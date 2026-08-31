@@ -1,0 +1,20 @@
+{
+  "name": "heartrot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.24.0",
+  "engines": {
+    "node": ">=20.18.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --if-present dev",
+    "build": "pnpm --filter @heartrot/app build",
+    "ship": "pnpm build && pnpm --filter @heartrot/worker run deploy",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "cf-types": "pnpm --filter @heartrot/worker run types",
+    "program:build": "cargo build-sbf --manifest-path programs/heartrot/Cargo.toml",
+    "program:test": "cargo test --manifest-path programs/heartrot/Cargo.toml",
+    "program:lint": "cargo clippy --manifest-path programs/heartrot/Cargo.toml -- -D warnings"
+  }
+}

@@ -1,0 +1,11 @@
+packages:
+  - app
+  - worker
+  - packages/client
+
+# pnpm 10 blocks dependency lifecycle scripts by default. These two fetch their platform
+# binary in a postinstall; without the allowlist `wrangler dev` and `vite build` fail at
+# runtime with a missing-binary error rather than at install time.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd

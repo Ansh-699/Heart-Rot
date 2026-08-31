@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = ["programs/heartrot"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Ansh-699/pixel-art"
+
+# Every version below was read off crates.io on 2026-09-01, not guessed.
+#
+# The feature list on `pinocchio` is copied from what `ephemeral-rollups-pinocchio` 0.17.0
+# itself requests (`cpi`, `alloc`, `account-resize`, `copy`, `default-features = false`).
+# Declaring the same set here keeps one unified `pinocchio` in the tree instead of two
+# feature-split copies. `sha2` is added on top because it is what backs
+# `Address::find_program_address` — PDA derivation is hand-written in every handler, so it
+# is not optional for us even though the ER SDK does not need it.
+[workspace.dependencies]
+pinocchio = { version = "0.11.2", default-features = false, features = [
+    "cpi",
+    "alloc",
+    "account-resize",
+    "copy",
+    "sha2",
+] }
+pinocchio-system = { version = "0.6.1", default-features = false }
+ephemeral-rollups-pinocchio = "0.17.0"
+bytemuck = { version = "1.25.2", default-features = false, features = ["derive"] }
+
+# `pinocchio-pubkey` is deliberately absent. 0.3.0 (its latest, 2025-07-24) requires
+# `pinocchio ^0.9`, which is semver-incompatible with 0.11 and would drag a second
+# pinocchio into the build. Write the program id as a literal `[u8; 32]`.
+
+[profile.release]
+# An overflow inside a health or position calculation is an exploit, not a panic, so the
+# code uses checked_*/saturating_* throughout. This flag is the backstop that turns a
+# missed one into a loud test failure rather than a silent wrap.
+overflow-checks = true
+lto = "fat"
+codegen-units = 1

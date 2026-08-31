@@ -1,0 +1,10 @@
+# Host toolchain only: `cargo test`, `cargo clippy`, `cargo fmt`.
+#
+# The on-chain build does NOT use this. `cargo build-sbf` runs Solana platform-tools
+# (v1.54 ships rustc 1.89.0-sbpf) and selects that toolchain itself.
+#
+# 1.89.0 is the floor — it is `pinocchio` 0.11.2's declared `rust-version`.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

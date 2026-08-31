@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "heartrot",
+  "main": "./src/index.ts",
+
+  // nodejs_compat is implied from 2026-08-04 onwards, but stated anyway so the dependency
+  // is visible in the file rather than inferred from the date.
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "assets": {
+    // Vite's build output. Keep in step with `build.outDir` in app/vite.config.ts.
+    "directory": "../app/dist",
+    "not_found_handling": "single-page-application",
+
+    // The whole security posture of the frontend in one line: /api/* is the ONLY path that
+    // reaches the Worker. Every other request is served as a free static asset and can
+    // never touch the treasury key, so "gameplay never passes through the backend" is
+    // enforced by the platform rather than by discipline.
+    //
+    // This key belongs INSIDE `assets`, not at the top level (01-architecture.md §0.3 puts
+    // it at the top level; that snippet is wrong). The array form needs wrangler >= 4.20.0
+    // and also disables the default Sec-Fetch-Mode: navigate heuristic, which is what makes
+    // the restriction absolute rather than header-dependent.
+    "run_worker_first": ["/api/*"]
+
+    // No "binding": the Worker serves only JSON from /api/* and never needs to reach for
+    // an asset itself.
+  },
+
+  "observability": { "enabled": true },
+
+  // Public routing constants — not secrets. Secrets go in .dev.vars / `wrangler secret put`;
+  // see .env.example. PROGRAM_ID is filled in after the first `solana program deploy`.
+  "vars": {
+    "PROGRAM_ID": "",
+    "ER_ENDPOINT": "https://devnet-as.magicblock.app/",
+    "ROUTER_ENDPOINT": "https://devnet-router.magicblock.app/",
+    "VALIDATOR_IDENTITY": "MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"
+  }
+}

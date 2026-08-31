@@ -1,0 +1,21 @@
+{
+  "name": "@heartrot/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@heartrot/client": "workspace:*",
+    "@solana/kit": "8.2.0",
+    "jose": "6.2.10"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "wrangler": "4.127.1"
+  }
+}

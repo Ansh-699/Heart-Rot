@@ -1,0 +1,279 @@
+/*
+ * Rig animation for the arena scene.
+ *
+ * Three rules hold for everything in this file, and breaking any one of them costs roughly
+ * half the frame rate with no error anywhere (docs/research/svg-rendering.md §2, §4):
+ *
+ *   1. Animate `transform` and nothing else. `fill`, `fill-opacity`, `d`, `x`/`y`,
+ *      `width`/`height` are repaints. `opacity` is composited too and is used, sparingly,
+ *      for the vent.
+ *   2. Animate the `transform` SHORTHAND, never the individual `translate` / `rotate` /
+ *      `scale` properties. Blink does not composite those on SVG children — which is
+ *      exactly backwards from the advice everywhere outside SVG.
+ *   3. Never introduce SMIL (`<animate>`) or `vector-effect` into an animated subtree, and
+ *      never write `transform: ... !important`. Each one silently drops the element to the
+ *      main thread.
+ *
+ * Timings use `steps()`, not easing. Smooth interpolation on a pixel sprite reads as a
+ * blurred photograph of a pixel sprite; stepped motion is what makes it look drawn. Blink
+ * composites `StepsTimingFunction`, so the look is free.
+ */
+
+/* ------------------------------------------------------------------ stage */
+
+.hr-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #0b0a0c;
+}
+
+.hr-scene {
+  display: block;
+  /* Width and height are written by `usePixelFit`, which lands one sprite pixel on a whole
+     number of device pixels. Do not set them here. */
+  shape-rendering: crispEdges;
+}
+
+/* ------------------------------------------------------------- boss parts */
+
+/*
+ * `transform-box` is deliberately absent: it stays at its `view-box` default, and every
+ * part carries an absolute `transform-origin` in sprite units from `sprites.ts`. Setting
+ * `fill-box` here would make each pivot depend on a bounding box that moves whenever a
+ * child animates — invisible today, a wandering rotation pivot the moment anything wraps
+ * the rig in an animated group.
+ */
+
+.hr-p-crown {
+  animation: hr-sway 4.2s steps(3, end) infinite;
+}
+.hr-p-wolf_l {
+  animation: hr-sway 3.1s steps(3, end) infinite;
+}
+.hr-p-beast_r {
+  animation: hr-sway 3.7s steps(3, end) infinite -1s;
+}
+.hr-p-torso {
+  animation: hr-breathe 2.8s steps(3, end) infinite;
+}
+.hr-p-mace {
+  animation: hr-sway 3.4s steps(3, end) infinite -0.6s;
+}
+.hr-p-claws {
+  animation: hr-sway 2.9s steps(3, end) infinite -1.4s;
+}
+
+/* The four volley emitters. Negative delays desynchronise them off one keyframe rule. */
+.hr-p-thorn0,
+.hr-p-thorn1,
+.hr-p-thorn2,
+.hr-p-thorn3 {
+  animation: hr-pulse 1.9s steps(2, end) infinite;
+}
+.hr-p-thorn1 {
+  animation-delay: -0.4s;
+}
+.hr-p-thorn2 {
+  animation-delay: -0.9s;
+}
+.hr-p-thorn3 {
+  animation-delay: -1.3s;
+}
+
+/* Amounts are in sprite units on a 230x270 boss: 2 units is ~1% of its width, which at
+   pixel-art scale is one or two visible pixels of drift. This is the tuning knob for how
+   alive the boss looks — raise it and the rig starts to wobble. */
+@keyframes hr-sway {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes hr-breathe {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes hr-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+/* ---------------------------------------------------------- part death */
+
+/*
+ * "A destroyed part stops animating and visibly detaches" is the whole read-the-fight-off-
+ * the-boss mechanic (spec §2), so this overrides the idle animation above rather than
+ * stacking with it. `!important` is on the `animation` shorthand and must stay off
+ * `transform` itself — an `!important` animated property is not composited.
+ */
+.hr-part.hr-destroyed {
+  animation: hr-part-detach 0.5s steps(6, end) forwards !important;
+  pointer-events: none;
+}
+
+/* Set by `Rig` once the detach has played out. A finished `forwards` animation still holds
+   a compositor layer; by the end of a raid that is most of the boss. */
+.hr-part.hr-gone {
+  display: none;
+}
+
+@keyframes hr-part-detach {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(10px, 60px) rotate(38deg);
+    opacity: 0;
+  }
+}
+
+/* ----------------------------------------------------------- vent / core */
+
+/* The core is shielded until the shell drops below the vent threshold, and the art is the
+   only place that is stated — there is no HUD reading for it. */
+.hr-vent {
+  opacity: 0;
+}
+.hr-boss[data-vent='open'] .hr-vent {
+  opacity: 0.45;
+  animation: hr-glow 1.2s steps(2, end) infinite;
+}
+
+.hr-boss[data-vent='sealed'] .hr-p-core {
+  opacity: 0.35;
+}
+.hr-boss[data-vent='open'] .hr-p-core {
+  animation: hr-core-throb 0.9s steps(2, end) infinite;
+}
+
+@keyframes hr-glow {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+
+@keyframes hr-core-throb {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+/* -------------------------------------------------------------- players */
+
+/* Amounts are in sprite units on an 82-unit-tall knight — ~4% of its height, the same
+   proportion the rig prototype used at a sixth the scale. */
+.hr-rig.hr-idle {
+  animation: hr-bob 1.6s steps(2, end) infinite;
+}
+.hr-rig.hr-run {
+  animation: hr-bob 0.32s steps(2, end) infinite;
+}
+.hr-rig.hr-dead {
+  opacity: 0.25;
+}
+
+/*
+ * Recoil rides on the same element as the bob and wins by cascade order, so a firing knight
+ * stops bobbing for 180 ms. Negative X is backwards for both facings: the mirror lives on
+ * the parent wrapper, so this group's local axis always points the way the knight is aiming.
+ */
+.hr-rig.hr-shoot {
+  animation: hr-recoil 0.18s steps(3, end);
+}
+
+@keyframes hr-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes hr-recoil {
+  0% {
+    transform: translate(0, 0);
+  }
+  40% {
+    transform: translate(-4px, 1px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+/* Marker under the seat the local player drives. Static, so it costs no layer. */
+.hr-you {
+  fill: none;
+  stroke: #b5b56a;
+  stroke-width: 2;
+  opacity: 0.7;
+}
+
+/* -------------------------------------------------------------- bullets */
+
+/*
+ * The one blanket `will-change` in the codebase, and it is measured: at 201 animated nodes
+ * the scene fell to p99 41.6 ms, and `will-change: transform` on them restored it to
+ * 13.9 ms — identical to removing the bullets entirely. It is safe here specifically
+ * because bullets only ever translate: a `will-change` layer rasters once at a fixed scale,
+ * so anything that also scaled would go visibly blurry.
+ */
+.hr-bullet {
+  fill: #b5b56a;
+  will-change: transform;
+}
+
+/* -------------------------------------------------------- reduced motion */
+
+/*
+ * Also the fast path, incidentally: Blink disables accelerated animation outright when
+ * reduce-motion is forced, so leaving the keyframes running would demote the whole scene to
+ * the main thread rather than degrade gracefully.
+ *
+ * Killing the animations takes the detach keyframe with it, and `Rig` hides a part on that
+ * animation's `animationend` — which now never fires. The state a destroyed part conveys is
+ * not decorative, so it is restated declaratively here.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .hr-scene,
+  .hr-scene * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .hr-part.hr-destroyed {
+    display: none;
+  }
+
+  .hr-boss[data-vent='open'] .hr-vent {
+    opacity: 0.45;
+  }
+}

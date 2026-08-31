@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The SDK is shared by the browser and the Worker, so it must not assume either. No
+    // "DOM", no node types — anything platform-specific belongs in app/ or worker/.
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["src"]
+}

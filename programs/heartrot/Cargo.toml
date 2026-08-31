@@ -1,0 +1,20 @@
+[package]
+name = "heartrot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "On-chain co-op pixel-art boss raid. Native Pinocchio, Solana devnet + MagicBlock ER."
+
+[lib]
+# `cdylib` is the deployed BPF artifact. `lib` exists so tests and any future Rust tooling
+# can `use heartrot::state::*` for the account layouts. Pinocchio's `program_entrypoint!`
+# is already `#[cfg(target_os = "solana")]`-gated, so the `lib` build carries no entrypoint
+# and no `no-entrypoint` feature is needed.
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+pinocchio.workspace = true
+pinocchio-system.workspace = true
+ephemeral-rollups-pinocchio.workspace = true
+bytemuck.workspace = true
