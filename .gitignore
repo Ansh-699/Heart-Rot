@@ -1,0 +1,31 @@
+# Rust / Solana
+target/
+**/*.rs.bk
+test-ledger/
+.anchor/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Cloudflare
+.wrangler/
+.dev.vars
+
+# Secrets — never commit these
+*.env
+.env*
+!.env.example
+**/keypair*.json
+**/*-keypair.json
+id.json
+treasury*.json
+secrets/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,644 @@
+<title>Heartrot Sprite Rig</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ground:#16131a; --panel:#1f1a26; --panel-2:#282132; --line:#3a3145;
+    --ink:#ece3ec; --muted:#9186a0; --dim:#6b6076;
+    --olive:#b5b56a; --olive-dim:#8a8a4a;
+    --flesh:#d9a8b8; --maroon:#5a2f45;
+    --ok:#7fb069; --warn:#d4a84a; --gone:#7a3a4a;
+    --steel:#8b95a8;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-size:13px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 20px 60px}
+
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+    padding-bottom:14px;border-bottom:1px solid var(--line);margin-bottom:18px}
+  h1{font-family:Silkscreen,monospace;font-size:20px;font-weight:700;margin:0;
+    letter-spacing:.02em;color:var(--flesh)}
+  .tag{font-size:11px;color:var(--dim);letter-spacing:.14em;text-transform:uppercase}
+  header p{margin:0;color:var(--muted);font-size:12px;flex:1 1 260px}
+
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) 268px;gap:18px;align-items:start}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}}
+
+  .stage{
+    background:
+      radial-gradient(120% 90% at 50% 18%, #2a2231 0%, #16131a 72%);
+    border:1px solid var(--line);border-radius:2px;
+    display:flex;align-items:flex-end;justify-content:center;
+    min-height:520px;overflow:auto;position:relative;padding:18px 10px 0;
+  }
+  .stage svg{display:block;image-rendering:pixelated;shape-rendering:crispEdges}
+  .hint{position:absolute;left:10px;bottom:8px;font-size:11px;color:var(--dim);
+    letter-spacing:.06em}
+  .verdict{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(22,19,26,.9);font-family:Silkscreen,monospace;font-size:22px;
+    color:var(--olive);letter-spacing:.06em;flex-direction:column;gap:10px}
+  .verdict small{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);
+    letter-spacing:0}
+  body.dead .verdict{display:flex}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:2px;
+    padding:14px}
+  .panel + .panel{margin-top:14px}
+  .panel h2{font-family:Silkscreen,monospace;font-size:11px;font-weight:400;margin:0 0 10px;
+    letter-spacing:.12em;color:var(--dim);text-transform:uppercase}
+
+  .shell{margin-bottom:14px}
+  .shellbar{height:10px;background:var(--panel-2);border:1px solid var(--line);
+    position:relative;overflow:hidden}
+  .shellbar i{display:block;height:100%;background:var(--flesh);width:100%;
+    transition:width .18s steps(8)}
+  .shellrow{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);
+    margin-bottom:5px;letter-spacing:.06em}
+  .shellrow b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+
+  ul.parts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+  ul.parts li{display:grid;grid-template-columns:9px 1fr auto;gap:8px;align-items:center;
+    padding:5px 6px;background:transparent;border:1px solid transparent;cursor:pointer;
+    font-size:12px}
+  ul.parts li:hover{background:var(--panel-2);border-color:var(--line)}
+  ul.parts li:focus-visible{outline:2px solid var(--olive);outline-offset:1px}
+  .dot{width:9px;height:9px;background:var(--ok)}
+  li.hurt .dot{background:var(--warn)}
+  li.dead .dot{background:var(--gone)}
+  li.dead{color:var(--dim);text-decoration:line-through}
+  .hp{font-variant-numeric:tabular-nums;color:var(--muted);font-size:11px}
+
+  .status{display:flex;flex-direction:column;gap:7px;font-size:12px}
+  .status div{display:flex;justify-content:space-between;align-items:center}
+  .status span{color:var(--muted);letter-spacing:.06em}
+  .pill{font-family:Silkscreen,monospace;font-size:10px;padding:3px 7px;
+    border:1px solid var(--line);color:var(--dim);letter-spacing:.08em}
+  .pill.open{color:var(--olive);border-color:var(--olive-dim)}
+  .pill.live{color:var(--flesh);border-color:var(--maroon)}
+
+  .ctl{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  button,.seg{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink);
+    background:var(--panel);border:1px solid var(--line);padding:6px 11px;cursor:pointer;
+    border-radius:2px}
+  button:hover{background:var(--panel-2);border-color:var(--olive-dim)}
+  button:focus-visible{outline:2px solid var(--olive);outline-offset:1px}
+  button[aria-pressed="true"]{border-color:var(--olive);color:var(--olive)}
+
+  .legend{margin-top:18px;color:var(--dim);font-size:11.5px;line-height:1.7;
+    border-top:1px solid var(--line);padding-top:12px}
+  .legend b{color:var(--muted);font-weight:500}
+  kbd{font-family:Silkscreen,monospace;font-size:10px;background:var(--panel-2);
+    border:1px solid var(--line);padding:2px 5px;color:var(--ink)}
+
+  /* ---- rig animation ---- */
+  .part{transform-box:fill-box}
+  #k_legs{transform-origin:50% 0%}
+  #k_body{transform-origin:50% 100%}
+  #k_arm{transform-origin:52% 88%}
+
+  .idle #k_body{animation:bob 1.6s steps(2,end) infinite}
+  .idle #k_legs{animation:none}
+  .run  #k_body{animation:bob .32s steps(2,end) infinite}
+  .run  #k_legs{animation:step .32s steps(2,end) infinite}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1px)}}
+  @keyframes step{0%,100%{transform:translateY(0) skewX(0deg)}
+                  50%{transform:translateY(-1px) skewX(-4deg)}}
+  .shooting #k_arm{animation:swing .18s steps(3,end)}
+  @keyframes swing{0%{transform:rotate(0deg)}
+                   40%{transform:rotate(-42deg) translateX(-2px)}
+                   100%{transform:rotate(0deg)}}
+
+  #b_crown{transform-origin:50% 100%;animation:sway 4.2s steps(3,end) infinite}
+  #b_wolf_l{transform-origin:80% 60%;animation:sway 3.1s steps(3,end) infinite}
+  #b_beast_r{transform-origin:20% 60%;animation:sway 3.7s steps(3,end) infinite -1s}
+  #b_torso{transform-origin:50% 90%;animation:breathe 2.8s steps(3,end) infinite}
+  #b_arm_mace{transform-origin:85% 8%;animation:sway 3.4s steps(3,end) infinite -.6s}
+  #b_arm_claw{transform-origin:15% 8%;animation:sway 2.9s steps(3,end) infinite -1.4s}
+  .thorn{transform-box:fill-box;transform-origin:50% 50%;
+    animation:pulse 1.9s steps(2,end) infinite}
+  #b_thorn_1{animation-delay:-.4s} #b_thorn_2{animation-delay:-.9s}
+  #b_thorn_3{animation-delay:-1.3s}
+  @keyframes sway{0%,100%{transform:translateX(0)}50%{transform:translateX(1px)}}
+  @keyframes breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-1px)}}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+
+  .part.destroyed{animation:fall .5s steps(6,end) forwards !important;pointer-events:none}
+  @keyframes fall{
+    0%{transform:translate(0,0) rotate(0deg);opacity:1}
+    100%{transform:translate(6px,26px) rotate(38deg);opacity:0}
+  }
+  .part.hit rect{fill:#fff !important}
+
+  #b_core{transform-box:fill-box;transform-origin:50% 50%;opacity:.35}
+  body.vent #b_core{opacity:1;animation:glow .9s steps(2,end) infinite}
+  @keyframes glow{0%,100%{filter:none}50%{filter:brightness(1.5)}}
+  #vent_glow{opacity:0;transition:opacity .3s}
+  body.vent #vent_glow{opacity:1;animation:glow 1.2s steps(2,end) infinite}
+
+  .wire .part{outline:1px dashed rgba(181,181,106,.55);outline-offset:0}
+  .tracer{stroke:#ffe9a8;stroke-width:1;opacity:0}
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none !important;transition:none !important}
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>HEARTROT</h1>
+    <span class="tag">sprite rig · step 1</span>
+    <p>Every destructible part is one <code>&lt;g&gt;</code>: the animation target and the hitbox are the same node. Art is placeholder — it drops into the same slots later.</p>
+  </header>
+
+  <div class="cols">
+    <div>
+      <div class="stage" id="stage">
+        <svg id="scene" viewBox="0 0 160 132" width="640" height="528" aria-label="Boss arena"></svg>
+        <div class="hint"><kbd>A</kbd><kbd>D</kbd> move · <kbd>SPACE</kbd> shoot · click a part to hit it</div>
+        <div class="verdict">CORE DESTROYED<small>incarnation 2 would spawn here</small></div>
+      </div>
+      <div class="ctl">
+        <button id="scaleBtn">scale 4×</button>
+        <button id="wireBtn" aria-pressed="false">hitboxes</button>
+        <button id="animBtn" aria-pressed="true">animation</button>
+        <button id="resetBtn">reset</button>
+      </div>
+      <div class="legend">
+        <b>Pixel-perfect how:</b> sprites are authored as character maps, compiled to SVG
+        <code>&lt;rect&gt;</code> runs on an integer grid, rendered with
+        <code>shape-rendering:crispEdges</code> at integer scale. Movement rounds to whole
+        sprite pixels, so nothing ever lands on a half-pixel.<br>
+        <b>What this proves:</b> per-part animation without spritesheets, part-level
+        hit detection, and the detach-on-death transition — the three things the boss
+        design depends on.
+      </div>
+    </div>
+
+    <aside>
+      <div class="panel">
+        <h2>Shell</h2>
+        <div class="shell">
+          <div class="shellrow"><span>integrity</span><b id="shellPct">100%</b></div>
+          <div class="shellbar"><i id="shellBar"></i></div>
+        </div>
+        <ul class="parts" id="partList"></ul>
+      </div>
+      <div class="panel">
+        <h2>Core</h2>
+        <div class="status">
+          <div><span>vent</span><span class="pill" id="ventPill">sealed</span></div>
+          <div><span>core</span><span class="pill" id="corePill">shielded</span></div>
+          <div><span>opens at</span><span class="hp">shell &lt; 35%</span></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+const PAL_B = {K:'#4a2038',D:'#5a2f45',M:'#a06a80',F:'#d9a8b8',L:'#e8c4ce',
+               H:'#f4e4e8',O:'#b5b56a',N:'#8a8a4a',V:'#2a1420',W:'#ffffff'};
+const PAL_K = {k:'#1a1d26',d:'#5a6478',m:'#8b95a8',l:'#c8d0dc',b:'#4a7fd4',
+               g:'#d4a84a',v:'#2a2f3d',s:'#c9d2de'};
+const PAL_T = {'0':'#25272e','1':'#33363f','2':'#3f434e','3':'#4b505c'};
+
+/* ---------- boss parts ---------- */
+const CROWN=[
+'.KK................KK',
+'KLLK..............KLLK',
+'KLFK..............KLFK',
+'KLFK...KKKKKKKK...KLFK',
+'KLFK..KLLLLLLLLK..KLFK',
+'KLFFK.KLFFFFFFFLK.KLFFK',
+'.KLFFKLFFFFFFFFLKKLFFK',
+'..KLFFLFVVFFVVFLFFLK',
+'...KKKLFVVFFVVFLKKK',
+'......KLFFFFFFFLK',
+'......KLFFKKFFFLK',
+'.......KLFFFFFLK',
+'.......KKLFFLKK',
+'.........KKKK'];
+
+const WOLF_L=[
+'.......KKKKKK',
+'.....KKLLLLLLKK',
+'...KKLFFFFFFFFLK',
+'..KLFFFFFFFFFFFLK',
+'.KLFFFFFFFFFFFFFLK',
+'KLFWWFFFFFFFFFFFFLK',
+'KLFWWFFFFFFFFFFFFLK',
+'KKLFFFFFFFFFFFFFLKK',
+'.KKLFFFFFFFFFFFLKK',
+'..KLFKKFFFFKKFLK',
+'..KLFFFFFFFFFFLK',
+'...KKLFFFFFFLKK',
+'.....KKLFFLKK',
+'.......KKKK'];
+
+const BEAST_R=[
+'......KKKKKK',
+'....KKLLLLLLKK',
+'..KLFFFFFFFFLKK',
+'.KLFFFFFFFFFFFLK',
+'KLFFFFFFFFFFFFFLK',
+'KLFFFFFFFFFFFFWWFLK',
+'KLFFFFFFFFFFFFWWFLK',
+'KKLFFFFFFFFFFFFFLKK',
+'.KKLFFFFFFFFFFFLKK',
+'...KLFKKFFFFKKFLK',
+'...KLFFFFFFFFFFLK',
+'....KKLFFFFFFLKK',
+'......KKLFFLKK',
+'........KKKK'];
+
+const TORSO=[
+'....KKKKKKKKKKKKKKKK',
+'..KKLFFFFFFFFFFFFFFLKK',
+'.KLFFFFFFFFFFFFFFFFFFLK',
+'KLFFFFFFFFFFFFFFFFFFFFLK',
+'KLFFFFMMFFFFFFFFMMFFFFLK',
+'KLFFFFMMFFFFFFFFMMFFFFLK',
+'KLFFFFFFFFFFFFFFFFFFFFLK',
+'KLFFFFFFKKKKKKKKFFFFFFLK',
+'KLFFFFFKVVVVVVVVKFFFFFLK',
+'KLFFFFKVVVVVVVVVVKFFFFLK',
+'KLFFFFKVVVVVVVVVVKFFFFLK',
+'KLFFFFKVVVVVVVVVVKFFFFLK',
+'KLFFFFKVVVVVVVVVVKFFFFLK',
+'KLFFFFFKVVVVVVVVKFFFFFLK',
+'KLFFFFFFKKKKKKKKFFFFFFLK',
+'KLFFFFFFFFFFFFFFFFFFFFLK',
+'KLFFFMMFFFFFFFFFFFFMMFLK',
+'KLFFFFFFFFFFFFFFFFFFFFLK',
+'.KLFFFFFFFFFFFFFFFFFFLK',
+'..KKLFFFFFFFFFFFFFFLKK',
+'....KKKKKKKKKKKKKKKK'];
+
+const CORE=[
+'..KKKKKK',
+'.KLLLLLLK',
+'KLHHHHHHLK',
+'KLHWHHWHLK',
+'KLHWHHWHLK',
+'KLHHHHHHLK',
+'KLHHKKHHLK',
+'.KLHHHHLK',
+'..KKLLKK',
+'....KK'];
+
+const THORN=[
+'.....N......N',
+'....N.N....N',
+'N...N..N..N',
+'.N.NOOOON',
+'..NOOOOOON.N',
+'.NOOOOOOOON..N',
+'NOOOONNOOOON',
+'.NOOOOOOOON.N',
+'..NOOOOOON..N',
+'.N..NOOON...N',
+'N..N...N..N',
+'..N....N.N'];
+
+const ARM_MACE=[
+'..........KKKK',
+'.........KLFFLK',
+'........KLFFFFLK',
+'.......KLFFFFFLK',
+'......KLFFFFFFLK',
+'.....KLFFFFFFLK',
+'....KLFFFFFFLK',
+'...KLFFFFFFLK',
+'..KLFFFFFFLK',
+'..KLFFFFFLK',
+'.KLFFFFFLK',
+'.KLFFFFLK',
+'.KKLFFLKK',
+'...KKLKK'];
+
+const ARM_CLAW=[
+'KKKK',
+'KLFFLKK',
+'KLFFFFLK',
+'.KLFFFFLK',
+'.KLFFFFFLK',
+'..KLFFFFFLK',
+'..KLFFFFFLK',
+'...KLFFFFLK',
+'...KLFFFLKK',
+'....KLFFLK',
+'....KLFFLK',
+'...KLFFFFLK',
+'..KLFKFKFFLK',
+'..KLKKLKKLLK',
+'..KK.KK.KKKK'];
+
+const B_LEGS=[
+'KKKKKKKKKKKKKKKKKKKK',
+'KLFFFFFFKKKKFFFFFFLK',
+'KLFFFFFKK..KKFFFFFLK',
+'.KLFFFFK....KFFFFLK',
+'.KLFFFFK....KFFFFLK',
+'.KLFFFK......KFFFLK',
+'.KLFFFK......KFFFLK',
+'..KLFFK......KFFLK',
+'..KLFMK......KFMLK',
+'..KLFMK......KFMLK',
+'..KLFFK......KFFLK',
+'..KLFFK......KFFLK',
+'..KKLFK......KFLKK',
+'...KLFFK....KFFLK',
+'...KLFFFKKKKFFFLK',
+'..KKLFFFFFFFFFFLKK',
+'.KLLFFFFFFFFFFFFLLK',
+'KLFLKLFLKKKKLFLKLFLK',
+'KKK.KKK....KKK.KKK'];
+
+/* ---------- knight parts ---------- */
+const K_BODY=[
+'.....kkkkkk',
+'....klllllk',
+'...klmmmmmlk',
+'..klmmmmmmmlk',
+'..kdvvvvvvvdk',
+'..kdvvvvvvvdk',
+'..klmmmmmmmlk',
+'...kdmmmmmdk',
+'....kkddddkk',
+'......kkkk',
+'...kkllllkk',
+'..klmbbbbmlk',
+'.klmmbbbbmmlk',
+'.klmmbggbmmlk',
+'.kdmmbbbbmmdk',
+'.kdmmmbbmmmdk',
+'..kddmmmmddk',
+'...kkddddkk',
+'.....kkkk'];
+
+const K_LEGS=[
+'....kkkkkk',
+'...kddddddk',
+'...kdmmmmdk',
+'...kdmkkmdk',
+'..kkdmkkmdkk',
+'..kddmkkmddk',
+'..kllkkkkllk',
+'..kkkk..kkkk'];
+
+const K_ARM=[
+'........kk',
+'.......ksssk',
+'.......ksssk',
+'.......ksssk',
+'.......ksssk',
+'.......ksssk',
+'....kkggggkk',
+'......kmmk',
+'....kkmmkk',
+'...kdmmmdk',
+'...kdmmmdk',
+'...klmmmlk',
+'....kkkkk'];
+
+/* ---------- compile pixel maps to svg rects ---------- */
+function rects(rows,pal){
+  let s='';
+  rows.forEach((row,y)=>{
+    let x=0;
+    while(x<row.length){
+      const c=row[x];
+      if(!pal[c]){x++;continue}
+      let run=1;
+      while(x+run<row.length && row[x+run]===c) run++;
+      s+=`<rect x="${x}" y="${y}" width="${run}" height="1" fill="${pal[c]}"/>`;
+      x+=run;
+    }
+  });
+  return s;
+}
+function g(id,cls,x,y,rows,pal){
+  return `<g id="${id}" class="${cls}" transform="translate(${x},${y})">${rects(rows,pal)}</g>`;
+}
+
+/* ---------- part table ---------- */
+const PARTS=[
+  {id:'crown',   name:'Ram Crown',  hp:120, x:56, y:2,  rows:CROWN,    pal:PAL_B},
+  {id:'wolf_l',  name:'Wolf Head',  hp:80,  x:34, y:16, rows:WOLF_L,   pal:PAL_B},
+  {id:'beast_r', name:'Beast Head', hp:80,  x:88, y:16, rows:BEAST_R,  pal:PAL_B},
+  {id:'arm_mace',name:'Mace Arm',   hp:90,  x:36, y:44, rows:ARM_MACE, pal:PAL_B},
+  {id:'arm_claw',name:'Claw Arm',   hp:90,  x:98, y:42, rows:ARM_CLAW, pal:PAL_B},
+  {id:'thorn_0', name:'Thorns I',   hp:30,  x:100,y:8,  rows:THORN,    pal:PAL_B,t:1},
+  {id:'thorn_1', name:'Thorns II',  hp:30,  x:26, y:36, rows:THORN,    pal:PAL_B,t:1},
+  {id:'thorn_2', name:'Thorns III', hp:30,  x:110,y:62, rows:THORN,    pal:PAL_B,t:1},
+  {id:'thorn_3', name:'Thorns IV',  hp:30,  x:24, y:76, rows:THORN,    pal:PAL_B,t:1},
+];
+const SHELL_MAX=PARTS.reduce((a,p)=>a+p.hp,0);
+const state={parts:{},core:60,coreMax:60,vent:false,dead:false,
+             kx:70,facing:1,moving:false};
+PARTS.forEach(p=>state.parts[p.id]=p.hp);
+
+/* ---------- floor ---------- */
+function floor(){
+  let s='';
+  for(let ty=0;ty<3;ty++)for(let tx=0;tx<10;tx++){
+    const ox=tx*16, oy=104+ty*10, off=(ty%2)?8:0;
+    s+=`<rect x="${ox}" y="${oy}" width="16" height="10" fill="${PAL_T['1']}"/>`;
+    s+=`<rect x="${ox}" y="${oy}" width="16" height="1" fill="${PAL_T['0']}"/>`;
+    s+=`<rect x="${(ox+off)%160}" y="${oy}" width="1" height="10" fill="${PAL_T['0']}"/>`;
+    s+=`<rect x="${ox+2}" y="${oy+2}" width="6" height="1" fill="${PAL_T['2']}"/>`;
+    s+=`<rect x="${ox+9}" y="${oy+5}" width="5" height="1" fill="${PAL_T['2']}"/>`;
+  }
+  return s;
+}
+function backwall(){
+  let s=`<rect x="0" y="0" width="160" height="104" fill="#221c2a"/>`;
+  for(let ty=0;ty<9;ty++)for(let tx=0;tx<11;tx++){
+    const ox=tx*15+((ty%2)?-7:0), oy=ty*12;
+    s+=`<rect x="${ox}" y="${oy}" width="14" height="11" fill="#282132"/>`;
+    s+=`<rect x="${ox}" y="${oy}" width="14" height="1" fill="#1c1724"/>`;
+  }
+  s+=`<rect x="0" y="96" width="160" height="8" fill="#1c1724"/>`;
+  return s;
+}
+
+function build(){
+  const svg=document.getElementById('scene');
+  let s=backwall()+floor();
+  s+=`<g id="boss">`;
+  s+=g('b_arm_mace','part',36,44,ARM_MACE,PAL_B);
+  s+=g('b_arm_claw','part',98,42,ARM_CLAW,PAL_B);
+  s+=g('b_wolf_l','part',34,16,WOLF_L,PAL_B);
+  s+=g('b_beast_r','part',88,16,BEAST_R,PAL_B);
+  s+=g('b_crown','part',56,2,CROWN,PAL_B);
+  s+=g('b_legs','',60,84,B_LEGS,PAL_B);
+  s+=g('b_torso','',54,30,TORSO,PAL_B);
+  s+=`<g id="vent_glow"><rect x="61" y="37" width="10" height="7" fill="#b5b56a" opacity=".45"/></g>`;
+  s+=g('b_core','',72,36,CORE,PAL_B);
+  PARTS.filter(p=>p.t).forEach(p=>{
+    s+=g('b_'+p.id,'part thorn',p.x,p.y,THORN,PAL_B);
+  });
+  s+=`</g>`;
+  s+=`<g id="knight" transform="translate(70,84)">`;
+  s+=g('k_legs','',0,19,K_LEGS,PAL_K);
+  s+=g('k_body','',0,0,K_BODY,PAL_K);
+  s+=g('k_arm','',6,8,K_ARM,PAL_K);
+  s+=`</g>`;
+  s+=`<line id="tracer" class="tracer" x1="0" y1="0" x2="0" y2="0"/>`;
+  svg.innerHTML=s;
+}
+
+/* ---------- ui ---------- */
+function renderList(){
+  const ul=document.getElementById('partList');
+  ul.innerHTML=PARTS.map(p=>{
+    const hp=state.parts[p.id];
+    const cls=hp<=0?'dead':(hp<p.hp?'hurt':'');
+    return `<li class="${cls}" data-id="${p.id}" tabindex="0">
+      <i class="dot"></i><span>${p.name}</span>
+      <span class="hp">${Math.max(0,hp)}/${p.hp}</span></li>`;
+  }).join('');
+  ul.querySelectorAll('li').forEach(li=>{
+    const hit=()=>damage(li.dataset.id,20);
+    li.onclick=hit;
+    li.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();hit()}};
+  });
+}
+function shellNow(){
+  return PARTS.reduce((a,p)=>a+Math.max(0,state.parts[p.id]),0);
+}
+function refresh(){
+  const pct=Math.round(shellNow()/SHELL_MAX*100);
+  document.getElementById('shellPct').textContent=pct+'%';
+  document.getElementById('shellBar').style.width=pct+'%';
+  const open=pct<35;
+  if(open!==state.vent){
+    state.vent=open;
+    document.body.classList.toggle('vent',open);
+    document.getElementById('ventPill').textContent=open?'open':'sealed';
+    document.getElementById('ventPill').className='pill'+(open?' open':'');
+    document.getElementById('corePill').textContent=open?state.core+' hp':'shielded';
+    document.getElementById('corePill').className='pill'+(open?' live':'');
+  }
+  if(open)document.getElementById('corePill').textContent=Math.max(0,state.core)+' hp';
+  renderList();
+}
+function flash(el){
+  if(!el)return;
+  el.classList.add('hit');
+  setTimeout(()=>el.classList.remove('hit'),70);
+}
+function damage(id,amt){
+  if(state.dead)return;
+  if(id==='core'){
+    if(!state.vent)return;
+    state.core-=amt; flash(document.getElementById('b_core'));
+    if(state.core<=0){state.dead=true;document.body.classList.add('dead')}
+    refresh(); return;
+  }
+  if(state.parts[id]<=0)return;
+  state.parts[id]-=amt;
+  const el=document.getElementById('b_'+id);
+  if(state.parts[id]<=0){ el.classList.add('destroyed') } else { flash(el) }
+  refresh();
+}
+
+/* ---------- shooting: hitscan against part groups ---------- */
+function shoot(){
+  const kn=document.getElementById('knight');
+  kn.classList.remove('shooting'); void kn.offsetWidth; kn.classList.add('shooting');
+  const originX=state.kx+6, originY=95;
+  const tr=document.getElementById('tracer');
+  // walk the ray in sprite-space, first live part wins
+  let target=null,tx=originX;
+  for(let d=1;d<120 && !target;d++){
+    const px=originX+state.facing*d;
+    for(const p of PARTS){
+      if(state.parts[p.id]<=0) continue;
+      const el=document.getElementById('b_'+p.id);
+      const bb=el.getBBox();
+      if(px>=p.x+bb.x && px<=p.x+bb.x+bb.width &&
+         originY-24>=p.y+bb.y && originY-24<=p.y+bb.y+bb.height){
+        target=p; tx=px; break;
+      }
+    }
+    if(!target && state.vent &&
+       px>=72 && px<=82 && originY-24>=36 && originY-24<=46){ target={id:'core'}; tx=px }
+  }
+  tr.setAttribute('x1',originX); tr.setAttribute('y1',originY-24);
+  tr.setAttribute('x2',target?tx:originX+state.facing*120); tr.setAttribute('y2',originY-24);
+  tr.style.opacity=1; setTimeout(()=>tr.style.opacity=0,60);
+  if(target) damage(target.id,20);
+}
+
+/* ---------- input ---------- */
+const keys={};
+addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','a','d',' '].includes(e.key))e.preventDefault();
+  if(e.key===' '&&!keys[' ']) shoot();
+  keys[e.key]=true;
+});
+addEventListener('keyup',e=>keys[e.key]=false);
+
+function tick(){
+  const L=keys.ArrowLeft||keys.a, R=keys.ArrowRight||keys.d;
+  const kn=document.getElementById('knight');
+  if(L!==R){
+    state.kx+=R?1:-1;                       // whole sprite pixels only
+    state.kx=Math.max(2,Math.min(146,state.kx));
+    state.facing=R?1:-1;
+    if(!state.moving){state.moving=true;kn.classList.add('run');kn.classList.remove('idle')}
+  }else if(state.moving){
+    state.moving=false;kn.classList.remove('run');kn.classList.add('idle');
+  }
+  kn.setAttribute('transform',
+    `translate(${state.kx},84) scale(${state.facing},1) translate(${state.facing<0?-13:0},0)`);
+  requestAnimationFrame(tick);
+}
+
+/* ---------- controls ---------- */
+let scale=4;
+document.getElementById('scaleBtn').onclick=()=>{
+  scale=scale>=6?2:scale+1;
+  const svg=document.getElementById('scene');
+  svg.setAttribute('width',160*scale); svg.setAttribute('height',132*scale);
+  document.getElementById('scaleBtn').textContent='scale '+scale+'×';
+};
+document.getElementById('wireBtn').onclick=e=>{
+  const on=e.target.getAttribute('aria-pressed')!=='true';
+  e.target.setAttribute('aria-pressed',on);
+  document.getElementById('scene').classList.toggle('wire',on);
+};
+document.getElementById('animBtn').onclick=e=>{
+  const on=e.target.getAttribute('aria-pressed')!=='true';
+  e.target.setAttribute('aria-pressed',on);
+  document.getElementById('scene').style.animationPlayState=on?'':'paused';
+  document.querySelectorAll('#scene *').forEach(n=>n.style.animationPlayState=on?'':'paused');
+};
+document.getElementById('resetBtn').onclick=()=>{
+  PARTS.forEach(p=>state.parts[p.id]=p.hp);
+  state.core=state.coreMax; state.dead=false; state.vent=false;
+  document.body.classList.remove('dead','vent');
+  build(); wireStage(); refresh();
+  document.getElementById('ventPill').textContent='sealed';
+  document.getElementById('ventPill').className='pill';
+  document.getElementById('corePill').textContent='shielded';
+  document.getElementById('corePill').className='pill';
+};
+
+function wireStage(){
+  document.getElementById('knight').classList.add('idle');
+  PARTS.forEach(p=>{
+    const el=document.getElementById('b_'+p.id);
+    if(el){el.style.cursor='crosshair'; el.onclick=()=>damage(p.id,20)}
+  });
+  const core=document.getElementById('b_core');
+  core.style.cursor='crosshair'; core.onclick=()=>damage('core',20);
+}
+
+build(); wireStage(); refresh(); tick();
+</script>

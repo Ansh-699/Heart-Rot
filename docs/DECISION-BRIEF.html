@@ -1,0 +1,193 @@
+<title>Heartrot Architecture Verdict</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{--ground:#141118;--panel:#1d1824;--panel2:#251f2e;--line:#372f42;
+ --ink:#ece3ec;--muted:#948999;--dim:#6a6076;
+ --olive:#b5b56a;--flesh:#d9a8b8;--bad:#c0616c;--good:#7fb069;--warn:#d4a84a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);
+ font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:13px;line-height:1.6}
+.wrap{max-width:1000px;margin:0 auto;padding:28px 20px 80px}
+h1{font-family:Silkscreen,monospace;font-size:20px;margin:0 0 8px;color:var(--flesh);letter-spacing:.02em}
+h2{font-family:Silkscreen,monospace;font-size:13px;margin:34px 0 12px;letter-spacing:.08em;
+ color:var(--olive);border-bottom:1px solid var(--line);padding-bottom:8px}
+header{border-bottom:1px solid var(--line);padding-bottom:16px}
+header p{margin:0;color:var(--muted);max-width:72ch}
+.runstat{display:flex;gap:0;margin:16px 0 0;border:1px solid var(--line);flex-wrap:wrap}
+.runstat div{padding:9px 15px;border-right:1px solid var(--line);flex:1 1 auto}
+.runstat div:last-child{border-right:0}
+.runstat dt{font-size:10px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase}
+.runstat dd{margin:2px 0 0;font-variant-numeric:tabular-nums;font-size:15px;color:var(--ink)}
+table{width:100%;border-collapse:collapse;margin:0 0 6px;font-size:12.5px}
+th{text-align:left;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+ color:var(--dim);font-weight:400;padding:7px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--muted)}
+td:first-child{color:var(--ink);white-space:nowrap}
+td b,th b{color:var(--ink);font-weight:600}
+.scroll{overflow-x:auto;border:1px solid var(--line);background:var(--panel)}
+code{color:var(--olive);font-size:12px}
+.wrong{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--bad);
+ padding:14px 16px;margin-bottom:12px}
+.wrong h3{margin:0 0 6px;font-size:13px;color:var(--bad);font-weight:600}
+.wrong p{margin:0 0 7px;color:var(--muted)}
+.wrong p:last-child{margin:0}
+.wrong b{color:var(--ink);font-weight:500}
+.ask{background:var(--panel);border:1px solid var(--warn);padding:14px 16px;margin-bottom:12px}
+.ask h3{margin:0 0 6px;font-size:13px;color:var(--warn);font-weight:600}
+.ask p{margin:0 0 7px;color:var(--muted)}
+.ask p:last-child{margin:0}
+.ask b{color:var(--ink);font-weight:500}
+.pill{display:inline-block;font-family:Silkscreen,monospace;font-size:9px;padding:2px 6px;
+ border:1px solid var(--line);color:var(--dim);letter-spacing:.08em;vertical-align:middle}
+.pill.k{color:var(--bad);border-color:var(--bad)}
+.pill.g{color:var(--good);border-color:var(--good)}
+.slices{display:flex;flex-direction:column;gap:0;border:1px solid var(--line)}
+.slice{display:grid;grid-template-columns:70px 1fr;border-bottom:1px solid var(--line)}
+.slice:last-child{border-bottom:0}
+.slice .n{padding:11px 12px;background:var(--panel2);font-family:Silkscreen,monospace;
+ font-size:10px;color:var(--dim);border-right:1px solid var(--line);letter-spacing:.06em}
+.slice .b{padding:11px 14px}
+.slice .b strong{color:var(--ink);display:block;margin-bottom:3px;font-weight:600}
+.slice .b span{color:var(--muted);font-size:12px}
+.slice.play{background:rgba(127,176,105,.06)}
+.slice.play .n{color:var(--good)}
+footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
+ color:var(--dim);font-size:11.5px;line-height:1.8}
+footer b{color:var(--muted);font-weight:500}
+</style>
+<div class="wrap">
+<header>
+  <h1>ARCHITECTURE VERDICT</h1>
+  <p>What 24 research agents found, what it kills, and the five things that need your
+  decision before code lands. The full corpus is 20 markdown files under
+  <code>~/Documents/pixel-artgame/docs/</code>; this is the layer above it.</p>
+  <div class="runstat">
+    <div><dt>agents</dt><dd>24</dd></div>
+    <div><dt>subagent tokens</dt><dd>5.06M</dd></div>
+    <div><dt>tool calls</dt><dd>1,752</dd></div>
+    <div><dt>claims refuted</dt><dd>26</dd></div>
+    <div><dt>docs written</dt><dd>968 KB</dd></div>
+  </div>
+</header>
+
+<h2>Three things I told you that were wrong</h2>
+
+<div class="wrong">
+  <h3>1. "Take BOLT. Drop Pinocchio."</h3>
+  <p><b>BOLT is deprecated.</b> The README on <code>main</code> says so verbatim
+  (commit <code>71906078</code>, 2026-05-28). Last functional commit 2025-10-19.
+  <code>bolt-lang</code> 0.2.5/0.2.6 are <b>yanked</b>; 0.2.4 does not resolve to a
+  buildable dependency set. Every BOLT page is deleted from docs.magicblock.gg.</p>
+  <p>I recommended it <em>because</em> it hands you scaffolding for free. That
+  scaffolding is abandoned. Three researchers reached this independently.</p>
+</div>
+
+<div class="wrong">
+  <h3>2. "Pinocchio means hand-rolling every ER CPI."</h3>
+  <p>True when I said it, false now. <b><code>ephemeral-rollups-pinocchio</code> 0.17.0
+  shipped 2026-08-26</b> with delegate, commit, undelegate, crank, VRF and Magic Actions —
+  about 30 releases dating to 2025-08-27. My <code>AccountInfo</code> incompatibility
+  argument is also stale: Pinocchio 0.11 renamed it to <code>AccountView</code>, and it
+  was always a compile-time <em>linking</em> constraint, never a CPI-boundary one.</p>
+  <p>Your instinct was better than my answer.</p>
+</div>
+
+<div class="wrong">
+  <h3>3. The funding tiers, and "10 ms".</h3>
+  <p><b>ER transaction fees are zero.</b> Verified three ways: <code>getFeeForMessage</code>
+  returns a hardcoded <code>0_u64</code>; <code>validate_transaction_fee_payer</code> is
+  <em>deleted</em> from the vendored SVM; and a live probe with a never-funded random
+  pubkey as fee payer actually executed. Session wallets need <b>no SOL at all</b> — the
+  four-tier ladder we designed solves a problem that does not exist.</p>
+  <p>And measured RTT India→<code>devnet-as</code> is <b>196 ms median</b>, not 10 ms.
+  Client-side prediction is mandatory, and that number must never be used as a budget.</p>
+</div>
+
+<h2>The finding that would have killed the game</h2>
+<div class="scroll"><table>
+<tr><th>What</th><th>Detail</th></tr>
+<tr><td><b>~38 account keys, hard</b></td><td>The ER enforces <code>program_id_index &lt; 38</code> unconditionally in <code>validate_supported_transaction_shape</code>. Program ids sort <em>last</em> in message key ordering, so for a write-heavy transaction this collapses to a <b>~38 total account ceiling</b>. BOLT's per-component PDA model produces ~46 accounts in the crank tick — <b>rejected every tick</b>, burning the 10-retry ladder and <b>permanently deleting the task ~26 s into the match</b>. Provably fatal, not a risk.</td></tr>
+<tr><td><b>No lookup tables</b></td><td>The ER rejects v0 transactions carrying ALTs outright, no feature flag. <b>No</b> Heartrot transaction may use one — gameplay included. Nobody flagged this until the second verification pass.</td></tr>
+<tr><td><b>Crank CU = 400,000</b></td><td>Not 1.4M. Neither <code>Magic111</code> nor <code>Crank111</code> is in Agave's builtin-costs table, so both classify NotBuiltin: 2 × 200,000.</td></tr>
+<tr><td><b>Zero fees = zero rate limit</b></td><td>Nothing debits anyone, so any keypair can flood the ER for free. Rate limiting must live in-program as tick counters.</td></tr>
+<tr><td><b>Cranks can't re-arm</b></td><td><code>ScheduleTask</code> needs a writable signer; crank instructions may carry none. Schedule <code>iterations</code> for the whole match up front. <code>task_id</code> is validator-<b>global</b> — a collision fails silently <em>after</em> your CPI returns Ok. Args are i64, not u64 as both the docs and our local skill claim.</td></tr>
+<tr><td><b>Worker → devnet RPC = 403</b></td><td><code>"Your IP or provider is blocked."</code> Identical POST from a shell returns 200. Paid RPC required for base-layer calls.</td></tr>
+<tr><td><b>Wrong ER reads silently</b></td><td>Correct owner, no error, no websocket notification, frozen data. Pin one validator per match and store its identity on-chain.</td></tr>
+<tr><td><b>Privy's popup-free path</b></td><td>First headless signature pays an iframe boot with a <b>15-second</b> ceiling; with user-controlled recovery + <code>showWalletUIs:false</code> there is no modal fallback, it throws. Signatures meter at $0.01 above 50K/month — 20 players burn the free tier in under an hour. Verdict: <b>identity only</b>, verify the JWT in the Worker with <code>jose</code>.</td></tr>
+<tr><td><b>Your SVG rig is fine</b> <span class="pill g">good news</span></td><td>Measured on the real <code>boss.svg</code>: 7,589 rects in 8 groups animating <code>transform</code> ran at <b>143 fps</b> on software GL. My "don't animate SVG paths" rule was wrong — rects inside a group are never animated individually; the group gets its own <code>cc::Layer</code>.</td></tr>
+</table></div>
+
+<h2>Settled</h2>
+<div class="scroll"><table>
+<tr><th>Decision</th><th>Instead of</th><th>Because</th></tr>
+<tr><td><b>One plain Anchor program</b></td><td>BOLT ECS</td><td>Deprecated and unbuildable. Also couldn't express the game: <code>MAX_RETURN_DATA</code> 1024 B vs a 936 B bullet pool, ~193K CU of framework tax against a 400K budget, 86 delegated accounts, 16 deploys.</td></tr>
+<tr><td><b>~4 accounts</b></td><td>86 component PDAs</td><td>The 38-key ceiling above. Arena+bullets, Boss, Players[20] packed, Leaderboard.</td></tr>
+<tr><td><b>Zero Pinocchio programs in v1</b></td><td>The BOLT+Pinocchio hybrid</td><td>With one program owning every account there is no ownership boundary left to cross — adding a program <em>creates</em> one. CPI hop costs 946–2,500 CU to save ~500. No compute pressure exists.</td></tr>
+<tr><td><b>TypeScript backend</b></td><td>Rust Worker</td><td>Rust was <em>proven working</em> end-to-end — and is still wrong: <code>solana-client</code> won't build for wasm32, and a Rust worker can't live inside the frontend Worker, so it becomes a second deployable. workerd does native BoringSSL Ed25519.</td></tr>
+<tr><td><b>Session key in IndexedDB</b></td><td><code>localStorage</code> secret</td><td>Non-extractable WebCrypto Ed25519 <code>CryptoKey</code> is structured-cloneable. Same effort, removes one-shot key exfiltration via XSS.</td></tr>
+<tr><td><b>VRF once per incarnation</b></td><td>Crank-requested VRF</td><td>Cranks may carry no writable signers; the VRF request needs one. Draw from the killing-blow player transaction instead — already session-signed, still zero popups — then hash-expand per tick.</td></tr>
+</table></div>
+
+<h2>Needs your call</h2>
+
+<div class="ask">
+  <h3>Anchor or Pinocchio for the one program?</h3>
+  <p>BOLT is out either way. The synthesis recommends <b>plain Anchor</b> for velocity:
+  Pinocchio emits no IDL so the TS client is hand-written, it validates nothing (owner,
+  signer, discriminator all by hand), and both it and the ER Pinocchio SDK are explicitly
+  unaudited. But the ER support is real and fresh, and it matches what you asked for.</p>
+  <p><b>This is partly a question about your goals, not the code.</b> If you want a
+  Pinocchio artifact for the job hunt, that's a legitimate reason and it changes the
+  answer — I'd give it a real self-contained job rather than bolt it on.</p>
+</div>
+
+<div class="ask">
+  <h3>Drop Next.js for a Vite + React SPA? <span class="pill">amends a frozen spec line</span></h3>
+  <p>Cloudflare does now recommend <code>vinext</code> over OpenNext — but it's
+  <code>1.0.0-beta.8</code>, no GA date, and its own README says OpenNext is the safer
+  choice. Decisive: <b>vinext server-renders every page</b>, so each load of a static game
+  shell is a billed Worker invocation, while static assets are free and unlimited. The
+  prerender escape hatch is blocked by an open issue that hits exactly our route handlers.</p>
+  <p>Route handler bodies are byte-identical either way, so it's cheap to reverse.</p>
+</div>
+
+<div class="ask">
+  <h3>Still open from before</h3>
+  <p><b>Deadline?</b> Grant, hackathon, or open-ended — this decides whether the
+  demo-able slice jumps the queue.<br>
+  <b>Devnet forever, or mainnet eventually?</b> Treasury posture, sybil resistance and
+  the economy all get different bones if mainnet is real.</p>
+</div>
+
+<h2>Build order</h2>
+<div class="slices">
+  <div class="slice"><div class="n">SLICE 0</div><div class="b"><strong>Spikes — ~2 days</strong><span>SP1 (Anchor + ERS 0.17 hello-world), SP2 (crank CU ceiling), SP5 (Magic Action from a crank). Nothing starts until these three have verdicts.</span></div></div>
+  <div class="slice"><div class="n">SLICE 1</div><div class="b"><strong>One program, one account, one ER round trip</strong><span>Delegate on base, hitscan write on ER, commit, undelegate. Session-key invariant test written now, not later. Kills the delegation and auth risks; produces the first real latency number.</span></div></div>
+  <div class="slice"><div class="n">SLICE 2</div><div class="b"><strong>The crank owns the fight</strong><span>BossTick at 400 ms, full 128-bullet advance and collision, no client. Runs unattended 10 minutes. Write down <code>consumed X of 400000</code>.</span></div></div>
+  <div class="slice"><div class="n">SLICE 3</div><div class="b"><strong>The browser watches</strong><span>Sliced SVG rig — one build step emits both the DOM groups and the on-chain hitbox JSON, so they cannot drift. You watch the boss fight an empty arena at 60 fps.</span></div></div>
+  <div class="slice play"><div class="n">SLICE 4</div><div class="b"><strong>First playable</strong><span>You control a knight, you shoot, the boss shoots back.</span></div></div>
+  <div class="slice"><div class="n">5 →</div><div class="b"><strong>Onboarding, lobby, gate, incarnations</strong><span>Privy identity, session keys, character select, the respawn loop.</span></div></div>
+</div>
+
+<h2>The corpus</h2>
+<div class="scroll"><table>
+<tr><th>Path</th><th>What</th></tr>
+<tr><td><code>architecture/01-architecture.md</code></td><td>83 KB. The build-from document — ECS layout as real Rust, PDA derivations, delegation lifecycle, crank design, the 4 routes, client pipeline, full match sequence, pinned version table.</td></tr>
+<tr><td><code>architecture/02-diagrams.md</code></td><td>Six mermaid diagrams: system context with hot/cold paths distinguished, two sequence diagrams, ECS map, state machines, account-ownership through delegation.</td></tr>
+<tr><td><code>architecture/03-risks-and-build-order.md</code></td><td>17-row decisions table each naming its rejected alternative and evidence, ranked risk register, build order, 11 spikes with pass/fail criteria.</td></tr>
+<tr><td><code>research/*.md</code> ×16</td><td>One per subsystem, every URL cited. Five carry a <code>## Verification</code> section from the adversarial pass.</td></tr>
+</table></div>
+
+<footer>
+  <b>On the two-pass verification:</b> the second pass refuted the first pass, not just the
+  researcher. The first verifier concluded the ~46-account crank layout was "a risk, not a
+  proven hard block" and pointed at <code>MAX_TX_ACCOUNT_LOCKS</code>. Both halves were
+  wrong — that limit isn't enforced by the ER at all, and the 38-entry one is, unconditionally.
+  It took reading <code>get_account_locks_unchecked()</code> in the validator source to see it.<br>
+  <b>And the researcher that failed:</b> its replacement found the first had claimed "no Rust
+  toolchain was available in this session" — false, cargo 1.98.0 was installed the whole time.
+  That claim is why the decisive experiment went unrun and a broken <code>Cargo.toml</code> fix
+  went into the doc untested. Running it showed the prescribed pins made resolution
+  <em>strictly worse</em>: three copies of <code>anchor-lang</code>.
+</footer>
+</div>
