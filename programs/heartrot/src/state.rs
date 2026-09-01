@@ -813,7 +813,14 @@ pub struct LeaderboardEntry {
     pub incarnation: u16,
     /// 0 or 1.
     pub survived: u8,
-    pub _pad0: u8,
+    /// `OUTCOME_*` — the *match's* result, copied from `Arena.outcome` at settle, so a
+    /// win and an enrage-with-survivors stop producing byte-identical rows.
+    ///
+    /// This spends what was `_pad0`, so the entry stays 48 bytes and the live account
+    /// keeps its size and its rent. The old rows already on chain have a zero there,
+    /// which reads as [`OUTCOME_UNDECIDED`] — the honest answer for a row written
+    /// before the outcome was recorded, and the reason no version bump is needed.
+    pub outcome: u8,
 }
 
 const _: () = {
@@ -824,6 +831,7 @@ const _: () = {
     assert!(offset_of!(LeaderboardEntry, damage_dealt) == 40);
     assert!(offset_of!(LeaderboardEntry, incarnation) == 44);
     assert!(offset_of!(LeaderboardEntry, survived) == 46);
+    assert!(offset_of!(LeaderboardEntry, outcome) == 47);
 };
 
 /// Base layer, never delegated, written by the Worker after the ER commit confirms.

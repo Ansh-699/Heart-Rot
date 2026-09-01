@@ -313,8 +313,8 @@ paid once. The whole account fits in a single `CreateAccount` and stays under th
 | `identity` | [u8; 32] | 8 | 32 | `sha256(privy DID)`, copied from `PlayerSlot.identity` |
 | `damage_dealt` | u32 | 40 | 4 | copied at settle |
 | `incarnation` | u16 | 44 | 2 | which boss incarnation |
-| `survived` | u8 | 46 | 1 | 0 or 1 |
-| `_pad0` | u8 | 47 | 1 | |
+| `survived` | u8 | 46 | 1 | 0 or 1 — this *seat* was alive at settle |
+| `outcome` | u8 | 47 | 1 | `OUTCOME_*` — how the *match* ended, copied from `Arena.outcome` |
 
 **Invariants**
 
@@ -324,6 +324,11 @@ paid once. The whole account fits in a single `CreateAccount` and stays under th
   a nicety: `GetCommitmentSignature` throws on every failure path, a throw means
   *unknown, retry*, and the settle route is retried by design. Without idempotency a
   retry duplicates twenty rows.
+- `outcome` spends what was `_pad0`, so the entry is still 48 bytes and the live
+  devnet account keeps its size, its rent and its version byte. Rows written before the
+  field existed have a zero there, which reads as `OUTCOME_UNDECIDED` — correct, since
+  no outcome was recorded for them. `survived` and `outcome` answer different questions
+  and neither implies the other: an `OUTCOME_ENRAGE` row can have `survived == 1`.
 - The entry ordering is ring order, not chronological. Decoders return it raw plus
   `next` and `total_written`; ordering is the caller's business.
 

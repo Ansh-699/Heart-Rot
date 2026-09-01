@@ -187,6 +187,7 @@ export const LEADERBOARD_ENTRY = {
     damage_dealt: 40,
     incarnation: 44,
     survived: 46,
+    outcome: 47,
   },
 } as const;
 
@@ -303,6 +304,12 @@ export type LeaderboardEntry = {
   damageDealt: number;
   incarnation: number;
   survived: boolean;
+  /**
+   * `OUTCOME_*` — how the *match* ended, not this seat. Without it a win and an
+   * enrage-with-survivors are the same row. `OUTCOME_UNDECIDED` on every row written
+   * before the field existed: it was padding, so those bytes are zero.
+   */
+  outcome: number;
 };
 
 export type LeaderboardAccount = {
@@ -455,6 +462,7 @@ export function decodeLeaderboard(data: Uint8Array): LeaderboardAccount {
       damageDealt: v.getUint32(b + e.damage_dealt, true),
       incarnation: v.getUint16(b + e.incarnation, true),
       survived: v.getUint8(b + e.survived) === 1,
+      outcome: v.getUint8(b + e.outcome),
     });
   }
 

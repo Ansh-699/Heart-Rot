@@ -344,6 +344,14 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // all-zero, so `zone` alone separates "nobody has entered yet" from "everybody
     // died" without needing to look at `session_pubkey` or the occupancy bitmask.
     let mut arena_occupants = 0u32;
+    // Seats that are down *with a deadline still to come*. The wipe check below is
+    // "everybody is dead and nobody is coming back", not "everybody is dead right now":
+    // a solo raider stamps their own respawn on the tick they die, and counting that as
+    // a wipe made `RESPAWN_TICKS` unreachable below two occupants — one player alone died
+    // once and the match ended. A seat at 0 HP with `respawn_at_tick == 0` is *not*
+    // pending; that is the "not scheduled" value, and it is what still makes a real wipe
+    // fire. Enrage remains the bound on a fight that would otherwise respawn forever.
+    let mut pending_respawns = 0u32;
 
     for seat in 0..MAX_SEATS {
         let slot = &mut players.slots[seat];
@@ -363,6 +371,9 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
                 slot.y = y;
                 slot.respawn_at_tick = 0;
             } else {
+                if slot.respawn_at_tick != 0 {
+                    pending_respawns += 1;
+                }
                 continue;
             }
         }
@@ -404,21 +415,32 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         // thinner than 24 units would still be jumped; `assets/map/arena.json` contains
         // none and would have to grow one before it could matter. Upgrade path if it
         // does: step the segment tile by tile, at ~3 lookups per bullet instead of 2.
+        //
+        // The wall samples *clip* the swept segment, they do not cancel it. Freeing the
+        // bullet here and skipping the player test — which is what this used to do — made
+        // a player standing against a wall partially immune: every shot aimed at them
+        // ended inside the wall behind them and was deleted before anything asked whether
+        // it had crossed them on the way. `end` is how far the bullet actually got, and
+        // the hit test below runs on `from → end` whether or not the step was stopped.
         let mid = ((from.0 + to.0) / 2, (from.1 + to.1) / 2);
-        if wall_at(mid.0, mid.1) || wall_at(to.0, to.1) {
-            bullet.active = BULLET_FREE;
-            continue;
-        }
-        bullet.x = to.0 as i16;
-        bullet.y = to.1 as i16;
+        let (blocked, end) = if wall_at(mid.0, mid.1) {
+            // Stopped in the first half: it never reached the midpoint, so it swept
+            // nothing. Clipping to `from` rather than `mid` is what keeps a bullet from
+            // reaching through the wall it died on.
+            (true, from)
+        } else if wall_at(to.0, to.1) {
+            (true, mid)
+        } else {
+            (false, to)
+        };
 
         // Broad phase: the swept segment's bounding box, inflated by the hit radius.
         // Four compares per player reject almost everything before any multiply, which
         // is what keeps 128 × 20 pair tests inside the budget.
-        let lo_x = from.0.min(to.0) - PLAYER_HIT_RADIUS;
-        let hi_x = from.0.max(to.0) + PLAYER_HIT_RADIUS;
-        let lo_y = from.1.min(to.1) - PLAYER_HIT_RADIUS;
-        let hi_y = from.1.max(to.1) + PLAYER_HIT_RADIUS;
+        let lo_x = from.0.min(end.0) - PLAYER_HIT_RADIUS;
+        let hi_x = from.0.max(end.0) + PLAYER_HIT_RADIUS;
+        let lo_y = from.1.min(end.1) - PLAYER_HIT_RADIUS;
+        let hi_y = from.1.max(end.1) + PLAYER_HIT_RADIUS;
 
         let mut i = 0usize;
         while i < live_n {
@@ -427,7 +449,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
                 || target.x > hi_x
                 || target.y < lo_y
                 || target.y > hi_y
-                || !bullet_hits(from, to, target.x, target.y)
+                || !bullet_hits(from, end, target.x, target.y)
             {
                 i += 1;
                 continue;
@@ -451,6 +473,10 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
                 // and respawned is indistinguishable from one who never took a hit.
                 slot.respawn_at_tick = tick.saturating_add(RESPAWN_TICKS);
                 slot.deaths = slot.deaths.saturating_add(1);
+                // `tick >= 1` (heartbeat ran), so the deadline just stamped is non-zero
+                // and this seat is coming back. Counted here as well as in the respawn
+                // pass because a seat that dies *this* tick was alive when that pass ran.
+                pending_respawns += 1;
                 // Swap-remove from the live list: this seat can absorb no more bullets
                 // this tick, and shrinking the list shortens every remaining bullet's
                 // inner loop.
@@ -460,6 +486,19 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
             // One bullet, one hit — it is spent either way, so stop scanning.
             break;
         }
+
+        // Spent on a player, or stopped by the wall it was clipped against. Either way
+        // it does not move; `to` is only narrowed to `i16` on the path where `wall_at`
+        // cleared it, which is what proves the casts.
+        if bullet.active != BULLET_ACTIVE {
+            continue;
+        }
+        if blocked {
+            bullet.active = BULLET_FREE;
+            continue;
+        }
+        bullet.x = to.0 as i16;
+        bullet.y = to.1 as i16;
     }
 
     // ---- 3. alive count ---------------------------------------------------
@@ -523,10 +562,14 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // where the last point of core HP was removed by a transaction that then failed to
     // land its own write.
     //
-    // Wipe: every player who is *in* the arena is dead. `arena_occupants > 0` is what
-    // stops a match that has been armed but not yet entered from settling on tick 1 —
-    // there is no grace timer and no extra field, just the distinction between "nobody
-    // here" and "nobody left".
+    // Wipe: every player who is *in* the arena is dead **and nobody is coming back**.
+    // `arena_occupants > 0` is what stops a match that has been armed but not yet entered
+    // from settling on tick 1 — there is no grace timer and no extra field, just the
+    // distinction between "nobody here" and "nobody left". `pending_respawns == 0` is the
+    // other half: a seat with a deadline still to come is not a corpse, and reading it as
+    // one is what made a solo raid unplayable — the lone occupant's death and the wipe
+    // landed on the same tick, so the respawn this handler had just stamped was never
+    // reached. Respawns are resolved in stage 1, above, so by here that count is current.
     //
     // Enrage: the six-minute timeout, kept distinct from a wipe because "you ran out of
     // time" and "you all died" are different end screens and nothing else on chain
@@ -541,7 +584,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // nothing, and the win does not become an enrage one tick later.
     let outcome = if boss.core_hp == 0 {
         OUTCOME_WIN
-    } else if arena_occupants > 0 && live_n == 0 {
+    } else if arena_occupants > 0 && live_n == 0 && pending_respawns == 0 {
         OUTCOME_WIPE
     } else if arena.enrage_at_tick != 0 && tick >= arena.enrage_at_tick {
         OUTCOME_ENRAGE
@@ -969,9 +1012,7 @@ mod tests {
         assert_eq!(arena.alive_count, 0);
         assert_eq!(boss.target_seat, NO_TARGET);
 
-        // Two players enter. The second one is load-bearing: a lone death *is* a wipe,
-        // and a wipe ends the match, so a respawn can only be observed in a raid that
-        // still has somebody standing. Seat 7 is parked in the far corner, out of reach
+        // Two players enter. Seat 7 is parked in the far corner, out of reach
         // of anything the boss can fire inside this test's span, and seat 3 is nearer, so
         // it is seat 3 the boss aims at.
         seat_in_arena(&mut players, 3, 400, 512);
@@ -1019,11 +1060,12 @@ mod tests {
         assert_eq!((players.slots[3].x, players.slots[3].y), entrance_for(3));
         assert_eq!(players.slots[3].deaths, 1, "coming back is not a second death");
 
-        // Now everyone in the arena is down at the same tick. That, and only that, is a
-        // wipe — and it is a loss, distinguishable from a win forever after. (Set
+        // Now everyone in the arena is down with nothing scheduled. That, and only that,
+        // is a wipe — and it is a loss, distinguishable from a win forever after. (Set
         // directly: the bullet → damage → death path is what the lines above test, and
-        // the wipe rule reads `hp`, not how it got there.)
+        // the wipe rule reads `hp` and `respawn_at_tick`, not how they got there.)
         players.slots[3].hp = 0;
+        players.slots[3].respawn_at_tick = 0;
         players.slots[7].hp = 0;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.alive_count, 0);
@@ -1035,6 +1077,94 @@ mod tests {
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.tick, after + 1, "the clock is the crank's heartbeat");
         assert_eq!(arena.outcome, OUTCOME_WIPE, "the outcome is written once");
+    }
+
+    /// One player alone must be able to play the game. Their death and the "everybody is
+    /// dead" test land on the same tick, so reading that as a wipe made `RESPAWN_TICKS`
+    /// unreachable below two occupants: a solo raider died once and the match ended, with
+    /// the respawn deadline this handler had just stamped never read by anything.
+    #[test]
+    fn a_solo_raid_respawns_instead_of_wiping() {
+        let (mut arena, mut boss, mut players) = fight();
+        // No thorns: the only bullet in this test is the one it fires by hand.
+        boss.parts = [0; N_PARTS];
+        seat_in_arena(&mut players, 0, 400, 512);
+        players.slots[0].hp = BULLET_DAMAGE;
+        arena.bullets[0] = Bullet {
+            x: 400 - BULLET_SPEED as i16,
+            y: 512,
+            dx: BULLET_SPEED as i8,
+            dy: 0,
+            active: BULLET_ACTIVE,
+            _pad0: 0,
+        };
+        let died_on = arena.tick + 1;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(players.slots[0].hp, 0);
+        assert_eq!(players.slots[0].respawn_at_tick, died_on + RESPAWN_TICKS);
+        assert_eq!(arena.alive_count, 0);
+        assert_eq!(arena.phase, PHASE_FIGHTING, "a pending respawn is not a wipe");
+        assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
+
+        // And the deadline is actually reached, which it never was before.
+        while arena.tick < died_on + RESPAWN_TICKS {
+            tick_once(&mut arena, &mut boss, &mut players);
+            assert_eq!(arena.phase, PHASE_FIGHTING, "the lone raider is still coming back");
+        }
+        assert_eq!(players.slots[0].hp, 100, "one player alone respawns like anyone else");
+        assert_eq!(players.slots[0].respawn_at_tick, 0);
+        assert_eq!((players.slots[0].x, players.slots[0].y), entrance_for(0));
+        assert_eq!(arena.alive_count, 1);
+
+        // A seat that is down with *nothing* scheduled is still a wipe, solo or not.
+        players.slots[0].hp = 0;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.phase, PHASE_SETTLING);
+        assert_eq!(arena.outcome, OUTCOME_WIPE, "nobody coming back is still a loss");
+
+        // And enrage still ends a fight that would otherwise respawn forever.
+        let (mut arena, mut boss, mut players) = fight();
+        boss.parts = [0; N_PARTS];
+        seat_in_arena(&mut players, 0, 400, 512);
+        players.slots[0].hp = 0;
+        players.slots[0].respawn_at_tick = u32::MAX;
+        arena.tick = 899;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.outcome, OUTCOME_ENRAGE, "the clock still ends the match");
+    }
+
+    /// A bullet whose step ends inside a wall used to be deleted before anything asked
+    /// whether it had crossed a player on the way, which made standing with your back to
+    /// a wall partial immunity to fire aimed at you. The wall clips the swept segment; it
+    /// does not cancel it — and the clip is what still stops the bullet reaching *through*.
+    #[test]
+    fn a_bullet_stopped_by_a_wall_still_hits_what_it_crossed() {
+        // Map row y=15 (units 240..255): tiles x=10..14 are floor, x=15 begins the heart
+        // chamber's wall block. The bullet steps 200 → 248, ending inside tile x=15.
+        let shot = |px: i16| {
+            let (mut arena, mut boss, mut players) = fight();
+            boss.parts = [0; N_PARTS];
+            seat_in_arena(&mut players, 0, px, 248);
+            arena.bullets[0] = Bullet {
+                x: 200,
+                y: 248,
+                dx: BULLET_SPEED as i8,
+                dy: 0,
+                active: BULLET_ACTIVE,
+                _pad0: 0,
+            };
+            tick_once(&mut arena, &mut boss, &mut players);
+            (players.slots[0].hp, arena.bullets[0].active)
+        };
+
+        // On the segment, hard against the wall: hit, and the bullet is spent.
+        assert_eq!(
+            shot(224),
+            (100 - BULLET_DAMAGE, BULLET_FREE),
+            "a player against a wall is not immune to fire aimed at them"
+        );
+        // Behind the wall the bullet died on: still cover, still not a hit.
+        assert_eq!(shot(264), (100, BULLET_FREE), "a bullet does not reach through the wall");
     }
 
     /// Volleys are the difficulty curve (`3 + alive_players`) and the counterplay

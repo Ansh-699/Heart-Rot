@@ -8,9 +8,10 @@
  * wraps it as a transaction signer. Imported by the browser SPA and by the Cloudflare
  * Worker, so nothing in here may assume either runtime.
  *
- * `map.ts` and `hitboxes.ts` are GENERATED — `tools/gen_map.py` and `tools/gen_hitboxes.py`
- * compile them, and their Rust twins, out of `assets/map/arena.json` and
- * `assets/sprites/hitboxes.json`. Never hand-edit them; re-run the tool.
+ * `map.ts`, `hitboxes.ts` and `errors.ts` are GENERATED — `tools/gen_map.py`,
+ * `tools/gen_hitboxes.py` and `tools/gen_errors.py` compile them, and their Rust twins
+ * where there is one, out of `assets/map/arena.json`, `assets/sprites/hitboxes.json` and
+ * `programs/heartrot/src/error.rs`. Never hand-edit them; re-run the tool.
  *
  * TWO INVARIANTS, both of which have already cost a build:
  *
@@ -38,6 +39,7 @@ export * from './layout';
 export * from './pda';
 export * from './instructions';
 export * from './connection';
+export * from './errors';
 export * from './session';
 export * from './signer';
 export * from './map';

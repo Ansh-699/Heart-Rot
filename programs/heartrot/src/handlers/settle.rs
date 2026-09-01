@@ -485,7 +485,13 @@ pub fn write_leaderboard(program_id: &Address, accounts: &mut [AccountView]) -> 
     let mut lb_data = leaderboard.try_borrow_mut()?;
     let board = load_mut::<Leaderboard>(&mut lb_data)?;
 
-    append_results(board, roster, arena_state.arena_id, arena_state.incarnation);
+    append_results(
+        board,
+        roster,
+        arena_state.arena_id,
+        arena_state.incarnation,
+        arena_state.outcome,
+    );
     Ok(())
 }
 
@@ -495,16 +501,23 @@ pub fn write_leaderboard(program_id: &Address, accounts: &mut [AccountView]) -> 
 /// Split out from [`write_leaderboard`] only so the ring arithmetic and the idempotency
 /// guard can be exercised without a runtime: an off-by-one in the cursor silently
 /// overwrites live history, which is not a defect a devnet run would surface.
+///
+/// `outcome` is the *match's* result (`Arena.outcome`) and `survived` is the *seat's*.
+/// Both are stored because neither implies the other: an enrage leaves survivors, and a
+/// win leaves corpses. Passed in rather than read from an `Arena` here so this stays a
+/// pure function over the two accounts it actually writes.
 fn append_results(
     board: &mut Leaderboard,
     roster: &Players,
     arena_id: u64,
     incarnation: u16,
+    outcome: u8,
 ) -> bool {
     if board.last_arena_id == arena_id && board.last_incarnation == incarnation {
         return false;
     }
 
+    let mut wrote = false;
     for slot in roster.slots.iter() {
         // Occupancy is derived from the session key, per the layout contract — there is
         // no occupancy flag on the slot to disagree with it.
@@ -518,15 +531,27 @@ fn append_results(
             damage_dealt: slot.damage_dealt,
             incarnation,
             survived: u8::from(slot.hp != 0),
-            _pad0: 0,
+            outcome,
         };
         board.next = ((cursor + 1) % LEADERBOARD_CAP) as u32;
         board.total_written = board.total_written.saturating_add(1);
+        wrote = true;
     }
 
-    board.last_arena_id = arena_id;
-    board.last_incarnation = incarnation;
-    true
+    // Only a settle that actually appended rows claims the idempotency key. **Do not
+    // hoist this out of the `if`.** The key is a single global slot, so an unconditional
+    // stamp lets a seatless arena — one whose seats were never claimed, which has nothing
+    // to record — overwrite a different match's key; that match's legitimate retry then
+    // matches nothing, is treated as a duplicate, and its rows are dropped for good.
+    // Observed on devnet, not theorised. A zero-row settle needs no key of its own:
+    // replaying it appends nothing either way, so it is already idempotent by having no
+    // effect at all, and leaving the previous match's key standing is what keeps *that*
+    // match's retry a no-op.
+    if wrote {
+        board.last_arena_id = arena_id;
+        board.last_incarnation = incarnation;
+    }
+    wrote
 }
 
 // ---------------------------------------------------------------------------
@@ -560,7 +585,9 @@ fn check_match_accounts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{DISC_LEADERBOARD, DISC_PLAYERS, LAYOUT_VERSION};
+    use crate::state::{
+        DISC_LEADERBOARD, DISC_PLAYERS, LAYOUT_VERSION, OUTCOME_ENRAGE, OUTCOME_WIN,
+    };
     use bytemuck::Zeroable;
 
     fn roster(occupied: usize) -> Players {
@@ -630,7 +657,7 @@ mod tests {
         let mut b = board();
         let p = roster(3);
 
-        assert!(append_results(&mut b, &p, 7, 2));
+        assert!(append_results(&mut b, &p, 7, 2, OUTCOME_WIN));
         assert_eq!(b.next, 3);
         assert_eq!(b.total_written, 3);
         assert_eq!(b.entries[0].identity, [100u8; 32]);
@@ -640,22 +667,67 @@ mod tests {
         assert_eq!(b.entries[3].arena_id, 0);
 
         // The retry the settle route is designed to perform.
-        assert!(!append_results(&mut b, &p, 7, 2));
+        assert!(!append_results(&mut b, &p, 7, 2, OUTCOME_WIN));
         assert_eq!(b.next, 3);
         assert_eq!(b.total_written, 3);
 
         // A different incarnation of the same arena is a different match.
-        assert!(append_results(&mut b, &p, 7, 3));
+        assert!(append_results(&mut b, &p, 7, 3, OUTCOME_WIN));
         assert_eq!(b.next, 6);
 
         // Wrap: fill to the last slot, then one more match must land at index 0 without
         // running off the end of `entries`.
         b.next = (LEADERBOARD_CAP - 1) as u32;
-        assert!(append_results(&mut b, &roster(2), 8, 1));
+        assert!(append_results(&mut b, &roster(2), 8, 1, OUTCOME_WIN));
         assert_eq!(b.next, 1);
         assert_eq!(b.entries[LEADERBOARD_CAP - 1].arena_id, 8);
         assert_eq!(b.entries[0].arena_id, 8);
         assert_eq!(b.last_arena_id, 8);
         assert_eq!(b.last_incarnation, 1);
+    }
+
+    /// F1: the permanent record must tell a victory from a defeat. Before the `outcome`
+    /// byte, an enrage that left survivors and a win produced byte-identical rows, so
+    /// eight of the ten rows already on devnet say `survived: true` and cannot be read.
+    /// `survived` stays per-seat: seat 0 lives through both matches, and that is not what
+    /// distinguishes them.
+    #[test]
+    fn win_and_enrage_rows_differ() {
+        let mut b = board();
+        let p = roster(2);
+
+        assert!(append_results(&mut b, &p, 7, 1, OUTCOME_WIN));
+        assert!(append_results(&mut b, &p, 8, 1, OUTCOME_ENRAGE));
+
+        assert_eq!(b.entries[0].outcome, OUTCOME_WIN);
+        assert_eq!(b.entries[2].outcome, OUTCOME_ENRAGE);
+        assert_ne!(
+            bytemuck::bytes_of(&b.entries[0])[8..],
+            bytemuck::bytes_of(&b.entries[2])[8..],
+            "a win row and an enrage row must not be byte-identical past the arena id"
+        );
+        // The survivor flag is the seat's fact and is unchanged by the match's.
+        assert_eq!(b.entries[0].survived, 1);
+        assert_eq!(b.entries[2].survived, 1);
+    }
+
+    /// F7, observed on devnet: a seatless arena's settle stamped the idempotency key over
+    /// a concurrently-settling match's, and that match's legitimate retry was then dropped
+    /// as a duplicate. A settle that writes nothing must claim nothing.
+    #[test]
+    fn zero_row_settle_does_not_steal_the_idempotency_key() {
+        let mut b = board();
+
+        assert!(append_results(&mut b, &roster(2), 7, 1, OUTCOME_WIN));
+        // The seatless arena: no session key, so no rows.
+        assert!(!append_results(&mut b, &roster(0), 9, 1, OUTCOME_ENRAGE));
+        assert_eq!(b.last_arena_id, 7);
+        assert_eq!(b.last_incarnation, 1);
+        assert_eq!(b.total_written, 2);
+
+        // Match 7's retry is still recognised as the duplicate it is.
+        assert!(!append_results(&mut b, &roster(2), 7, 1, OUTCOME_WIN));
+        assert_eq!(b.next, 2);
+        assert_eq!(b.total_written, 2);
     }
 }

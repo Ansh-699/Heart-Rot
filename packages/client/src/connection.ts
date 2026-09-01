@@ -27,7 +27,11 @@
  * left is the one that comes back afterwards, and both layers of the stack were destroying
  * it — kit discards the ER's `-32003` message (see `surfaceServerErrors`) and
  * `JSON.stringify` throws on the bigints kit decodes a `TransactionError` into (see
- * `stringifyWithBigints`). Both were found on devnet, twice each.
+ * `stringifyWithBigints`). Both were found on devnet, twice each. `decodeTransactionError`
+ * finishes the job: an error that survives both of those still arrives as `Custom(8)`, and
+ * a bare number is only half a diagnosis, so it is resolved against the generated
+ * `errors.ts` table into `PlayerDead` — through the three different wire shapes the ER,
+ * base devnet and kit each pick for the same value.
  */
 
 import {
@@ -52,6 +56,8 @@ import {
   type TransactionMessageBytesBase64,
   type TransactionSigner,
 } from '@solana/kit';
+
+import { HEARTROT_ERRORS, HEARTROT_ERROR_HIGHEST } from './errors';
 
 // This package is shared by the browser and by workerd, so its tsconfig carries neither
 // the DOM lib nor Node types. `fetch` and `setTimeout` are web standards present in both
@@ -131,6 +137,87 @@ const sleep = (ms: number): Promise<void> =>
  */
 export function stringifyWithBigints(value: unknown): string {
   return JSON.stringify(value, (_key, v: unknown) => (typeof v === 'bigint' ? v.toString() : v));
+}
+
+/** What a `TransactionError` says once it has been read. Every field but `message` is best-effort. */
+export type DecodedTransactionError = {
+  /** Index of the failing instruction, when the failure was an `InstructionError`. */
+  readonly instruction?: number;
+  /** The `Custom(n)` code, when the failing instruction returned one. */
+  readonly code?: number;
+  /** The `HeartrotError` variant name for `code`, when this client knows it. */
+  readonly name?: string;
+  /** One line, always present, safe to show a human. */
+  readonly message: string;
+};
+
+/** A member of a plain object, or `undefined` for anything that is not one. */
+function memberOf(value: unknown, key: string): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
+/**
+ * A non-negative integer written in any of the three shapes this stack produces.
+ *
+ * That is the whole of F4: **the ER serialises `InstructionError`'s members as JSON
+ * strings** — `InstructionError: ["0", { Custom: "8" }]` — where base devnet writes
+ * numbers and kit's own decoder hands back `bigint`s. A decoder that reads one shape
+ * silently fails to recognise the other two and reports every ER rule violation as an
+ * opaque blob.
+ */
+function asCode(value: unknown): number | undefined {
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number') return Number.isInteger(value) ? value : undefined;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  return undefined;
+}
+
+/**
+ * Read a `TransactionError` — from `getSignatureStatuses`, from a simulation, or off a
+ * `cause` — and name the rule that refused, so a caller sees `PlayerDead` rather than
+ * `Custom(8)`.
+ *
+ * The `Custom(n) -> name` table is GENERATED from `programs/heartrot/src/error.rs` into
+ * `errors.ts` by `tools/gen_errors.py`; the codes are wire ABI and a Pinocchio program
+ * ships no IDL, so a table typed out here by hand is this project's signature defect —
+ * one fact stored twice — waiting on the next appended variant.
+ *
+ * `code` is the field to branch on, never `message`. `BlockedByWall` in particular is
+ * expected traffic — one per tick from a player holding a direction into a wall — and
+ * exists as its own code precisely so a client can filter it instead of surfacing it.
+ */
+export function decodeTransactionError(err: unknown): DecodedTransactionError {
+  const member = memberOf(err, 'InstructionError');
+  if (!Array.isArray(member)) {
+    // Not an instruction failure: `AccountInUse`, `BlockhashNotFound`, a bare string.
+    return { message: typeof err === 'string' ? err : stringifyWithBigints(err) };
+  }
+
+  const instruction = asCode(member[0]);
+  const detail: unknown = member[1];
+  const code = asCode(memberOf(detail, 'Custom'));
+  const info = code === undefined ? undefined : HEARTROT_ERRORS[code];
+
+  let what: string;
+  if (info !== undefined) {
+    what = `${info.name} (Custom ${String(code)}) — ${info.message}`;
+  } else if (code !== undefined) {
+    what =
+      code <= HEARTROT_ERROR_HIGHEST
+        ? `Custom(${code}) — a retired heartrot code`
+        : `Custom(${code}) — not a heartrot code: another program in the transaction, or a newer deploy than this client`;
+  } else {
+    // A named runtime variant: `PrivilegeEscalation`, `ProgramFailedToComplete`, …
+    what = typeof detail === 'string' ? detail : stringifyWithBigints(detail);
+  }
+
+  return {
+    instruction,
+    code,
+    name: info?.name,
+    message: instruction === undefined ? what : `instruction ${instruction}: ${what}`,
+  };
 }
 
 /** The `error` member of a JSON-RPC response, once it has been proven to be one. */
@@ -389,9 +476,15 @@ export async function sendInstructions(
  * either — `getSlot` is `-32601` there, which breaks every stock confirmation helper
  * silently.
  *
- * ponytail: accepts only `confirmed`/`finalized`. The ER runs one validator with no
- * consensus and ignores commitment; if it turns out to report `processed` forever, accept
- * any non-null status with `err === null` on the ER path.
+ * **Any non-null status with `err === null` is a landed transaction**, whatever
+ * `confirmationStatus` says. It deliberately does not wait for `confirmed`: the ER is a
+ * single validator with no consensus, so it may report `processed` for the whole life of
+ * the transaction and a helper demanding more than that hangs until the timeout on every
+ * ER send — a timeout error for a transaction that executed correctly, which is the
+ * worst diagnostic in the set. A status entry exists only once a node has executed the
+ * transaction; on the base layer the residual fork risk is bounded by the blockhash the
+ * send already committed to, and every base-layer flow here is idempotent (tag 10 no-ops
+ * on its own key, tag 15 refuses with `MatchNotRecorded` until tag 10 lands).
  */
 export async function confirmSignature(
   rpc: HeartrotRpc,
@@ -405,18 +498,16 @@ export async function confirmSignature(
     const status = value[0];
     if (status != null) {
       if (status.err !== null) {
-        // `stringifyWithBigints`, never `JSON.stringify`: kit decodes the instruction index
-        // and a `Custom` code as bigints, and the plain call throws on them — which is how
-        // `InstructionError: [0, "IncorrectAuthority"]` reached two spikes as
-        // `TypeError: Do not know how to serialize a BigInt`. `cause` keeps the structured
-        // error so a caller can read `Custom(6)` off it without parsing the message.
-        throw new Error(`transaction ${signature} failed: ${stringifyWithBigints(status.err)}`, {
-          cause: status.err,
-        });
+        // `decodeTransactionError`, never `JSON.stringify`: kit decodes the instruction
+        // index and a `Custom` code as bigints and the plain call throws on them — which
+        // is how `InstructionError: [0, { Custom: 6 }]` reached two spikes as
+        // `TypeError: Do not know how to serialize a BigInt`. The decoder also names the
+        // rule, and `cause` carries the whole decode so a caller can branch on
+        // `.code === 14` (`BlockedByWall`) without parsing the message.
+        const decoded = decodeTransactionError(status.err);
+        throw new Error(`transaction ${signature} failed: ${decoded.message}`, { cause: decoded });
       }
-      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
-        return;
-      }
+      return;
     }
     if (Date.now() >= deadline) {
       throw new Error(`transaction ${signature} not confirmed within the timeout`);
