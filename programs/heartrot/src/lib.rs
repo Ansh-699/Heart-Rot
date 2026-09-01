@@ -60,6 +60,15 @@ pub mod guards;
 pub mod instruction;
 pub mod state;
 
+/// Generated tables. Neither file is hand-editable: `hitboxes` is compiled from
+/// `assets/sprites/hitboxes.json` by `tools/gen_hitboxes.py` (same pass that emits the
+/// TS copy the renderer imports), `map` from `assets/map/arena.json` by `tools/gen_map.py`.
+/// Both exist because the alternative — a hand-written Rust copy of data the art and the
+/// client also hold — is the one defect this codebase keeps producing: the drawn boss and
+/// the raycast boss stopped being the same boss. Edit the asset, re-run the tool.
+pub mod hitboxes;
+pub mod map;
+
 /// The handler modules live in `src/handlers/`, and `handlers/mod.rs` does not exist —
 /// an inline module declaration pushes the directory component instead, so each `mod`
 /// below resolves to `src/handlers/<name>.rs`. `pub` because `player.rs` reaches across

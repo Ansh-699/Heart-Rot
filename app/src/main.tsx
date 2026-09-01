@@ -1,94 +1,91 @@
 /**
  * Mount point, and the one place identity is installed.
  *
- * The shell depends on a token-returning function (`AuthSource`), never on a Privy SDK, so
- * this file is the whole seam: the provider — when the SDK lands — wraps `<App />` below
- * and its `getAccessToken` becomes the argument to `setAuthSource`. Nothing else changes.
+ * The shell depends on a token-returning function (`AuthSource`), never on the Privy SDK.
+ * This file is the whole seam: `PrivyProvider` wraps `<App />`, and Privy's standalone
+ * `getAccessToken` becomes the argument to `setAuthSource`. Nothing else in `app/src`
+ * imports `@privy-io/react-auth` except `screens/Onboarding.tsx`, which needs the login
+ * modal itself.
  *
- * Until then the placeholder source below is installed instead. It is deliberately *not*
- * the store's default: that default rejects unconditionally, which leaves the app stuck on
- * the onboarding screen with no way forward even in local development. A source that
- * resolves lets the client run end to end; the token it mints is plainly marked as
- * unsigned, so the Worker's JWKS check rejects it loudly rather than accepting a forgery.
+ * **Privy is identity only.** It hands back a DID and an ES256 JWT that the Worker verifies
+ * against the public JWKS; it never signs a Solana transaction. Its headless signing path
+ * pays a cross-origin iframe boot with a 15-second ceiling and throws with no modal
+ * fallback under user-controlled recovery, and its signatures meter at $0.01 above
+ * 50K/month — twenty players at gameplay rates burn that in under an hour. Every gameplay
+ * signature comes from the non-extractable WebCrypto key `store.signIn()` resolves. Hence
+ * `createOnLogin: 'off'` below: an embedded wallet we would never sign with is a liability
+ * (a recovery prompt in the login flow) with no upside.
  */
 
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { PrivyProvider, getAccessToken } from '@privy-io/react-auth';
 
 import App from './App';
 import { setAuthSource, StoreProvider } from './state/store';
 import './styles.css';
 
-// ---------------------------------------------------------------------------
-// Identity
-// ---------------------------------------------------------------------------
+const container = document.getElementById('root');
+if (!container) throw new Error('#root is missing from index.html');
+const root = createRoot(container);
 
 /**
- * PLACEHOLDER — substitute the Privy React SDK before any public deployment.
- *
- * To do that: add `@privy-io/react-auth` to `app/package.json`, wrap `<App />` in
- * `<PrivyProvider appId={PRIVY_APP_ID}>`, and replace this whole block with
- * `setAuthSource(getAccessToken)` from `usePrivy()`. `VITE_PRIVY_APP_ID` and the Worker's
- * `PRIVY_APP_ID` must be the same application (see `.env.example`); the Worker builds its
- * JWKS URL from its copy, so a mismatch fails every route with an auth error.
+ * Public by construction — it is inlined into the bundle — but absent it there is no
+ * sign-in at all, so this is a hard stop rather than a warning. It must be the same Privy
+ * application as the Worker's `PRIVY_APP_ID`: the Worker builds its JWKS URL and its
+ * expected `aud` from its own copy, so a mismatch rejects every token with `invalid privy
+ * token` and nothing on screen says why.
  */
 const PRIVY_APP_ID: string | undefined = import.meta.env.VITE_PRIVY_APP_ID;
 
-/**
- * A stable subject for this browser. Privy's DID is stable across reloads and the Worker
- * derives the seat's identity from it, so a fresh random value per page load would hand
- * out a new identity on every refresh and make dev sessions untraceable.
- */
-function devSubject(): string {
-  const KEY = 'heartrot.dev-subject';
-  let id = localStorage.getItem(KEY);
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem(KEY, id);
-  }
-  return id;
-}
+if (!PRIVY_APP_ID) {
+  // Loudly, and where a person will actually see it. Throwing here would leave a blank
+  // page and a console line, which is how a misconfigured deploy reads as "the game is
+  // broken" instead of as "one variable is unset".
+  root.render(
+    <section className="card">
+      <p className="eyebrow">Not configured</p>
+      <h2>Sign-in is unavailable.</h2>
+      <p className="lede">
+        <code>VITE_PRIVY_APP_ID</code> is unset, so this build has no identity provider and
+        nobody can reach the game. Set it to the same Privy application as the Worker&rsquo;s{' '}
+        <code>PRIVY_APP_ID</code> (see <code>.env.example</code>) and rebuild.
+      </p>
+    </section>,
+  );
+} else {
+  /**
+   * Called fresh for every cold-path request, never cached: Privy access tokens are
+   * short-lived and the SDK refreshes them behind this call. A `null` means the session
+   * lapsed — recoverable by signing in again, which is what the message says.
+   *
+   * Installing this is the load-bearing line of the file. Without it `authSource` stays at
+   * the store's rejecting default, `store.signIn()` can never resolve, and `screenOf`
+   * returns `'onboarding'` forever.
+   */
+  setAuthSource(async () => {
+    const token = await getAccessToken();
+    if (!token) throw new Error('Your sign-in expired. Sign in again.');
+    return token;
+  });
 
-/** Token shape: `unsigned-dev.<app id>.<subject>`. Never verifies; never meant to. */
-function devToken(): string {
-  if (!PRIVY_APP_ID) {
-    throw new Error('Sign-in is unconfigured: set VITE_PRIVY_APP_ID (see .env.example).');
-  }
-  return `unsigned-dev.${PRIVY_APP_ID}.${devSubject()}`;
-}
-
-setAuthSource(async () => devToken());
-
-// ---------------------------------------------------------------------------
-// Mount
-// ---------------------------------------------------------------------------
-
-const container = document.getElementById('root');
-if (!container) throw new Error('#root is missing from index.html');
-
-createRoot(container).render(
-  <StrictMode>
-    <StoreProvider>
-      <App />
-    </StoreProvider>
-  </StrictMode>,
-);
-
-// ---------------------------------------------------------------------------
-// Self-check
-//
-// The failure this guards against is the one that just shipped: an auth source that never
-// resolves, which shows up four screens later as "stuck on onboarding" rather than as an
-// error here. Dev-only, so a production build pays nothing for it.
-// ---------------------------------------------------------------------------
-
-if (import.meta.env.DEV) {
-  if (!PRIVY_APP_ID) {
-    console.warn('heartrot: VITE_PRIVY_APP_ID is unset — sign-in will fail.');
-  } else {
-    const token = devToken();
-    if (!token || devToken() !== token) {
-      throw new Error('main self-check: auth source must return a stable, non-empty token');
-    }
-  }
+  root.render(
+    <StrictMode>
+      <PrivyProvider
+        appId={PRIVY_APP_ID}
+        config={{
+          loginMethods: ['email', 'google', 'wallet'],
+          appearance: { walletChainType: 'solana-only' },
+          embeddedWallets: {
+            ethereum: { createOnLogin: 'off' },
+            solana: { createOnLogin: 'off' },
+          },
+        }}
+      >
+        <StoreProvider>
+          <App />
+        </StoreProvider>
+      </PrivyProvider>
+    </StrictMode>,
+  );
 }

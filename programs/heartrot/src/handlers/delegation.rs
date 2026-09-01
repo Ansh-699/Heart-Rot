@@ -38,6 +38,7 @@ use ephemeral_rollups_pinocchio::{
 };
 use pinocchio::{address::address_eq, error::ProgramError, AccountView, Address, ProgramResult};
 
+use crate::error::HeartrotError;
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
 use crate::state::{
     load, load_mut, Arena, Boss, Players, PHASE_LOBBY, PHASE_SETTLED, SEED_ARENA, SEED_BOSS,
@@ -132,8 +133,14 @@ pub fn process_delegate(program_id: &Address, accounts: &mut [AccountView]) -> P
         // Delegation is a match-start step. Refusing anything but Lobby stops a
         // settled or in-flight arena being pushed back onto the ER, which would
         // resurrect a match whose leaderboard row is already written.
+        //
+        // `WrongPhase` rather than `InvalidAccountData`: the account is perfectly
+        // well-formed and the discriminator matched, so the builtin would be a lie that
+        // also collides with every genuine layout failure in this handler. The client
+        // renders `Custom(6)` and can tell "this match already started" from "you handed
+        // me the wrong account".
         if a.phase != PHASE_LOBBY {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(HeartrotError::WrongPhase.into());
         }
         (
             a.arena_id,
@@ -409,8 +416,13 @@ fn check_commit_accounts(
         }
 
         if settle {
+            // A second commit-and-undelegate against accounts already leaving the ER
+            // fails deep inside the Magic program; this is the same refusal named at the
+            // top. `WrongPhase` distinguishes it from the layout failures above, which
+            // matters here more than anywhere else in this file: an operator retrying a
+            // settle needs to know the first one landed, not that something is corrupt.
             if a.phase == PHASE_SETTLED {
-                return Err(ProgramError::InvalidAccountData);
+                return Err(HeartrotError::WrongPhase.into());
             }
             a.phase = PHASE_SETTLED;
         }

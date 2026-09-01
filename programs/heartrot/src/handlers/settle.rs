@@ -13,7 +13,10 @@
 //!    after the scheduling CPI returns `Ok`.** The failure is recorded only to a table
 //!    inside the validator that no RPC exposes. So the id must be wide and random, it
 //!    lives on `Arena.crank_task_id` where `settle` can find it again, and it is an `i64`
-//!    — the published docs say `u64` and are wrong.
+//!    — the published docs say `u64` and are wrong. Because that namespace is shared with
+//!    everyone, the id must also be *unguessable*: an id anyone can precompute can be
+//!    squatted before the match starts and the match then never ticks, with no error
+//!    anywhere. [`mint_task_id`] is where that is dealt with.
 //! 2. **A crank instruction may carry no writable signer**, only the read-only
 //!    `crank_signer` PDA, and **a crank cannot re-arm itself** — `ScheduleTask` needs a
 //!    writable signer. Every iteration of the match is therefore scheduled up front.
@@ -34,9 +37,13 @@ use ephemeral_rollups_pinocchio::{
     instruction::commit_and_undelegate_accounts,
 };
 use pinocchio::{
-    error::ProgramError, instruction::InstructionAccount, AccountView, Address, ProgramResult,
+    error::ProgramError,
+    instruction::InstructionAccount,
+    sysvars::slot_hashes,
+    AccountView, Address, ProgramResult,
 };
 
+use crate::error::HeartrotError;
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
 // The single deploy-time treasury key, declared once in `handlers::init`. It is imported
 // rather than re-declared here on purpose: a second copy is a second thing to fill in at
@@ -89,6 +96,10 @@ const TICK_ITERATIONS: i64 = 4_500;
 /// so an under-sized buffer surfaces as `InvalidInstructionData`, not corruption.
 const SCHEDULE_BUF_LEN: usize = 256;
 
+/// Hash domain for [`mint_task_id`]. Distinct from `init_arena`'s `b"crank"` domain so
+/// the two derivations over the same arena can never land on the same id.
+const DOMAIN_TASK: &[u8] = b"crank-task";
+
 /// `[Arena, Boss, Players]` plus the payer the SDK prepends. This constant is passed as
 /// `ScheduleCrankCpi::invoke`'s const parameter, which must equal `1 + instruction
 /// accounts` exactly — the SDK `copy_from_slice`s into a fixed array of this size.
@@ -131,18 +142,24 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
     assert_writable(boss)?;
     assert_writable(players)?;
 
-    // One borrow that validates, transitions, and copies out the two fields the CPI
-    // needs. The borrow must be dropped before the CPI: it re-enters the runtime with
-    // these same accounts, and a live `Ref` would make that a borrow failure.
+    // Read outside the borrow purely for readability; a failure here reverts the whole
+    // instruction, so ordering against the state write carries no risk either way.
+    let entropy = schedule_entropy()?;
+    let arena_key = *arena.address();
+
+    // One borrow that validates, transitions, mints the id, and copies out the two fields
+    // the CPI needs. The borrow must be dropped before the CPI: it re-enters the runtime
+    // with these same accounts, and a live `Ref` would make that a borrow failure.
     let (task_id, crank_authority) = {
         let mut data = arena.try_borrow_mut()?;
         let state = load_mut::<Arena>(&mut data)?;
 
         // Only a lobby arena starts. A second `start_match` on a live match would
         // schedule a *second* crank against the same accounts, doubling the tick rate
-        // with no way to tell the two apart.
+        // with no way to tell the two apart — and would mint a second id over the first,
+        // stranding the original task where `settle` can no longer cancel it.
         if state.phase != PHASE_LOBBY {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(HeartrotError::WrongPhase.into());
         }
         // The scheduling payer *is* the task authority the ER records, and `boss_tick`
         // authorizes its caller against `crank_signer_pda(arena.crank_authority)`. If
@@ -150,14 +167,16 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
         if payer.address().as_ref() != state.crank_authority.as_slice() {
             return Err(ProgramError::IncorrectAuthority);
         }
-        // A zero id is not merely useless: id 0 is as collision-prone as id 1 on a shared
-        // devnet validator, and a collision is the failure mode that returns `Ok`.
-        if state.crank_task_id <= 0 {
-            return Err(ProgramError::InvalidAccountData);
-        }
 
+        // The id the task is actually registered under is minted *here*, one instruction
+        // before the CPI that registers it, and written back over the creation-time value
+        // so `settle` cancels the same id that was scheduled. `init_arena`'s value is kept
+        // only as one more input to the mix; it is public, so it carries no secrecy of its
+        // own and a zero there is harmless rather than a thing to reject.
+        let task_id = mint_task_id(program_id, &arena_key, state.crank_task_id, &entropy);
+        state.crank_task_id = task_id;
         state.phase = PHASE_FIGHTING;
-        (state.crank_task_id, state.crank_authority)
+        (task_id, state.crank_authority)
     };
 
     let crank_authority = Address::new_from_array(crank_authority);
@@ -189,6 +208,77 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
 
     let mut buf = [0u8; SCHEDULE_BUF_LEN];
     cpi.invoke::<SCHEDULE_CPI_ACCOUNTS>(&mut buf)
+}
+
+/// 32 bytes of chain state that **did not exist when the arena was created**.
+///
+/// This is the whole anti-squat argument, so it is worth being precise about. Every other
+/// input to a task id is public and stable: `program_id` is fixed, `arena_id` is
+/// `Leaderboard.last_arena_id + 1`, and the arena PDA is `[b"arena", arena_id]` — a pure
+/// function of that id. Anyone can compute all three for the next dozen matches and squat
+/// their ids at leisure, which is exactly the hole this closes.
+///
+/// The only source is the most recent **SlotHashes** entry: the ER's own block hash for
+/// the previous slot. A block hash is not a function of anything an outsider holds — it
+/// does not exist until the validator produces that block, so it cannot be precomputed at
+/// any lead time at all, and by the time it is readable the very next instruction (the
+/// `ScheduleTask` CPI below) has already claimed the id derived from it. It is read
+/// through `sol_get_sysvar`, which needs no account: the frozen tag-3 account list has no
+/// room for one, and the ~38-key ceiling has no room to spare either.
+///
+/// There is deliberately **no fallback**. The obvious one is the `Clock`, and it is not
+/// entropy at all against this attacker: slot, timestamp and the two epochs are public and
+/// enumerable, so an outsider can grind candidate tuples across the window between
+/// `init_arena` and `start_match` and pre-squat one id per candidate — free, because ER
+/// fees are zero — which is precisely the hole this function exists to close. A weaker id
+/// does not degrade gracefully: a squatted id makes `ScheduleTask` return `Ok` and the
+/// match then never ticks, with the failure recorded only in a validator-local table and
+/// no crank re-arm possible. A `start_match` that refuses is recoverable and visible; a
+/// match scheduled under a guessable id is neither.
+///
+/// So a missing sysvar, a short read, or an all-zero hash (present but unpopulated) all
+/// fail loudly with `UnsupportedSysvar`. If that ever fires on the target ER, the fix is
+/// to give the validator a SlotHashes sysvar, not to soften this.
+fn schedule_entropy() -> Result<[u8; 32], ProgramError> {
+    // Entries start at byte 8 and are `[slot: u64 | hash: [u8; 32]]`, most recent first.
+    let mut entry = [0u8; 40];
+    if slot_hashes::raw::fetch_into(&mut entry, 8).is_err() || entry[8..].iter().all(|b| *b == 0) {
+        return Err(ProgramError::UnsupportedSysvar);
+    }
+
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&entry[8..]);
+    Ok(out)
+}
+
+/// Mix the arena's identity with [`schedule_entropy`] into a wide, positive `i64`.
+///
+/// Pure and total: no syscall, no failure path, and the arena key binds the id to *this*
+/// match so two arenas that somehow read the same entropy still get different ids.
+/// `derive_address` is PDA derivation used as a hash, for the reason `init_arena` gives —
+/// SHA-256 is not otherwise reachable from pinocchio 0.11 on both targets.
+///
+/// Nothing outside this program ever reproduces this derivation: the minted id is written
+/// to `Arena.crank_task_id` and read back from there by `settle`. It is one fact in one
+/// place, so the client needs no copy of the formula and there is nothing to drift.
+fn mint_task_id(program_id: &Address, arena_key: &Address, base: i64, entropy: &[u8; 32]) -> i64 {
+    let hash = Address::derive_address(
+        &[
+            DOMAIN_TASK,
+            arena_key.as_ref(),
+            &entropy[..],
+            &base.to_le_bytes()[..],
+        ],
+        None,
+        program_id,
+    )
+    .to_bytes();
+
+    let mut head = [0u8; 8];
+    head.copy_from_slice(&hash[..8]);
+    // Sign bit cleared and floored at 1: the crank arguments are `i64`, a negative id is
+    // rejected, and 0 is both unusable and the most collision-prone value on the cluster.
+    (i64::from_le_bytes(head) & i64::MAX).max(1)
 }
 
 // ---------------------------------------------------------------------------
@@ -244,8 +334,14 @@ pub fn settle(program_id: &Address, accounts: &mut [AccountView]) -> ProgramResu
         }
         // A lobby arena was never delegated with players in it and has nothing to
         // record; anything else — fighting, or a retried settle — commits.
+        //
+        // `Fighting` is accepted on purpose and must stay accepted: it is the dead-crank
+        // recovery path, the only way a match whose task died can ever end. That is also
+        // why `MatchNotOver` is *not* raised here — "the match is still running" is not a
+        // fact this program can establish, since a stalled crank and a healthy one look
+        // identical on chain. The Worker samples `tick` twice to tell them apart.
         if state.phase == PHASE_LOBBY {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(HeartrotError::WrongPhase.into());
         }
         state.phase = PHASE_SETTLED;
         state.crank_task_id
@@ -332,10 +428,12 @@ pub fn write_leaderboard(program_id: &Address, accounts: &mut [AccountView]) -> 
     if payer.address().as_ref() != arena_state.crank_authority.as_slice() {
         return Err(ProgramError::IncorrectAuthority);
     }
-    // Only a settled match has a result. A mid-flight arena would record damage
-    // totals that are still moving.
+    // Only a settled match has a result. A mid-flight arena would record damage totals
+    // that are still moving. `MatchNotOver` rather than `WrongPhase` because this is the
+    // one place the condition is decidable: `PHASE_SETTLED` is written by `settle` itself,
+    // so anything else here means the settlement has not happened yet.
     if arena_state.phase != PHASE_SETTLED {
-        return Err(ProgramError::InvalidAccountData);
+        return Err(HeartrotError::MatchNotOver.into());
     }
 
     let players_data = players.try_borrow()?;
@@ -439,6 +537,33 @@ mod tests {
         b.discriminator = DISC_LEADERBOARD;
         b.version = LAYOUT_VERSION;
         b
+    }
+
+    /// The property H4 rests on: the minted id moves when the entropy moves, and stays
+    /// inside the range the crank arguments accept. If mixing ever stops depending on the
+    /// entropy — a dropped seed, a truncation — every arena goes back to a precomputable
+    /// id and the squat is back, silently, because a collision returns `Ok`.
+    #[test]
+    fn task_id_depends_on_entropy_and_is_positive() {
+        let program_id = Address::new_from_array([9u8; 32]);
+        let arena = Address::new_from_array([4u8; 32]);
+        let other_arena = Address::new_from_array([5u8; 32]);
+
+        let a = mint_task_id(&program_id, &arena, 7, &[1u8; 32]);
+        let b = mint_task_id(&program_id, &arena, 7, &[2u8; 32]);
+        let c = mint_task_id(&program_id, &other_arena, 7, &[1u8; 32]);
+        let d = mint_task_id(&program_id, &arena, 8, &[1u8; 32]);
+
+        assert_ne!(a, b, "entropy must reach the id");
+        assert_ne!(a, c, "the arena must reach the id");
+        assert_ne!(a, d, "the creation-time value must reach the id");
+        for id in [a, b, c, d] {
+            assert!(id > 0, "crank ids are i64 and 0 is not usable: {id}");
+        }
+        // Deterministic for a fixed input, which is what lets `settle` cancel what
+        // `start_match` scheduled — the id is stored, but a wandering derivation would
+        // mean the stored value and the scheduled one could ever disagree.
+        assert_eq!(a, mint_task_id(&program_id, &arena, 7, &[1u8; 32]));
     }
 
     /// The three ways this write goes wrong in production: a retried settle duplicating

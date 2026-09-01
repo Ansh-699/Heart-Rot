@@ -1,12 +1,13 @@
 /**
  * Build-time sprite data for the renderer.
  *
- * Everything here is derived from the files in `assets/sprites/` at module load and is
- * then immutable. Nothing in this file touches React or the DOM, so the parsing below is
- * the one place a wrong number can enter the render tree, and the assertions at the
- * bottom fail the app loudly at import rather than drawing a boss with a missing arm.
+ * Everything here is derived at module load from the art in `assets/sprites/` and from the
+ * generated tables in `@heartrot/client`, and is then immutable. Nothing in this file
+ * touches React or the DOM, so the parsing below is the one place a wrong number can enter
+ * the render tree, and the assertions at the bottom fail the app loudly at import rather
+ * than drawing a boss with a missing arm.
  *
- * Two source shapes, two different jobs:
+ * Three source shapes, three different jobs:
  *
  *   `parts/boss.svg`  already carries one `<g id="part-*">` per body part, emitted by
  *                     `tools/svg_slice.py` from the same pass that produced
@@ -19,10 +20,26 @@
  *                     the sheet's own empty columns rather than hardcoded, so re-exporting
  *                     the art with the figures at different offsets keeps working instead
  *                     of silently drawing a knight's shoulder as a whole knight.
+ *
+ *   `@heartrot/client` carries the generated tables: the wall bitboard the chain collides
+ *                     against, and the boss hitboxes and anchor it raycasts against. The
+ *                     dungeon is *compiled* from that grid here rather than drawn as a
+ *                     picture of it, and the boss anchor is imported rather than
+ *                     recomputed, so there is no second copy of either fact to drift.
  */
+import {
+  BOSS_ANCHOR_X,
+  BOSS_ANCHOR_Y,
+  BOSS_SPRITE_H,
+  BOSS_SPRITE_W,
+  MAP_GRID,
+  MAP_TILE,
+  MAP_TILES,
+  PART_HITBOXES,
+} from '@heartrot/client';
+
 import bossSlicedSvg from '../../../assets/sprites/parts/boss.svg?raw';
 import knightsSheetSvg from '../../../assets/sprites/knights.svg?raw';
-import roomUrl from '../../../assets/sprites/room.svg';
 import hitboxJson from '../../../assets/sprites/hitboxes.json';
 
 // ---------------------------------------------------------------------------
@@ -30,17 +47,15 @@ import hitboxJson from '../../../assets/sprites/hitboxes.json';
 // ---------------------------------------------------------------------------
 
 /**
- * The scene's viewBox is arena space, 1:1. `TILE * 64` in `shoot.rs` and `tick.rs`.
+ * The scene's viewBox is arena space, 1:1 — the same `MAP_TILES * MAP_TILE` the chain
+ * clamps every position into, taken from the generated map rather than restated here.
  *
  * Drawing in arena units directly means `PlayerSlot.x`, `Boss.x` and `Bullet.x` land in
  * the SVG unmodified: no scale factor, no rounding, no second unit anyone has to convert
  * between. It is also what lets the bullet extrapolation in `Arena.tsx` be exact — the
  * client steps the same integers by the same amount the crank does.
  */
-export const ARENA_UNITS = 1024;
-
-/** The static map layer. One `<image>`, rasterised once, never re-rendered. */
-export const MAP_URL: string = roomUrl;
+export const ARENA_UNITS = MAP_TILES * MAP_TILE;
 
 /**
  * Bullet square, in arena units. Comfortably inside `PLAYER_HIT_RADIUS` (12) so a bullet
@@ -105,6 +120,48 @@ function spans(flags: readonly boolean[]): Array<readonly [number, number]> {
 }
 
 // ---------------------------------------------------------------------------
+// The dungeon
+// ---------------------------------------------------------------------------
+
+/**
+ * The map layer, compiled from `MAP_GRID` — the same generated table the chain raycasts
+ * and `predict.ts` collides against. Drawn from the bitboard rather than from a picture of
+ * a room, because a picture can disagree with the walls and this cannot.
+ *
+ * 4,096 tiles would be 4,096 nodes that never change (design spec §6). Merging each row's
+ * runs into subpaths of one `d` makes each layer a single node instead, and since the
+ * strings are module constants the whole dungeon is built once per page load.
+ */
+function tilePath(hit: (tx: number, ty: number) => boolean, h: number = MAP_TILE): string {
+  let d = '';
+  for (let ty = 0; ty < MAP_TILES; ty++) {
+    const flags = Array.from({ length: MAP_TILES }, (_, tx) => hit(tx, ty));
+    for (const [lo, hi] of spans(flags)) {
+      const w = (hi - lo + 1) * MAP_TILE;
+      d += `M${lo * MAP_TILE} ${ty * MAP_TILE}h${w}v${h}h-${w}z`;
+    }
+  }
+  return d;
+}
+
+/** Off-map reads as wall, exactly as `isWallTile` decides it. */
+function tileAt(tx: number, ty: number): string {
+  return MAP_GRID[ty]?.[tx] ?? '#';
+}
+
+/** Every solid tile: the border, the four corner rocks, the chamber walls, the pillars. */
+export const MAP_WALL_PATH = tilePath((tx, ty) => tileAt(tx, ty) === '#');
+
+/**
+ * The lit top face of every wall that has floor above it. Purely a legibility cue: without
+ * it a 2x2 pillar and a corridor wall are the same flat block and the halls read as noise.
+ */
+export const MAP_RIM_PATH = tilePath((tx, ty) => tileAt(tx, ty) === '#' && tileAt(tx, ty - 1) !== '#', 3);
+
+/** The four edge entrances — walkable, so they are a floor tint and not a wall. */
+export const MAP_ENTRANCE_PATH = tilePath((tx, ty) => tileAt(tx, ty) === 'E');
+
+// ---------------------------------------------------------------------------
 // Boss rig
 // ---------------------------------------------------------------------------
 
@@ -143,59 +200,6 @@ export type BossPart = {
 };
 
 const bossBox = viewBox(bossSlicedSvg, 'parts/boss.svg');
-
-/** Sprite canvas, in arena units (1 sprite pixel = 1 arena unit). */
-export const BOSS_SPRITE_W = bossBox.w;
-export const BOSS_SPRITE_H = bossBox.h;
-
-/**
- * Where the sprite's top-left corner goes, relative to `Boss.x` / `Boss.y`.
- *
- * `PART_HITBOXES` in `programs/heartrot/src/handlers/shoot.rs` spans x [-96, 96] and
- * y [-112, 128] around the boss position, so the volume the program raycasts is centred on
- * (0, 8). Centring the 230x270 canvas there is what puts the drawn boss where the shots
- * land.
- *
- * ponytail: KNOWN CEILING — the drawn boss and the raycast boss are not the same boss, and
- * no choice of anchor makes them one. `PART_HITBOXES` is a hand-written idealisation:
- * symmetric about x=0, four thorns on a ±88/±56 lattice, mace on the RIGHT. The art is an
- * asymmetric drawing: mace on the LEFT, crown pushed right, thorns scattered. Measured
- * against this anchor (art box vs. program box, boss-local units):
- *
- *     part      art x        art y        rust x       rust y       IoU
- *     crown     [   7,  74]  [-120, -61]  [ -40,  40]  [-112, -72]  22.6%
- *     wolf_l    [ -47,   3]  [ -78, -25]  [ -96, -40]  [ -80, -24]   6.9%
- *     beast_r   [  57, 103]  [ -75, -23]  [  40,  96]  [ -80, -24]  56.2%
- *     thorn0    [ -16,   5]  [ -99, -63]  [ -88, -56]  [ -16,  16]   0%
- *     thorn1    [  65, 113]  [ -90, -25]  [  56,  88]  [ -16,  16]   0%
- *     thorn2    [ -30, -10]  [ -29,  -6]  [ -88, -56]  [  48,  80]   0%
- *     thorn3    [  88, 112]  [   0,  17]  [  56,  88]  [  48,  80]   0%
- *     mace      [-114,  -3]  [ -25, 112]  [  56,  96]  [  80, 128]   0%   mirrored
- *     claws     [  55, 107]  [ -30,  80]  [ -96, -56]  [  80, 128]   0%   mirrored
- *     core      [   5,  45]  [ -32,  13]  circle centre (0,16) r=24
- *
- * Six of nine parts do not overlap at all, and mace/claws are on opposite sides, which a
- * translation cannot fix. So a shot aimed at drawn art misses, and a shot at empty air hits.
- * Which side is right is NOT decided here: `hitboxes.json` (imported above) carries exact
- * integer boxes from the same slice that produced these groups, so either `PART_HITBOXES`
- * becomes generated from it, or the art is redrawn to the program's lattice. Both are
- * outside the renderer — that table is the contract until it moves, and this file draws to
- * the art because the art is what the player sees.
- */
-export const BOSS_ANCHOR_X = 0 - Math.round(BOSS_SPRITE_W / 2);
-export const BOSS_ANCHOR_Y = 8 - Math.round(BOSS_SPRITE_H / 2);
-
-/**
- * The vent, for the glow that reads "the core is damageable now".
- *
- * No fallback: a zero rect here is an invisible vent, which is indistinguishable from a
- * sealed one and would quietly delete the only cue that the core is open.
- */
-export const BOSS_CORE_BOX: Hitbox = (() => {
-  const box = HITBOXES['core'];
-  if (!box) throw new Error('hitboxes.json: no "core" entry — the vent has nowhere to draw');
-  return box;
-})();
 
 /**
  * Every `<g>` in the sliced file, in document order — which is the slicer's paint order,
@@ -337,8 +341,31 @@ export function facesWest(facing: number): boolean {
       `parts/boss.svg: chain part indices are ${JSON.stringify(chainIndices)}, expected 0..${expected - 1}`,
     );
   }
-  if (BOSS_SPRITE_W !== hitboxJson.sprite.w || BOSS_SPRITE_H !== hitboxJson.sprite.h) {
-    throw new Error('parts/boss.svg: viewBox disagrees with hitboxes.json sprite size');
+  if (bossBox.w !== BOSS_SPRITE_W || bossBox.h !== BOSS_SPRITE_H) {
+    throw new Error('parts/boss.svg: viewBox disagrees with the generated sprite size');
   }
+
+  // F1, restated as a runnable check: the group this file draws and the box the program
+  // raycasts are the same rectangle, translated by the generated anchor and nothing else.
+  // Both sides come from `hitboxes.json`, so this can only fire if the art file and the
+  // generated modules were produced by different runs of the slicer.
+  hitboxJson.part_index.forEach((name, i) => {
+    const art = HITBOXES[name];
+    const hit = PART_HITBOXES[i];
+    if (!art || !hit) throw new Error(`hitboxes.json: part ${i} "${name}" is missing a box`);
+    if (
+      art.x + BOSS_ANCHOR_X !== hit.x ||
+      art.y + BOSS_ANCHOR_Y !== hit.y ||
+      art.w !== hit.w ||
+      art.h !== hit.h
+    ) {
+      throw new Error(
+        `part "${name}": drawn at [${art.x + BOSS_ANCHOR_X},${art.y + BOSS_ANCHOR_Y},${art.w},${art.h}] ` +
+          `but shot at [${hit.x},${hit.y},${hit.w},${hit.h}] — re-run tools/gen_hitboxes.py`,
+      );
+    }
+  });
+
+  if (MAP_WALL_PATH.length === 0) throw new Error('assets/map: the generated dungeon has no walls');
   if (SKINS.length === 0 || SKIN_HEIGHT <= 0) throw new Error('knights.svg: no usable skins');
 }

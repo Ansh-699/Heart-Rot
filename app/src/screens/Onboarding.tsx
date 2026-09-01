@@ -24,14 +24,47 @@
  * Phantom / Backpack / WalletConnect through one Wallet Standard connector list, so the
  * spec's "two paths" is one code path and two labels — and `@solana/wallet-adapter-*` is
  * not a dependency anywhere.
+ *
+ * This is the only file in `app/src` besides `main.tsx` that imports the Privy SDK, and it
+ * imports exactly one hook: the modal is the one thing the store's `AuthSource` seam —
+ * "give me a token" — cannot express. Everything downstream of the modal goes through the
+ * store, so this card never handles a token itself.
  */
+
+import { useEffect } from 'react';
+import { usePrivy } from '@privy-io/react-auth';
 
 import { useSelect, useStore } from '../state/store';
 
 export function Onboarding() {
   const store = useStore();
   const busy = useSelect((s) => s.status === 'joining');
-  const signIn = () => void store.signIn();
+  const { ready, authenticated, login } = usePrivy();
+
+  /**
+   * Two steps, because the proof and the key have different owners: Privy's modal proves
+   * who you are, then `store.signIn()` turns that into the token *and* the session keypair
+   * the rest of the game signs with. The effect is what joins them — `login()` returns
+   * void and only reports back by flipping `authenticated`, so nothing else would carry
+   * the flow forward. It is also what picks up a returning tab, where Privy restores the
+   * session and `authenticated` is already true by the time this card first renders.
+   *
+   * It cannot loop: `signIn` flips the store's own `authenticated`, which moves `screenOf`
+   * to `'select'` and unmounts this card. On failure the store holds `status: 'error'`
+   * (rendered by the shell's error bar) and the button below re-arms as the retry.
+   */
+  useEffect(() => {
+    if (authenticated) void store.signIn();
+  }, [authenticated, store]);
+
+  /**
+   * Already authenticated means the modal has nothing left to ask — this press is a retry
+   * after a failed token fetch or a failed key unwrap — so it goes straight at `signIn`.
+   */
+  const enter = () => {
+    if (authenticated) void store.signIn();
+    else login();
+  };
 
   return (
     <section className="card">
@@ -48,10 +81,10 @@ export function Onboarding() {
         is generated inside this browser, holds zero SOL, and never leaves it.
       </p>
       <div className="row">
-        <button className="btn btn-primary" onClick={signIn} disabled={busy}>
+        <button className="btn btn-primary" onClick={enter} disabled={!ready || busy}>
           {busy ? 'Signing in…' : 'Enter with email or social'}
         </button>
-        <button className="btn" onClick={signIn} disabled={busy}>
+        <button className="btn" onClick={enter} disabled={!ready || busy}>
           I already have a wallet
         </button>
       </div>

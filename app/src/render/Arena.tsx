@@ -4,8 +4,9 @@
  *
  * Layer discipline, and why each one is the way it is:
  *
- *   map      one `<image>`. A 64x64 tile map as SVG rects is 4,096 nodes that never change
- *            (design spec §6). This is one node that never changes.
+ *   map      four `<path>`/`<rect>` nodes compiled from the generated wall bitboard. A
+ *            64x64 tile map as one rect per tile is 4,096 nodes that never change (design
+ *            spec §6); merging each row's runs into subpaths makes each layer one node.
  *   boss     `<Rig>`, one composited `<g>` per part.
  *   players  one composited `<g>` per seat, `<use>`-ing a skin defined once in `<defs>`.
  *   bullets  up to 128 `<rect>`s, the only place in the codebase that uses `will-change`,
@@ -25,7 +26,9 @@ import { Rig } from './Rig';
 import {
   ARENA_UNITS,
   BULLET_SIZE,
-  MAP_URL,
+  MAP_ENTRANCE_PATH,
+  MAP_RIM_PATH,
+  MAP_WALL_PATH,
   SKINS,
   SKIN_HEIGHT,
   facesWest,
@@ -102,18 +105,15 @@ export function Arena({ arena, boss, players, localSeat, tickMs = 400, className
             </g>
           ))}
         </defs>
-        <image
-          href={MAP_URL}
-          x={0}
-          y={0}
-          width={ARENA_UNITS}
-          height={ARENA_UNITS}
-          // ponytail: the room art is 279x168 and the arena is square, so `slice` crops it
-          // rather than stretching non-square pixels, which pixel art cannot survive. The
-          // upgrade path is a floor-plus-wall band authored at the arena's aspect.
-          preserveAspectRatio="xMidYMid slice"
-          imageRendering="pixelated"
-        />
+        {/* The dungeon, compiled from the same wall bitboard the chain collides against:
+            floor, then walls, then the lit top faces, then the four entrances. Four static
+            nodes, no image, nothing to keep in sync by hand. */}
+        <g className="hr-map">
+          <rect x={0} y={0} width={ARENA_UNITS} height={ARENA_UNITS} fill="#17151b" />
+          <path d={MAP_WALL_PATH} fill="#2b2733" />
+          <path d={MAP_RIM_PATH} fill="#413a4f" />
+          <path d={MAP_ENTRANCE_PATH} fill="#b5b56a" opacity={0.18} />
+        </g>
       </>
     ),
     [],

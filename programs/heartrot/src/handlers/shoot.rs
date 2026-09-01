@@ -25,12 +25,15 @@
 
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
+use crate::error::HeartrotError;
 use crate::guards::{
     assert_owned_by, assert_pda, assert_session_authority, assert_signer, assert_writable,
 };
+use crate::hitboxes::{CORE_RADIUS_SQ, CORE_X, CORE_Y, PART_HITBOXES};
+use crate::map;
 use crate::state::{
-    load_mut, Arena, Boss, Players, N_PARTS, PHASE_FIGHTING, PHASE_SETTLING, SEED_BOSS,
-    SEED_PLAYERS, ZONE_ARENA,
+    load_mut, Arena, Boss, Players, PHASE_FIGHTING, PHASE_SETTLING, SEED_BOSS, SEED_PLAYERS,
+    ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
@@ -40,17 +43,34 @@ use crate::state::{
 /// Arena space is 16 units per tile over the 64×64 map, so 0..1024 on both axes.
 /// `PlayerSlot.x`, `Boss.x` and `Bullet.x` are all in these units — the layout
 /// contract requires one shared unit and does not name it, so it is named here.
-const TILE: i32 = 16;
-const ARENA_SIZE: i32 = 64 * TILE;
+/// Widened from `map::TILE` rather than re-typed, and asserted equal, so the ray and
+/// the wall table can never disagree about how big a tile is.
+const TILE: i32 = map::TILE as i32;
 
 /// The ray advances one tile per step and gives up after this many. Range therefore
 /// reads as "twenty tiles", which is the number to tune for feel.
 const MAX_RAY_STEPS: i32 = 20;
 
-/// Cheap rejection before walking anything: the boss centre must be within reach at
-/// all. `MAX_RAY_STEPS * TILE` of ray plus a generous boss half-extent (the far
-/// corner of the sprite box is ~148 units from centre).
-const MAX_REACH_SQ: i32 = (MAX_RAY_STEPS * TILE + 160) * (MAX_RAY_STEPS * TILE + 160);
+/// Is the tile under this arena-space point solid? Off-map is solid, and negatives are
+/// walls *before* the divide because `-1 / 16` truncates to tile 0.
+///
+/// This is the same decision as `handlers::player::is_wall`, over the same generated
+/// `map::WALLS` table — that one is `i16` and private to movement, this one is the `i32`
+/// the ray already walks in. One table, so a corridor that blocks a step also blocks a
+/// shot; that is what makes a two-player front on a 2-wide corridor mean anything.
+fn is_wall(x: i32, y: i32) -> bool {
+    if x < 0 || y < 0 {
+        return true;
+    }
+    let (tx, ty) = ((x / TILE) as usize, (y / TILE) as usize);
+    if tx >= map::MAP_TILES {
+        return true;
+    }
+    match map::WALLS.get(ty) {
+        Some(row) => row & (1u64 << tx) != 0,
+        None => true,
+    }
+}
 
 /// Eight-way `PlayerSlot.facing`, clockwise from north. `y` grows downward, matching
 /// screen space and the client's tile grid.
@@ -90,52 +110,14 @@ const VENT_THRESHOLD_DEN: u32 = 100;
 // ---------------------------------------------------------------------------
 // Hitboxes
 // ---------------------------------------------------------------------------
-
-/// A boss-local axis-aligned box, in arena units relative to `Boss.x` / `Boss.y`.
-#[derive(Clone, Copy)]
-struct Rect {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-}
-
-impl Rect {
-    /// Half-open on both axes, so touching rectangles cannot both claim a step.
-    fn contains(&self, x: i32, y: i32) -> bool {
-        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
-    }
-}
-
-/// Index-aligned with `Boss.parts`: crown, wolf_l, beast_r, thorn0..3, mace, claws.
-///
-/// ponytail: hand-written numbers for a hand-drawn boss, which is exactly what build
-/// step 0b calls for ("hitscan against hardcoded hitboxes"). The upgrade path is
-/// already designed — `tools/svg_slice.py` emits `<part>.hitboxes.json` with integer
-/// x/y/w/h per part from the same slice that produces the `<g>` groups the browser
-/// animates — so this table becomes generated, and the DOM and the chain stop being
-/// able to drift. Until that file exists these numbers are the contract, and the
-/// renderer must be positioned from them rather than the other way round.
-///
-/// Every box is at least one `TILE` wide and tall on purpose: the ray samples one
-/// point per tile, so anything narrower could be stepped straight over.
-const PART_HITBOXES: [Rect; N_PARTS] = [
-    Rect { x: -40, y: -112, w: 80, h: 40 }, // 0 crown
-    Rect { x: -96, y: -80, w: 56, h: 56 },  // 1 wolf_l
-    Rect { x: 40, y: -80, w: 56, h: 56 },   // 2 beast_r
-    Rect { x: -88, y: -16, w: 32, h: 32 },  // 3 thorn0
-    Rect { x: 56, y: -16, w: 32, h: 32 },   // 4 thorn1
-    Rect { x: -88, y: 48, w: 32, h: 32 },   // 5 thorn2
-    Rect { x: 56, y: 48, w: 32, h: 32 },    // 6 thorn3
-    Rect { x: 56, y: 80, w: 40, h: 48 },    // 7 mace
-    Rect { x: -96, y: 80, w: 40, h: 48 },   // 8 claws
-];
-
-/// The vent is round, so it is a circle rather than a rectangle: centre offset from
-/// `Boss.x`/`Boss.y` and a *squared* radius, compared against a squared distance.
-const CORE_X: i32 = 0;
-const CORE_Y: i32 = 16;
-const CORE_RADIUS_SQ: i32 = 24 * 24;
+//
+// There is no table here. `crate::hitboxes` is generated from
+// `assets/sprites/hitboxes.json` by `tools/gen_hitboxes.py`, in the same pass that
+// emits the TypeScript the renderer draws from, so the boss the player sees and the
+// boss the ray hits are one fact. The hand-written table this file used to carry
+// described a different creature — six of its nine parts had zero overlap with the art
+// and two were on the wrong side — which is what a second copy of a fact always
+// becomes. Move the art, re-run the tool; never edit coordinates here.
 
 /// What the ray struck first, as pure geometry. Whether a `Core` hit is *damageable*
 /// is a game rule (the vent must be open) and is decided by the caller, not here.
@@ -146,7 +128,7 @@ enum Hit {
 }
 
 /// Walk the ray one tile at a time from `(from_x, from_y)` along `dir`; first hit
-/// wins, and a step outside the arena is a wall that stops it.
+/// wins, and a solid tile stops it.
 ///
 /// A part with 0 HP is destroyed and detached, so the ray passes straight through it
 /// — stripping the shell is what opens a lane to the core, and that falls out of the
@@ -155,29 +137,24 @@ enum Hit {
 /// All arithmetic widens to `i32` before it is used, which is what makes it safe
 /// rather than merely checked: the worst case is two `i16` extremes squared and
 /// summed, 2,147,352,578, which still fits `i32::MAX`.
+///
+/// There is no cheap out-of-reach pre-test any more. The wall test *is* the early
+/// out — off the map and off a corridor are the same rejection — and the distance
+/// check it replaced needed a hand-guessed "boss half-extent" constant, which is the
+/// exact kind of number that drifts away from the art it claims to describe.
 fn raycast(from_x: i16, from_y: i16, dir: u8, boss: &Boss) -> Option<Hit> {
     let (step_x, step_y) = FACING_STEP[(dir & 7) as usize];
     let (boss_x, boss_y) = (boss.x as i32, boss.y as i32);
     let (mut x, mut y) = (from_x as i32, from_y as i32);
 
-    // Out of reach entirely — skip 20 steps × 10 boxes of work. Squared distance
-    // against a squared radius; there is no sqrt in this program.
-    let (to_boss_x, to_boss_y) = (boss_x - x, boss_y - y);
-    if to_boss_x * to_boss_x + to_boss_y * to_boss_y > MAX_REACH_SQ {
-        return None;
-    }
-
     for _ in 0..MAX_RAY_STEPS {
         x += step_x * TILE;
         y += step_y * TILE;
 
-        // Wall. The arena boundary is the only wall the chain knows about.
-        //
-        // ponytail: interior cover is not modelled, so a shot passes through any
-        // pillar the map art draws. Upgrade path when the map gains real cover: a
-        // 64×64 wall bitmask (512 B) on `Arena`, sampled with the same tile step this
-        // loop already walks.
-        if x < 0 || y < 0 || x >= ARENA_SIZE || y >= ARENA_SIZE {
+        // Cover. The same generated bitboard movement collides against, so a corridor
+        // wall stops a shot exactly where it stops a player — that equivalence is the
+        // whole reason a 2-tile front is defensible.
+        if is_wall(x, y) {
             return None;
         }
 
@@ -260,27 +237,32 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
     let players = load_mut::<Players>(&mut players_data)?;
 
     if arena.phase != PHASE_FIGHTING {
-        return Err(ProgramError::InvalidArgument);
+        return Err(HeartrotError::WrongPhase.into());
     }
 
     let slot = players
         .slots
         .get_mut(seat as usize)
-        .ok_or(ProgramError::InvalidInstructionData)?;
+        .ok_or(HeartrotError::SeatOutOfRange)?;
 
     // The entire security perimeter, not one layer of it: this signer must be the
     // session key stored on the seat being fired from.
     assert_session_authority(slot, authority)?;
 
-    // Dead players and lobby players have nothing to shoot with or at.
-    if slot.hp == 0 || slot.zone != ZONE_ARENA {
-        return Err(ProgramError::InvalidArgument);
+    // Dead players and lobby players have nothing to shoot with or at. Two separate
+    // rules, so two separate codes: "you are dead, wait for respawn" and "you are still
+    // in the lobby" are opposite instructions to the player holding the fire key.
+    if slot.hp == 0 {
+        return Err(HeartrotError::PlayerDead.into());
+    }
+    if slot.zone != ZONE_ARENA {
+        return Err(HeartrotError::WrongZone.into());
     }
 
     // Rate limit, in ticks. `saturating_add` rather than `+`: a `last_shot_tick`
     // close to u32::MAX must fail the comparison, not wrap into "ready".
     if arena.tick <= slot.last_shot_tick.saturating_add(SHOT_COOLDOWN_TICKS) {
-        return Err(ProgramError::InvalidArgument);
+        return Err(HeartrotError::RateLimited.into());
     }
     slot.last_shot_tick = arena.tick;
 
@@ -340,6 +322,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::N_PARTS;
     use bytemuck::Zeroable;
 
     const EAST: u8 = 2;
@@ -356,33 +339,47 @@ mod tests {
         boss
     }
 
+    /// The boss spawns at the centre of the heart chamber, tile (32, 32), which is
+    /// where `tick.rs` puts it and what the map generator asserts.
+    const BOSS_XY: i16 = 32 * 16;
+
     /// The whole attack is this function: if it picks the wrong box, or keeps a
     /// destroyed part solid, or walks through a wall, the game is wrong in a way no
     /// account check would catch.
+    ///
+    /// The expected indices below are read off the *generated* table, so if the art
+    /// moves and the table is regenerated this test is supposed to be re-derived with
+    /// it. It is here to prove the ray consults that table in order, not to pin the
+    /// coordinates a second time.
     #[test]
     fn ray_takes_the_first_intact_box() {
-        let mut boss = boss_at(512, 512);
+        let mut boss = boss_at(BOSS_XY, BOSS_XY);
 
-        // Level with the boss centre, 200 units west: the thorn cluster at local
-        // x −88..−56 is the first box the ray enters.
-        assert_eq!(raycast(312, 512, EAST, &boss), Some(Hit::Part(3)));
+        // Level with the boss centre, twelve tiles west along the open row the west
+        // corridor opens onto. Part 7 spans local x −114..−3 at this height, so it is
+        // the first box the ray enters.
+        assert_eq!(raycast(320, BOSS_XY, EAST, &boss), Some(Hit::Part(7)));
 
-        // Strip that thorn and the same shot reaches the vent behind it.
-        boss.parts[3] = 0;
-        assert_eq!(raycast(312, 512, EAST, &boss), Some(Hit::Core));
+        // Strip it and the same shot reaches the vent behind it.
+        boss.parts[7] = 0;
+        assert_eq!(raycast(320, BOSS_XY, EAST, &boss), Some(Hit::Core));
 
-        // Fired away from the boss: nothing in 20 tiles.
-        assert_eq!(raycast(312, 512, WEST, &boss), None);
+        // Fired away from the boss: nothing but floor, then the west edge.
+        assert_eq!(raycast(320, BOSS_XY, WEST, &boss), None);
     }
 
     #[test]
-    fn walls_and_range_stop_the_ray() {
-        // A ray that would leave the arena stops at the boundary rather than
-        // sampling negative space.
-        let corner_boss = boss_at(100, 100);
-        assert_eq!(raycast(10, 100, WEST, &corner_boss), None);
+    fn walls_stop_the_ray() {
+        // Off the map is solid, so a ray that would leave the arena stops at the edge
+        // rather than sampling negative space.
+        assert_eq!(raycast(10, BOSS_XY, WEST, &boss_at(BOSS_XY, BOSS_XY)), None);
 
-        // Out of reach: rejected before a single step is walked.
-        assert_eq!(raycast(20, 20, EAST, &boss_at(512, 512)), None);
+        // Cover, which is the point of raycasting the map at all. Row y = 28 is a hall
+        // row with the chamber's outer rock at tiles 15..23; from tile 10 the geometry
+        // would otherwise reach a part, and the wall eats the shot instead.
+        let boss = boss_at(BOSS_XY, BOSS_XY);
+        assert!(!is_wall(10 * 16, 28 * 16));
+        assert!(is_wall(15 * 16, 28 * 16));
+        assert_eq!(raycast(10 * 16, 28 * 16, EAST, &boss), None);
     }
 }

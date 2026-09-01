@@ -27,20 +27,22 @@
  * contract went out of its way to remove.
  */
 
-import type { Bullet, PlayerSlot } from '@heartrot/client';
+import { MAP_MAX_XY, MAP_TILE, isWall, type Bullet, type PlayerSlot } from '@heartrot/client';
 
 // ---------------------------------------------------------------------------
-// Map geometry — mirrors `handlers/player.rs`
+// Map geometry — the generated table, not a copy of it
 // ---------------------------------------------------------------------------
 
-/** Arena-space units per map tile. */
-export const TILE = 16;
+/**
+ * `MAP_TILE`, `MAP_MAX_XY` and `isWall` all come from `@heartrot/client`'s `map` module,
+ * which `tools/gen_map.py` emits from `assets/map/arena.json` in the same pass that emits
+ * the chain's `programs/heartrot/src/map.rs`. A hand-mirrored wall test here would put the
+ * dungeon in two places again, and one disagreeing tile is a permanent snap-back that
+ * reads as lag rather than as a map bug.
+ */
+export const TILE = MAP_TILE;
 
-/** 64×64 tiles per zone, one `u64` of wall bits per row on the chain side. */
-export const MAP_TILES = 64;
-
-/** Highest legal coordinate. The chain clamps every write into `0..=MAP_MAX_XY`. */
-export const MAP_MAX_XY = MAP_TILES * TILE - 1;
+export { MAP_MAX_XY };
 
 /** Crank period. A *target*, not a contract — never derive game state from wall clock. */
 export const TICK_MS = 400;
@@ -75,20 +77,6 @@ export interface Point {
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-/**
- * ponytail: mirrors the bare border ring that `handlers/player.rs` currently hardcodes.
- * When the tilemap build step emits the real wall table, both sides must load the same
- * emitted data — a client that disagrees with the chain about one tile produces a
- * permanent snap-back on that tile and looks like lag, not like a map bug.
- */
-function isWall(x: number, y: number): boolean {
-  if (x < 0 || y < 0) return true;
-  const tx = Math.floor(x / TILE);
-  const ty = Math.floor(y / TILE);
-  if (tx >= MAP_TILES || ty >= MAP_TILES) return true;
-  return tx === 0 || ty === 0 || tx === MAP_TILES - 1 || ty === MAP_TILES - 1;
 }
 
 /**
@@ -284,8 +272,15 @@ if (import.meta.env.DEV) {
     if (!cond) throw new Error(`predict self-check: ${what}`);
   };
 
+  // Tile row 4 is open floor for its whole width in the generated dungeon, so these steps
+  // exercise reconciliation rather than the map. Tile column 0 is the outer wall.
+  const FREE_Y = 4 * TILE;
   const slot = (over: Partial<PlayerSlot>): PlayerSlot =>
-    ({ x: 320, y: 320, facing: 0, hp: 100, lastMoveSeq: 0, ...over }) as unknown as PlayerSlot;
+    ({ x: 320, y: FREE_Y, facing: 0, hp: 100, lastMoveSeq: 0, ...over }) as unknown as PlayerSlot;
+
+  // The generated wall table is really the one being consulted — a stale or missing build
+  // of `packages/client/src/map.ts` would otherwise show up only as in-game rubber-banding.
+  ok(isWall(0, 0) && !isWall(320, FREE_Y), 'generated wall map is loaded');
 
   // Wrap-space acks: the u16 rollover must not read as "nothing acknowledged".
   ok(isAcked(5, 5) && isAcked(5, 4) && !isAcked(4, 5), 'ack ordering');
@@ -306,7 +301,7 @@ if (import.meta.env.DEV) {
 
   // The chain rejects a wall move and leaves facing alone; so must the prediction.
   const edge = createPredictor();
-  edge.reconcile(slot({ x: TILE, y: 320, facing: 4 }), 0);
+  edge.reconcile(slot({ x: TILE, facing: 4 }), 0);
   ok(edge.push(6, 0) === null && edge.self.facing === 4, 'wall move is not predicted');
 
   // Dead players do not move, and bullets land on integers at whole ticks.

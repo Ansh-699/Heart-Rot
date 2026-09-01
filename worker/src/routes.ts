@@ -79,6 +79,25 @@ const DELEGATE_CU = 600_000;
 const BASE_CONFIRM_MS = 30_000;
 const ER_CONFIRM_MS = 15_000;
 
+/**
+ * How long `Arena.tick` must provably stand still before `/api/match/settle` will end a
+ * match the program still calls `Fighting`.
+ *
+ * `settle.rs` describes the crank interval as "a floor, not a guarantee — the scheduler
+ * re-queues at `last_execution + interval`, so ticks drift under load rather than
+ * catching up". Seconds of silence are therefore an ordinary hiccup, and settling is
+ * irreversible: there is no instruction that returns a settled arena to the ER. So the
+ * bar here is the same one the browser's own watchdog uses before it calls this route at
+ * all — `TICK_STALL_HARD_MS` in app/src/net/subscribe.ts. That number lives on both
+ * sides of a boundary the worker cannot import across; what must hold is the inequality,
+ * not the equality: this may never be *shorter* than the client's watchdog, or the
+ * client asks for a settle the Worker considers unproven and the match cannot end.
+ */
+const STALL_PROOF_MS = 45_000;
+
+/** A healthy crank moves `tick` every 400 ms, so one sample is enough to spare the rest. */
+const STALL_SAMPLE_MS = 5_000;
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -517,12 +536,17 @@ export async function matchStart(env: Env, body: unknown): Promise<Response> {
  * either the program already moved the match out of `Fighting`, or `tick` has provably
  * stopped advancing. Trusting a client-supplied reason would let one player end a raid
  * for nineteen others.
+ *
+ * `arenaId` is client-supplied and names any arena on the chain, so being logged in is
+ * not enough on its own either: the caller must hold a seat in the match they are asking
+ * to end.
  */
 export async function matchSettle(env: Env, body: unknown): Promise<Response> {
   const token = field(body, 'privyToken');
   const arenaId = arenaIdField(body);
 
-  await verifyPrivyToken(token, env.PRIVY_APP_ID);
+  const did = await verifyPrivyToken(token, env.PRIVY_APP_ID);
+  const identity = await identityFromDid(did);
 
   const c = await context(env);
   const pdas = await matchPdas(c.programId, arenaId);
@@ -530,6 +554,20 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
   const { state, erFqdn } = await readArena(c, pdas.arena);
   if (!state) return json({ error: 'no_such_match' }, 404);
   const incarnation = state.incarnation;
+
+  // Membership, from the same layer the arena was read from — the three accounts are
+  // delegated and committed as one instruction, so they are never on opposite sides.
+  // Everyone who reaches this route legitimately got here by holding a seat; a caller
+  // who does not hold one is naming somebody else's match.
+  const rosterBytes = await accountData(
+    erFqdn === undefined ? c.base : createRpc(erFqdn),
+    pdas.players,
+  );
+  if (!rosterBytes) return json({ error: 'no_such_match' }, 404);
+  const seated = decodePlayers(rosterBytes).slots.some(
+    (slot) => slot.occupied && slot.identity.every((byte, i) => byte === identity[i]),
+  );
+  if (!seated) return json({ error: 'not_in_match' }, 403);
 
   // An arena sitting in the lobby on the base layer was never delegated and has nothing
   // to commit. Settling it would write a leaderboard row of twenty empty seats and burn
@@ -543,14 +581,19 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
 
     if (state.phase === PHASE_FIGHTING) {
       // The chain still thinks this match is live, so the only legitimate reason to be
-      // here is a dead crank. Sample the clock twice: `tick` advancing is the entire
-      // liveness signal that exists, and a settle that races a healthy crank would end
-      // a fight everyone else is still in.
-      await sleep(1_500);
-      const again = await accountData(er, pdas.arena);
-      if (!again) throw new Error('arena vanished mid-settle');
-      const now = decodeArena(again);
-      if (now.tick !== state.tick) return json({ error: 'match_live', tick: now.tick }, 409);
+      // here is a dead crank, and `tick` advancing is the entire liveness signal that
+      // exists. Watch it for the full `STALL_PROOF_MS`: a settle that races a crank that
+      // was merely drifting ends a fight nineteen other people are still in, and cannot
+      // be undone. A crank that is alive moves `tick` inside the first sample, so a live
+      // match is refused in ~5 s and only a genuinely dead one pays the whole window.
+      const deadline = Date.now() + STALL_PROOF_MS;
+      do {
+        await sleep(STALL_SAMPLE_MS);
+        const again = await accountData(er, pdas.arena);
+        if (!again) throw new Error('arena vanished mid-settle');
+        const now = decodeArena(again);
+        if (now.tick !== state.tick) return json({ error: 'match_live', tick: now.tick }, 409);
+      } while (Date.now() < deadline);
     }
 
     // `settle` cancels the crank before committing — a task still armed when the

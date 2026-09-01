@@ -11,9 +11,9 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
-import type { BossAccount } from '@heartrot/client';
+import { BOSS_ANCHOR_X, BOSS_ANCHOR_Y, CORE, type BossAccount } from '@heartrot/client';
 
-import { BOSS_ANCHOR_X, BOSS_ANCHOR_Y, BOSS_CORE_BOX, BOSS_PARTS } from './sprites';
+import { BOSS_PARTS } from './sprites';
 
 export interface RigProps {
   boss: BossAccount;
@@ -21,6 +21,17 @@ export interface RigProps {
 
 /** Must match the `@keyframes` name in `animations.css`. */
 const DETACH_ANIMATION = 'hr-part-detach';
+
+/**
+ * The vent, in the sprite space this group's children are drawn in: the generated `CORE`
+ * is boss-local, and the two spaces differ by the anchor. Drawing the glow as the exact
+ * circle `shoot.rs` tests means the lit area is the area that takes core damage.
+ */
+const VENT = {
+  cx: CORE.x - BOSS_ANCHOR_X,
+  cy: CORE.y - BOSS_ANCHOR_Y,
+  r: Math.sqrt(CORE.radiusSq),
+};
 
 export function Rig({ boss }: RigProps) {
   // A part that has finished its detach animation stops being drawn at all. Kept as state
@@ -58,14 +69,7 @@ export function Rig({ boss }: RigProps) {
           // itself would fight the destroyed/hurt states it already carries.
           return (
             <g key={part.name}>
-              <rect
-                className="hr-vent"
-                x={BOSS_CORE_BOX.x}
-                y={BOSS_CORE_BOX.y}
-                width={BOSS_CORE_BOX.w}
-                height={BOSS_CORE_BOX.h}
-                fill="#b5b56a"
-              />
+              <circle className="hr-vent" cx={VENT.cx} cy={VENT.cy} r={VENT.r} fill="#b5b56a" />
               <g
                 className="hr-part hr-p-core"
                 style={{ transformOrigin: `${part.originX}px ${part.originY}px` }}

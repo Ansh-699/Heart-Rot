@@ -109,6 +109,9 @@ export default function App() {
   const store = useStore();
 
   const link = useMatchLink();
+  // Not inside `World`: the gate is what gets you *out* of the lobby, and it must keep
+  // running on a screen whose stage node the renderer has not attached to yet.
+  useGateEntry(link);
 
   // The chain decides a match is over; somebody has to tell the base layer. `settle()`
   // is self-debouncing, so all twenty clients seeing this notification is fine.
@@ -292,17 +295,6 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
       });
     };
 
-    let lastGateAt = Number.NEGATIVE_INFINITY;
-    const maybeEnterGate = (): void => {
-      const slot = mySeatSlot(store.getState());
-      if (!slot || slot.zone !== ZONE_LOBBY) return;
-      if (!onGate(predictor.self.x, predictor.self.y)) return;
-      const now = performance.now();
-      if (now - lastGateAt < GATE_RETRY_MS) return;
-      lastGateAt = now;
-      send(enterGate({ ...common, session, seat: match.seat }));
-    };
-
     return attachControls({
       surface: host,
       // Read live rather than captured: the gates mirror `arena.tick`, and a stale clock
@@ -331,13 +323,66 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         const seq = predictor.push(dir);
         if (seq === null) return;
         send(movePlayer({ ...common, session, seat: match.seat, dir, seq }));
-        maybeEnterGate();
       },
       onShoot: (dir) => {
         send(shoot({ ...common, boss: match.boss, session, seat: match.seat, dir }));
       },
     });
   }, [host, link, store]);
+}
+
+/**
+ * Walking onto the gate is what starts the raid, so the check has to run off the
+ * **chain's** copy of the player and not off an input callback.
+ *
+ * The old version fired inside `onMove`, one line after the `movePlayer` that put the
+ * player on the tile: under `skipPreflight` the chain still had them off the gate, the
+ * `enter_gate` was rejected invisibly, and a player who then stopped pressing keys
+ * produced no further `onMove` — no retry, stuck in the lobby for the life of the match.
+ *
+ * So: poll the authoritative slot. `mySeatSlot` is whatever the last `Players`
+ * notification wrote, which is exactly the state the handler will check, and standing
+ * still keeps satisfying it. The loop stops itself the moment `zone` flips out of
+ * `ZONE_LOBBY` — the same one-way condition the handler enforces — and `inFlight` keeps
+ * a slow send from being sent twice.
+ */
+function useGateEntry(link: Link): void {
+  const store = useStore();
+
+  useEffect(() => {
+    if (link === null) return;
+    const { er, signer, match } = link;
+    let inFlight = false;
+
+    const timer = setInterval(() => {
+      if (inFlight) return;
+      const slot = mySeatSlot(store.getState());
+      if (!slot || slot.zone !== ZONE_LOBBY) return;
+      if (!onGate(slot.x, slot.y)) return;
+      inFlight = true;
+      void sendInstructions(er, signer, [
+        enterGate({
+          programId: match.programId,
+          arena: match.arena,
+          players: match.players,
+          session: signer.address,
+          seat: match.seat,
+        }),
+      ])
+        .catch((error: unknown) => {
+          // Same reasoning as the gameplay path: a dropped send is retried on the next
+          // period, and holding `error` here would hide the world feed behind it.
+          console.error('heartrot: enter_gate send failed', error);
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    }, GATE_RETRY_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [link, store]);
 }
 
 // ---------------------------------------------------------------------------

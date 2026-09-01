@@ -5,13 +5,24 @@
 //! — against this handler, `iterations` times, and three properties of that arrangement
 //! shape every line below:
 //!
-//! 1. **It must never return `Err`.** Ten consecutive failures move the task to
-//!    `failed_tasks` and it never ticks again — ~26 s into a six-minute match, with no
-//!    RPC to ask whether it is still alive. So every rejection here is `return Ok(())`,
-//!    there is no `?` on anything that can fail, no `unwrap`, no unchecked index, and no
-//!    arithmetic that can overflow-panic under `overflow-checks = true`. A no-op tick
-//!    still surfaces: `Arena.tick` stops advancing and the client's 45 s watchdog
-//!    settles the match. A dead task surfaces as nothing at all.
+//! 1. **The crank's own path must never return `Err`.** Ten consecutive failures move
+//!    the task to `failed_tasks` and it never ticks again — ~26 s into a six-minute
+//!    match, with no RPC to ask whether it is still alive. So every rejection the crank
+//!    can actually reach is `return Ok(())`, there is no `?` on anything that can fail,
+//!    no `unwrap`, no unchecked index, and no arithmetic that can overflow-panic under
+//!    `overflow-checks = true`. A no-op tick still surfaces: `Arena.tick` stops
+//!    advancing and the client's 45 s watchdog settles the match. A dead task surfaces
+//!    as nothing at all.
+//!
+//!    The **one** exception is the crank-signer check, which returns
+//!    [`HeartrotError::NotCrankSigner`]. That path is unreachable for the crank by
+//!    construction: `Arena.crank_authority` is written once by `init_arena` and by
+//!    nothing afterwards, and `settle::start_match` freezes into the crank row the
+//!    signer PDA derived from that same field — so the value this handler re-derives
+//!    against cannot have moved. The only sender who can fail it is someone hand-building
+//!    a `boss_tick`, and answering that with `Ok(())` is exactly the H5 complaint: a
+//!    forged tick and a real one become indistinguishable to everything watching. A
+//!    rejection the crank cannot reach spends none of its ten strikes.
 //! 2. **It cannot re-arm itself and cannot draw randomness.** `ScheduleTask` needs a
 //!    writable signer and a crank instruction may carry none, which also rules out the
 //!    VRF request (its `payer` is a writable signer). Iterations are scheduled for the
@@ -31,6 +42,7 @@
 
 use pinocchio::{AccountView, Address, ProgramResult};
 
+use crate::error::HeartrotError;
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
 // The crank identity, imported rather than re-declared. `settle::start_match` derives the
 // signer it freezes into the crank row from these two values and this handler re-derives
@@ -39,6 +51,12 @@ use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable}
 // compile. A drift is invisible in production — the task fails every tick, burns its ten
 // retries and is deleted ~26 s into the match while every path here still returns `Ok(())`.
 use crate::handlers::settle::{CRANK_PROGRAM_ID, CRANK_SIGNER_SEED};
+// The boss's geometry, generated from `assets/sprites/hitboxes.json` by
+// `tools/gen_hitboxes.py` alongside the TypeScript the renderer draws with. `shoot.rs`
+// raycasts against this same table in this same frame, so importing it is what makes the
+// thorn a bullet leaves and the thorn a player shoots off one object.
+use crate::hitboxes::PART_HITBOXES;
+use crate::map;
 use crate::state::{
     load_mut, Arena, Boss, Players, BULLET_ACTIVE, BULLET_FREE, MAX_BULLETS, MAX_SEATS, NO_TARGET,
     N_PARTS, PHASE_FIGHTING, PHASE_SETTLING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
@@ -54,14 +72,34 @@ use crate::state::{
 ///
 /// ponytail: duplicated rather than shared because no `constants.rs` exists yet and
 /// `shoot.rs`'s copy is private to that module. Upgrade path: one `arena.rs` holding
-/// `TILE`, `ARENA_SIZE`, the facing table and `PART_HITBOXES`, imported by both. The
-/// numbers must not drift in the meantime — a bullet pool that wraps at a different
-/// boundary than the raycast walks is a desync no test in either module would see.
+/// `TILE`, `ARENA_SIZE` and the facing table, imported by both (the hitboxes already
+/// live in one place — `crate::hitboxes`). The numbers must not drift in the meantime —
+/// a bullet pool that wraps at a different boundary than the raycast walks is a desync
+/// no test in either module would see.
 const TILE: i32 = 16;
 const ARENA_SIZE: i32 = 64 * TILE;
 
-/// Where a respawning player is put back. Bottom-centre of the arena, on the entrance
-/// side, so a wipe-and-respawn does not drop anyone on top of the boss.
+// These two are literals on purpose: `tools/gen_map.py` reads them back out of this
+// file by regex and evaluates them, so it can validate `assets/map/arena.json` against
+// the grid the simulation actually uses. Writing them as `map::TILE as i32` would leave
+// the generator unable to parse its own inputs. The asserts are the other half of that
+// contract — a redrawn map with a different tile size or edge length fails this build
+// rather than putting bullets and players on two different grids.
+const _: () = assert!(TILE == map::TILE as i32);
+const _: () = assert!(ARENA_SIZE == (map::MAP_TILES as i32) * TILE);
+
+/// Where a respawning player is put back: the mouth of the south corridor approach, on
+/// the entrance side of the map, so a wipe-and-respawn does not drop anyone on top of
+/// the boss.
+///
+/// Still a pair of constants rather than a lookup into `crate::map`, because the
+/// generated table is a *wall bitboard* — the grid's four `E` tiles are floor bits like
+/// any other and survive the compile as nothing. What does survive is the assertion
+/// under [`entrance_for`]: every one of the twenty respawn points is proved to be floor
+/// in `map::WALLS` at compile time, and `gen_map.py` independently proves the same
+/// points can reach the heart chamber. So the pair cannot silently disagree with the
+/// map the way it did before — but it is not yet *derived* from it. See the note on
+/// [`entrance_for`].
 const ENTRANCE_X: i32 = ARENA_SIZE / 2;
 const ENTRANCE_Y: i32 = ARENA_SIZE - 6 * TILE;
 
@@ -69,6 +107,37 @@ const ENTRANCE_Y: i32 = ARENA_SIZE - 6 * TILE;
 /// visible knights rather than one. `(seat − 10) × 24` spans 272..728, well inside the
 /// arena, so the clamp below is a belt not a brace.
 const ENTRANCE_SPACING: i32 = 24;
+
+// ---------------------------------------------------------------------------
+// Walls
+// ---------------------------------------------------------------------------
+
+/// Is the tile containing `(x, y)` solid?
+///
+/// One shift and one mask against the generated bitboard — no loop, no raycast, no
+/// account. Off-map is solid, which is what lets this *replace* the arena-bounds test
+/// the bullet loop used to do: `wall_at` answers `false` only for `0..ARENA_SIZE` on
+/// both axes, so a point that clears it is known to fit back into `i16`.
+///
+/// Byte-for-byte the same decision as `handlers::player::is_wall` and
+/// `packages/client/src/map.ts`'s `isWall`: negatives are wall *before* the divide, so
+/// truncation direction can never matter.
+///
+/// `const` because the respawn assertion below runs it at compile time on all twenty
+/// seats. One function, both uses — a second copy of this test is precisely the kind of
+/// duplicate that drifts.
+#[inline]
+const fn wall_at(x: i32, y: i32) -> bool {
+    if x < 0 || y < 0 {
+        return true;
+    }
+    let tx = (x / TILE) as usize;
+    let ty = (y / TILE) as usize;
+    if tx >= map::MAP_TILES || ty >= map::MAP_TILES {
+        return true;
+    }
+    map::WALLS[ty] & (1u64 << tx) != 0
+}
 
 // ---------------------------------------------------------------------------
 // Balance knobs
@@ -118,21 +187,37 @@ const VENT_THRESHOLD_DEN: u32 = 100;
 // Emitters
 // ---------------------------------------------------------------------------
 
-/// `Boss.parts` indices of the four thorn clusters, index-aligned with the hitbox table
-/// in `shoot.rs` (crown, wolf_l, beast_r, thorn0..3, mace, claws).
+/// `Boss.parts` indices of the four thorn clusters, index-aligned with
+/// [`PART_HITBOXES`] (crown, wolf_l, beast_r, thorn0..3, mace, claws) — the generator
+/// emits that order straight from the slicer's `part_index`.
 const THORN_PART_FIRST: usize = 3;
 const N_THORN_EMITTERS: usize = 4;
 
-/// Muzzle offsets from `Boss.x`/`Boss.y`, in arena units — the centres of
-/// `PART_HITBOXES[3..7]` in `shoot.rs`. Bullets leave the thorn the player can see and
-/// shoot off, which is what makes "strip the thorns and the volleys stop" readable
-/// counterplay rather than a hidden rule.
-const THORN_MUZZLE: [(i32, i32); N_THORN_EMITTERS] = [
-    (-72, 0),  // thorn0
-    (72, 0),   // thorn1
-    (-72, 64), // thorn2
-    (72, 64),  // thorn3
-];
+/// Muzzle offsets from `Boss.x`/`Boss.y`, in arena units: the centre of each thorn's
+/// box in the generated table. Bullets leave the thorn the player can see and shoot off,
+/// which is what makes "strip the thorns and the volleys stop" readable counterplay
+/// rather than a hidden rule.
+///
+/// *Computed* from [`PART_HITBOXES`], not restated from it. The four pairs used to be
+/// hand-written here and had drifted onto the deleted fictional lattice — two of the
+/// four muzzles sat inside the mace and the claws, so the boss fired out of limbs while
+/// the thorns were silent, and only the `boss.parts[3 + i]` gate below (an *index*, not
+/// a position) kept the counterplay looking like it worked. Written as a const block
+/// there is nothing left to hand-edit: move a thorn in the art, re-run
+/// `tools/gen_hitboxes.py`, and the muzzles move with it at compile time.
+const THORN_MUZZLE: [(i32, i32); N_THORN_EMITTERS] = {
+    let mut muzzle = [(0i32, 0i32); N_THORN_EMITTERS];
+    let mut i = 0;
+    while i < N_THORN_EMITTERS {
+        // `w`/`h` are positive by construction — the generator refuses to emit a box
+        // thinner than one tile — so the halving needs no sign handling and the centre
+        // is always inside the box it names.
+        let rect = PART_HITBOXES[THORN_PART_FIRST + i];
+        muzzle[i] = (rect.x + rect.w / 2, rect.y + rect.h / 2);
+        i += 1;
+    }
+    muzzle
+};
 
 const _: () = {
     // `dx`/`dy` are i8. A speed that does not fit truncates silently into a bullet
@@ -142,6 +227,22 @@ const _: () = {
     assert!(BASE_VOLLEY_BULLETS + MAX_SEATS <= MAX_BULLETS);
     assert!(THORN_PART_FIRST + N_THORN_EMITTERS <= N_PARTS);
     assert!(PLAYER_HIT_RADIUS > 0);
+
+    // Every muzzle stands in the thorn it fires from. This is the defect that shipped:
+    // the old hand-written offsets put two of the four inside the mace and the claws,
+    // and nothing in the program disagreed. Re-slicing the art can only move a muzzle
+    // *with* its box, so this holds by construction — it fires only if someone puts the
+    // offsets back under hand control.
+    let mut i = 0;
+    while i < N_THORN_EMITTERS {
+        let (x, y) = THORN_MUZZLE[i];
+        assert!(
+            PART_HITBOXES[THORN_PART_FIRST + i].contains(x, y),
+            "a thorn muzzle is outside its own hitbox -- THORN_MUZZLE must stay derived \
+             from crate::hitboxes, never hand-written",
+        );
+        i += 1;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -317,9 +418,27 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         let from = (bullet.x as i32, bullet.y as i32);
         let to = (from.0 + bullet.dx as i32, from.1 + bullet.dy as i32);
 
-        // Walls. i16 + i8 cannot overflow in i32, so the bounds test is the only
-        // check needed before narrowing back.
-        if to.0 < 0 || to.0 >= ARENA_SIZE || to.1 < 0 || to.1 >= ARENA_SIZE {
+        // Walls. i16 + i8 cannot overflow in i32, so `to` is a valid probe already;
+        // `wall_at` folds the old arena-bounds test into the same lookup because
+        // off-map is solid, and clearing it is what proves the narrowing casts below.
+        //
+        // This is what makes the dungeon tactical instead of decorative: a volley fired
+        // down a 2-tile corridor dies on the corridor wall, so holding a corridor is a
+        // real position and standing in an open hall is not.
+        //
+        // Two point samples, not one: a bullet covers BULLET_SPEED = 48 units per tick
+        // and the map's thinnest solid feature is a 2×2 pillar, 32 units through, so an
+        // endpoint-only test would let a volley pass clean through the pillar a player
+        // is hiding behind. Samples 24 units apart cannot skip a 32-unit obstacle. Same
+        // tunnelling argument `bullet_hits` makes for players, same symptom if it is
+        // skipped — cover that does not cover.
+        //
+        // ponytail: two lookups, not a DDA walk of the swept segment. A solid feature
+        // thinner than 24 units would still be jumped; `assets/map/arena.json` contains
+        // none and would have to grow one before it could matter. Upgrade path if it
+        // does: step the segment tile by tile, at ~3 lookups per bullet instead of 2.
+        let mid = ((from.0 + to.0) / 2, (from.1 + to.1) / 2);
+        if wall_at(mid.0, mid.1) || wall_at(to.0, to.1) {
             bullet.active = BULLET_FREE;
             continue;
         }
@@ -444,12 +563,52 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
 /// `pub(crate)` for `enter_gate`, which has to put a player through the gate at the same
 /// place a respawn puts them. Two definitions of "the entrance" is exactly the kind of
 /// duplication that drifts and then reads as a teleport bug.
-pub(crate) fn entrance_for(seat: usize) -> (i16, i16) {
-    let offset = (seat as i32 - MAX_SEATS as i32 / 2) * ENTRANCE_SPACING;
-    let x = (ENTRANCE_X + offset).clamp(0, ARENA_SIZE - 1);
-    let y = ENTRANCE_Y.clamp(0, ARENA_SIZE - 1);
+///
+/// `const fn` so the assertion below can run it on every seat at compile time. That
+/// assertion is the whole point: before the map was generated these coordinates were a
+/// free-floating pair that nothing checked, and the arena entrance the respawn used and
+/// the arena the map drew had stopped being the same place.
+pub(crate) const fn entrance_for(seat: usize) -> (i16, i16) {
+    let offset = (seat as i32)
+        .saturating_sub(MAX_SEATS as i32 / 2)
+        .saturating_mul(ENTRANCE_SPACING);
+    let x = clamp_arena(ENTRANCE_X.saturating_add(offset));
+    let y = clamp_arena(ENTRANCE_Y);
     (x as i16, y as i16)
 }
+
+/// `i32::clamp` is not `const`; this is, and it is the only clamp in the file.
+#[inline]
+const fn clamp_arena(v: i32) -> i32 {
+    if v < 0 {
+        0
+    } else if v > ARENA_SIZE - 1 {
+        ARENA_SIZE - 1
+    } else {
+        v
+    }
+}
+
+/// Every respawn point stands on floor in the generated map.
+///
+/// `tools/gen_map.py` already reads `ENTRANCE_X`/`_Y`/`_SPACING` back out of this file
+/// and refuses to emit a map that walls one of these tiles in or seals it off from the
+/// heart chamber — but that check only fires when someone runs the tool. This one fires
+/// on every `cargo check`, against the table that actually shipped. A respawn inside a
+/// wall is a player who cannot move in any direction for the rest of the match, and
+/// there is no runtime signal for it at all: they simply stop.
+const _: () = {
+    let mut seat = 0;
+    while seat < MAX_SEATS {
+        let (x, y) = entrance_for(seat);
+        assert!(
+            !wall_at(x as i32, y as i32),
+            "a respawn point lands in a wall in map::WALLS -- redraw assets/map/arena.json \
+             or move ENTRANCE_X/ENTRANCE_Y, then re-run tools/gen_map.py",
+        );
+        seat += 1;
+    }
+};
 
 /// Claim up to `3 + alive` free pool slots and fire them at `target` from whichever
 /// thorn clusters are still standing.
@@ -549,8 +708,10 @@ fn spawn_volley(arena: &mut Arena, boss: &Boss, target: (i32, i32), tick: u32, a
 /// every tick, so a layout that breached the ceiling would be rejected on every
 /// execution and delete the task ~26 s in.
 ///
-/// No instruction data. Every rejection below is `Ok(())`, never `Err`: see the module
-/// docs for why an error here is fatal and a no-op is merely visible.
+/// No instruction data. Every rejection the crank can reach is `Ok(())` — see the module
+/// docs for why an error there is fatal and a no-op is merely visible. The crank-signer
+/// check is the single exception and returns [`HeartrotError::NotCrankSigner`]; the same
+/// docs argue why the crank cannot reach it.
 pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramResult {
     let [arena_account, boss_account, players_account, crank_signer, ..] = accounts else {
         return Ok(());
@@ -560,7 +721,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
     // the `AccountView` mutably for the life of the borrow, so the immutable
     // interrogation has to happen up front.
     if assert_signer(crank_signer).is_err() {
-        return Ok(());
+        return Err(HeartrotError::NotCrankSigner.into());
     }
     for account in [&*arena_account, &*boss_account, &*players_account] {
         if assert_owned_by(account, program_id).is_err() || assert_writable(account).is_err() {
@@ -614,14 +775,21 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
     // the `crank_authority` it comes from. `derive_program_address` costs one sha256
     // plus one curve check per bump attempt (~1.2 attempts expected), a rounding error
     // against 400 K.
+    //
+    // These two are the file's only `Err`, and they are safe for the reason the module
+    // header gives: `crank_authority` is write-once in `init_arena`, `start_match`
+    // freezes the signer derived from it into the crank row, and this re-derives from
+    // the same field — so the real crank cannot fail here and spends none of its ten
+    // strikes. A caller that *does* fail is hand-building a `boss_tick`, and it now gets
+    // `Custom(2)` instead of a success indistinguishable from a real tick.
     let Some((expected_signer, _bump)) = Address::derive_program_address::<2>(
         &[CRANK_SIGNER_SEED, arena.crank_authority.as_slice()],
         &CRANK_PROGRAM_ID,
     ) else {
-        return Ok(());
+        return Err(HeartrotError::NotCrankSigner.into());
     };
     if signer_key != expected_signer {
-        return Ok(());
+        return Err(HeartrotError::NotCrankSigner.into());
     }
 
     // Phase gate before any other account is even borrowed. Lobby, settling and settled
@@ -697,6 +865,37 @@ mod tests {
         assert!(!bullet_hits((100, 100), (148, 100), 124, 100 + PLAYER_HIT_RADIUS + 1));
         // Behind the segment's start is a miss, not a hit on an infinite line.
         assert!(!bullet_hits((100, 100), (148, 100), 40, 100));
+    }
+
+    /// The dungeon is only tactical if it stops bullets, and both halves of that have
+    /// to hold: a volley fired across a corridor dies on the corridor wall, and a volley
+    /// fired *along* the corridor lives. The pillar case is the one an endpoint-only
+    /// test would get wrong — a 2×2 pillar is 32 units through and a bullet steps 48.
+    #[test]
+    fn bullets_stop_at_generated_walls() {
+        let fired = |x: i16, y: i16, dx: i8, dy: i8| {
+            let (mut arena, mut boss, mut players) = fight();
+            // No thorns, so nothing else can spawn into the pool and confuse the count.
+            boss.parts = [0; N_PARTS];
+            arena.bullets[0] = Bullet { x, y, dx, dy, active: BULLET_ACTIVE, _pad0: 0 };
+            step(&mut arena, &mut boss, &mut players);
+            arena.bullets[0].active == BULLET_ACTIVE
+        };
+
+        // Across the north corridor at tile row 20: x tiles 31–32 are floor, 15–30 and
+        // 33–48 are the chamber-wall block. A bullet crossing it must die.
+        assert!(!fired(520, 328, -(BULLET_SPEED as i8), 0), "corridor wall stops a volley");
+        // Straight down the same corridor, tile rows 20 → 23, all floor. Must live.
+        assert!(fired(520, 328, 0, BULLET_SPEED as i8), "a corridor is a firing lane");
+
+        // The 2×2 pillar at tiles (2..3, 2..3) = units 32..63 on both axes. The bullet
+        // starts on floor at tile x=1 and lands on floor at tile x=4: only the midpoint
+        // sample sees the pillar at all.
+        assert!(!fired(16, 40, BULLET_SPEED as i8, 0), "a pillar is not passable");
+
+        // The border ring still frees a bullet, and does it through the same lookup that
+        // used to be a separate arena-bounds test.
+        assert!(!fired(24, 24, -(BULLET_SPEED as i8), 0), "off-map is solid");
     }
 
     /// Normalisation must never exceed `BULLET_SPEED` (the client extrapolates with the

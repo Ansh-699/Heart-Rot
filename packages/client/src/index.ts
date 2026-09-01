@@ -7,6 +7,10 @@
  * even for, `session.ts` holds the browser's WebCrypto Ed25519 seat key and `signer.ts`
  * wraps it as a transaction signer. Imported by the browser SPA and by the Cloudflare
  * Worker, so nothing in here may assume either runtime.
+ *
+ * `map.ts` and `hitboxes.ts` are GENERATED — `tools/gen_map.py` and `tools/gen_hitboxes.py`
+ * compile them, and their Rust twins, out of `assets/map/arena.json` and
+ * `assets/sprites/hitboxes.json`. Never hand-edit them; re-run the tool.
  */
 
 export * from './layout';
@@ -15,3 +19,5 @@ export * from './instructions';
 export * from './connection';
 export * from './session';
 export * from './signer';
+export * from './map';
+export * from './hitboxes';
