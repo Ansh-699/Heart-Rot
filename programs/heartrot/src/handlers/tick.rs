@@ -32,6 +32,11 @@
 //!    `[noop, ExecuteCrank]` with no `ComputeBudget` instruction, and we do not build
 //!    it, so the ceiling is `2 × 200,000` and unraisable. The loops below are therefore
 //!    fixed-bound, allocation-free, and broad-phased before any multiply.
+//! 4. **It is the arena's only clock, in every phase.** [`heartbeat`] advances
+//!    `Arena.tick` before any phase gate, so `tick` is a crank-liveness heartbeat rather
+//!    than a fight timer. [`Arena::abandon_roll`] measures the VRF timeout against it, and
+//!    a clock that only ran while `FIGHTING` would freeze in `PHASE_ROLLING` — the timeout
+//!    would never fire and a VRF outage would wedge the arena there for good.
 //!
 //! Order of operations is the spec's, with one deliberate swap noted at the respawn
 //! pass. Damage *to* the boss is not here — that is `shoot`, a player transaction.
@@ -60,7 +65,8 @@ use crate::hitboxes::{Muzzle, MUZZLES, N_MUZZLES};
 use crate::map;
 use crate::state::{
     load_mut, Arena, Boss, Players, BULLET_ACTIVE, BULLET_FREE, MAX_BULLETS, MAX_SEATS, NO_TARGET,
-    PHASE_FIGHTING, PHASE_SETTLING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
+    OUTCOME_ENRAGE, OUTCOME_UNDECIDED, OUTCOME_WIN, OUTCOME_WIPE, PHASE_FIGHTING, PHASE_ROLLING,
+    SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
@@ -287,21 +293,45 @@ struct Target {
     y: i32,
 }
 
+/// The clock, the VRF timeout, and the phase gate — everything one execution does before
+/// it is allowed to touch the boss.
+///
+/// Returns `true` when the caller should run [`step`]. Split from [`process`] rather than
+/// inlined there so the unit tests below drive the *same* sequencing the crank does; two
+/// copies of "what a tick does before the fight" is how a test comes to pass against an
+/// order the chain does not run.
+///
+/// The clock advances first, unconditionally, and that ordering is load-bearing — see
+/// point 4 of the module docs. Saturating, not wrapping: at `u32::MAX` the clock stops and
+/// the client's watchdog settles the match, where wrapping would rewind every rate limiter
+/// and every respawn deadline at once. (A match is ~900 ticks; this is a guard, not a
+/// scenario.)
+///
+/// `abandon_roll` is total and self-gating: it checks the phase and the deadline itself,
+/// so this is one call and no second copy of [`crate::state::ROLL_TIMEOUT_TICKS`].
+fn heartbeat(arena: &mut Arena) -> bool {
+    arena.tick = arena.tick.saturating_add(1);
+    if arena.phase == PHASE_ROLLING {
+        // Before the timeout this writes nothing and the arena stays in `ROLLING` waiting
+        // for the oracle; after it, the roll is abandoned back to `SETTLING` with **no
+        // seed**, which is what makes `begin_next_incarnation` refuse rather than run an
+        // incarnation whose ruleset nobody can prove was rolled.
+        arena.abandon_roll();
+        return false;
+    }
+    arena.phase == PHASE_FIGHTING
+}
+
 /// The whole game loop, as pure state transition — no accounts, no CPI, no clock.
 ///
 /// Split out from [`process`] so it can be run against plain structs in a unit test.
 /// Nothing in here can panic or return an error: it is the body of an instruction that
-/// is not allowed to fail.
+/// is not allowed to fail. `arena.tick` is already this tick's value — [`heartbeat`]
+/// advanced it — and nothing here writes it.
 fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
-    // ---- 1. the clock -----------------------------------------------------
-    //
-    // Saturating, not wrapping: at u32::MAX the clock stops and the watchdog settles
-    // the match. Wrapping would rewind every rate limiter and every respawn timer at
-    // once. (A match is ~900 ticks; this is a guard, not a scenario.)
-    arena.tick = arena.tick.saturating_add(1);
     let tick = arena.tick;
 
-    // ---- 2. respawns, and the live-target list ---------------------------
+    // ---- 1. respawns, and the live-target list ---------------------------
     //
     // Deliberate deviation from the spec's ordering, which respawns *after* collision:
     // doing it here means one pass over the 1,924-byte `Players` account instead of
@@ -345,7 +375,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         live_n += 1;
     }
 
-    // ---- 3. advance bullets, and collide ---------------------------------
+    // ---- 2. advance bullets, and collide ---------------------------------
     for index in 0..MAX_BULLETS {
         let bullet = &mut arena.bullets[index];
         if bullet.active != BULLET_ACTIVE {
@@ -408,9 +438,19 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
             let slot = &mut players.slots[target.seat as usize];
             slot.hp = slot.hp.saturating_sub(BULLET_DAMAGE);
             if slot.hp == 0 {
-                // Dead. `respawn_at_tick` is the only death state there is — aliveness
-                // is derived from `hp`, so there is no flag to fall out of sync.
+                // Dead. `respawn_at_tick` is the only death *state* there is — aliveness
+                // is derived from `hp`, so there is no flag to fall out of sync — and
+                // `deaths` is the only death *record*. Both are written on this one line
+                // for that reason: a death counted anywhere else is a second definition of
+                // "died", and the two would diverge the first time a player is killed by a
+                // path that forgets one of them. Saturating; a raid that dies 65,535 times
+                // has stopped caring about the count.
+                //
+                // It is also the only trace a wipe-heavy raid leaves: `survived` is one bit
+                // sampled at settle time, so without this a player who died nineteen times
+                // and respawned is indistinguishable from one who never took a hit.
                 slot.respawn_at_tick = tick.saturating_add(RESPAWN_TICKS);
+                slot.deaths = slot.deaths.saturating_add(1);
                 // Swap-remove from the live list: this seat can absorb no more bullets
                 // this tick, and shrinking the list shortens every remaining bullet's
                 // inner loop.
@@ -422,7 +462,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         }
     }
 
-    // ---- 4. alive count ---------------------------------------------------
+    // ---- 3. alive count ---------------------------------------------------
     //
     // Recomputed from the slots rather than decremented as players die. `shoot` and
     // `enter_gate` also touch this number; deriving it every tick means a bug in either
@@ -430,7 +470,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // `live_n <= MAX_SEATS = 20`, so the cast cannot truncate.
     arena.alive_count = live_n as u8;
 
-    // ---- 5. aggro ---------------------------------------------------------
+    // ---- 4. aggro ---------------------------------------------------------
     //
     // Nearest alive player, which is the whole targeting rule (spec §3) and is what
     // makes stepping forward pull fire off the group. No grouping feature, no threat
@@ -450,7 +490,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     }
     boss.target_seat = best_seat;
 
-    // ---- 6. the volley ----------------------------------------------------
+    // ---- 5. the volley ----------------------------------------------------
     if boss.attack_timer > 0 {
         boss.attack_timer -= 1;
     } else {
@@ -460,7 +500,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         }
     }
 
-    // ---- 7. the vent ------------------------------------------------------
+    // ---- 6. the vent ------------------------------------------------------
     //
     // Derived state, cached for the client. Recomputed from the parts every tick and
     // never set independently: the boss is a shell, and `sum(parts)` *is* its health.
@@ -471,25 +511,45 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         shell.saturating_mul(VENT_THRESHOLD_DEN) < shell_max.saturating_mul(VENT_THRESHOLD_NUM),
     );
 
-    // ---- 8. end of match --------------------------------------------------
+    // ---- 7. end of match --------------------------------------------------
     //
-    // Win: the core is dead. `shoot` sets this too, on the killing blow, so the killer
-    // sees it instantly; re-deriving it here costs one compare and covers the case
+    // The three ways a fight ends, as three *distinct* outcomes rather than one shared
+    // phase. A raid that killed the core and a raid that was wiped used to land in the
+    // same `PHASE_SETTLING` with nothing on chain telling them apart, which meant winning
+    // was not recorded anywhere and there was no win condition in the program at all.
+    //
+    // Win: the core is dead. `shoot` ends the fight too, on the killing blow, so the
+    // killer sees it instantly; re-deriving it here costs one compare and covers the case
     // where the last point of core HP was removed by a transaction that then failed to
-    // land its phase write.
+    // land its own write.
     //
     // Wipe: every player who is *in* the arena is dead. `arena_occupants > 0` is what
     // stops a match that has been armed but not yet entered from settling on tick 1 —
     // there is no grace timer and no extra field, just the distinction between "nobody
     // here" and "nobody left".
     //
-    // Enrage: the six-minute timeout. `!= 0` because an `enrage_at_tick` that was never
-    // written would otherwise settle the match on its first tick.
-    let core_dead = boss.core_hp == 0;
-    let wiped = arena_occupants > 0 && live_n == 0;
-    let enraged = arena.enrage_at_tick != 0 && tick >= arena.enrage_at_tick;
-    if core_dead || wiped || enraged {
-        arena.phase = PHASE_SETTLING;
+    // Enrage: the six-minute timeout, kept distinct from a wipe because "you ran out of
+    // time" and "you all died" are different end screens and nothing else on chain
+    // separates them. `!= 0` because an `enrage_at_tick` that was never written would
+    // otherwise end the match on its first tick.
+    //
+    // Checked in that order, and the order is the tie-break: a raid whose last player dies
+    // to the same volley that the core dies on has *won*. Below that, `end_fight` is
+    // idempotent and total — it writes phase and outcome together, refuses to overwrite an
+    // outcome already recorded, and returns `false` rather than `Err`, which is the only
+    // shape a crank can use. So when `shoot` recorded the win 200 ms ago this call changes
+    // nothing, and the win does not become an enrage one tick later.
+    let outcome = if boss.core_hp == 0 {
+        OUTCOME_WIN
+    } else if arena_occupants > 0 && live_n == 0 {
+        OUTCOME_WIPE
+    } else if arena.enrage_at_tick != 0 && tick >= arena.enrage_at_tick {
+        OUTCOME_ENRAGE
+    } else {
+        OUTCOME_UNDECIDED
+    };
+    if outcome != OUTCOME_UNDECIDED {
+        arena.end_fight(outcome);
     }
 }
 
@@ -755,11 +815,13 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
         return Err(HeartrotError::NotCrankSigner.into());
     }
 
-    // Phase gate before any other account is even borrowed. Lobby, settling and settled
-    // are all no-ops, and the crank keeps firing harmlessly through them — cancelling
+    // The clock, the VRF timeout and the phase gate, before any other account is even
+    // borrowed: outside `FIGHTING` this handler touches nothing but `Arena`, so `Boss` and
+    // `Players` are never mapped on an idle tick. Lobby, settled and rolled are no-ops
+    // beyond the clock, and the crank keeps firing harmlessly through them — cancelling
     // the task is the settle path's job, from outside, because a crank cannot cancel
     // itself any more than it can re-arm itself.
-    if arena.phase != PHASE_FIGHTING {
+    if !heartbeat(arena) {
         return Ok(());
     }
 
@@ -784,8 +846,10 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
 #[cfg(test)]
 mod tests {
     use super::*;
-    // N_PARTS sizes the fixtures' part arrays; the handler itself never names it.
-    use crate::state::{Bullet, N_PARTS};
+    // `N_PARTS` sizes the fixtures' part arrays and `PHASE_SETTLING` / `ROLL_TIMEOUT_TICKS`
+    // are what the assertions read; the handler itself names none of the three — it writes
+    // phases only through the `Arena` helpers, which is the point.
+    use crate::state::{Bullet, N_PARTS, PHASE_SETTLING, ROLL_TIMEOUT_TICKS};
     use bytemuck::Zeroable;
 
     fn fight() -> (Arena, Boss, Players) {
@@ -804,6 +868,17 @@ mod tests {
         boss.attack_timer = VOLLEY_INTERVAL_TICKS;
 
         (arena, boss, Players::zeroed())
+    }
+
+    /// One crank execution, minus the accounts — exactly what [`process`] does once the
+    /// three structs are in hand. Every test drives this rather than [`step`] directly, so
+    /// the clock and the phase gate are exercised in the order the chain runs them; a test
+    /// helper that stepped the fight straight would be a second, kinder definition of
+    /// "a tick" and would pass against an order the crank does not execute.
+    fn tick_once(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
+        if heartbeat(arena) {
+            step(arena, boss, players);
+        }
     }
 
     fn seat_in_arena(players: &mut Players, seat: usize, x: i16, y: i16) {
@@ -842,7 +917,7 @@ mod tests {
             // No thorns, so nothing else can spawn into the pool and confuse the count.
             boss.parts = [0; N_PARTS];
             arena.bullets[0] = Bullet { x, y, dx, dy, active: BULLET_ACTIVE, _pad0: 0 };
-            step(&mut arena, &mut boss, &mut players);
+            tick_once(&mut arena, &mut boss, &mut players);
             arena.bullets[0].active == BULLET_ACTIVE
         };
 
@@ -888,14 +963,19 @@ mod tests {
         let (mut arena, mut boss, mut players) = fight();
 
         // Nobody in the arena: the boss ticks, but an empty arena is not a wipe.
-        step(&mut arena, &mut boss, &mut players);
+        tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.tick, 1);
         assert_eq!(arena.phase, PHASE_FIGHTING);
         assert_eq!(arena.alive_count, 0);
         assert_eq!(boss.target_seat, NO_TARGET);
 
-        // One player enters and takes a bullet aimed straight at them.
+        // Two players enter. The second one is load-bearing: a lone death *is* a wipe,
+        // and a wipe ends the match, so a respawn can only be observed in a raid that
+        // still has somebody standing. Seat 7 is parked in the far corner, out of reach
+        // of anything the boss can fire inside this test's span, and seat 3 is nearer, so
+        // it is seat 3 the boss aims at.
         seat_in_arena(&mut players, 3, 400, 512);
+        seat_in_arena(&mut players, 7, 100, 900);
         arena.bullets[0] = Bullet {
             x: 400 - BULLET_SPEED as i16,
             y: 512,
@@ -904,14 +984,14 @@ mod tests {
             active: BULLET_ACTIVE,
             _pad0: 0,
         };
-        step(&mut arena, &mut boss, &mut players);
+        tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(players.slots[3].hp, 100 - BULLET_DAMAGE);
         assert_eq!(arena.bullets[0].active, BULLET_FREE, "a spent bullet is freed");
-        assert_eq!(arena.alive_count, 1);
+        assert_eq!(arena.alive_count, 2);
         assert_eq!(boss.target_seat, 3, "nearest alive player is the aggro target");
 
-        // Kill them outright; the same tick must read as a wipe, because everyone who
-        // is in the arena is now dead.
+        // Kill seat 3 outright. One seat down is not a wipe while seat 7 is standing, so
+        // the fight carries on and the death is a respawn deadline rather than an ending.
         players.slots[3].hp = BULLET_DAMAGE;
         arena.bullets[1] = Bullet {
             x: 400 - BULLET_SPEED as i16,
@@ -922,21 +1002,39 @@ mod tests {
             _pad0: 0,
         };
         let died_on = arena.tick + 1;
-        step(&mut arena, &mut boss, &mut players);
+        tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(players.slots[3].hp, 0);
         assert_eq!(players.slots[3].respawn_at_tick, died_on + RESPAWN_TICKS);
-        assert_eq!(arena.alive_count, 0);
-        assert_eq!(arena.phase, PHASE_SETTLING, "all arena players dead is a wipe");
+        assert_eq!(arena.alive_count, 1);
+        assert_eq!(players.slots[3].deaths, 1, "a death is counted where it is stamped");
+        assert_eq!(arena.phase, PHASE_FIGHTING, "one seat down is not a wipe");
+        assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
 
-        // Rewind the phase and let the respawn timer expire: the seat comes back at
-        // full health, at the entrance.
-        arena.phase = PHASE_FIGHTING;
+        // Let the respawn deadline pass: the seat comes back at full health, at its door.
         while arena.tick < died_on + RESPAWN_TICKS {
-            step(&mut arena, &mut boss, &mut players);
+            tick_once(&mut arena, &mut boss, &mut players);
         }
         assert_eq!(players.slots[3].hp, 100);
         assert_eq!(players.slots[3].respawn_at_tick, 0);
         assert_eq!((players.slots[3].x, players.slots[3].y), entrance_for(3));
+        assert_eq!(players.slots[3].deaths, 1, "coming back is not a second death");
+
+        // Now everyone in the arena is down at the same tick. That, and only that, is a
+        // wipe — and it is a loss, distinguishable from a win forever after. (Set
+        // directly: the bullet → damage → death path is what the lines above test, and
+        // the wipe rule reads `hp`, not how it got there.)
+        players.slots[3].hp = 0;
+        players.slots[7].hp = 0;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.alive_count, 0);
+        assert_eq!(arena.phase, PHASE_SETTLING, "every arena occupant dead is a wipe");
+        assert_eq!(arena.outcome, OUTCOME_WIPE, "and a wipe is not a win");
+
+        // The crank keeps firing after the fight, and must change nothing but the clock.
+        let after = arena.tick;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.tick, after + 1, "the clock is the crank's heartbeat");
+        assert_eq!(arena.outcome, OUTCOME_WIPE, "the outcome is written once");
     }
 
     /// Volleys are the difficulty curve (`3 + alive_players`) and the counterplay
@@ -950,7 +1048,7 @@ mod tests {
 
         // Run until the attack timer fires.
         for _ in 0..=VOLLEY_INTERVAL_TICKS {
-            step(&mut arena, &mut boss, &mut players);
+            tick_once(&mut arena, &mut boss, &mut players);
         }
         let fired = arena.bullets.iter().filter(|b| b.active == BULLET_ACTIVE).count();
         assert_eq!(fired, BASE_VOLLEY_BULLETS + 4, "3 + alive_players");
@@ -967,7 +1065,7 @@ mod tests {
             boss.parts[m.part] = 0;
         }
         for _ in 0..=VOLLEY_INTERVAL_TICKS {
-            step(&mut arena, &mut boss, &mut players);
+            tick_once(&mut arena, &mut boss, &mut players);
         }
         assert!(
             arena.bullets.iter().all(|b| b.active == BULLET_FREE),
@@ -1000,38 +1098,94 @@ mod tests {
         assert_eq!(used, [MAX_SEATS / DOORS; DOORS], "every door carries seats");
     }
 
-    /// The three ways a match ends, and the one way it must not.
+    /// The three ways a match ends, and the one way it must not. Each has to reach the
+    /// same `SETTLING` phase carrying a *different* outcome — the whole point of the
+    /// second axis is that after this the end screen can still tell them apart.
     #[test]
     fn end_conditions() {
         // Win.
         let (mut arena, mut boss, mut players) = fight();
         seat_in_arena(&mut players, 0, 400, 512);
         boss.core_hp = 0;
-        step(&mut arena, &mut boss, &mut players);
+        tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.phase, PHASE_SETTLING);
+        assert_eq!(arena.outcome, OUTCOME_WIN, "a dead core is a win");
 
         // Enrage.
         let (mut arena, mut boss, mut players) = fight();
         seat_in_arena(&mut players, 0, 400, 512);
         arena.tick = 899;
-        step(&mut arena, &mut boss, &mut players);
+        tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.phase, PHASE_SETTLING);
+        assert_eq!(arena.outcome, OUTCOME_ENRAGE, "running out of time is not a wipe");
+
+        // The killing blow that also kills the last player is a win, not a wipe — the
+        // check order is the tie-break, and this is the case it decides.
+        let (mut arena, mut boss, mut players) = fight();
+        seat_in_arena(&mut players, 0, 400, 512);
+        players.slots[0].hp = 0;
+        boss.core_hp = 0;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.outcome, OUTCOME_WIN, "the raid died winning");
+
+        // `shoot` recording the win first is the true record. The crank's next execution
+        // lands on a `SETTLING` arena, so it advances the clock and touches nothing else —
+        // it must not re-score the match as the enrage its own timer would now see.
+        let (mut arena, mut boss, mut players) = fight();
+        seat_in_arena(&mut players, 0, 400, 512);
+        assert!(arena.end_fight(OUTCOME_WIN), "the killer got there first");
+        arena.tick = 899;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.outcome, OUTCOME_WIN, "the first outcome is the true one");
+        assert_eq!(arena.phase, PHASE_SETTLING);
+        assert_eq!(arena.tick, 900, "the clock runs in every phase");
 
         // An arena with `enrage_at_tick` never written must not settle on tick 1.
         let (mut arena, mut boss, mut players) = fight();
         arena.enrage_at_tick = 0;
         seat_in_arena(&mut players, 0, 400, 512);
-        step(&mut arena, &mut boss, &mut players);
+        tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.phase, PHASE_FIGHTING);
 
         // The vent is derived: strip the shell past 35 % and it opens, on its own.
         let (mut arena, mut boss, mut players) = fight();
         seat_in_arena(&mut players, 0, 400, 512);
-        step(&mut arena, &mut boss, &mut players);
+        tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(boss.vent_open, 0);
         boss.parts = [30; N_PARTS];
-        step(&mut arena, &mut boss, &mut players);
+        tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(boss.vent_open, 1);
+    }
+
+    /// The VRF timeout — and the reason the clock had to move out of [`step`].
+    ///
+    /// A roll the oracle never answers has to expire, and the only clock that can expire
+    /// it is this crank's. While `step` owned the tick counter the clock stopped the
+    /// moment the fight ended, so in `PHASE_ROLLING` the comparison `abandon_roll` makes
+    /// was frozen, the timeout never fired, and one VRF outage wedged the arena there for
+    /// the life of the account. Nothing else in the program can notice that.
+    #[test]
+    fn an_unanswered_roll_expires_on_the_cranks_clock() {
+        let (mut arena, mut boss, mut players) = fight();
+        seat_in_arena(&mut players, 0, 400, 512);
+        boss.core_hp = 0;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.outcome, OUTCOME_WIN);
+
+        arena.begin_roll().expect("a won match may roll");
+        let deadline = arena.roll_requested_tick + ROLL_TIMEOUT_TICKS;
+
+        // Up to the deadline the arena stays in `ROLLING`, waiting for the oracle.
+        while arena.tick < deadline {
+            tick_once(&mut arena, &mut boss, &mut players);
+            assert_eq!(arena.phase, PHASE_ROLLING, "abandoned before the deadline");
+        }
+
+        // One tick past it, the roll is abandoned — and no seed is invented in its place.
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.phase, PHASE_SETTLING);
+        assert_eq!(arena.next_affix_seed, [0u8; 32], "a fallback seed is not randomness");
+        assert_eq!(arena.outcome, OUTCOME_WIN, "the win survives the failed roll");
     }
 
     /// The same seed and tick must produce the same volley on the chain and in the
@@ -1045,7 +1199,7 @@ mod tests {
             let (mut arena, mut boss, mut players) = fight();
             seat_in_arena(&mut players, 5, 300, 800);
             for _ in 0..=VOLLEY_INTERVAL_TICKS {
-                step(&mut arena, &mut boss, &mut players);
+                tick_once(&mut arena, &mut boss, &mut players);
             }
             arena.bullets.map(|b| (b.x, b.y, b.dx, b.dy, b.active))
         };

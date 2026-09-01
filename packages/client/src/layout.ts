@@ -34,10 +34,48 @@ export const DISC_LEADERBOARD = 4;
 
 export const LAYOUT_VERSION = 1;
 
+/**
+ * `Arena.phase` — where the match is. **Not** how the fight ended: that is
+ * `Arena.outcome`, a separate byte, because a phase cannot carry the result past
+ * `PHASE_SETTLED` and the end screen still has to say what happened.
+ *
+ * Values 0..3 are frozen. 4 and 5 are appended, so a `switch` in the app that only knows
+ * the first four keeps compiling — but it will fall through to its default for the ~10 s
+ * of a VRF roll. The renderable beat for those two is "the heart reforms", per the design.
+ *
+ * The legal transitions live in `programs/heartrot/src/state.rs` (`PHASE_EDGES`) and in
+ * `docs/architecture/06-game-loop.md` §3. Nothing on the client enforces them; this is
+ * here so a UI can say *why* an action is unavailable rather than sending it and losing.
+ */
 export const PHASE_LOBBY = 0;
 export const PHASE_FIGHTING = 1;
+/** The fight is over and `outcome` says how; nothing is committed yet. */
 export const PHASE_SETTLING = 2;
 export const PHASE_SETTLED = 3;
+/** A VRF request for the next incarnation's seed is in flight. */
+export const PHASE_ROLLING = 4;
+/** The seed landed; the match is ready to settle. */
+export const PHASE_ROLLED = 5;
+
+/**
+ * `Arena.outcome` — how the fight ended, written once and surviving settlement.
+ * `OUTCOME_UNDECIDED` on every arena that has not finished, including every account
+ * created before this field existed (it was zero padding).
+ */
+export const OUTCOME_UNDECIDED = 0;
+/** Core HP reached 0. The only outcome that rolls a next incarnation. */
+export const OUTCOME_WIN = 1;
+/** Every seat standing in the arena was dead at the same tick. */
+export const OUTCOME_WIPE = 2;
+/** `enrage_at_tick` passed with the core alive. Scored as a loss, shown differently. */
+export const OUTCOME_ENRAGE = 3;
+
+/**
+ * Crank ticks a roll may stay in `PHASE_ROLLING` before `boss_tick` abandons it. Mirrors
+ * the Rust constant of the same name; a countdown UI must use this and not its own
+ * guess, or it declares the oracle dead while the chain is still waiting for it.
+ */
+export const ROLL_TIMEOUT_TICKS = 25;
 
 export const ZONE_LOBBY = 0;
 export const ZONE_ARENA = 1;
@@ -65,8 +103,8 @@ export const BULLET = {
 
 export const ARENA = {
   discriminator: DISC_ARENA,
-  size: 1160,
-  rentExemptLamports: 8_964_480n,
+  size: 1200,
+  rentExemptLamports: 9_242_880n,
   offsets: {
     discriminator: 0,
     version: 1,
@@ -74,6 +112,7 @@ export const ARENA = {
     phase: 3,
     alive_count: 4,
     bullet_cursor: 5,
+    outcome: 6,
     arena_id: 8,
     crank_task_id: 16,
     tick: 24,
@@ -84,6 +123,11 @@ export const ARENA = {
     validator_identity: 72,
     affix_seed: 104,
     bullets: 136,
+    // Appended after the bullet pool. Everything above keeps its offset, so a client
+    // built against the 1,160-byte layout decodes a 1,200-byte account correctly and
+    // simply does not see these two.
+    roll_requested_tick: 1160,
+    next_affix_seed: 1168,
   },
 } as const;
 
@@ -118,6 +162,7 @@ export const PLAYER_SLOT = {
     hp: 8,
     hp_max: 10,
     last_move_seq: 12,
+    deaths: 14,
     respawn_at_tick: 16,
     last_shot_tick: 20,
     last_move_tick: 24,
@@ -178,6 +223,8 @@ export type ArenaAccount = {
   bump: number;
   /** `PHASE_*`. */
   phase: number;
+  /** `OUTCOME_*`. Undecided until the fight ends, then fixed for the incarnation. */
+  outcome: number;
   aliveCount: number;
   bulletCursor: number;
   arenaId: bigint;
@@ -191,9 +238,17 @@ export type ArenaAccount = {
   crankAuthority: Uint8Array;
   /** Which ER this match lives on. Never resolve your own; use this one. */
   validatorIdentity: Uint8Array;
+  /** The seed this incarnation is being fought under. Affixes derive from it. */
   affixSeed: Uint8Array;
   /** All `MAX_BULLETS` slots, index-stable so a renderer can reuse DOM nodes. */
   bullets: Bullet[];
+  /** `tick` at which `PHASE_ROLLING` was entered. Meaningful only in that phase. */
+  rollRequestedTick: number;
+  /**
+   * The VRF seed for the next incarnation, or all-zero for "none" — see `rollSeed`,
+   * which is the check the UI should use rather than testing the bytes itself.
+   */
+  nextAffixSeed: Uint8Array;
 };
 
 export type BossAccount = {
@@ -226,6 +281,8 @@ export type PlayerSlot = {
   hpMax: number;
   /** Echo of the client's input sequence number. Prediction reconciles on this. */
   lastMoveSeq: number;
+  /** Times this seat hit 0 HP during the current incarnation. */
+  deaths: number;
   respawnAtTick: number;
   lastShotTick: number;
   lastMoveTick: number;
@@ -308,6 +365,7 @@ export function decodeArena(data: Uint8Array): ArenaAccount {
   return {
     bump: v.getUint8(o.bump),
     phase: v.getUint8(o.phase),
+    outcome: v.getUint8(o.outcome),
     aliveCount: v.getUint8(o.alive_count),
     bulletCursor: v.getUint8(o.bullet_cursor),
     arenaId: v.getBigUint64(o.arena_id, true),
@@ -320,6 +378,8 @@ export function decodeArena(data: Uint8Array): ArenaAccount {
     validatorIdentity: bytes(data, o.validator_identity, 32),
     affixSeed: bytes(data, o.affix_seed, 32),
     bullets,
+    rollRequestedTick: v.getUint32(o.roll_requested_tick, true),
+    nextAffixSeed: bytes(data, o.next_affix_seed, 32),
   };
 }
 
@@ -368,6 +428,7 @@ export function decodePlayers(data: Uint8Array): PlayersAccount {
       hp: v.getUint16(s + p.hp, true),
       hpMax: v.getUint16(s + p.hp_max, true),
       lastMoveSeq: v.getUint16(s + p.last_move_seq, true),
+      deaths: v.getUint16(s + p.deaths, true),
       respawnAtTick: v.getUint32(s + p.respawn_at_tick, true),
       lastShotTick: v.getUint32(s + p.last_shot_tick, true),
       lastMoveTick: v.getUint32(s + p.last_move_tick, true),
@@ -414,6 +475,32 @@ export function decodeLeaderboard(data: Uint8Array): LeaderboardAccount {
  * layout fact, and the Worker's seat allocator and the client's lobby roster must
  * not each rediscover it.
  */
+/**
+ * The next incarnation's VRF seed, or `null` when the oracle never answered.
+ *
+ * All-zero is the "no seed" sentinel and it is also the *verification*: the only writer
+ * of these bytes is the tag-14 callback, which the scoped VRF identity signs. So a
+ * non-null return means a proof was verified on chain, and the UI needs no second flag —
+ * which is exactly why it should call this rather than testing the bytes itself, in two
+ * components, one of which will eventually test `!== undefined`.
+ */
+export function rollSeed(arena: ArenaAccount): Uint8Array | null {
+  return isZero(arena.nextAffixSeed) ? null : arena.nextAffixSeed;
+}
+
+/**
+ * The tick at which `boss_tick` gives up on a pending roll.
+ *
+ * `arena.tick` past this and the crank abandons the roll on its next execution, dropping
+ * the arena back to `PHASE_SETTLING` with no seed. A countdown must derive its deadline
+ * from here rather than adding `ROLL_TIMEOUT_TICKS` itself: the program's comparison is
+ * strictly-greater, so a UI that used `>=` would announce the oracle dead one tick early,
+ * every time.
+ */
+export function rollDeadlineTick(arena: ArenaAccount): number {
+  return arena.rollRequestedTick + ROLL_TIMEOUT_TICKS;
+}
+
 export function freeSeats(seatOccupied: number): number[] {
   const free: number[] = [];
   for (let seat = 0; seat < MAX_SEATS; seat++) {

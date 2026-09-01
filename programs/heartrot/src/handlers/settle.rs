@@ -5,6 +5,17 @@
 //! (tag 9, ER) cancels that crank and commits the three delegated accounts home, and
 //! `write_leaderboard` (tag 10, base layer) appends the result to the ring.
 //!
+//! The VRF round trip that picks the *next* incarnation's ruleset is deliberately not
+//! here: `handlers::roll` owns tags 13 and 14, and `handlers::init` owns tag 15. What this
+//! module owes them is the two orderings below — `settle` must refuse to commit a `Rolling`
+//! arena, and `write_leaderboard` must have run before tag 15 zeroes the roster.
+//!
+//! The phase byte is never assigned here. Every transition goes through
+//! `state::Arena`'s methods, which check it against `state::PHASE_EDGES` — the one place
+//! the game loop's control flow is written down, shared with the four other files that
+//! move `phase`. That is what makes the refusal above structural rather than a rule this
+//! file has to remember.
+//!
 //! Four validator behaviours drive nearly every decision below. All four were read from
 //! `magicblock-core` 0.14.11 at commit `cec4cf5`, which is what devnet runs today
 //! (`docs/research/er-cranks.md`):
@@ -52,7 +63,7 @@ use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable}
 use crate::handlers::init::TREASURY;
 use crate::state::{
     load, load_mut, Arena, Leaderboard, LeaderboardEntry, Players, LEADERBOARD_CAP, PHASE_FIGHTING,
-    PHASE_LOBBY, PHASE_SETTLED, SEED_BOSS, SEED_LEADERBOARD, SEED_PLAYERS,
+    PHASE_SETTLED, SEED_BOSS, SEED_LEADERBOARD, SEED_PLAYERS,
 };
 
 // ---------------------------------------------------------------------------
@@ -154,18 +165,11 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
         let mut data = arena.try_borrow_mut()?;
         let state = load_mut::<Arena>(&mut data)?;
 
-        // Only a lobby arena starts. A second `start_match` on a live match would
-        // schedule a *second* crank against the same accounts, doubling the tick rate
-        // with no way to tell the two apart — and would mint a second id over the first,
-        // stranding the original task where `settle` can no longer cancel it.
-        if state.phase != PHASE_LOBBY {
-            return Err(HeartrotError::WrongPhase.into());
-        }
         // The scheduling payer *is* the task authority the ER records, and `boss_tick`
         // authorizes its caller against `crank_signer_pda(arena.crank_authority)`. If
         // those two keys disagree the task schedules fine and then fails every tick.
         if payer.address().as_ref() != state.crank_authority.as_slice() {
-            return Err(ProgramError::IncorrectAuthority);
+            return Err(HeartrotError::NotArenaAuthority.into());
         }
 
         // The id the task is actually registered under is minted *here*, one instruction
@@ -174,8 +178,15 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
         // only as one more input to the mix; it is public, so it carries no secrecy of its
         // own and a zero there is harmless rather than a thing to reject.
         let task_id = mint_task_id(program_id, &arena_key, state.crank_task_id, &entropy);
+
+        // Only a lobby arena starts, and `LOBBY → FIGHTING` is the single edge that says
+        // so — `FIGHTING → FIGHTING` is absent from `PHASE_EDGES` precisely because a
+        // second `start_match` would schedule a *second* crank against the same accounts,
+        // doubling the tick rate with no way to tell the two apart, and would leave the
+        // id minted above over the first, stranding the original task where `settle` can
+        // no longer cancel it. Last, so a rejected transition writes no id.
+        state.try_set_phase(PHASE_FIGHTING)?;
         state.crank_task_id = task_id;
-        state.phase = PHASE_FIGHTING;
         (task_id, state.crank_authority)
     };
 
@@ -352,20 +363,31 @@ pub fn settle(program_id: &Address, accounts: &mut [AccountView]) -> ProgramResu
         let mut arena_data = arena.try_borrow_mut()?;
         let state = load_mut::<Arena>(&mut arena_data)?;
         if payer.address().as_ref() != state.crank_authority.as_slice() {
-            return Err(ProgramError::IncorrectAuthority);
+            return Err(HeartrotError::NotArenaAuthority.into());
         }
-        // A lobby arena was never delegated with players in it and has nothing to
-        // record; anything else — fighting, or a retried settle — commits.
+        // Which phases may settle is `PHASE_EDGES`'s to say, not this handler's, and
+        // routing through `try_set_phase` is what buys the second refusal this
+        // instruction needs. Two absences do the work:
         //
-        // `Fighting` is accepted on purpose and must stay accepted: it is the dead-crank
-        // recovery path, the only way a match whose task died can ever end. That is also
-        // why `MatchNotOver` is *not* raised here — "the match is still running" is not a
-        // fact this program can establish, since a stalled crank and a healthy one look
+        // - `LOBBY → SETTLED`: an arena never fought was never delegated with players in
+        //   it and has nothing to record.
+        // - `ROLLING → SETTLED`: the commit-during-fulfilment hazard. Committing here
+        //   undelegates an account the VRF callback is about to write, so the fulfilment
+        //   fails and the oracle retries it for the full 240-slot TTL. An operator with a
+        //   stuck roll waits `ROLL_TIMEOUT_TICKS` for `boss_tick` to abandon it back to
+        //   `SETTLING`, which is a settleable phase again.
+        //
+        // `FIGHTING → SETTLED` stays legal on purpose: it is the dead-crank recovery
+        // path, the only way a match whose task died can ever end. That is also why
+        // `MatchNotOver` is *not* raised here — "the match is still running" is not a fact
+        // this program can establish, since a stalled crank and a healthy one look
         // identical on chain. The Worker samples `tick` twice to tell them apart.
-        if state.phase == PHASE_LOBBY {
-            return Err(HeartrotError::WrongPhase.into());
-        }
-        state.phase = PHASE_SETTLED;
+        //
+        // `outcome` is deliberately left alone. A `FIGHTING` arena settled by this path
+        // keeps `OUTCOME_UNDECIDED`, which is the honest record: the fight was cut short
+        // by an operator, not won, wiped or timed out. Writing a result here would be
+        // inventing one.
+        state.try_set_phase(PHASE_SETTLED)?;
         state.crank_task_id
     };
 
@@ -431,7 +453,7 @@ pub fn write_leaderboard(program_id: &Address, accounts: &mut [AccountView]) -> 
     // be able to fill with twenty rows of its choosing. The frozen layout has no spare
     // bytes to hold an admin key on the account itself, so the gate is this constant.
     if payer.address() != &TREASURY {
-        return Err(ProgramError::IncorrectAuthority);
+        return Err(HeartrotError::NotTreasury.into());
     }
 
     assert_owned_by(leaderboard, program_id)?;
@@ -448,7 +470,7 @@ pub fn write_leaderboard(program_id: &Address, accounts: &mut [AccountView]) -> 
     // Kept alongside the treasury check rather than replaced by it: it is what stops the
     // treasury recording a match some other authority ran.
     if payer.address().as_ref() != arena_state.crank_authority.as_slice() {
-        return Err(ProgramError::IncorrectAuthority);
+        return Err(HeartrotError::NotArenaAuthority.into());
     }
     // Only a settled match has a result. A mid-flight arena would record damage totals
     // that are still moving. `MatchNotOver` rather than `WrongPhase` because this is the

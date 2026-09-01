@@ -31,8 +31,12 @@
 //! one byte long* is rejected with `InvalidInstructionData`. Short is an attacker probing
 //! for an index panic; long is either client/program version skew or bytes parked where
 //! the next version of this program might read them. Neither is accepted quietly. Tags
-//! 2, 3, 9, 11 and 12 take no `data` parameter at all, so `lib.rs::ZERO_ARG_TAGS` refuses
-//! a trailing payload on their behalf before dispatch.
+//! 2, 3, 9, 11, 12 and 15 take no `data` parameter at all, so `lib.rs::ZERO_ARG_TAGS`
+//! refuses a trailing payload on their behalf before dispatch.
+//!
+//! Tag 14 is the one tag that is deliberately **not** in `ZERO_ARG_TAGS` despite having a
+//! fixed block: it is the VRF oracle's callback, and every rejection on that path has to
+//! be `Ok(())` (see the tag 14 section), which a pre-dispatch `Err` would defeat.
 //!
 //! Tags are **append-only**: never renumber, never reuse a retired one. `8` is frozen
 //! hardest — `settle::start_match` writes it into the validator's crank row at schedule
@@ -70,9 +74,14 @@
 //! | 10 | `WriteLeaderboard` | `settle::write_leaderboard` | base | 0 B | 4 | `init::TREASURY` |
 //! | 11 | `Commit` | `delegation::process_commit` | ER | 0 B | 6 exact | `Arena.crank_authority` |
 //! | 12 | `CommitAndUndelegate` | `delegation::process_commit_and_undelegate` | ER | 0 B | 6 exact | `Arena.crank_authority` |
+//! | 13 | `RequestRoll` | `roll::request_roll` | ER | 1 B | 8 | `slots[seat].session_pubkey` |
+//! | 14 | `ConsumeRoll` | `roll::consume_roll` | ER | 34 B | 2 | scoped VRF identity PDA (read-only) |
+//! | 15 | `NextIncarnation` | `init::next_incarnation` | base | 0 B | 5 | `init::TREASURY` |
 //!
-//! Tags 11 and 12 are operator-only and have no client builder. One further instruction
-//! carries no tag of ours at all — see [the pre-tag route](#pre-tag-route) at the bottom.
+//! Tags 11 and 12 are operator-only and have no client builder. Tag 14 has no client
+//! builder either, for a different reason: the VRF program builds it. One further
+//! instruction carries no tag of ours at all — see [the pre-tag route](#pre-tag-route) at
+//! the bottom.
 //!
 //! # Tag 0 — `InitLeaderboard`, base layer
 //!
@@ -298,6 +307,104 @@
 //! before `0xA0000000` locks them out until re-delegation, and settle needs one. Tag 12
 //! requires the tag 8 crank to be cancelled first, or it keeps firing into accounts that
 //! no longer live on the ER.
+//!
+//! # Tag 13 — `RequestRoll`, ER
+//!
+//! Args, 1 byte exactly: `seat` u8 at `[0]`.
+//!
+//! | # | Account | Flags | |
+//! |---|---|---|---|
+//! | 0 | arena | `w` | `phase` must be `Settling` **and** `outcome` must be `Win`; stamps `roll_requested_tick` |
+//! | 1 | players | `r` | read only to resolve `slots[seat].session_pubkey` |
+//! | 2 | payer / session key | `w s` | must equal `slots[seat].session_pubkey`. **Writable**: the VRF program's first account is a writable signer and a CPI cannot escalate a read-only account to writable |
+//! | 3 | program identity | `r` | PDA `["identity"]` under **this** program; we `invoke_signed` it, so it is not a signer on the incoming transaction |
+//! | 4 | oracle queue | `w` | must equal `vrf::consts::DEFAULT_EPHEMERAL_QUEUE` — `5hBR571xnXppuCPveTrctfTU7tJLSN94nq7kv7FRK5Tc`. In-ER only; the base-layer `DEFAULT_QUEUE` charges 500,000 lamports a request |
+//! | 5 | system program | `r` | |
+//! | 6 | slot hashes | `r` | `SysvarS1otHashes111111111111111111111111111` |
+//! | 7 | vrf program | `r` | `Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz` |
+//!
+//! **A player asks, never the crank.** The VRF request needs a writable signer and tag 8
+//! may carry none — that is a hard property of cranks, not an oversight — so the killing
+//! blow's client sends tag 13 straight after its shoot lands, on the popup-free session
+//! key it already holds. The in-ER queue is fee-exempt, so a zero-lamport session key pays
+//! for it, and a failure is visible to the player instead of buried in a crank log.
+//!
+//! Any claimed seat may send it, not only the killer: one rule, and if the killer's browser
+//! closed between the two transactions the other nineteen can still ask. It needs no rate
+//! limiter — `Settling → Rolling` is a one-shot edge, so a second request is refused as an
+//! illegal transition, not as a quota breach.
+//!
+//! Not folded into tag 7: `Shoot` is the hottest instruction in the program and four extra
+//! VRF accounts on every shot would spend CU and key budget on all of them to serve one.
+//! Splitting them is also what makes `Settling` a real persisting state — "core dead,
+//! nobody has asked yet" — which is the state tag 8's timeout needs in order to finish the
+//! loop when nobody ever does ask.
+//!
+//! # Tag 14 — `ConsumeRoll`, ER, VRF callback only
+//!
+//! Args, 34 bytes exactly:
+//!
+//! | Offset | Width | Field | |
+//! |---|---|---|---|
+//! | `[0..32]` | 32 | `randomness` | the fulfilled VRF output, written verbatim into `Arena.next_affix_seed` |
+//! | `[32..34]` | 2 | `for_incarnation` | u16 LE, echoed from `callback_args`; a roll that lands after the arena has already advanced is discarded rather than applied to the wrong boss |
+//!
+//! | # | Account | Flags | |
+//! |---|---|---|---|
+//! | 0 | scoped vrf identity | `r s` | must equal `vrf::pda::scoped_vrf_identity(program_id)` = PDA `["identity", <this program>]` under the **VRF** program. **This check is the entire security of the instruction**: without it any caller writes the next boss's ruleset. The global `VRF_PROGRAM_IDENTITY` is deprecated and shared with every consumer on the network — asserting that one leaves the callback spoofable |
+//! | 1 | arena | `w` | `phase` must be `Rolling`; receives `next_affix_seed` |
+//!
+//! **Nobody builds this instruction but the VRF program.** Tag 13's CPI freezes the
+//! discriminator (`[14]`, one byte, cap 8), the two account metas above (cap 25) and the
+//! `callback_args` (`incarnation.to_le_bytes()`, cap 512) into the request, and the oracle
+//! replays exactly that shape on fulfilment. The oracle prepends its discriminator and
+//! appends the randomness, which is why the callback needs no pre-tag route: our chosen
+//! discriminator **is** one byte and **is** the tag, so it lands in the ordinary dispatch.
+//! Never widen it past one byte, and never renumber it — 14 is as frozen as 8.
+//!
+//! `Boss` is deliberately not an account here. The boss is rescaled by tag 15 on the base
+//! layer, so the frozen callback list stays two entries and never has to name `Players`,
+//! which could not fit the 25-account cap anyway.
+//!
+//! Every rejection on this path is `Ok(())`, never `Err` — a wrong length, a stale
+//! `for_incarnation`, a failed identity check, a wrong phase, all of them. An `Err` reverts
+//! the oracle's `ProvideRandomness` transaction, which it then retries for the request's
+//! full 240-slot TTL. This is the same discipline tag 8 is held to, for the same reason.
+//!
+//! # Tag 15 — `NextIncarnation`, base layer
+//!
+//! Args: none (`ZERO_ARG_TAGS`). Sent on the **base layer**, after tag 10 has filed the
+//! finished match: it rewrites all three accounts, which the ER holds while they are
+//! delegated.
+//!
+//! | # | Account | Flags | |
+//! |---|---|---|---|
+//! | 0 | payer | `w s` | must equal `init::TREASURY` — it re-arms the boss and reopens the match, the same authority `init_arena` needs |
+//! | 1 | arena | `w` | undelegated and ours again; `phase` must be `Settled` and `next_affix_seed` must be non-zero |
+//! | 2 | boss | `w` | PDA `["boss", arena]` |
+//! | 3 | players | `w` | PDA `["players", arena]` |
+//! | 4 | leaderboard | `r` | PDA `["leaderboard"]`; must show `last_arena_id == Arena.arena_id && last_incarnation == Arena.incarnation` |
+//!
+//! Incarnation N+1 reuses the same three accounts, reset in place: fresh ones would cost
+//! 0.0245 SOL of rent per incarnation and orphan the old, the `Arena` PDA is
+//! `["arena", arena_id]` so reuse keeps one address per raid chain, and `Leaderboard`'s
+//! idempotency key is already `(arena_id, incarnation)`.
+//!
+//! The read-only `Leaderboard` at index 4 is an **ordering interlock, not a data source**.
+//! `write_leaderboard` is gated on `phase == Settled` and this instruction flips `phase` to
+//! `Lobby` and zeroes every `damage_dealt`, so a tag 15 that beat tag 10 would erase the
+//! whole match record with nothing left able to notice. Requiring the leaderboard to
+//! already name this exact `(arena_id, incarnation)` makes that ordering structural.
+//!
+//! Both extra conditions — the `Settled` phase and the non-zero seed — refuse with
+//! `HeartrotError::WrongPhase`. That is one condition ("this instruction is not legal from
+//! this state"), and the reason is readable straight off the account the caller already
+//! passed: `outcome` says the raid lost, or an all-zero `next_affix_seed` says the oracle
+//! never answered. A second error code would carry no information the caller does not hold.
+//!
+//! There is no `roll_verified` flag anywhere. All-zero `next_affix_seed` is the sentinel
+//! *and* the verification: the only writer of those bytes is tag 14, which the scoped VRF
+//! identity signs, so "non-zero" already means "a proof was verified on chain".
 //!
 //! # Pre-tag route
 //!

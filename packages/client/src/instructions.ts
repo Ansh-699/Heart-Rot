@@ -17,9 +17,22 @@
  *      the wrong data. Every meta below carries its index in a comment, and the indices
  *      mirror the handler's own reads.
  *
- * `boss_tick` (tag 8) has no builder: it is never sent by a client. Its account list is
- * frozen into the validator's crank row by `start_match`'s scheduling CPI and replayed
- * from there forever.
+ * Three of the program's routes have no builder here, and none of them is an omission —
+ * each names a signer no client holds, so a builder would only ever produce a transaction
+ * that cannot be signed:
+ *
+ *   - **Tag 8 `BossTick`** — signed by the crank signer PDA. Its account list is frozen
+ *     into the validator's crank row by `start_match`'s scheduling CPI and replayed from
+ *     there forever.
+ *   - **Tag 14 `ConsumeRoll`** — signed by the scoped VRF identity PDA under the *VRF*
+ *     program. The oracle builds it, from the discriminator, metas and `callback_args`
+ *     that tag 13's CPI froze into the request.
+ *   - **The undelegation callback** — no tag of ours at all, routed on the delegation
+ *     program's own 8-byte discriminator, signed by the undelegate buffer PDA.
+ *
+ * Everything the program dispatches that a keypair *can* sign has a builder below,
+ * including the operator-only tags 11 and 12: without those, an arena that was delegated
+ * and never started can never be brought home again.
  *
  * No builder produces an address lookup table entry, and none may ever be compiled into
  * one (D18): the ER rejects v0 transactions carrying ALTs outright, with no feature flag.
@@ -40,10 +53,14 @@ import {
   DELEGATION_PROGRAM_ID,
   MAGIC_CONTEXT_ID,
   MAGIC_PROGRAM_ID,
+  SLOT_HASHES_SYSVAR_ID,
   SYSTEM_PROGRAM_ID,
+  VRF_ORACLE_QUEUE_ID,
+  VRF_PROGRAM_ID,
   delegationBufferPda,
   delegationMetadataPda,
   delegationRecordPda,
+  programIdentityPda,
 } from './pda';
 
 // Instruction tags. Frozen: `IX_BOSS_TICK = 8` is written into the crank row at schedule
@@ -58,6 +75,10 @@ const IX_MOVE = 6;
 const IX_SHOOT = 7;
 const IX_SETTLE = 9;
 const IX_WRITE_LEADERBOARD = 10;
+const IX_COMMIT = 11;
+const IX_COMMIT_AND_UNDELEGATE = 12;
+const IX_REQUEST_ROLL = 13;
+const IX_NEXT_INCARNATION = 15;
 
 const addresses = getAddressEncoder();
 
@@ -315,6 +336,51 @@ export function writeLeaderboard(p: {
   };
 }
 
+/**
+ * Tag 15 — reset the same three accounts in place for incarnation N+1. Base layer, after
+ * tag 10 has filed the finished match. **Args: none** (`ZERO_ARG_TAGS` rejects a trailing
+ * payload).
+ *
+ * No new accounts are created: incarnation N+1 reuses this `Arena`/`Boss`/`Players`, which
+ * is what keeps one address per raid chain and keeps `Leaderboard`'s `(arena_id,
+ * incarnation)` key meaningful. The boss is rescaled and every seat is zeroed, so a
+ * returning player is re-seated by an ordinary tag 4.
+ *
+ * `leaderboard` is **read-only, and an ordering interlock rather than a data source**:
+ * this instruction leaves `Settled` and zeroes every `damage_dealt`, so a tag 15 that beat
+ * tag 10 would erase the match record with nothing left able to notice. The handler
+ * requires the leaderboard to already name this exact `(arena_id, incarnation)` and
+ * otherwise returns `Custom(17)` `MatchNotRecorded`.
+ *
+ * Refused with `Custom(6)` `WrongPhase` when `phase` is not `Settled` **or**
+ * `next_affix_seed` is all-zero. Those are one condition — "not legal from this state" —
+ * and which one it was is readable off the `Arena` the caller already has: `rollSeed()`
+ * returning `null` says the oracle never answered, so the raid chain stops here and a
+ * human re-rolls or opens a fresh arena.
+ */
+export function nextIncarnation(p: {
+  programId: Address;
+  /** Must equal `init::TREASURY`, and is the base-layer fee payer. */
+  payer: Address;
+  arena: Address;
+  boss: Address;
+  players: Address;
+  leaderboard: Address;
+}): HeartrotInstruction {
+  const { data } = alloc(IX_NEXT_INCARNATION, 0);
+  return {
+    programAddress: p.programId,
+    accounts: [
+      { address: p.payer, role: AccountRole.WRITABLE_SIGNER }, // 0 payer — must be init::TREASURY
+      { address: p.arena, role: AccountRole.WRITABLE }, // 1 arena
+      { address: p.boss, role: AccountRole.WRITABLE }, // 2 boss
+      { address: p.players, role: AccountRole.WRITABLE }, // 3 players
+      { address: p.leaderboard, role: AccountRole.READONLY }, // 4 leaderboard — ordering interlock
+    ],
+    data,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // ER instructions
 // ---------------------------------------------------------------------------
@@ -529,6 +595,143 @@ export function settle(p: {
       { address: p.players, role: AccountRole.WRITABLE }, // 3 players
       { address: MAGIC_CONTEXT_ID, role: AccountRole.WRITABLE }, // 4 magic_context
       { address: MAGIC_PROGRAM_ID, role: AccountRole.READONLY }, // 5 magic_program
+    ],
+    data,
+  };
+}
+
+/**
+ * Tags 11 and 12 share one account list, byte for byte: **exactly 6**, and the order is
+ * deliberately *not* tag 9's — the two magic accounts come second and third, before the
+ * match accounts. Both handlers destructure with no `..`, so a seventh account is
+ * `NotEnoughAccountKeys`, and a swapped pair would hand `magic_context` to the arena slot.
+ *
+ * `payer` is a **read-only** signer. The ER rejects a writable account it does not hold
+ * delegated with `InvalidWritableAccount`, and the crank authority is a base-layer key, so
+ * it signs read-only and a throwaway keypair is the transaction's fee payer. ER fees are
+ * zero, so that keypair needs no funding — an unfunded session key has already played a
+ * whole match on devnet.
+ */
+function commitAccounts(p: {
+  payer: Address;
+  arena: Address;
+  boss: Address;
+  players: Address;
+}): readonly AccountMeta[] {
+  return [
+    { address: p.payer, role: AccountRole.READONLY_SIGNER }, // 0 payer — must be Arena.crank_authority
+    { address: MAGIC_CONTEXT_ID, role: AccountRole.WRITABLE }, // 1 magic_context
+    { address: MAGIC_PROGRAM_ID, role: AccountRole.READONLY }, // 2 magic_program
+    { address: p.arena, role: AccountRole.WRITABLE }, // 3 arena
+    { address: p.boss, role: AccountRole.WRITABLE }, // 4 boss
+    { address: p.players, role: AccountRole.WRITABLE }, // 5 players
+  ];
+}
+
+/**
+ * Tag 11 — commit the three accounts' current ER state to the base layer without
+ * undelegating. ER, no args, operator-only.
+ *
+ * **It writes no phase**, in any phase: this is a snapshot, and the match keeps running on
+ * the ER afterwards. It does **spend the commit quota** — ten commits per account before
+ * the delegation program locks them out until re-delegation — and `settle` needs one of
+ * those ten, so do not put this on a timer.
+ *
+ * Refused from `PHASE_ROLLING` with `Custom(6)` `WrongPhase`: committing an arena whose VRF
+ * request is still in flight would land the callback on an account the ER no longer holds,
+ * and the oracle would then retry the failure for the request's whole 240-slot TTL. Wait
+ * `ROLL_TIMEOUT_TICKS` for `boss_tick` to abandon the roll, then send it.
+ */
+export function commit(p: {
+  programId: Address;
+  /** Must equal `Arena.crank_authority`. Signs read-only; a throwaway key pays the fee. */
+  payer: Address;
+  arena: Address;
+  boss: Address;
+  players: Address;
+}): HeartrotInstruction {
+  const { data } = alloc(IX_COMMIT, 0);
+  return { programAddress: p.programId, accounts: commitAccounts(p), data };
+}
+
+/**
+ * Tag 12 — commit and hand the three accounts back to the base layer. ER, no args,
+ * operator-only. **This is the stranded-arena recovery path.**
+ *
+ * From `PHASE_LOBBY` it undelegates and leaves the phase at `Lobby`: an arena that was
+ * delegated (tag 2) and never started (tag 3) has no crank to cancel and so can never reach
+ * `settle`, which is exactly how two arenas were stranded on devnet. This brings them home,
+ * and tag 2 can delegate them again afterwards.
+ *
+ * From `Fighting`/`Settling`/`Rolled`/`Settled` it sets `PHASE_SETTLED`, and a repeat send
+ * is **accepted rather than refused** — `Settled → Settled` is a legal edge, so a retry
+ * after a lost confirmation is safe. From `PHASE_ROLLING` it is refused with `Custom(6)`
+ * `WrongPhase`, for the same in-flight-callback reason as tag 11.
+ *
+ * Cancel the tag 8 crank first if the match was ever started, or it keeps firing every
+ * 400 ms into accounts that no longer live on the ER. `settle` (tag 9) does both in one
+ * instruction and is the normal end of a match; this tag is for the arenas that cannot
+ * reach it.
+ */
+export function commitAndUndelegate(p: {
+  programId: Address;
+  /** Must equal `Arena.crank_authority`. Signs read-only; a throwaway key pays the fee. */
+  payer: Address;
+  arena: Address;
+  boss: Address;
+  players: Address;
+}): HeartrotInstruction {
+  const { data } = alloc(IX_COMMIT_AND_UNDELEGATE, 0);
+  return { programAddress: p.programId, accounts: commitAccounts(p), data };
+}
+
+/**
+ * Tag 13 — ask the VRF oracle for the next incarnation's ruleset. ER, session-signed.
+ * Args (1 B): seat u8 @0.
+ *
+ * Legal only from `PHASE_SETTLING` with `outcome == OUTCOME_WIN`, and `Settling → Rolling`
+ * is a one-shot edge — a second request is refused as an illegal transition, which is also
+ * why this handler needs no rate limiter of its own.
+ *
+ * **A player asks, never the crank.** The VRF request's first account is a *writable*
+ * signer and a CPI cannot escalate a read-only account to writable, so a crank — which may
+ * carry no writable signer at all — structurally cannot make this request. The killing
+ * blow's client sends this straight after its `shoot` confirms, on the popup-free session
+ * key it already holds; the in-ER queue is fee-exempt, so a zero-lamport key pays for it.
+ * Any claimed seat may send it, not only the killer, so a closed browser costs nothing as
+ * long as one of the other nineteen asks. If nobody does, `boss_tick` abandons the roll
+ * after `ROLL_TIMEOUT_TICKS` and the match settles normally with no seed — the raid is
+ * unaffected, only the respawn loop stops.
+ *
+ * `session` is the one meta here that differs from every other session-signed builder: it
+ * is `WRITABLE_SIGNER`, not `READONLY_SIGNER`, because the program forwards it as the VRF
+ * request's payer. Async because index 3 is a PDA under our own program.
+ *
+ * Nobody builds the reply: the CPI freezes the one-byte callback discriminator `[14]`, two
+ * account metas and the `callback_args` into the request, and the oracle replays that
+ * shape.
+ */
+export async function requestRoll(p: {
+  programId: Address;
+  arena: Address;
+  players: Address;
+  session: Address;
+  seat: number;
+}): Promise<HeartrotInstruction> {
+  const { data } = alloc(IX_REQUEST_ROLL, 1);
+  data[1] = seatIndex(p.seat);
+  const programIdentity = await programIdentityPda(p.programId);
+  return {
+    programAddress: p.programId,
+    accounts: [
+      { address: p.arena, role: AccountRole.WRITABLE }, // 0 arena — phase, outcome, roll_requested_tick
+      { address: p.players, role: AccountRole.READONLY }, // 1 players — resolves slots[seat].session_pubkey
+      { address: p.session, role: AccountRole.WRITABLE_SIGNER }, // 2 session key — also the VRF request's payer
+      { address: programIdentity, role: AccountRole.READONLY }, // 3 program_identity — invoke_signed by us, so not a signer here
+      { address: VRF_ORACLE_QUEUE_ID, role: AccountRole.WRITABLE }, // 4 oracle_queue — the in-ER, fee-exempt queue
+      { address: SYSTEM_PROGRAM_ID, role: AccountRole.READONLY }, // 5 system_program
+      { address: SLOT_HASHES_SYSVAR_ID, role: AccountRole.READONLY }, // 6 slot_hashes
+      { address: VRF_PROGRAM_ID, role: AccountRole.READONLY }, // 7 vrf_program
     ],
     data,
   };

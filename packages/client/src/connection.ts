@@ -21,22 +21,35 @@
  * game bug rather than a config bug. The only reliable discriminator is the delegation
  * record's validator authority matching the identity of the endpoint you are actually
  * talking to, so `connectMatch` and `assertErIdentity` check exactly that.
+ *
+ * The module's second job is that **every error a chain sends actually arrives**. That is
+ * not free here: `sendInstructions` uses `skipPreflight` by design, so the only diagnostic
+ * left is the one that comes back afterwards, and both layers of the stack were destroying
+ * it — kit discards the ER's `-32003` message (see `surfaceServerErrors`) and
+ * `JSON.stringify` throws on the bigints kit decodes a `TransactionError` into (see
+ * `stringifyWithBigints`). Both were found on devnet, twice each.
  */
 
 import {
   appendTransactionMessageInstructions,
+  compileTransaction,
   createDefaultRpcTransport,
   createSolanaRpcFromTransport,
   createTransactionMessage,
+  getBase64Decoder,
   getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
   pipe,
+  setTransactionMessageFeePayer,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
   type Address,
   type Instruction,
+  type Lamports,
+  type RpcTransport,
   type Signature,
+  type TransactionMessageBytesBase64,
   type TransactionSigner,
 } from '@solana/kit';
 
@@ -97,14 +110,97 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/**
+ * `JSON.stringify`, but it survives the `bigint`s kit puts in every decoded RPC value.
+ *
+ * Exported because the plain call is a landmine anywhere near kit: a `TransactionError`
+ * from `getSignatureStatuses` is `{ InstructionError: [0n, { Custom: 6n }] }`, and
+ * `JSON.stringify` throws `TypeError: Do not know how to serialize a BigInt` on it —
+ * replacing the on-chain diagnostic with a TypeScript error dressed as a chain error. Two
+ * devnet spikes lost their result to exactly that.
+ *
+ * Bigints come out **quoted** — `{"InstructionError":["0",{"Custom":"6"}]}`, not the
+ * unquoted shape a validator prints. JSON has no bigint, so a replacer can only return a
+ * string; emitting bare digits needs a sentinel-and-substitute pass that a real string
+ * containing the sentinel then corrupts. The quotes are the honest rendering and the
+ * error code is still right there, which is the whole job.
+ */
+export function stringifyWithBigints(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => (typeof v === 'bigint' ? v.toString() : v));
+}
+
+/** The `error` member of a JSON-RPC response, once it has been proven to be one. */
+type JsonRpcErrorPayload = { readonly code: number; readonly message: string; readonly data?: unknown };
+
+function jsonRpcErrorOf(response: unknown): JsonRpcErrorPayload | undefined {
+  if (typeof response !== 'object' || response === null) return undefined;
+  const error: unknown = (response as { error?: unknown }).error;
+  if (typeof error !== 'object' || error === null) return undefined;
+  const { code, message, data } = error as { code?: unknown; message?: unknown; data?: unknown };
+  if (typeof message !== 'string') return undefined;
+  if (typeof code !== 'number' && typeof code !== 'bigint') return undefined;
+  return { code: Number(code), message, data };
+}
+
+function rpcMethodOf(payload: unknown): string {
+  if (typeof payload === 'object' && payload !== null) {
+    const { method } = payload as { method?: unknown };
+    if (typeof method === 'string') return method;
+  }
+  return 'rpc';
+}
+
+/**
+ * Wrap a transport so a JSON-RPC error reaches the caller with the **server's own
+ * message** attached.
+ *
+ * Kit maps `error.code` to a `SolanaError` and, for every code outside a small allow-list,
+ * throws away `error.message`. The ER returns *all* of its cloner and transaction
+ * verification failures as `-32003`, whose canonical Solana meaning is
+ * `TransactionSignatureVerificationFailure` — so a transaction whose signature was
+ * verified locally against its own public key reports "Transaction signature verification
+ * failure", and the real cause ("Cloner error: … InsufficientFundsForRent",
+ * "Address loading from lookup tables is disabled", "Error processing Instruction 0: …")
+ * is gone. Forty minutes of one spike went into recovering a message the server had
+ * already sent.
+ *
+ * This runs *before* kit's response transformer, which is the only place the raw payload
+ * still exists. `cause` carries the whole `{ code, message, data }` for callers that want
+ * to branch on it.
+ */
+function surfaceServerErrors(url: string, inner: RpcTransport): RpcTransport {
+  return async <TResponse,>(config: Parameters<RpcTransport>[0]): Promise<TResponse> => {
+    const response = await inner<TResponse>(config);
+    const error = jsonRpcErrorOf(response);
+    if (error !== undefined) {
+      throw new Error(
+        `${rpcMethodOf(config.payload)} on ${url}: ${error.message} (JSON-RPC ${error.code})`,
+        { cause: error },
+      );
+    }
+    return response;
+  };
+}
+
 /**
  * One RPC constructor for both layers. `authorization` is for the paid base-layer
  * provider; the ER needs no auth and takes none.
+ *
+ * Every connection in this codebase is built here, which is why the server-message rescue
+ * above is installed here rather than at any one call site: it covers `sendTransaction`,
+ * `getFeeForMessage` and every read alike.
  */
 export function createRpc(url: string, authorization?: string) {
   return createSolanaRpcFromTransport(
-    createDefaultRpcTransport(
-      authorization === undefined ? { url } : { url, headers: { Authorization: authorization } },
+    surfaceServerErrors(
+      url,
+      createDefaultRpcTransport(
+        authorization === undefined ? { url } : { url, headers: { Authorization: authorization } },
+      ),
     ),
   );
 }
@@ -309,7 +405,14 @@ export async function confirmSignature(
     const status = value[0];
     if (status != null) {
       if (status.err !== null) {
-        throw new Error(`transaction ${signature} failed: ${JSON.stringify(status.err)}`);
+        // `stringifyWithBigints`, never `JSON.stringify`: kit decodes the instruction index
+        // and a `Custom` code as bigints, and the plain call throws on them — which is how
+        // `InstructionError: [0, "IncorrectAuthority"]` reached two spikes as
+        // `TypeError: Do not know how to serialize a BigInt`. `cause` keeps the structured
+        // error so a caller can read `Custom(6)` off it without parsing the message.
+        throw new Error(`transaction ${signature} failed: ${stringifyWithBigints(status.err)}`, {
+          cause: status.err,
+        });
       }
       if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
         return;
@@ -320,4 +423,38 @@ export async function confirmSignature(
     }
     await sleep(pollMs);
   }
+}
+
+/**
+ * What will this instruction set cost on `rpc`? **Legacy message, deliberately.**
+ *
+ * The ER's `getFeeForMessage` rejects any v0 message with
+ * `transaction verification error: Address loading from lookup tables is disabled`, even
+ * when the message carries no lookup table — nothing in this codebase can produce one.
+ * That refusal is specific to this one RPC method: the same validator accepts, executes
+ * and finalises v0 *transactions* all day, which is why `sendInstructions` still builds v0
+ * and only the probe goes legacy. Measured answers: ER 0, base layer 5000 lamports, for
+ * the identical `move` instruction.
+ *
+ * Takes a fee-payer `Address` rather than a signer because nothing is signed — a fee is a
+ * property of the message. `null` is the server's own answer for a blockhash it can no
+ * longer find, not an error.
+ */
+export async function probeFee(
+  rpc: HeartrotRpc,
+  feePayer: Address,
+  instructions: readonly Instruction[],
+): Promise<Lamports | null> {
+  const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+  const { messageBytes } = compileTransaction(
+    pipe(
+      createTransactionMessage({ version: 'legacy' }),
+      (m) => setTransactionMessageFeePayer(feePayer, m),
+      (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
+      (m) => appendTransactionMessageInstructions(instructions, m),
+    ),
+  );
+  const base64 = getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64;
+  const { value } = await rpc.getFeeForMessage(base64).send();
+  return value;
 }

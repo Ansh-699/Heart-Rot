@@ -1,0 +1,56 @@
+{"t":"2026-09-01T11:21:27.042Z","event":"start","programId":"JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5","arenaId":"1788261687","arena":"9EL3pUDxxV8oGcYXnk6vEDLdYnShGiRq8qTPVUr2FzKv","boss":"CDvBshMFgb7vdkydo4N5NQarrdxVcCU766rG4J4tTPL","players":"Fd6uZ98k4EAm5TzZyVAUU2s63WKMSr4DpyhumMeZC6f6","seats":20}
+{"t":"2026-09-01T11:21:28.608Z","event":"init_arena","signature":"5nuvr6QoXjNdjTUuQaovK1TtDdKv8nzbeV3FfPz3CFzM5mxBuX2djq7CjTsuPJrCUpg5eib7WJNNjtEZaZkXzb5k"}
+{"t":"2026-09-01T11:21:29.681Z","event":"delegate","signature":"5APgy3vhtupnjLocKgo5biQazgud1BTaW14LbbrK2oAywnLnMs95ePJmpx7id4aps7ETSde2Gcy6c6jmUiSYn2Lw"}
+{"t":"2026-09-01T11:21:31.439Z","event":"connected","via":"connectMatch","erFqdn":"https://devnet-as.magicblock.app/"}
+{"t":"2026-09-01T11:21:31.578Z","event":"logs_subscribe_sent","wsUrl":"wss://devnet-as.magicblock.app/"}
+{"t":"2026-09-01T11:21:31.698Z","event":"logs_subscribe_ok","subscription":110947}
+{"t":"2026-09-01T11:21:32.243Z","event":"start_match","signature":"2cY43X6DBv2BMXw7PEFNKVvFbLLaU5Ev3gW4Y2zvya8495rwkgcK1YE3PT2D8rYP1oqesdd6aKPPsY3MnKvCudcW","phase":1,"tick":1,"enrageAtTick":900,"budgetSeconds":359.6}
+{"t":"2026-09-01T11:21:33.879Z","event":"seats_claimed","count":20,"ms":1631}
+{"t":"2026-09-01T11:21:34.130Z","event":"walk_progress","round":0,"pending":20}
+{"t":"2026-09-01T11:21:45.207Z","event":"walk_progress","round":10,"pending":20}
+{"t":"2026-09-01T11:21:56.075Z","event":"walk_progress","round":20,"pending":18}
+{"t":"2026-09-01T11:22:05.700Z","event":"walk_progress","round":30,"pending":5}
+{"t":"2026-09-01T11:22:11.148Z","event":"walk_done","round":37,"ms":37141}
+{"t":"2026-09-01T11:22:13.582Z","event":"seats_entered","aliveCount":20,"tick":104,"phase":1,"ticksToEnrage":796,"walkMs":39575}
+{"t":"2026-09-01T11:22:13.583Z","event":"phase_begin","phase":"paced","moveEveryMs":400,"shootEveryMs":800}
+{"t":"2026-09-01T11:23:10.487Z","event":"phase_end","phase":"paced","tick":247,"phaseByte":1,"outcome":0,"aliveCount":20,"activeBullets":12}
+{"t":"2026-09-01T11:23:10.488Z","event":"ledger_integrity","phase":"paced","attempts":3750,"rows":3750,"note":"a shortfall means two sends compiled to the same signature"}
+{"t":"2026-09-01T11:23:10.490Z","event":"acceptance","phase":"paced","kind":"move","sent":2500,"accepted":654,"rateLimited":30,"otherErr":1816,"noStatus":0,"sendFailed":0,"acceptedPct":26.2,"errorCodes":{"7":30,"14":1815,"UnsupportedProgramId":1}}
+{"t":"2026-09-01T11:23:10.490Z","event":"throughput","phase":"paced","kind":"move","sentPerSec":44,"acceptedPerSec":11.5,"acceptedPerSeatPerSec":0.58}
+{"t":"2026-09-01T11:23:10.491Z","event":"latency_accept","phase":"paced","kind":"move","n":2500,"min":108,"p50":125,"p90":136,"p95":190,"p99":679,"max":1456}
+{"t":"2026-09-01T11:23:10.492Z","event":"latency_execute","phase":"paced","kind":"move","note":"send -> the transaction own logs arrived over logsSubscribe","n":2068,"min":108,"p50":131,"p90":157,"p95":170,"p99":711,"max":1459}
+{"t":"2026-09-01T11:23:10.493Z","event":"latency_write_to_visible","phase":"paced","kind":"move","note":"accepted moves only; exact = the poller saw this exact seq","exact":{"n":649,"min":116,"p50":198,"p90":261,"p95":438,"p99":820,"max":1553},"all":{"n":654,"min":116,"p50":198,"p90":265,"p95":464,"p99":992,"max":1834}}
+{"t":"2026-09-01T11:23:10.493Z","event":"cu_self","phase":"paced","kind":"move","note":"the program own consumed line on our transactions, rejections included","n":2067,"min":1899,"p50":1940,"p90":1943,"p95":1943,"p99":1943,"max":1943}
+{"t":"2026-09-01T11:23:10.493Z","event":"cu_self_accepted","phase":"paced","kind":"move","n":520,"min":1932,"p50":1936,"p90":1936,"p95":1936,"p99":1936,"max":1936}
+{"t":"2026-09-01T11:23:10.494Z","event":"acceptance","phase":"paced","kind":"shoot","sent":1250,"accepted":1214,"rateLimited":35,"otherErr":1,"noStatus":0,"sendFailed":0,"acceptedPct":97.1,"errorCodes":{"7":35,"UnsupportedProgramId":1}}
+{"t":"2026-09-01T11:23:10.494Z","event":"throughput","phase":"paced","kind":"shoot","sentPerSec":22,"acceptedPerSec":21.4,"acceptedPerSeatPerSec":1.07}
+{"t":"2026-09-01T11:23:10.494Z","event":"latency_accept","phase":"paced","kind":"shoot","n":1250,"min":111,"p50":125,"p90":137,"p95":207,"p99":698,"max":1461}
+{"t":"2026-09-01T11:23:10.495Z","event":"latency_execute","phase":"paced","kind":"shoot","note":"send -> the transaction own logs arrived over logsSubscribe","n":1058,"min":115,"p50":133,"p90":163,"p95":174,"p99":693,"max":1421}
+{"t":"2026-09-01T11:23:10.495Z","event":"cu_self","phase":"paced","kind":"shoot","note":"the program own consumed line on our transactions, rejections included","n":1057,"min":3433,"p50":3968,"p90":5358,"p95":5378,"p99":5562,"max":6292}
+{"t":"2026-09-01T11:23:10.495Z","event":"cu_self_accepted","phase":"paced","kind":"shoot","n":1029,"min":3551,"p50":3968,"p90":5358,"p95":5378,"p99":5562,"max":6292}
+{"t":"2026-09-01T11:23:10.495Z","event":"cu_crank","phase":"paced","note":"transactions mentioning the program that this run did not send","of":399700,"n":907,"min":1900,"p50":3551,"p90":12321,"p95":16527,"p99":21776,"max":21810,"headroomPct":94.5}
+{"t":"2026-09-01T11:23:10.495Z","event":"phase_begin","phase":"aggressive","moveEveryMs":150,"shootEveryMs":150}
+{"t":"2026-09-01T11:24:06.780Z","event":"phase_end","phase":"aggressive","tick":387,"phaseByte":1,"outcome":0,"aliveCount":20,"activeBullets":0}
+{"t":"2026-09-01T11:24:06.788Z","event":"ledger_integrity","phase":"aggressive","attempts":13319,"rows":13319,"note":"a shortfall means two sends compiled to the same signature"}
+{"t":"2026-09-01T11:24:06.801Z","event":"acceptance","phase":"aggressive","kind":"move","sent":6659,"accepted":42,"rateLimited":64,"otherErr":6553,"noStatus":0,"sendFailed":0,"acceptedPct":0.6,"errorCodes":{"7":64,"14":6553}}
+{"t":"2026-09-01T11:24:06.802Z","event":"throughput","phase":"aggressive","kind":"move","sentPerSec":118.6,"acceptedPerSec":0.7,"acceptedPerSeatPerSec":0.04}
+{"t":"2026-09-01T11:24:06.819Z","event":"latency_accept","phase":"aggressive","kind":"move","n":6659,"min":107,"p50":122,"p90":131,"p95":134,"p99":169,"max":491}
+{"t":"2026-09-01T11:24:06.833Z","event":"latency_execute","phase":"aggressive","kind":"move","note":"send -> the transaction own logs arrived over logsSubscribe","n":6378,"min":109,"p50":140,"p90":164,"p95":169,"p99":184,"max":524}
+{"t":"2026-09-01T11:24:06.836Z","event":"latency_write_to_visible","phase":"aggressive","kind":"move","note":"accepted moves only; exact = the poller saw this exact seq","exact":{"n":42,"min":120,"p50":194,"p90":235,"p95":250,"p99":535,"max":535},"all":{"n":42,"min":120,"p50":194,"p90":235,"p95":250,"p99":535,"max":535}}
+{"t":"2026-09-01T11:24:06.846Z","event":"cu_self","phase":"aggressive","kind":"move","note":"the program own consumed line on our transactions, rejections included","n":6378,"min":1901,"p50":1941,"p90":1943,"p95":1943,"p99":1943,"max":1943}
+{"t":"2026-09-01T11:24:06.846Z","event":"cu_self_accepted","phase":"aggressive","kind":"move","n":41,"min":1934,"p50":1934,"p90":1936,"p95":1936,"p99":1936,"max":1936}
+{"t":"2026-09-01T11:24:06.858Z","event":"acceptance","phase":"aggressive","kind":"shoot","sent":6660,"accepted":1260,"rateLimited":5400,"otherErr":0,"noStatus":0,"sendFailed":0,"acceptedPct":18.9,"errorCodes":{"7":5400}}
+{"t":"2026-09-01T11:24:06.859Z","event":"throughput","phase":"aggressive","kind":"shoot","sentPerSec":118.6,"acceptedPerSec":22.4,"acceptedPerSeatPerSec":1.12}
+{"t":"2026-09-01T11:24:06.872Z","event":"latency_accept","phase":"aggressive","kind":"shoot","n":6660,"min":106,"p50":122,"p90":131,"p95":134,"p99":171,"max":489}
+{"t":"2026-09-01T11:24:06.886Z","event":"latency_execute","phase":"aggressive","kind":"shoot","note":"send -> the transaction own logs arrived over logsSubscribe","n":6396,"min":109,"p50":140,"p90":164,"p95":170,"p99":182,"max":525}
+{"t":"2026-09-01T11:24:06.894Z","event":"cu_self","phase":"aggressive","kind":"shoot","note":"the program own consumed line on our transactions, rejections included","n":6396,"min":3433,"p50":3433,"p90":3968,"p95":3968,"p99":3968,"max":4147}
+{"t":"2026-09-01T11:24:06.896Z","event":"cu_self_accepted","phase":"aggressive","kind":"shoot","n":1202,"min":3551,"p50":3968,"p90":3968,"p95":3968,"p99":4147,"max":4147}
+{"t":"2026-09-01T11:24:06.899Z","event":"cu_crank","phase":"aggressive","note":"transactions mentioning the program that this run did not send","of":399700,"n":828,"min":1903,"p50":3433,"p90":13054,"p95":16517,"p99":21476,"max":21804,"headroomPct":94.5}
+{"t":"2026-09-01T11:24:06.902Z","event":"poll_granularity","note":"gaps between consecutive Players reads, ms","n":2646,"min":109,"p50":124,"p90":135,"p95":139,"p99":271,"max":518}
+{"t":"2026-09-01T11:24:07.193Z","event":"boss_state","parts":[4080,2795,2875,1150,1070,1150,1150,2875,2875],"partsMax":[4600,2875,2875,1150,1150,1150,1150,2875,2875],"ventOpen":0,"coreHp":2000,"coreHpMax":2000,"targetSeat":8}
+{"t":"2026-09-01T11:24:07.194Z","event":"player_state","deaths":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"hp":[100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100],"damageDealt":[200,0,0,0,120,0,0,0,0,0,0,0,200,0,0,0,160,0,0,0]}
+{"t":"2026-09-01T11:24:07.227Z","event":"key_probe_built","totalKeys":41}
+{"t":"2026-09-01T11:24:07.554Z","event":"key_probe_accepted_by_rpc","totalKeys":41,"signature":"4RKG2F24fEiTvbqWoXkkqxusMZhYYYrYdKSv9qFHgTfBGZhSCPMd4xT5dh5M3A5uBGoLDjNbAikwBi2Zevx8jqd8"}
+{"t":"2026-09-01T11:24:07.746Z","event":"key_probe_status","totalKeys":41,"signature":"4RKG2F24fEiTvbqWoXkkqxusMZhYYYrYdKSv9qFHgTfBGZhSCPMd4xT5dh5M3A5uBGoLDjNbAikwBi2Zevx8jqd8","confirmationStatus":"finalized","err":14}
+{"t":"2026-09-01T11:24:11.790Z","event":"settle","signature":"42wNyh3iv8H9gBqik5EM83ck26ztMT99fAypUGqUeLgwjVfRn3wrcc9H4dVgjW74qAaSUpycMokNAPXJUhe7wxbf","tick":399,"phase":1,"outcome":0}
+{"t":"2026-09-01T11:24:11.790Z","event":"done","arenaId":"1788261687","rows":17069}

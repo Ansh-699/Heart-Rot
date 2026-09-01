@@ -30,7 +30,7 @@
 //! | seat byte `>= MAX_SEATS`, or a slot lookup that misses | [`HeartrotError::SeatOutOfRange`] | `player::{join, enter_gate, move_player}`, `shoot::process` |
 //! | `join` names a free seat that is already claimed by another `identity` | [`HeartrotError::SeatOccupied`] | `player::join` |
 //! | a named seat whose `session_pubkey` is still the all-zero sentinel | [`HeartrotError::SeatUnclaimed`] | `guards::assert_session_authority` |
-//! | `arena.phase` is not one this instruction accepts | [`HeartrotError::WrongPhase`] | `player::assert_playable`, `shoot::process`, `settle::{start_match, settle}`, `delegation::{process_delegate, check_commit_accounts}` |
+//! | `arena.phase` is not one this instruction accepts | [`HeartrotError::WrongPhase`] | `state::Arena::{try_set_phase, begin_roll, begin_next_incarnation}`, `player::assert_playable`, `shoot::process`, `settle::{start_match, settle}`, `delegation::{process_delegate, check_commit_accounts}` |
 //! | `last_move_tick` / `last_shot_tick` cooldown has not elapsed | [`HeartrotError::RateLimited`] | `player::move_player`, `shoot::process` |
 //! | `slot.hp == 0` | [`HeartrotError::PlayerDead`] | `player::move_player`, `shoot::process` |
 //! | `slot.zone` is wrong for the instruction | [`HeartrotError::WrongZone`] | `player::enter_gate`, `shoot::process` |
@@ -42,6 +42,31 @@
 //! | `move_player` into a tile `map::WALLS` marks solid | [`HeartrotError::BlockedByWall`] | `player::move_player` |
 //! | `enter_gate` from a seat that is not standing on a gate tile | [`HeartrotError::NotOnGate`] | `player::enter_gate` |
 //! | `authority` signed but is not the seat's `session_pubkey` | [`HeartrotError::WrongSessionKey`] | `guards::assert_session_authority` |
+//! | `next_incarnation` before the settled match reached the leaderboard | [`HeartrotError::MatchNotRecorded`] | `init::next_incarnation` |
+//! | a VRF callback not signed by the scoped VRF identity | [`HeartrotError::NotVrfIdentity`] | `roll::consume_roll` |
+//!
+//! ## Why the game loop added only two codes
+//!
+//! The game-loop contract (`docs/architecture/06-game-loop.md`, and `state::PHASE_EDGES`
+//! which is its executable copy) makes four conditions look like candidates for a variant
+//! each — an illegal phase transition, a match already settled, a roll the oracle never
+//! fulfilled, and a second concurrent `next_incarnation`. All four are already
+//! [`HeartrotError::WrongPhase`], on purpose, and giving any of them its own code would be
+//! the "two rows for one condition" defect this header warns about.
+//!
+//! The state a game-loop instruction is judged against is the triple
+//! `(phase, outcome, next_affix_seed)`, and all three live on the `Arena` the caller
+//! already passed. "This instruction is not legal from this state" is *one* condition; a
+//! caller who wants to know *which* leg refused reads it straight off that account —
+//! `outcome == OUTCOME_WIPE` says the raid never earned a roll, an all-zero
+//! `next_affix_seed` says the oracle never answered, and `phase == PHASE_LOBBY` after a
+//! `next_incarnation` says another transaction won the race. A second code would carry no
+//! information the caller does not already hold, while costing a permanently frozen
+//! discriminant.
+//!
+//! The two codes below are the conditions that genuinely have no owner, because neither is
+//! a fact about `arena.phase`: one is about the *`Leaderboard`* being stale relative to a
+//! correctly-settled arena, and one is about *who signed* a callback.
 //!
 //! There is deliberately no row for "`start_match` on an arena whose `crank_task_id` is
 //! `<= 0`". Code 16 was `CrankTaskIdUnset` and is retired: nothing can produce a
@@ -173,6 +198,32 @@ heartrot_errors! {
     // `crank_task_id` floor it at 1, so the condition it named cannot occur. Retired,
     // not free: a future variant is numbered 17 and up, because a deployed client that
     // still knows 16 must never be handed a different rule under that number.
+    /// `next_incarnation` on an arena whose result has not reached the `Leaderboard` yet —
+    /// `last_arena_id` / `last_incarnation` do not name this match. Tag 15 zeroes every
+    /// `damage_dealt` and flips the phase out of `PHASE_SETTLED`, which is the only phase
+    /// `write_leaderboard` accepts, so a tag 15 that beat the leaderboard write would
+    /// destroy the match record with no way to reconstruct it.
+    ///
+    /// Not [`Self::WrongPhase`]: the arena's phase is exactly right, and the stale account
+    /// is the *`Leaderboard`*. Not [`Self::MatchNotOver`] either — that one means the fight
+    /// has not finished; this one means it finished and has not been *filed*. The
+    /// distinction is what the caller does next: this is the retryable one (send tag 10,
+    /// then tag 15 again), the way [`Self::NotOnGate`] is the retryable half of
+    /// [`Self::WrongZone`].
+    MatchNotRecorded = 17,
+
+    /// A VRF callback whose signer is not `vrf::pda::scoped_vrf_identity(heartrot)`. The
+    /// entire security perimeter for progression: `consume_roll` is the only writer of
+    /// `next_affix_seed`, and non-zero seed bytes *mean* "a proof was verified on chain",
+    /// so a callback that accepts any other signer lets a player choose the next boss's
+    /// ruleset. Distinct from [`Self::NotCrankSigner`] because the consequences are
+    /// opposite: a crank that cannot authorize stops the match clock and pages an
+    /// operator, while this one is an attempted forgery that must not be filed under an
+    /// operational alarm. Distinct from [`Self::WrongSessionKey`] because no seat is
+    /// involved — the deprecated global `VRF_PROGRAM_IDENTITY` is shared with every other
+    /// consumer of the queue, so "signed by the VRF program" is not the check; "signed by
+    /// the identity scoped to *this* program" is.
+    NotVrfIdentity = 18,
 }
 
 /// Highest code ever issued, live or **retired**. Every variant is numbered at or below
@@ -180,7 +231,7 @@ heartrot_errors! {
 /// (16) being handed to a new rule, since the discriminants are wire ABI and a client in a
 /// browser tab cannot be asked to forget one.
 #[cfg(test)]
-const HIGHEST_ISSUED: u32 = 16;
+const HIGHEST_ISSUED: u32 = 18;
 
 impl From<HeartrotError> for ProgramError {
     #[inline(always)]

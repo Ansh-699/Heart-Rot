@@ -125,6 +125,22 @@ pub const ENTRANCES: [(i16, i16); 4] = [
     (512, 992), // tile (32, 62)
 ];
 
+/// The `B` heart tile: where the boss stands, in world units at the tile's top-left
+/// corner -- the same convention as [`ENTRANCES`].
+///
+/// `handlers::init` reads this and writes it to `Boss.x`/`Boss.y` on every spawn and
+/// respawn. It is here rather than there because the boss's position is a fact about
+/// the *map*: the sprite is 230x270 units of hitbox centred on this point, and the
+/// drawn heart chamber is the only open space on the grid wide enough to hold it.
+///
+/// It used to be a pair of literals in `init.rs` reading (512, 320) -- tile (32, 20),
+/// which is the two-tile north *corridor*, not the chamber. The shell was mostly
+/// inside solid rock, `shoot`'s ray died on the corridor wall before reaching it, and
+/// this generator "checked" the spawn against a hardcoded map centre attributed to a
+/// `start_match` write that never existed. Three copies, two of them wrong, and the
+/// fight had never been run on chain so nothing had noticed.
+pub const BOSS_SPAWN: (i16, i16) = (512, 512); // tile (32, 32)
+
 /// Every entrance stands on floor in the table above.
 ///
 /// The generator proves the same thing plus reachability, but only when someone runs it.
@@ -147,4 +163,14 @@ const _: () = {
         );
         i += 1;
     }
+
+    // And the boss stands on floor. Same argument, higher stakes: a boss inside rock
+    // is a boss whose shell no ray can strip, which is a match that cannot be won and
+    // which nothing at runtime reports.
+    let (bx, by) = BOSS_SPAWN;
+    assert!(
+        WALLS[(by / TILE) as usize] & (1u64 << (bx / TILE)) == 0,
+        "map::BOSS_SPAWN lands in a wall -- move the `B` in assets/map/arena.json \
+         and re-run tools/gen_map.py",
+    );
 };

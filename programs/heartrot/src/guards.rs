@@ -50,7 +50,7 @@
 #![allow(unexpected_cfgs)]
 
 use {
-    crate::state::PlayerSlot,
+    crate::{error::HeartrotError, state::PlayerSlot},
     pinocchio::{
         account::AccountView,
         address::{Address, address_eq},
@@ -192,9 +192,22 @@ pub fn assert_pda<const N: usize>(
 /// of the twenty seats, on a network where transactions are free. This is the entire
 /// perimeter for player actions, not one layer of it.
 ///
-/// Three ways it fails, and all three matter:
-/// signature missing, seat never claimed (the all-zero sentinel must not authorize
-/// anyone), and a real signer against the wrong seat.
+/// Three ways it fails, and all three matter, so all three answer differently:
+///
+/// - the transaction is not signed at all — `MissingRequiredSignature`, the runtime's own
+///   name for the condition, which this file does not duplicate;
+/// - the seat was never claimed, so its key is the all-zero sentinel and must authorize
+///   nobody — [`HeartrotError::SeatUnclaimed`];
+/// - a real signer against somebody else's seat — [`HeartrotError::WrongSessionKey`].
+///
+/// The last two used to return the builtin `UninitializedAccount` and `IncorrectAuthority`.
+/// Both are wrong, and the second is the expensive one: `IncorrectAuthority` is also what
+/// six unrelated authority checks return, so the one signal that says *the arena is being
+/// cheated* arrived indistinguishable from a misconfigured crank or a treasury typo — on a
+/// network where the error code is the only diagnostic a failed ER transaction hands back.
+/// `UninitializedAccount` is merely imprecise: the `Players` account is perfectly well
+/// initialized, one seat inside it is empty, and a caller who went looking for an
+/// uninitialized account would find nothing wrong with any of them.
 pub fn assert_session_authority(
     player_slot: &PlayerSlot,
     signer: &AccountView,
@@ -203,13 +216,13 @@ pub fn assert_session_authority(
     // Ordered before the comparison so an unclaimed seat can never be entered by
     // whatever key happens to equal the sentinel.
     if player_slot.session_pubkey == UNCLAIMED {
-        return Err(ProgramError::UninitializedAccount);
+        return Err(HeartrotError::SeatUnclaimed.into());
     }
     let expected = Address::new_from_array(player_slot.session_pubkey);
     if address_eq(&expected, signer.address()) {
         Ok(())
     } else {
-        Err(ProgramError::IncorrectAuthority)
+        Err(HeartrotError::WrongSessionKey.into())
     }
 }
 
@@ -377,11 +390,15 @@ mod tests {
         // Control: the seat's own key, signing.
         assert!(assert_session_authority(&slot, &v).is_ok());
 
-        // A real signer against somebody else's seat — the arena-wide cheat.
+        // A real signer against somebody else's seat — the arena-wide cheat. It must be
+        // `WrongSessionKey` and nothing else: the builtin `IncorrectAuthority` this used
+        // to return is shared with every other authority check in the program, so a
+        // stolen session key reached an operator looking exactly like a misconfigured
+        // crank.
         slot.session_pubkey = *addr(43).as_array();
         assert_eq!(
             assert_session_authority(&slot, &v).unwrap_err(),
-            ProgramError::IncorrectAuthority
+            HeartrotError::WrongSessionKey.into()
         );
 
         // The unclaimed sentinel must authorize nobody, including a signer whose key
@@ -389,13 +406,31 @@ mod tests {
         slot.session_pubkey = UNCLAIMED;
         assert_eq!(
             assert_session_authority(&slot, &v).unwrap_err(),
-            ProgramError::UninitializedAccount
+            HeartrotError::SeatUnclaimed.into()
         );
         let mut zero_signer = raw::<8>(Address::new_from_array(UNCLAIMED), PROGRAM, true, false);
         let v = view!(zero_signer);
         assert_eq!(
             assert_session_authority(&slot, &v).unwrap_err(),
-            ProgramError::UninitializedAccount
+            HeartrotError::SeatUnclaimed.into()
         );
+    }
+
+    /// The three refusals above are the entire perimeter for player actions, and the only
+    /// thing that reaches a caller is the code. Two of them sharing one would collapse
+    /// "this seat was never claimed" into "somebody is driving a seat that is not theirs",
+    /// which is precisely the merge that hid the cheat behind `IncorrectAuthority`.
+    #[test]
+    fn session_authority_refusals_are_three_distinct_codes() {
+        let codes = [
+            ProgramError::MissingRequiredSignature,
+            HeartrotError::SeatUnclaimed.into(),
+            HeartrotError::WrongSessionKey.into(),
+        ];
+        for (i, a) in codes.iter().enumerate() {
+            for b in &codes[i + 1..] {
+                assert_ne!(a, b, "two session-authority refusals share a code");
+            }
+        }
     }
 }

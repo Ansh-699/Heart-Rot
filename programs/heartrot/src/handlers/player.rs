@@ -17,11 +17,32 @@
 //!   and the raid would never start. The Sybil gate is Privy identity in the Worker;
 //!   this handler enforces that the Worker is the one asking.
 //!
+//! **The seat lifecycle, end to end**, since it spans four files and no one of them shows
+//! the whole of it:
+//!
+//! 1. **Claimed** by `join` (tag 4) into a zeroed slot — [`claim_seat`], which zeroes and
+//!    then writes, so a re-used index cannot inherit the last occupant's HP, damage or
+//!    death count.
+//! 2. **Entered** by `enter_gate` (tag 5), once: `ZONE_LOBBY → ZONE_ARENA` is one-way and
+//!    the reverse call is refused, which is what bounds `arena.alive_count`.
+//! 3. **Killed and respawned** by `boss_tick`, which owns `hp`, `deaths` and
+//!    `respawn_at_tick`. A death does **not** release the seat: the design's death is a
+//!    3-second timer, not permadeath (`00-game-design-spec.md` §3), so the session key,
+//!    the identity and the accumulated `damage_dealt` all survive it — and must, or a
+//!    respawning player would lose their leaderboard row mid-fight. Nothing in this file
+//!    frees a seat; there is no unclaim instruction, by design.
+//! 4. **Cleared** by `init::next_incarnation` (tag 15) through
+//!    [`Players::reset_for_incarnation`], which zeroes all twenty slots on the base layer.
+//!    That is the only thing that ever unclaims a seat, and it unclaims all of them at
+//!    once. Everyone re-joins for incarnation N+1; `/session/init` is idempotent per
+//!    `identity`, so a returning player is re-seated by the path that seats everyone.
+//!
 //! Coordinates are integers in arena-space units, y down, origin top-left, shared
 //! verbatim with `Bullet` and `Boss`. `TILE` units make one map tile. Nothing here
 //! is ever a float: the client extrapolates the same integers between ticks, and a
 //! float on either side of the boundary reintroduces drift.
 
+use bytemuck::Zeroable;
 use pinocchio::{
     error::ProgramError,
     sysvars::{clock::Clock, Sysvar},
@@ -34,8 +55,8 @@ use crate::guards::{
 };
 use crate::map::WALLS;
 use crate::state::{
-    self, Arena, Players, MAX_SEATS, PHASE_FIGHTING, PHASE_LOBBY, SEED_PLAYERS, ZONE_ARENA,
-    ZONE_LOBBY,
+    self, Arena, PlayerSlot, Players, MAX_SEATS, PHASE_FIGHTING, PHASE_LOBBY, SEED_PLAYERS,
+    ZONE_ARENA, ZONE_LOBBY,
 };
 
 // ---------------------------------------------------------------------------
@@ -121,6 +142,45 @@ pub fn lobby_spawn(seat: u8) -> (i16, i16) {
         LOBBY_ENTRANCE.0.saturating_add(offset).clamp(0, MAP_MAX_XY),
         LOBBY_ENTRANCE.1.clamp(0, MAP_MAX_XY),
     )
+}
+
+/// Write a freshly claimed seat, in place.
+///
+/// **Zero first, then set the fields whose correct value is not zero.** The ordering is the
+/// whole point: assigning the slot field by field is `PlayerSlot`'s field list stored a
+/// second time, here, and the second copy is the one that goes stale. It already had —
+/// `deaths` was claimed out of `PlayerSlot._pad1` this run, and a field-by-field claim would
+/// have carried a previous occupant's death count onto a re-used seat while looking
+/// complete. `..PlayerSlot::zeroed()` makes that unrepresentable: a field added to the slot
+/// is zero here until someone deliberately names it.
+///
+/// It is also exactly what [`Players::reset_for_incarnation`] does to all twenty seats, so a
+/// seat claimed after a respawn and a seat claimed on a fresh arena are the same bytes.
+///
+/// Every field left implicit is correct at zero: `facing` 0 is north, `last_move_seq` 0 is
+/// "no input yet", `respawn_at_tick` 0 is "not scheduled" (the value `tick::step` reads as
+/// unarmed), `damage_dealt` and `deaths` start a leaderboard row at nothing, and both
+/// rate-limit stamps start at 0 — legal under the `!=` rule in [`move_clock`], which can
+/// only collide in the one slot/tick where the clock also reads 0.
+fn claim_seat(
+    slot: &mut PlayerSlot,
+    seat: u8,
+    skin_id: u8,
+    session_pubkey: [u8; 32],
+    identity: [u8; 32],
+) {
+    let (x, y) = lobby_spawn(seat);
+    *slot = PlayerSlot {
+        zone: ZONE_LOBBY,
+        skin_id,
+        x,
+        y,
+        hp: PLAYER_HP_MAX,
+        hp_max: PLAYER_HP_MAX,
+        session_pubkey,
+        identity,
+        ..PlayerSlot::zeroed()
+    };
 }
 
 /// Is the tile containing this point solid? Anything off the map counts as wall, so
@@ -240,9 +300,29 @@ fn octant(dx: i8, dy: i8) -> Result<u8, ProgramError> {
     })
 }
 
-/// A match that is settling or settled accepts no player input at all — the accounts
-/// are on their way back to base layer and any write is either lost or, worse, lands
-/// after the commit snapshot.
+/// The two phases in which a seat may act. Everything else is a fight that is over.
+///
+/// `LOBBY` and `FIGHTING` are the only phases in which player input means anything, and
+/// this is the allow-list rather than a deny-list of the other four for a reason: the phase
+/// byte grew from four values to six this run (`PHASE_ROLLING`, `PHASE_ROLLED`), and a
+/// handler written as `phase != PHASE_SETTLING && phase != PHASE_SETTLED` would have
+/// silently started accepting moves during a VRF roll. An allow-list gains nothing when a
+/// phase is appended; a deny-list loses a rule.
+///
+/// What each refusal prevents:
+///
+/// - `SETTLING` / `ROLLED`: `outcome` is fixed and the leaderboard will be written from
+///   these bytes. A move accepted here changes a match that is already scored.
+/// - `ROLLING`: a VRF callback is in flight against this arena. Player writes are not the
+///   hazard — committing is — but there is no fight to move in either.
+/// - `SETTLED`: the accounts are on their way back to base layer, so the write is either
+///   discarded or, worse, lands after the commit snapshot and is silently lost.
+///
+/// Applied by all three handlers here. `join` and `enter_gate` deliberately accept
+/// `FIGHTING` as well as `LOBBY`: late entry is the design's matchmaking (`00-game-design-
+/// spec.md` §4 — "the lobby *is* the matchmaker"), all 20 seats exist before the crank is
+/// armed so a late seat costs the frozen account list nothing (R15), and a raid that
+/// refused reinforcements would punish exactly the player who watched the fight start.
 fn assert_playable(phase: u8) -> Result<(), ProgramError> {
     if phase == PHASE_LOBBY || phase == PHASE_FIGHTING {
         Ok(())
@@ -273,7 +353,7 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
     // `seat_occupied` read that decided the arena had room. Honouring its choice is what
     // makes the seat it reported to the browser the seat the browser actually gets;
     // picking a different free slot here would hand the client a stale index.
-    let seat = data[0] as usize;
+    let seat = data[0];
     let skin_id = data[1];
     let mut session_pubkey = [0u8; 32];
     session_pubkey.copy_from_slice(&data[2..34]);
@@ -343,29 +423,12 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
     // a lost race it should retry on another seat.
     let slot = players
         .slots
-        .get_mut(seat)
+        .get_mut(seat as usize)
         .ok_or(HeartrotError::SeatOutOfRange)?;
     if slot.session_pubkey != UNCLAIMED {
         return Err(HeartrotError::SeatOccupied.into());
     }
-    let (x, y) = lobby_spawn(seat as u8);
-    slot.zone = ZONE_LOBBY;
-    slot.facing = 0;
-    slot.skin_id = skin_id;
-    slot.x = x;
-    slot.y = y;
-    slot.hp = PLAYER_HP_MAX;
-    slot.hp_max = PLAYER_HP_MAX;
-    slot.last_move_seq = 0;
-    slot.respawn_at_tick = 0;
-    // Zero is a legal stamp under the `!=` rule in `move_clock`: it can only equal
-    // the current clock in the one slot/tick where both are 0, which costs at most
-    // one dropped input at genesis.
-    slot.last_shot_tick = 0;
-    slot.last_move_tick = 0;
-    slot.damage_dealt = 0;
-    slot.session_pubkey = session_pubkey;
-    slot.identity = identity;
+    claim_seat(slot, seat, skin_id, session_pubkey, identity);
 
     // The bitmask is the Worker's cheap read of occupancy; `session_pubkey` above is
     // the authority. They are written together so they cannot drift.
@@ -467,6 +530,12 @@ pub fn move_player(
 /// `enter_gate(seat)` — accounts `[arena (w), players (w), session key (signer)]`.
 ///
 /// Flips the seat from lobby to arena and teleports it to the arena entrance.
+///
+/// The only player-callable handler here with no tick counter, and it does not need one:
+/// the `zone != ZONE_LOBBY` refusal below makes it one-shot per seat per incarnation, so a
+/// flood of repeats is a flood of rejections that write nothing — where `move` and `shoot`
+/// would each succeed, every time, at zero fee. That refusal is therefore load-bearing
+/// twice over: it is the rate limit *and* the `alive_count` bound.
 pub fn enter_gate(
     program_id: &Address,
     accounts: &mut [AccountView],
@@ -540,6 +609,111 @@ pub fn enter_gate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::{PHASE_ROLLED, PHASE_ROLLING, PHASE_SETTLED, PHASE_SETTLING};
+
+    /// A seat index is re-used forever — twenty of them serve every incarnation of an arena
+    /// — so a claim that leaves one field of the previous occupant behind is a scoreboard
+    /// that lies and a rate limiter that starts pre-armed. `deaths` is the concrete case:
+    /// it was `PlayerSlot._pad1` until this run, and a field-by-field claim would have gone
+    /// on looking complete while carrying a dead player's count onto a new one.
+    #[test]
+    fn a_seat_claim_cannot_inherit_the_last_occupant() {
+        let mut used = PlayerSlot::zeroed();
+        used.zone = ZONE_ARENA;
+        used.facing = 5;
+        used.hp = 0;
+        used.deaths = 9;
+        used.damage_dealt = 12_345;
+        used.respawn_at_tick = 700;
+        used.last_move_tick = 700;
+        used.last_shot_tick = 699;
+        used.last_move_seq = 4_000;
+
+        claim_seat(&mut used, 3, 7, [1u8; 32], [2u8; 32]);
+
+        assert_eq!(used.session_pubkey, [1u8; 32]);
+        assert_eq!(used.identity, [2u8; 32]);
+        assert_eq!(used.skin_id, 7);
+        assert_eq!(used.zone, ZONE_LOBBY);
+        assert_eq!((used.hp, used.hp_max), (PLAYER_HP_MAX, PLAYER_HP_MAX));
+        assert_eq!((used.x, used.y), lobby_spawn(3));
+
+        // The whole point, stated as bytes rather than as a list of fields: a re-used seat
+        // and a never-used one are indistinguishable. A field added to `PlayerSlot` and
+        // forgotten here fails this line — a per-field assertion would not, since it would
+        // be the same forgotten list a second time.
+        let mut fresh = PlayerSlot::zeroed();
+        claim_seat(&mut fresh, 3, 7, [1u8; 32], [2u8; 32]);
+        assert_eq!(bytemuck::bytes_of(&used), bytemuck::bytes_of(&fresh));
+        assert_eq!((used.deaths, used.damage_dealt, used.respawn_at_tick), (0, 0, 0));
+        assert_eq!((used.last_move_tick, used.last_shot_tick), (0, 0));
+    }
+
+    /// The phase gate, over the whole 6-value phase byte and past the end of it.
+    ///
+    /// Player input is legal in exactly two phases. The four refusals are one rule with
+    /// four reasons (see [`assert_playable`]); walking every value is what stops the next
+    /// appended phase from defaulting to "playable".
+    #[test]
+    fn only_a_live_match_accepts_player_input() {
+        assert!(assert_playable(PHASE_LOBBY).is_ok());
+        assert!(assert_playable(PHASE_FIGHTING).is_ok(), "late entry is the matchmaker");
+
+        for phase in [
+            PHASE_SETTLING,
+            PHASE_SETTLED,
+            PHASE_ROLLING,
+            PHASE_ROLLED,
+            PHASE_ROLLED + 1,
+            u8::MAX,
+        ] {
+            assert_eq!(
+                assert_playable(phase).unwrap_err(),
+                HeartrotError::WrongPhase.into(),
+                "phase {phase} accepted input into a fight that is over",
+            );
+        }
+
+        // While fighting, the move limiter runs off the match clock — one accepted move per
+        // crank tick, the same budget for all twenty seats. (The lobby branch reads the ER
+        // slot clock through a syscall that does not exist off chain, so it is not
+        // exercised here; `move_clock`'s doc comment carries why it has to be a second
+        // clock at all.)
+        let mut arena = Arena::zeroed();
+        arena.phase = PHASE_FIGHTING;
+        arena.tick = 41;
+        assert_eq!(move_clock(&arena), Ok(41));
+    }
+
+    /// Incarnation N+1 must hand `join` twenty claimable seats and no live key.
+    ///
+    /// This is the only thing that ever unclaims a seat, and it is not in this file — so
+    /// what is asserted here is the interface `join` and `guards::assert_session_authority`
+    /// depend on: after the reset every slot carries the all-zero sentinel, which is
+    /// simultaneously "claimable" to `join` and "authorizes nobody" to the guard. A reset
+    /// that left a session key behind would leave a closed browser's key able to drive a
+    /// seat in a fight its owner never entered.
+    #[test]
+    fn an_incarnation_reset_unclaims_every_seat() {
+        let mut players = Players::zeroed();
+        for seat in 0..MAX_SEATS as u8 {
+            let key = [seat.wrapping_add(1); 32];
+            let slot = players.slots.get_mut(seat as usize).expect("seat in range");
+            claim_seat(slot, seat, 0, key, key);
+            slot.deaths = 3;
+            slot.damage_dealt = 500;
+        }
+        assert!(players.slots.iter().all(|s| s.session_pubkey != UNCLAIMED));
+
+        players.reset_for_incarnation();
+
+        assert!(players.slots.iter().all(|s| s.session_pubkey == UNCLAIMED));
+        assert!(players.slots.iter().all(|s| s.identity == [0u8; 32]));
+        assert!(players
+            .slots
+            .iter()
+            .all(|s| s.deaths == 0 && s.damage_dealt == 0 && s.hp == 0));
+    }
 
     #[test]
     fn geometry_holds() {

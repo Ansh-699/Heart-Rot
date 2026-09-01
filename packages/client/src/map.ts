@@ -104,6 +104,15 @@ export const MAP_ENTRANCES: readonly (readonly [number, number])[] = [
   [512, 992], // tile (32, 62)
 ];
 
+/**
+ * The `B` heart tile: where the boss stands, in arena-space units at the tile's
+ * top-left corner. The exact pair `map::BOSS_SPAWN` holds on the chain, which
+ * `init::init_arena` writes to `Boss.x`/`Boss.y` on every spawn and respawn -- so the
+ * browser can draw the boss, and predict a hitscan against it, without restating a
+ * position the map already carries.
+ */
+export const BOSS_SPAWN: readonly [number, number] = [512, 512]; // tile (32, 32)
+
 /** Is this tile solid? Off-map is solid, so a caller that skips the clamp fails closed. */
 export function isWallTile(tx: number, ty: number): boolean {
   if (tx < 0 || ty < 0 || tx >= MAP_TILES || ty >= MAP_TILES) return true;

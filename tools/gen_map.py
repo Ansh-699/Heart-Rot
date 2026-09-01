@@ -189,6 +189,27 @@ def entrance_world(grid: list[str], tile: int) -> list[tuple[int, int]]:
     return [(x * tile, y * tile) for x, y in entrance_points(grid)]
 
 
+def heart_point(grid: list[str]) -> tuple[int, int]:
+    """The single `B` tile: where the boss stands.
+
+    Fatal if there is not exactly one. The whole boss -- 230x270 units of hitbox --
+    is centred on this point, so "which tile" is a load-bearing fact and not a
+    decoration: drawn in the wrong place, most of the shell sits inside solid rock
+    and no ray can reach it.
+    """
+    hearts = [(x, y) for y, row in enumerate(grid) for x, c in enumerate(row) if c == HEART]
+    if len(hearts) != 1:
+        die(f"expected exactly one `{HEART}` heart tile, found {len(hearts)}")
+    return hearts[0]
+
+
+def heart_world(grid: list[str], tile: int) -> tuple[int, int]:
+    """[`heart_point`] in world units -- the tile's top-left corner, the same
+    convention `entrance_world` and every position in the program is written in."""
+    x, y = heart_point(grid)
+    return (x * tile, y * tile)
+
+
 def validate(grid: list[str], g: dict[str, object]) -> None:
     n = g["MAP_TILES"]
     tile = g["TILE"]
@@ -213,14 +234,14 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
             if not solid(x, y):
                 die(f"border tile ({x}, {y}) is not wall -- the map must be closed")
 
-    hearts = [(x, y) for y in range(n) for x, c in enumerate(grid[y]) if c == HEART]
-    if len(hearts) != 1:
-        die(f"expected exactly one `{HEART}` heart tile, found {len(hearts)}")
-    heart = hearts[0]
-    boss = (g["ARENA_SIZE"] // 2 // tile, g["ARENA_SIZE"] // 2 // tile)
-    if heart != boss:
-        die(f"heart tile {heart} is not the boss spawn {boss} that "
-            "tick.rs::start_match writes (ARENA_SIZE/2, ARENA_SIZE/2)")
+    # The `B` tile IS the boss spawn -- it is emitted as `map::BOSS_SPAWN` and
+    # `init::init_arena` reads it from there. It used to be compared against a
+    # hardcoded (ARENA_SIZE/2, ARENA_SIZE/2) that named a `tick.rs::start_match`
+    # write which does not exist, while the real spawn lived in `init.rs` as a pair
+    # of literals -- and those literals said tile (32, 20), the *north corridor*,
+    # two tiles wide, with most of the boss's hitboxes buried in rock. One fact, one
+    # place: this tool emits it, nothing restates it.
+    heart = heart_point(grid)
 
     entrances = entrance_points(grid)
     if len(entrances) != 4:
@@ -295,6 +316,8 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
         f"    ({wx}, {wy}), // tile ({tx}, {ty})"
         for (tx, ty), (wx, wy) in zip(entrance_points(grid), entrance_world(grid, g["TILE"]))
     )
+    (htx, hty) = heart_point(grid)
+    (hx, hy) = heart_world(grid, g["TILE"])
     return f'''//! Arena wall bitboard.
 //!
 //! {BANNER.replace(chr(10), chr(10) + "//! ")}
@@ -355,6 +378,22 @@ pub const ENTRANCES: [(i16, i16); 4] = [
 {ents}
 ];
 
+/// The `B` heart tile: where the boss stands, in world units at the tile's top-left
+/// corner -- the same convention as [`ENTRANCES`].
+///
+/// `handlers::init` reads this and writes it to `Boss.x`/`Boss.y` on every spawn and
+/// respawn. It is here rather than there because the boss's position is a fact about
+/// the *map*: the sprite is 230x270 units of hitbox centred on this point, and the
+/// drawn heart chamber is the only open space on the grid wide enough to hold it.
+///
+/// It used to be a pair of literals in `init.rs` reading (512, 320) -- tile (32, 20),
+/// which is the two-tile north *corridor*, not the chamber. The shell was mostly
+/// inside solid rock, `shoot`'s ray died on the corridor wall before reaching it, and
+/// this generator "checked" the spawn against a hardcoded map centre attributed to a
+/// `start_match` write that never existed. Three copies, two of them wrong, and the
+/// fight had never been run on chain so nothing had noticed.
+pub const BOSS_SPAWN: (i16, i16) = ({hx}, {hy}); // tile ({htx}, {hty})
+
 /// Every entrance stands on floor in the table above.
 ///
 /// The generator proves the same thing plus reachability, but only when someone runs it.
@@ -377,6 +416,16 @@ const _: () = {{
         );
         i += 1;
     }}
+
+    // And the boss stands on floor. Same argument, higher stakes: a boss inside rock
+    // is a boss whose shell no ray can strip, which is a match that cannot be won and
+    // which nothing at runtime reports.
+    let (bx, by) = BOSS_SPAWN;
+    assert!(
+        WALLS[(by / TILE) as usize] & (1u64 << (bx / TILE)) == 0,
+        "map::BOSS_SPAWN lands in a wall -- move the `B` in assets/map/arena.json \\
+         and re-run tools/gen_map.py",
+    );
 }};
 '''
 
@@ -388,6 +437,8 @@ def emit_ts(grid: list[str], g: dict[str, object]) -> str:
         f"  [{wx}, {wy}], // tile ({tx}, {ty})"
         for (tx, ty), (wx, wy) in zip(entrance_points(grid), entrance_world(grid, g["TILE"]))
     )
+    (htx, hty) = heart_point(grid)
+    (hx, hy) = heart_world(grid, g["TILE"])
     return f'''/**
  * Arena wall map -- the browser's copy of the table the chain raycasts against.
  *
@@ -426,6 +477,15 @@ export const MAP_GRID: readonly string[] = [
 export const MAP_ENTRANCES: readonly (readonly [number, number])[] = [
 {ents}
 ];
+
+/**
+ * The `B` heart tile: where the boss stands, in arena-space units at the tile's
+ * top-left corner. The exact pair `map::BOSS_SPAWN` holds on the chain, which
+ * `init::init_arena` writes to `Boss.x`/`Boss.y` on every spawn and respawn -- so the
+ * browser can draw the boss, and predict a hitscan against it, without restating a
+ * position the map already carries.
+ */
+export const BOSS_SPAWN: readonly [number, number] = [{hx}, {hy}]; // tile ({htx}, {hty})
 
 /** Is this tile solid? Off-map is solid, so a caller that skips the clamp fails closed. */
 export function isWallTile(tx: number, ty: number): boolean {{

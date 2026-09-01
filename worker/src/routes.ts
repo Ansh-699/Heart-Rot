@@ -37,8 +37,14 @@ import {
   initLeaderboard,
   leaderboardPda,
   matchPdas,
+  nextIncarnation,
+  OUTCOME_WIN,
   PHASE_FIGHTING,
   PHASE_LOBBY,
+  PHASE_ROLLING,
+  PHASE_SETTLED,
+  rollDeadlineTick,
+  rollSeed,
   sendInstructions,
   settle,
   startMatch,
@@ -222,31 +228,93 @@ async function treasuryTier(c: Ctx): Promise<{ lamports: bigint; matches: number
 // ---------------------------------------------------------------------------
 
 /**
+ * Roll a settled arena forward to incarnation N+1, in place, and report the new number.
+ * `null` means this raid chain ends here and a fresh arena id is the way on.
+ *
+ * A next incarnation exists only for a win whose VRF roll actually landed. A wipe, an
+ * enrage, and a win the oracle never answered for are all the same answer — the loop
+ * stops loudly rather than continuing under a seed nobody verified.
+ *
+ * Tag 15 reuses the same three accounts, so this costs one base-layer transaction and no
+ * rent, and the arena keeps the address the whole chain has been played on.
+ */
+async function rollForward(
+  c: Ctx,
+  pdas: { arena: Address; boss: Address; players: Address },
+  settled: ArenaAccount,
+): Promise<number | null> {
+  if (settled.outcome !== OUTCOME_WIN || rollSeed(settled) === null) return null;
+
+  const ix = nextIncarnation({
+    programId: c.programId,
+    // The program checks this against `init::TREASURY`, so the Worker is the only
+    // thing that can advance a chain — a player cannot re-roll a boss on demand.
+    payer: c.treasury.address,
+    ...pdas,
+    leaderboard: await leaderboardPda(c.programId),
+  });
+  try {
+    await confirmSignature(c.base, await sendInstructions(c.base, c.treasury, [ix]), {
+      timeoutMs: BASE_CONFIRM_MS,
+    });
+  } catch {
+    // Two joiners race here every time a raid wins, and the loser's tag 15 is refused by
+    // `LOBBY -> LOBBY` being an illegal edge — which is the mutex working, not a failure.
+    // `MatchNotRecorded` (a settle whose leaderboard write never landed) arrives as the
+    // same `WrongPhase`, so the answer is not in the error: re-read the account.
+  }
+  const { state } = await readArena(c, pdas.arena);
+  if (!state || state.phase !== PHASE_LOBBY || state.incarnation <= settled.incarnation) {
+    return null;
+  }
+  return state.incarnation;
+}
+
+/**
+ * How many arena ids past the leaderboard's head to consider before giving up. Each step
+ * costs a router call and an RPC read, and every step past the first means that many
+ * raids are running at once.
+ */
+const ARENA_SCAN = 3;
+
+/**
  * The open arena, derived from chain state alone.
  *
  * `Leaderboard` carries `(last_arena_id, last_incarnation)` as its settle-time
  * idempotency key, which makes it the one durable counter this design already has. So
  * no KV, no config, and — the point — no client-supplied id decides which arena a
- * player joins or which one the treasury pays rent for. The next match is `last + 1`;
- * if a raid is already running on that id, the following one is open and untouched.
+ * player joins or which one the treasury pays rent for.
+ *
+ * The scan starts *at* `last_arena_id` rather than after it, because incarnations advance
+ * in place: a won raid's next boss is the same arena at N+1, not a new address. Only a
+ * chain that has ended — a wipe, an enrage, or a roll the oracle never answered — moves
+ * the scan on, and a raid already running on an id leaves the next one untouched.
  */
-async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number }> {
+async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number } | null> {
   const board = await accountData(c.base, await leaderboardPda(c.programId));
+  // A leaderboard that exists but has recorded nothing reads `last_arena_id == 0`, which
+  // is not an arena id at all — `arenaIdField` rejects 0 on the way in, so returning it
+  // would make `/api/match/start` answer `wrong_arena` to the correct request forever.
+  const last = board ? decodeLeaderboard(board).lastArenaId : 0n;
+  const head = last > 0n ? last : 1n;
 
-  let arenaId = 1n;
-  let incarnation = 1;
-  if (board) {
-    const decoded = decodeLeaderboard(board);
-    arenaId = decoded.lastArenaId + 1n;
-    incarnation = decoded.lastIncarnation + 1;
-  }
+  for (let step = 0; step < ARENA_SCAN; step++) {
+    const arenaId = head + BigInt(step);
+    const pdas = await matchPdas(c.programId, arenaId);
+    const { state } = await readArena(c, pdas.arena);
 
-  const { arena } = await matchPdas(c.programId, arenaId);
-  const { state } = await readArena(c, arena);
-  if (state && state.phase !== PHASE_LOBBY) {
-    return { arenaId: arenaId + 1n, incarnation: incarnation + 1 };
+    // Never played. `init_arena` will create it at incarnation 1 — the counter is
+    // per-arena, so a fresh chain always starts at the base fight.
+    if (!state) return { arenaId, incarnation: 1 };
+    if (state.phase === PHASE_LOBBY) return { arenaId, incarnation: state.incarnation };
+
+    if (state.phase === PHASE_SETTLED) {
+      const rolled = await rollForward(c, pdas, state);
+      if (rolled !== null) return { arenaId, incarnation: rolled };
+    }
+    // Mid-fight, mid-settlement, or a chain that ended: the next id is untouched.
   }
-  return { arenaId, incarnation };
+  return null;
 }
 
 /**
@@ -381,7 +449,9 @@ export async function sessionInit(env: Env, body: unknown): Promise<Response> {
   const treasury = await treasuryTier(c);
   if (treasury.tier === 4) return json({ error: 'treasury_low', tier: treasury.tier }, 503);
 
-  const { arenaId, incarnation } = await openArena(c);
+  const open = await openArena(c);
+  if (!open) return json({ error: 'no_open_arena' }, 503);
+  const { arenaId, incarnation } = open;
   const pdas = await matchPdas(c.programId, arenaId);
   const { er, erFqdn } = await ensureArena(c, arenaId, incarnation, pdas);
 
@@ -486,7 +556,9 @@ export async function matchStart(env: Env, body: unknown): Promise<Response> {
   const treasury = await treasuryTier(c);
   if (treasury.tier === 4) return json({ error: 'treasury_low', tier: treasury.tier }, 503);
 
-  const { arenaId, incarnation } = await openArena(c);
+  const open = await openArena(c);
+  if (!open) return json({ error: 'no_open_arena' }, 503);
+  const { arenaId, incarnation } = open;
   if (requested !== arenaId) {
     return json({ error: 'wrong_arena', arenaId: arenaId.toString() }, 409);
   }
@@ -537,10 +609,16 @@ export async function matchStart(env: Env, body: unknown): Promise<Response> {
  * the only path that runs once the crank's ten-retry ladder has deleted the task, and
  * there is no RPC anywhere that reports whether a task is still alive.
  *
- * `reason` is advisory and is not read. What this route settles on is chain state:
- * either the program already moved the match out of `Fighting`, or `tick` has provably
- * stopped advancing. Trusting a client-supplied reason would let one player end a raid
- * for nineteen others.
+ * `reason` is advisory and is not read. What this route settles on is chain state: either
+ * the program has already fixed an `outcome` — `Settling`, `Rolled`, `Settled`, whichever
+ * of win, wipe and enrage it was — or the arena is still `Fighting` and `tick` has
+ * provably stopped advancing. Trusting a client-supplied reason would let one player end
+ * a raid for nineteen others. `Lobby` and `Rolling` are refused outright: the first has no
+ * match to record, and the second must not leave the ER while a VRF callback is in flight.
+ *
+ * The response carries `outcome` and `nextIncarnation` because settlement is where the
+ * two axes separate: `phase` is `Settled` either way, and only `outcome` says whether the
+ * raid killed the core, and only a verified roll seed says the chain continues.
  *
  * `arenaId` is client-supplied and names any arena on the chain, so being logged in is
  * not enough on its own either: the caller must hold a seat in the match they are asking
@@ -558,7 +636,6 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
 
   const { state, erFqdn } = await readArena(c, pdas.arena);
   if (!state) return json({ error: 'no_such_match' }, 404);
-  const incarnation = state.incarnation;
 
   // Membership, from the same layer the arena was read from — the three accounts are
   // delegated and committed as one instruction, so they are never on opposite sides.
@@ -586,7 +663,27 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
     return json({ error: 'nothing_to_settle' }, 409);
   }
 
-  if (erFqdn !== undefined) {
+  // A VRF request is in flight, and committing now is the one thing that must not happen
+  // here: the callback would land on accounts the ER no longer holds, fail, and be
+  // retried by the oracle for its whole 240-slot TTL. `ROLLING -> SETTLED` is not a legal
+  // edge for exactly this reason, so there is nothing to send — `boss_tick` abandons the
+  // roll after `ROLL_TIMEOUT_TICKS` and the arena drops back to a settleable state on its
+  // own. Hand the client the wait rather than sending an instruction the program refuses.
+  if (state.phase === PHASE_ROLLING) {
+    const ticksLeft = Math.max(0, rollDeadlineTick(state) - state.tick) + 1;
+    return json({ committed: false, phase: 'rolling', retryAfterMs: ticksLeft * TICK_MS }, 202);
+  }
+
+  if (erFqdn === undefined) {
+    // Already home. `settle` is the only instruction that both ends a fight and
+    // undelegates, so anything that is back on the base layer and *not* `Settled` was
+    // committed by a bare tag 11 with the fight unfinished. There is no instruction that
+    // sends it back to an ER, and `write_leaderboard` accepts only `Settled` — so this is
+    // a stuck match, not a settleable one, and reporting it is all this route can do.
+    if (state.phase !== PHASE_SETTLED) {
+      return json({ error: 'not_settleable', phase: state.phase }, 409);
+    }
+  } else {
     const er = createRpc(erFqdn);
 
     if (state.phase === PHASE_FIGHTING) {
@@ -621,13 +718,12 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
   // Ownership returning to our program is the state `write_leaderboard` actually needs,
   // and unlike a log string it is unambiguous.
   const deadline = Date.now() + 25_000;
-  let committed = false;
+  let settled: ArenaAccount | null = null;
   for (;;) {
     const base = await accountData(c.base, pdas.arena);
     if (base) {
       try {
-        decodeArena(base);
-        committed = true;
+        settled = decodeArena(base);
         break;
       } catch {
         // Still a delegated husk: zero bytes owned by the delegation program.
@@ -639,7 +735,7 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
   // Unknown, not failed — 202, and the client polls. Re-entering this route is safe:
   // `settle` on an already-settled arena commits again and `write_leaderboard` no-ops
   // on a repeated `(arena_id, incarnation)`.
-  if (!committed) return json({ committed: false, retryAfterMs: 2_000 }, 202);
+  if (!settled) return json({ committed: false, retryAfterMs: 2_000 }, 202);
 
   const leaderboard = await leaderboardPda(c.programId);
   if ((await accountData(c.base, leaderboard)) === null) {
@@ -674,7 +770,22 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
     committed: true,
     baseSignature,
     leaderboardWritten: true,
-    nextIncarnation: incarnation + 1,
+    // Read off the committed account rather than inferred, which is the whole reason
+    // `outcome` is a second axis: after settlement `phase` is `Settled` for a raid that
+    // killed the core and for one that wiped alike, and the end screen has to tell them
+    // apart. `OUTCOME_*` in `@heartrot/client`.
+    outcome: settled.outcome,
+    /**
+     * The incarnation the next `/api/session/init` will seat players into, or `null`
+     * when this raid chain ends here — a wipe, an enrage, or a win whose VRF roll the
+     * oracle never answered. The Worker does not send tag 15 now: nothing carries an
+     * incarnation forward except players coming back, and `openArena` rolls the arena
+     * when the first one does, so a chain nobody returns to costs no transaction.
+     */
+    nextIncarnation:
+      settled.outcome === OUTCOME_WIN && rollSeed(settled) !== null
+        ? settled.incarnation + 1
+        : null,
   });
 }
 

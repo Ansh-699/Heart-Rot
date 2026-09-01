@@ -51,27 +51,68 @@ export interface Env {
   BASE_RPC_URL: string;
   BASE_RPC_TOKEN?: string;
 
-  RATE_LIMIT?: RateLimitBinding;
+  /** Not optional: `REQUIRED` below refuses every request without it. */
+  RATE_LIMIT: RateLimitBinding;
 }
 
 /** Requests are small JSON documents. Anything larger is not one of ours. */
 const MAX_BODY_BYTES = 8 * 1024;
 
+/**
+ * Every binding a request needs before any route may run, in one list.
+ *
+ * `BASE_RPC_TOKEN` is absent because it is genuinely optional, and `ER_ENDPOINT`
+ * because nothing reads it — the ER's address comes from the router's `fqdn`, not from
+ * config, so requiring it would assert a dependency that does not exist.
+ *
+ * Without this gate an unset secret is not inert. `PROGRAM_ID: ''` reaches
+ * `@solana/kit`'s `address()`, which throws, and the catch-all below turns that into an
+ * opaque `internal_error` on every single request; an unset `PRIVY_APP_ID` builds the
+ * JWKS URL `…/apps//jwks.json` and answers `unauthorized` to every correctly signed-in
+ * player. Both name the deployment, and both report something else. Checking here — at
+ * the one place every route passes through — is also why no route below re-checks: a
+ * second site would be the same fact stored twice, and would drift.
+ */
+const REQUIRED: readonly (keyof Env)[] = [
+  'PROGRAM_ID',
+  'ROUTER_ENDPOINT',
+  'VALIDATOR_IDENTITY',
+  'PRIVY_APP_ID',
+  'TREASURY_SECRET_KEY',
+  'BASE_RPC_URL',
+  // ER transaction fees are zero and the ER performs no fee-payer validation, so the
+  // network provides no economic backstop anywhere in this system. Inside the program
+  // that is handled with per-player tick counters; out here it is the limiter. Every
+  // route spends real SOL, so running them unmetered because a binding is missing is
+  // worse than being down: it is required, not optional hardening.
+  'RATE_LIMIT',
+];
+
+/**
+ * `Map`, not an object literal: `pathname` is attacker-controlled, and an object lookup
+ * on `__proto__` or `constructor` yields an inherited value that is truthy and not one
+ * of ours. A `Map` has no inherited keys to find.
+ */
+const POST_ROUTES = new Map<string, (env: Env, body: unknown) => Promise<Response>>([
+  ['/api/session/init', sessionInit],
+  ['/api/match/start', matchStart],
+  ['/api/match/settle', matchSettle],
+]);
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
 
-    // ER transaction fees are zero and the ER performs no fee-payer validation, so the
-    // network provides no economic backstop anywhere in this system. Inside the
-    // program that is handled with per-player tick counters; out here it is this. The
-    // binding is per-Cloudflare-location, not global, so an abuser reaching many colos
-    // multiplies their allowance — it is a brake, not a wall, and the treasury tier
-    // check in each route is what actually bounds the spend.
-    if (!env.RATE_LIMIT) {
-      // Fail closed. Every route below spends real SOL; running them unmetered because
-      // a binding is missing is worse than being down.
-      return json({ error: 'rate_limiter_unconfigured' }, 503);
-    }
+    // Fail closed, and say which binding is missing. The names are ops signal, not a
+    // secret — they are already in .env.example — and the alternative is an operator
+    // reading a 500 that names nothing. Values are never read here, only presence.
+    const missing = REQUIRED.filter((name) => !env[name]);
+    if (missing.length > 0) return json({ error: 'misconfigured', missing }, 503);
+
+    // The binding is per-Cloudflare-location, not global, so an abuser reaching many
+    // colos multiplies their allowance — it is a brake, not a wall, and the treasury
+    // tier check in each route is what actually bounds the spend. Keyed per route so
+    // one client polling a slow settle cannot spend another route's budget.
     const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
     const { success } = await env.RATE_LIMIT.limit({ key: `${ip}:${pathname}` });
     if (!success) return json({ error: 'rate_limited' }, 429);
@@ -81,21 +122,12 @@ export default {
         return await faucetStatus(env);
       }
 
-      if (request.method === 'POST') {
-        const body = await readJson(request);
-        switch (pathname) {
-          case '/api/session/init':
-            return await sessionInit(env, body);
-          case '/api/match/start':
-            return await matchStart(env, body);
-          case '/api/match/settle':
-            return await matchSettle(env, body);
-          default:
-            break;
-        }
-      }
+      // Resolved before the body is touched, so a typo'd URL answers `not_found`
+      // rather than being told its body is not JSON.
+      const route = request.method === 'POST' ? POST_ROUTES.get(pathname) : undefined;
+      if (!route) return json({ error: 'not_found' }, 404);
 
-      return json({ error: 'not_found' }, 404);
+      return await route(env, await readJson(request));
     } catch (error) {
       if (error instanceof BadRequest) return json({ error: error.message }, 400);
       if (error instanceof Unauthorized) return json({ error: 'unauthorized' }, 401);
@@ -113,9 +145,13 @@ async function readJson(request: Request): Promise<unknown> {
   const declared = Number(request.headers.get('content-length') ?? '0');
   if (declared > MAX_BODY_BYTES) throw new BadRequest('body too large');
 
-  const text = await request.text();
-  // Chunked requests declare no length, so the guard above is not enough on its own.
-  if (text.length > MAX_BODY_BYTES) throw new BadRequest('body too large');
+  // Chunked requests declare no length, so the guard above is not enough on its own —
+  // and the cap is in *bytes*, so it has to be measured on the bytes. `String.length`
+  // counts UTF-16 code units, which lets a body of multibyte characters through at
+  // roughly three times the limit.
+  const body = await request.arrayBuffer();
+  if (body.byteLength > MAX_BODY_BYTES) throw new BadRequest('body too large');
+  const text = new TextDecoder().decode(body);
   try {
     return JSON.parse(text) as unknown;
   } catch {

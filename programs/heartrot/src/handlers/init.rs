@@ -1,10 +1,12 @@
 //! Base-layer account creation: the CPIs that stand a match up before anything is
 //! delegated to the ER.
 //!
-//! Two instructions, both base layer, both paid by the treasury: [`init_arena`] once per
-//! match (`Arena` + `Boss` + `Players`, tag 1) and [`init_leaderboard`] once per
-//! deployment (tag 0). Neither is on the 400 ms path, so they spend compute freely on a
-//! full PDA search rather than trusting a caller-supplied bump.
+//! Three instructions, all base layer: [`init_arena`] once per match (`Arena` + `Boss` +
+//! `Players`, tag 1), [`init_leaderboard`] once per deployment (tag 0), and
+//! [`next_incarnation`] (tag 15), which creates nothing at all — it re-seeds the three
+//! accounts a settled match already owns for incarnation N+1. None is on the 400 ms path,
+//! so they spend compute freely on a full PDA search rather than trusting a
+//! caller-supplied bump.
 //!
 //! Four rules the rest of this file is built on:
 //!
@@ -41,9 +43,11 @@ use pinocchio::{
 use pinocchio_system::instructions::CreateAccount;
 use pinocchio::sysvars::{rent::Rent, Sysvar};
 
+use crate::error::HeartrotError;
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
+use crate::map;
 use crate::state::{
-    init, AccountLayout, Arena, Boss, Leaderboard, Players, NO_TARGET, N_PARTS, PHASE_LOBBY,
+    init, load, load_mut, AccountLayout, Arena, Boss, Leaderboard, Players, N_PARTS, PHASE_LOBBY,
     SEED_ARENA, SEED_BOSS, SEED_LEADERBOARD, SEED_PLAYERS,
 };
 
@@ -91,6 +95,22 @@ const TREASURY_BYTES: [u8; 32] = decode_base58_address(TREASURY_BASE58);
 /// Upgrade path if the treasury ever has to rotate without a redeploy: an `admin: [u8; 32]`
 /// on `Leaderboard`, stamped by `init_leaderboard`.
 pub const TREASURY: Address = Address::new_from_array(TREASURY_BYTES);
+
+/// `signer` is [`TREASURY`], or [`HeartrotError::NotTreasury`].
+///
+/// Named rather than `ProgramError::IncorrectAuthority`: `error.rs` reserves code 11 for
+/// exactly this condition, and the builtin is also what six unrelated authority failures
+/// return — a caller that used the wrong deploy key could not tell its config fault from a
+/// stolen session key. It does **not** check `is_signer`; callers assert that first, so
+/// that an account merely *carrying* the treasury's address fails as a missing signature
+/// rather than as a wrong key.
+fn assert_treasury(signer: &AccountView) -> Result<(), ProgramError> {
+    if address_eq(signer.address(), &TREASURY) {
+        Ok(())
+    } else {
+        Err(HeartrotError::NotTreasury.into())
+    }
+}
 
 /// Refuses a deploy build that never had `HEARTROT_TREASURY` set.
 ///
@@ -185,14 +205,15 @@ const MAX_SIGNER_SEEDS: usize = 3;
 // Boss balance
 // ---------------------------------------------------------------------------
 
-/// Boss spawn position, in arena units — 16 per tile over the 64×64 map, so 0..1023 on
-/// both axes with `y` growing downward, the same units as `PlayerSlot.x` and `Bullet.x`.
-///
-/// Twenty tiles down the centre line. The sprite reaches 112 units above its origin and
-/// 128 below (`shoot.rs`'s hitbox table), so the whole boss is inside the arena, and it is
-/// well clear of the bottom-centre entrance players respawn at.
-const BOSS_SPAWN_X: i16 = 512;
-const BOSS_SPAWN_Y: i16 = 320;
+// Where the boss stands is `crate::map::BOSS_SPAWN`, compiled out of the `B` heart tile
+// in `assets/map/arena.json` by `tools/gen_map.py` alongside the wall bitboard the ray
+// dies on. It is not a constant of this file, and it must never become one again: it was
+// a `BOSS_SPAWN_X`/`BOSS_SPAWN_Y` pair here reading (512, 320) — tile (32, 20), the
+// two-tile north *corridor* — while the drawn map put the heart at (512, 512) and both
+// `shoot.rs` and `player.rs` tested against that. Three copies, two of them wrong. The
+// boss stood with its shell inside solid rock, `shoot`'s ray died on the corridor wall
+// before most of the parts, and the whole fight had never been run on chain, so nothing
+// had noticed. Move the `B`, re-run the tool, and the boss moves with it.
 
 /// Kill condition, only damageable once the vent opens. "Low tier" in the design spec: 50
 /// landed shots at `shoot.rs`'s `SHOT_DAMAGE` of 40.
@@ -256,7 +277,7 @@ const ACCOUNT_STORAGE_OVERHEAD: u64 = 128;
 ///
 /// | account | space | devnet minimum | ER expects | shortfall |
 /// |---------|-------|----------------|------------|-----------|
-/// | Arena   | 1160  |      8,156,904 |  8,964,480 |   807,576 |
+/// | Arena   | 1200  |      8,410,224 |  9,242,880 |   832,656 |
 /// | Boss    |   50  |      1,127,274 |  1,238,880 |   111,606 |
 /// | Players | 1924  |     12,995,316 | 14,281,920 | 1,286,604 |
 ///
@@ -387,6 +408,21 @@ fn scale_for_incarnation(base: u16, incarnation: u16) -> u16 {
     }
 }
 
+/// The whole shell, scaled for one incarnation.
+///
+/// The single site that turns [`BOSS_PARTS_BASE`] into the numbers an account holds.
+/// `init_arena` (incarnation N as created) and [`next_incarnation`] (incarnation N+1)
+/// both go through it, so a boss cannot be one difficulty curve when a match is opened
+/// and another when it respawns — the defect this codebase keeps re-deriving from one
+/// fact stored twice.
+fn scaled_parts(incarnation: u16) -> [u16; N_PARTS] {
+    let mut parts = [0u16; N_PARTS];
+    for (slot, base) in parts.iter_mut().zip(BOSS_PARTS_BASE) {
+        *slot = scale_for_incarnation(base, incarnation);
+    }
+    parts
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -414,9 +450,7 @@ pub fn init_arena(program_id: &Address, accounts: &mut [AccountView], data: &[u8
     // Before anything is created or paid for. `assert_signer` comes first, because an
     // account that merely *carries* the treasury's address is an attacker naming it.
     assert_signer(payer)?;
-    if !address_eq(payer.address(), &TREASURY) {
-        return Err(ProgramError::IncorrectAuthority);
-    }
+    assert_treasury(payer)?;
 
     let mut arena_id_bytes = [0u8; 8];
     arena_id_bytes.copy_from_slice(&data[0..8]);
@@ -526,25 +560,17 @@ pub fn init_arena(program_id: &Address, accounts: &mut [AccountView], data: &[u8
         let mut account_data = boss.try_borrow_mut()?;
         let state = init::<Boss>(&mut account_data, boss_bump)?;
 
-        state.x = BOSS_SPAWN_X;
-        state.y = BOSS_SPAWN_Y;
-        state.core_hp = BOSS_CORE_HP;
-        state.core_hp_max = BOSS_CORE_HP;
-
-        let mut parts = [0u16; N_PARTS];
-        for (slot, base) in parts.iter_mut().zip(BOSS_PARTS_BASE) {
-            *slot = scale_for_incarnation(base, incarnation);
-        }
-        state.parts = parts;
-        state.parts_max = parts;
-
-        // No alive player exists yet — every seat is unclaimed and in the lobby.
-        // `NO_TARGET` is outside `0..MAX_SEATS` so a bounds check catches it instead of
-        // the boss silently opening fire on seat 0.
-        state.target_seat = NO_TARGET;
-        // `vent_open` and `attack_timer` stay 0: a full shell is sealed, and the first
-        // attack beat is the crank's to schedule. `vent_open` is recomputed from `parts`
-        // every tick, never set independently.
+        // The same call `next_incarnation` makes, deliberately: spawning a boss and
+        // respawning one are the same operation, and writing the fields out here as well
+        // would be the balance table stored twice. On a freshly allocated account the
+        // fields it zeroes (`vent_open`, `attack_timer`) are already zero, and the ones it
+        // writes are the only non-zero defaults `Boss` has.
+        state.reset_for_incarnation(
+            scaled_parts(incarnation),
+            BOSS_CORE_HP,
+            map::BOSS_SPAWN.0,
+            map::BOSS_SPAWN.1,
+        );
     }
 
     // Stamping the header is the whole job for `Players`. An empty seat *is* the zeroed
@@ -607,6 +633,117 @@ pub fn init_leaderboard(
     Ok(())
 }
 
+/// Tag 15 — advance a settled match to incarnation N+1, in place. Base layer.
+///
+/// The respawn loop, and the only thing that makes this a game rather than one fight.
+/// It creates nothing: incarnation N+1 reuses the same `Arena`, `Boss` and `Players`.
+/// Fresh accounts would cost 0.0245 SOL of rent per incarnation, orphan the old ones, and
+/// break the one property the rest of the system is built on — the `Arena` PDA is
+/// `[b"arena", arena_id]`, so one raid chain has exactly one address, and `Leaderboard`'s
+/// idempotency key is already `(arena_id, incarnation)`.
+///
+/// Accounts:
+///   0. `[SIGNER]` authority — must be [`TREASURY`].
+///   1. `[WRITE]`  arena — PDA `[b"arena", arena_id]`, `PHASE_SETTLED`, non-zero
+///      `next_affix_seed`.
+///   2. `[WRITE]`  boss — PDA `[b"boss", arena_key]`.
+///   3. `[WRITE]`  players — PDA `[b"players", arena_key]`.
+///   4. `[]`       leaderboard — PDA `[b"leaderboard"]`, read-only.
+///
+/// Data: none. Tag 15 is in `lib.rs`'s `ZERO_ARG_TAGS`, which rejects a trailing payload
+/// before dispatch, so this handler takes no `data` parameter to length-check — the same
+/// arrangement as tags 2, 3, 9, 11 and 12.
+///
+/// No system program: nothing is allocated, so there is no CPI. That is also why the
+/// account list is five rather than six.
+///
+/// **Ordering against the leaderboard is structural, not a convention.**
+/// `write_leaderboard` is gated on `phase == PHASE_SETTLED`, and this instruction both
+/// leaves that phase and zeroes every `damage_dealt` — so a tag 15 that beat the tag 10
+/// write would destroy the whole match record with nothing left to reconstruct it from.
+/// The `Leaderboard` is therefore passed read-only and its idempotency key must already
+/// name *this* `(arena_id, incarnation)`. It is the same account tag 10 stamps, so the
+/// check is a direct read of "has this match been recorded yet".
+///
+/// **Delegation needs no check of its own.** While the accounts are delegated the
+/// delegation program owns them, so `assert_owned_by` rejects this outright — an arena
+/// still on the ER cannot be rolled forward from the base layer.
+///
+/// Refusals: [`HeartrotError::NotTreasury`] for the wrong key, and
+/// [`HeartrotError::WrongPhase`] for every state condition — a phase that is not
+/// `PHASE_SETTLED`, an all-zero `next_affix_seed` (the oracle never answered), and a
+/// leaderboard that has not recorded this match. One code, because all three are
+/// "this instruction is not legal from this state" and the caller is holding both
+/// accounts that say which one it was.
+pub fn next_incarnation(program_id: &Address, accounts: &mut [AccountView]) -> ProgramResult {
+    let [authority, arena, boss, players, leaderboard, ..] = accounts else {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    };
+
+    assert_signer(authority)?;
+    assert_treasury(authority)?;
+
+    assert_writable(arena)?;
+    assert_writable(boss)?;
+    assert_writable(players)?;
+    assert_owned_by(arena, program_id)?;
+    assert_owned_by(boss, program_id)?;
+    assert_owned_by(players, program_id)?;
+    assert_owned_by(leaderboard, program_id)?;
+
+    // `arena_id` is read out of the account before anything proves the account is the
+    // canonical `Arena` for it, so it stays untrusted until the `assert_pda` below agrees.
+    // The borrow is scoped rather than held because `assert_pda` reads `arena.address()`,
+    // and pinocchio's `RefMut` locks the whole `AccountView` for its lifetime.
+    let (arena_id, incarnation_now) = {
+        let arena_data = arena.try_borrow()?;
+        let state = load::<Arena>(&arena_data)?;
+        (state.arena_id, state.incarnation)
+    };
+    assert_pda(arena, &[SEED_ARENA, &arena_id.to_le_bytes()[..]], program_id)?;
+
+    // Only trustworthy now. `Boss` and `Players` hang off this key, which is what ties
+    // all three to the same match — ownership alone would accept another raid's boss.
+    let arena_key = arena.address().to_bytes();
+    assert_pda(boss, &[SEED_BOSS, &arena_key[..]], program_id)?;
+    assert_pda(players, &[SEED_PLAYERS, &arena_key[..]], program_id)?;
+    assert_pda(leaderboard, &[SEED_LEADERBOARD], program_id)?;
+
+    {
+        let lb_data = leaderboard.try_borrow()?;
+        let board = load::<Leaderboard>(&lb_data)?;
+        if board.last_arena_id != arena_id || board.last_incarnation != incarnation_now {
+            return Err(HeartrotError::WrongPhase.into());
+        }
+    }
+
+    // Everything above this line is a read. `begin_next_incarnation` is the mutex as well
+    // as the mutation: it runs only from `PHASE_SETTLED` and leaves `PHASE_LOBBY`, and
+    // `LOBBY → LOBBY` is not a legal edge, so a second concurrent tag 15 is rejected here
+    // rather than advancing the counter twice. Solana serialises writes to one account, so
+    // that is a real lock and not a hopeful one.
+    let mut arena_data = arena.try_borrow_mut()?;
+    let incarnation = load_mut::<Arena>(&mut arena_data)?.begin_next_incarnation()?;
+
+    let mut boss_data = boss.try_borrow_mut()?;
+    load_mut::<Boss>(&mut boss_data)?.reset_for_incarnation(
+        scaled_parts(incarnation),
+        BOSS_CORE_HP,
+        map::BOSS_SPAWN.0,
+        map::BOSS_SPAWN.1,
+    );
+
+    // Seats do not carry over: a seat is a session key plus a live position and both are
+    // stale by respawn time. `/session/init` is idempotent per `identity`, so a returning
+    // player is re-seated for free by the path that seats everyone else — while carrying
+    // seats forward would leave `Arena.seat_occupied` and `session_pubkey` disagreeing the
+    // moment one player did not come back, with no instruction able to notice.
+    let mut players_data = players.try_borrow_mut()?;
+    load_mut::<Players>(&mut players_data)?.reset_for_incarnation();
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,6 +795,55 @@ mod tests {
                 128, 218, 98, 36, 25, 126, 142, 180, 99, 172, 145, 121, 206, 14
             ],
         );
+    }
+
+    /// A respawned boss must be indistinguishable from a freshly spawned one at the same
+    /// incarnation, or the second raid of a chain fights a different fight from the first.
+    /// Both paths now call `Boss::reset_for_incarnation` with [`scaled_parts`], so what
+    /// this pins is that the reset actually *clears* a fought-through boss rather than
+    /// only topping its HP up — a vent left open or a stale `target_seat` would hand
+    /// incarnation N+1 a boss that is already broken open and already aiming.
+    #[test]
+    fn respawned_boss_matches_a_fresh_spawn() {
+        use bytemuck::Zeroable;
+
+        let spawn = |incarnation| {
+            let mut boss = Boss::zeroed();
+            boss.reset_for_incarnation(
+                scaled_parts(incarnation),
+                BOSS_CORE_HP,
+                map::BOSS_SPAWN.0,
+                map::BOSS_SPAWN.1,
+            );
+            boss
+        };
+
+        // A boss at the end of a won fight: shell stripped, vent open, core dead, mid-beat
+        // and locked onto a seat that no longer exists after `Players` is zeroed.
+        let mut fought = spawn(2);
+        fought.parts = [0u16; N_PARTS];
+        fought.core_hp = 0;
+        fought.vent_open = 1;
+        fought.attack_timer = 7;
+        fought.target_seat = 3;
+
+        fought.reset_for_incarnation(
+            scaled_parts(3),
+            BOSS_CORE_HP,
+            map::BOSS_SPAWN.0,
+            map::BOSS_SPAWN.1,
+        );
+        assert_eq!(bytemuck::bytes_of(&fought), bytemuck::bytes_of(&spawn(3)));
+
+        // And the fight it re-arms is a real one: a sealed, full shell whose max is its
+        // current HP, so the vent threshold means 100 % on every incarnation.
+        assert_eq!(fought.vent_open, 0);
+        assert_eq!(fought.parts, fought.parts_max);
+        assert_eq!(fought.core_hp, BOSS_CORE_HP);
+        assert!(fought.parts.iter().all(|&hp| hp != 0));
+        // Incarnation 3 is × 1.45, so it is strictly harder than the base fight.
+        assert!(fought.parts[0] > BOSS_PARTS_BASE[0]);
+        assert_eq!(spawn(0).parts, BOSS_PARTS_BASE);
     }
 
     /// The vent is the fight's only path to the core and it opens on a comparison

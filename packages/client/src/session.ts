@@ -145,10 +145,13 @@ async function generate(): Promise<SessionKeyPair> {
     // specified behaviour for a generated pair, and it is how the address below is read.
     return await subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']);
   } catch (cause) {
-    // Otherwise this surfaces as "NotSupportedError: Unrecognized name", which sends
-    // people looking for a bug in their own code.
+    // Otherwise this surfaces as "NotSupportedError: Unrecognized name", or — on an
+    // insecure origin, where `crypto.subtle` is simply absent and `subtle` above is
+    // `undefined` — as a bare TypeError. Both send people looking for a bug in their own
+    // code, and the second is the one a dev hits first, testing on http://<LAN ip>.
     throw new Error(
-      'This browser cannot generate Ed25519 keys. HEARTROT needs Chrome 137+, Firefox 129+ or Safari 17+.',
+      'Cannot generate an Ed25519 session key. HEARTROT needs a secure origin ' +
+        '(https:// or localhost) and Chrome 137+, Firefox 129+ or Safari 17+.',
       { cause },
     );
   }

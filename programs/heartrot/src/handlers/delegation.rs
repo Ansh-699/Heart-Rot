@@ -41,8 +41,8 @@ use pinocchio::{address::address_eq, error::ProgramError, AccountView, Address, 
 use crate::error::HeartrotError;
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
 use crate::state::{
-    load, load_mut, Arena, Boss, Players, PHASE_LOBBY, PHASE_SETTLED, SEED_ARENA, SEED_BOSS,
-    SEED_PLAYERS,
+    load, load_mut, Arena, Boss, Players, PHASE_LOBBY, PHASE_ROLLING, PHASE_SETTLED, SEED_ARENA,
+    SEED_BOSS, SEED_PLAYERS,
 };
 
 /// `commit_frequency_ms` for every account we delegate.
@@ -310,10 +310,22 @@ pub fn process_commit(program_id: &Address, accounts: &mut [AccountView]) -> Pro
 ///
 /// Accounts: `[payer, magic_context, magic_program, arena, boss, players]`.
 ///
-/// Sets `phase = Settled` first, so the state that lands on base layer says the match
-/// is over. Re-running is rejected rather than being a no-op: a second
-/// commit-and-undelegate against accounts already leaving the ER produces a failure
-/// deep inside the Magic program, and this turns it into a clear one at the top.
+/// Moves `phase` to `Settled` first, so the state that lands on the base layer says the
+/// match is over — through [`Arena::try_set_phase`], so the legal `→ SETTLED` edges are
+/// the one table in `state.rs`. Two cases are not that:
+///
+/// - `PHASE_ROLLING` is **refused**. A VRF callback is in flight and undelegating under it
+///   strands the oracle retrying for 240 slots.
+/// - `PHASE_LOBBY` **undelegates without a phase write**. This is the recovery path for an
+///   arena that was delegated and never started — the only way its rent comes back — and
+///   an arena that never fought must not land on base claiming it finished.
+///
+/// Tag 9 `settle` performs the same commit-and-undelegate on the happy path, and also
+/// cancels the crank in the same instruction. This handler is what is left when `settle`
+/// cannot run: it refuses `PHASE_LOBBY` outright, so a **delegated arena that was never
+/// started can only come back through here**. That is the stranded case — two such arenas
+/// sit on devnet holding ~0.06 SOL — and it is why this must have a client builder rather
+/// than staying a dispatch entry nobody can reach.
 ///
 /// The caller must **cancel the `boss_tick` crank before invoking this**. A crank
 /// whose account list is frozen around these three keeps firing into accounts that
@@ -356,6 +368,12 @@ fn check_commit_accounts(
     players: &AccountView,
     settle: bool,
 ) -> Result<[AccountView; 3], ProgramError> {
+    // Signer, and deliberately **not** writable — the mirror of `settle`'s payer. The ER
+    // rejects a writable non-delegated account with `InvalidWritableAccount`, and the
+    // treasury is not delegated, so the meta the client builds must be `r s`. The
+    // transaction's own fee payer is then some other key entirely (ER fees are 0 and the
+    // ER runs no fee-payer validation), which is also what keeps the fee payer out of the
+    // committee below — a fee payer inside the committee set is `IllegalOwner`.
     assert_signer(payer)?;
 
     if magic_context.address() != &MAGIC_CONTEXT_ID {
@@ -415,20 +433,52 @@ fn check_commit_accounts(
             return Err(ProgramError::IncorrectAuthority);
         }
 
-        if settle {
-            // A second commit-and-undelegate against accounts already leaving the ER
-            // fails deep inside the Magic program; this is the same refusal named at the
-            // top. `WrongPhase` distinguishes it from the layout failures above, which
-            // matters here more than anywhere else in this file: an operator retrying a
-            // settle needs to know the first one landed, not that something is corrupt.
-            if a.phase == PHASE_SETTLED {
-                return Err(HeartrotError::WrongPhase.into());
-            }
-            a.phase = PHASE_SETTLED;
-        }
+        apply_commit_phase(a, settle)?;
     }
 
     Ok([*arena, *boss, *players])
+}
+
+/// The phase rule the two ER handlers share.
+///
+/// Split out because it is the only branching logic in this file and the only part of it
+/// reachable without a runtime account — `AccountView` cannot be constructed in a unit
+/// test, so a rule left inline in `check_commit_accounts` is a rule nothing can check.
+fn apply_commit_phase(a: &mut Arena, settle: bool) -> Result<(), ProgramError> {
+    // Neither handler may run while a VRF roll is in flight. Committing or
+    // undelegating in `PHASE_ROLLING` leaves the oracle's callback aimed at an account the
+    // ER no longer holds, where it fails and is retried for the whole 240-slot request
+    // TTL. An operator with a stuck roll waits `ROLL_TIMEOUT_TICKS`, after which
+    // `boss_tick` abandons it back to `PHASE_SETTLING` and both handlers are legal again —
+    // which is why `boss_tick` must advance `tick` outside the `Fighting` gate, or the
+    // timeout never fires and this refusal is permanent.
+    //
+    // Tag 12 would be caught by `try_set_phase` below anyway (`ROLLING -> SETTLED` is not
+    // an edge). Tag 11 writes no phase at all, so without this line it has no transition
+    // to be rejected by.
+    if a.phase == PHASE_ROLLING {
+        return Err(HeartrotError::WrongPhase.into());
+    }
+
+    if settle && a.phase != PHASE_LOBBY {
+        // The legal `-> SETTLED` edges are `state.rs`'s table, not a second copy of it
+        // here: `SETTLING` on the normal path, `FIGHTING` when the crank died mid-match,
+        // `ROLLED` after a roll landed, and `SETTLED` on a retry. A retry is *accepted*
+        // rather than refused — `GetCommitmentSignature` throws on every failure path, so
+        // the operator route is retried by design, and a second commit-and-undelegate of
+        // accounts already leaving the ER fails inside the Magic program, which is a
+        // truthful failure rather than one this handler needs to pre-empt.
+        //
+        // `PHASE_LOBBY` is excluded rather than transitioned: an arena that was delegated
+        // and never started has nothing to settle, and `LOBBY -> SETTLED` is illegal
+        // precisely because a match that never ran must not be recorded as finished. It
+        // still has to *undelegate* — that stranded case is the only way an arena holding
+        // 0.0245 SOL of rent comes back — so it commits as-is and lands on the base layer
+        // still in `Lobby`, re-delegatable and re-startable.
+        a.try_set_phase(PHASE_SETTLED)?;
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +505,36 @@ fn check_commit_accounts(
 /// PDA — only the delegation program can produce that signature. The seeds then have
 /// to re-derive `delegated_account` under our program id or the `CreateAccount` CPI
 /// fails, so attacker-supplied seeds cannot conjure some other account.
+///
+/// # Lamports: why sp10 saw undelegation return more than went in, and why it stops
+///
+/// sp10 measured every account coming back holding **its balance plus its top-up a second
+/// time** — Arena 9,772,056 = 8,964,480 + 807,576, Boss 1,350,486, Players 15,568,524. The
+/// term that repeats is the sp9 rent shortfall: devnet's rent schedule is ~9% cheaper than
+/// the default one the ER computes with, so `Rent::get()` funds less than `(128 + space) ×
+/// 6960` and the ER refuses to clone the account.
+///
+/// The spike paid that shortfall by transferring **after** delegating. That is the whole
+/// mechanism. The delegation record snapshots the balance at delegation time, so the
+/// snapshot was the devnet minimum while the live base-layer account held the ER minimum,
+/// and undelegation settled a delta that should have been zero. Every measured row is
+/// `returned = balance + (balance − snapshot)`.
+///
+/// `init::er_clonable_rent` now funds `max(Rent::get(), (128 + space) × 6960)` at creation,
+/// **before** tag 2 ever runs, so snapshot == balance, the delta is zero, and there is
+/// nothing to accrete. Nothing in this handler had to change: the amount is
+/// `Rent::get()?.try_minimum_balance(buffer.data_len())` computed inside the SDK's
+/// `undelegate` and spent through an atomic `CreateAccount`, so there is no lever here
+/// even if there were something to correct.
+///
+/// One thing the sp10 numbers cannot separate, because snapshot happened to equal the
+/// devnet minimum in all three rows: whether the returned balance is `balance + delta` (in
+/// which case a zero delta returns the full ER-clonable balance and re-delegation for
+/// incarnation N+1 just works) or `devnet_minimum + 2 × delta` (in which case a zero delta
+/// returns the *devnet* minimum and the arena is under-funded for its next delegation).
+/// The two are algebraically identical on that data set. The measurement that separates
+/// them is one cycle on an arena funded before delegation: read the base-layer balance
+/// after undelegation and compare it against `(128 + 1200) × 6960 = 9,242,880`.
 pub fn process_undelegation(
     program_id: &Address,
     accounts: &mut [AccountView],
@@ -480,6 +560,71 @@ pub fn process_undelegation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::{PHASE_FIGHTING, PHASE_ROLLED, PHASE_SETTLING};
+    use bytemuck::Zeroable;
+
+    fn arena_in(phase: u8) -> Arena {
+        let mut a = Arena::zeroed();
+        a.phase = phase;
+        a
+    }
+
+    /// Tag 12 is the only route back to the base layer for an arena that never started,
+    /// and `LOBBY -> SETTLED` is not a legal edge — so the handler has to undelegate a
+    /// lobby arena *without* writing a phase. Getting this wrong either strands the two
+    /// devnet arenas permanently (refuse) or files a match that never ran as finished
+    /// (transition).
+    #[test]
+    fn commit_and_undelegate_recovers_a_lobby_arena_without_settling_it() {
+        let mut a = arena_in(PHASE_LOBBY);
+        apply_commit_phase(&mut a, true).expect("a stranded lobby arena must be recoverable");
+        assert_eq!(a.phase, PHASE_LOBBY, "a match that never ran is not settled");
+    }
+
+    /// Every other phase tag 12 accepts goes through `state.rs`'s table, including the
+    /// retry: `GetCommitmentSignature` throws on every failure path, so an operator who
+    /// cannot tell whether the first attempt landed must be able to send a second.
+    #[test]
+    fn commit_and_undelegate_settles_every_phase_that_fought() {
+        for phase in [PHASE_FIGHTING, PHASE_SETTLING, PHASE_ROLLED, PHASE_SETTLED] {
+            let mut a = arena_in(phase);
+            apply_commit_phase(&mut a, true).expect("a fought match settles");
+            assert_eq!(a.phase, PHASE_SETTLED);
+        }
+    }
+
+    /// Both handlers refuse `PHASE_ROLLING`: undelegating under an in-flight VRF request
+    /// aims the callback at an account the ER no longer holds, and the oracle then retries
+    /// it for the full 240-slot TTL. Tag 11 writes no phase, so it is the one that would
+    /// slip through a check left to `try_set_phase`.
+    #[test]
+    fn neither_handler_runs_while_a_roll_is_in_flight() {
+        for settle in [false, true] {
+            let mut a = arena_in(PHASE_ROLLING);
+            assert_eq!(
+                apply_commit_phase(&mut a, settle).unwrap_err(),
+                HeartrotError::WrongPhase.into()
+            );
+            assert_eq!(a.phase, PHASE_ROLLING, "a refused call writes nothing");
+        }
+    }
+
+    /// Tag 11 is a snapshot, not an ending: it must leave the phase exactly as it found it
+    /// in every phase it accepts, or a mid-match operator snapshot would end the match.
+    #[test]
+    fn commit_never_writes_a_phase() {
+        for phase in [
+            PHASE_LOBBY,
+            PHASE_FIGHTING,
+            PHASE_SETTLING,
+            PHASE_ROLLED,
+            PHASE_SETTLED,
+        ] {
+            let mut a = arena_in(phase);
+            apply_commit_phase(&mut a, false).expect("a snapshot is legal outside ROLLING");
+            assert_eq!(a.phase, phase);
+        }
+    }
 
     /// The only hand-rolled parsing in this file is the discriminator split, and it
     /// is reachable by anyone who can send a transaction — the callback has no

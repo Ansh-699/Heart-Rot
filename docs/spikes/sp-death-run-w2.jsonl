@@ -1,0 +1,43 @@
+{"t":"2026-09-01T11:30:41.941Z","event":"start","phase":"a","programId":"JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5","seats":[0]}
+{"t":"2026-09-01T11:30:41.949Z","event":"match_pdas","arenaId":"1788262241","arena":"DHuQoYTNHTKERif8dCHSAtu3i8aPTy4u2aCzBA83f7sE","boss":"9QWHBSyUQt4NTsXJzYmsuNiwQwxQVrLVZd4GUjurom1R","players":"4zxtAWvXHk3DTZC6DxmFbEfGvSUKbeXZnaL3Dh8DFT9x"}
+{"t":"2026-09-01T11:30:43.022Z","event":"init_arena","signature":"2vqPnexGNR9YLfmv1pZ6iDd4F2NaVHVEQ8Wx2onw4Ue4skLGjXvGi5TaoxoMnnqyRhyQZFDQjGg3aie3taznjwfQ"}
+{"t":"2026-09-01T11:30:44.142Z","event":"delegate","signature":"5aGPELQgVNRLv8jmmhdWpvPYAThLhnaCUAoeu3BLPYsedo7hZU5Ft18jLrCjLCU3U87n8LwvQHBokvHgXJLFSkcZ"}
+{"t":"2026-09-01T11:30:46.939Z","event":"connected","via":"connectMatch","erFqdn":"https://devnet-as.magicblock.app/"}
+{"t":"2026-09-01T11:30:47.306Z","event":"er_status","what":"start_match","signature":"38zWdtQrf6sGwhVQu5e6XDb3tCLZx45BSCdYsvBJ5eSqevKRkmnJZHZW9h1BWLJNsPQ73njJYUczxCBDyyPpvSM7","err":null,"status":"finalized"}
+{"t":"2026-09-01T11:30:47.432Z","event":"start_match","signature":"38zWdtQrf6sGwhVQu5e6XDb3tCLZx45BSCdYsvBJ5eSqevKRkmnJZHZW9h1BWLJNsPQ73njJYUczxCBDyyPpvSM7","tick":1,"phase":1,"bossXy":[512,320]}
+{"t":"2026-09-01T11:30:47.811Z","event":"er_status","what":"claim_seat 0","signature":"2MwMWGk2F7p2CMzARg5ZjCHX8KtjoHQ1si83w3EKQhPTNp1uzysmJ8BekeQFJjyKZPNFo5bq1UYFUhv7YRBHHkpS","err":null,"status":"finalized"}
+{"t":"2026-09-01T11:30:47.811Z","event":"seats_claimed","seats":[0],"spawns":[[208,832]],"entrances":[[464,16]]}
+{"t":"2026-09-01T11:30:48.216Z","event":"walk_progress","what":"to_gate","round":0,"pending":1}
+{"t":"2026-09-01T11:30:56.658Z","event":"walk_progress","what":"to_gate","round":10,"pending":1}
+{"t":"2026-09-01T11:31:05.310Z","event":"walk_progress","what":"to_gate","round":20,"pending":1}
+{"t":"2026-09-01T11:31:13.746Z","event":"walk_progress","what":"to_gate","round":30,"pending":1}
+{"t":"2026-09-01T11:31:19.378Z","event":"walk_done","what":"to_gate","round":37}
+{"t":"2026-09-01T11:31:19.910Z","event":"er_status","what":"enter_gate x1","signature":"2cVE8CT4zDuc4LxTMDJpPoz88m5rsWAaGk1pAsC64X78nbwjaVuyXMffNuCQiy6YjrtuFPGKGJ2fFPUTVRzxgUA9","err":null,"status":"finalized"}
+{"t":"2026-09-01T11:31:20.990Z","event":"seats_entered","tick":85,"aliveCount":1,"targetSeat":0,"seats":[{"seat":0,"hp":100,"x":464,"y":16,"zone":1,"deaths":0,"respawnAt":0}],"expectedEntrances":[[464,16]]}
+{"t":"2026-09-01T11:31:22.330Z","event":"entrance_survivable","stillMs":1,"ticksStoodStill":3,"firstHitTick":null,"activeBullets":0,"targetSeat":0,"seats":[{"seat":0,"hp":100,"x":464,"y":16,"zone":1,"deaths":0,"respawnAt":0}],"note":"nobody has died standing at entrance_for(); advancing on the boss"}
+{"t":"2026-09-01T11:31:22.727Z","event":"walk_progress","what":"to_boss","round":0,"pending":1}
+{"t":"2026-09-01T11:31:31.246Z","event":"walk_progress","what":"to_boss","round":10,"pending":1}
+{"t":"2026-09-01T11:31:37.778Z","event":"walk_done","what":"to_boss","round":18}
+{"t":"2026-09-01T11:31:37.921Z","event":"advanced","tick":127,"seats":[{"seat":0,"hp":100,"x":496,"y":272,"zone":1,"deaths":0,"respawnAt":0}]}
+{"t":"2026-09-01T11:31:40.579Z","event":"watch","tick":134,"aliveCount":1,"activeBullets":0,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":100,"xy":[496,272]}]}
+{"t":"2026-09-01T11:31:47.256Z","event":"first_blood","seat":0,"tick":151,"hp":92,"secondsSinceEntry":26.266,"ticksSinceEntry":66}
+{"t":"2026-09-01T11:31:49.951Z","event":"watch","tick":157,"aliveCount":1,"activeBullets":1,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":92,"xy":[496,272]}]}
+{"t":"2026-09-01T11:31:59.294Z","event":"watch","tick":181,"aliveCount":1,"activeBullets":4,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":92,"xy":[496,272]}]}
+{"t":"2026-09-01T11:32:08.703Z","event":"watch","tick":204,"aliveCount":1,"activeBullets":0,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":76,"xy":[496,272]}]}
+{"t":"2026-09-01T11:32:18.043Z","event":"watch","tick":228,"aliveCount":1,"activeBullets":2,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":68,"xy":[496,272]}]}
+{"t":"2026-09-01T11:32:38.160Z","event":"watch","tick":278,"aliveCount":1,"activeBullets":0,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":44,"xy":[496,272]}]}
+{"t":"2026-09-01T11:32:47.506Z","event":"watch","tick":301,"aliveCount":1,"activeBullets":2,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":44,"xy":[496,272]}]}
+{"t":"2026-09-01T11:32:56.852Z","event":"watch","tick":325,"aliveCount":1,"activeBullets":4,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":28,"xy":[496,272]}]}
+{"t":"2026-09-01T11:33:06.196Z","event":"watch","tick":348,"aliveCount":1,"activeBullets":0,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":20,"xy":[496,272]}]}
+{"t":"2026-09-01T11:33:26.220Z","event":"watch","tick":398,"aliveCount":1,"activeBullets":4,"bulletsInWalls":0,"targetSeat":0,"seats":[{"seat":0,"hp":12,"xy":[496,272]}]}
+{"t":"2026-09-01T11:33:31.555Z","event":"death","seat":0,"tick":411,"respawnAtTick":419,"deltaTicks":8,"configuredRespawnTicks":8,"deaths":1,"secondsSinceEntry":130.565,"ticksSinceEntry":326,"aliveCount":0}
+{"t":"2026-09-01T11:33:32.172Z","event":"er_status","what":"dead_move seat 0","signature":"dEa2WJbxVW9J1BZzrgqdgXmnpUjTFRQZNB8v32Tbw9BTuiqcGEQLHmAYzUTBebb51hhbKZRzWbASasNEusnK7bb","err":{"InstructionError":["0",{"Custom":"6"}]},"status":"finalized"}
+{"t":"2026-09-01T11:33:32.535Z","event":"er_status","what":"dead_shoot seat 0","signature":"3WbdLLdMiF2GiMq43syCqLpgSfFovcZ7eFfG3EmNfCXhBge3W6F811UQ2WbsxMnUGM1yeJfuztgCYPQYACVEvnXJ","err":{"InstructionError":["0",{"Custom":"6"}]},"status":"finalized"}
+{"t":"2026-09-01T11:33:32.536Z","event":"dead_player_probe","seat":0,"moveErr":{"InstructionError":["0",{"Custom":"6"}]},"shootErr":{"InstructionError":["0",{"Custom":"6"}]},"expected":"Custom(8) PlayerDead","moveRejected":false,"shootRejected":false}
+{"t":"2026-09-01T11:33:32.536Z","event":"fight_over","tick":411,"phase":2,"outcome":2,"outcomeName":"WIPE","seats":[{"seat":0,"hp":0,"x":496,"y":272,"zone":1,"deaths":1,"respawnAt":419}]}
+{"t":"2026-09-01T11:33:32.536Z","event":"phase_a_summary","arenaId":"1788262241","firstHitTick":151,"secondsToFirstHit":26.266,"ticksToFirstHit":66,"deaths":[{"seat":0,"tick":411,"respawnAt":419}],"respawns":[],"advanced":true,"bulletPeak":4,"bulletsInWallsMax":0,"bulletsOffMapMax":0,"finalPhase":2,"finalOutcome":2,"isWipe":true,"isWin":false}
+{"t":"2026-09-01T11:33:33.057Z","event":"er_status","what":"settle","signature":"46kvhh3wcMPjScpYZ8dZXWhNjyus3P1t6doFhkRTJUMftg6ScuUSxmm3kbhnydc7U1DgR6DfgKdekNTZgC4kiJLY","err":null,"status":"finalized"}
+{"t":"2026-09-01T11:33:33.057Z","event":"settle","signature":"46kvhh3wcMPjScpYZ8dZXWhNjyus3P1t6doFhkRTJUMftg6ScuUSxmm3kbhnydc7U1DgR6DfgKdekNTZgC4kiJLY","beforePhase":2,"beforeOutcome":2,"beforeTick":414}
+{"t":"2026-09-01T11:33:43.390Z","event":"post_settle","tick":415,"phase":3,"outcome":2,"owner":"JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5"}
+{"t":"2026-09-01T11:33:44.420Z","event":"leaderboard","signature":"4CaSgB915oPdPwkkXP1cC7fokoU6BQfcmo1Fb2MiPCSRghVY4jnQjHevcviS2HmCWAUe4DKpWDSCG6BiBnzNkrPy","totalWritten":5,"next":5,"lastArenaId":"1788262241","lastIncarnation":1,"rowsForThisMatch":[{"incarnation":1,"damageDealt":0,"survived":false}],"note":"LeaderboardEntry carries no outcome field; a wiped raid and a won raid differ only in `survived`, which is sampled from hp at settle time"}
+{"t":"2026-09-01T11:33:44.420Z","event":"done","phase":"a"}

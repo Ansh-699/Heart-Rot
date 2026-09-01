@@ -30,22 +30,21 @@ use crate::guards::{
     assert_owned_by, assert_pda, assert_session_authority, assert_signer, assert_writable,
 };
 use crate::hitboxes::{CORE_RADIUS_SQ, CORE_X, CORE_Y, PART_HITBOXES};
-use crate::map;
+use crate::map::{MAP_TILES, TILE, WALLS};
 use crate::state::{
-    load_mut, Arena, Boss, Players, PHASE_FIGHTING, PHASE_SETTLING, SEED_BOSS, SEED_PLAYERS,
-    ZONE_ARENA,
+    load_mut, Arena, Boss, PlayerSlot, Players, OUTCOME_WIN, PHASE_FIGHTING, SEED_BOSS,
+    SEED_PLAYERS, ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
 // Arena space
 // ---------------------------------------------------------------------------
-
-/// Arena space is 16 units per tile over the 64×64 map, so 0..1024 on both axes.
-/// `PlayerSlot.x`, `Boss.x` and `Bullet.x` are all in these units — the layout
-/// contract requires one shared unit and does not name it, so it is named here.
-/// Widened from `map::TILE` rather than re-typed, and asserted equal, so the ray and
-/// the wall table can never disagree about how big a tile is.
-const TILE: i32 = map::TILE as i32;
+//
+// There is no `TILE` and no `ARENA_SIZE` in this file. Both are `crate::map`'s, compiled
+// out of `assets/map/arena.json` alongside the wall table itself, and the ray casts
+// `map::TILE` to `i32` at the two places it needs the wider type rather than restating
+// the number. A local copy of a tile size is the same defect as a local copy of a
+// hitbox: it survives a redraw of the map that it is supposed to describe.
 
 /// The ray advances one tile per step and gives up after this many. Range therefore
 /// reads as "twenty tiles", which is the number to tune for feel.
@@ -62,11 +61,11 @@ fn is_wall(x: i32, y: i32) -> bool {
     if x < 0 || y < 0 {
         return true;
     }
-    let (tx, ty) = ((x / TILE) as usize, (y / TILE) as usize);
-    if tx >= map::MAP_TILES {
+    let (tx, ty) = ((x / TILE as i32) as usize, (y / TILE as i32) as usize);
+    if tx >= MAP_TILES {
         return true;
     }
-    match map::WALLS.get(ty) {
+    match WALLS.get(ty) {
         Some(row) => row & (1u64 << tx) != 0,
         None => true,
     }
@@ -106,6 +105,28 @@ const VENT_OPEN: u8 = 1;
 /// `sum × 100 < sum_max × 35` so no percentage is ever a float.
 const VENT_THRESHOLD_NUM: u32 = 35;
 const VENT_THRESHOLD_DEN: u32 = 100;
+
+/// Recompute `Boss.vent_open` from the parts, and answer whether it is open.
+///
+/// The vent is **derived state**, cached on the account for the client — never set
+/// independently, or it drifts out of agreement with the numbers it summarises. This is
+/// the only place in this file that writes it, and it runs on the same line that changed
+/// a part, so "the shell crossed the threshold" and "the vent is open" cannot be two
+/// different facts.
+///
+/// `pub(crate)` because `boss_tick` re-derives exactly this every tick from its own copy
+/// of the rule; that copy is the shell threshold stored twice and should call this
+/// instead (see the run's todo).
+///
+/// The sums cannot overflow `u32` (9 × 65,535 × 100 ≈ 59 M) but are saturating anyway.
+pub(crate) fn recompute_vent(boss: &mut Boss) -> bool {
+    let shell: u32 = boss.parts.iter().map(|&hp| hp as u32).sum();
+    let shell_max: u32 = boss.parts_max.iter().map(|&hp| hp as u32).sum();
+    let open =
+        shell.saturating_mul(VENT_THRESHOLD_DEN) < shell_max.saturating_mul(VENT_THRESHOLD_NUM);
+    boss.vent_open = u8::from(open);
+    open
+}
 
 // ---------------------------------------------------------------------------
 // Hitboxes
@@ -148,8 +169,8 @@ fn raycast(from_x: i16, from_y: i16, dir: u8, boss: &Boss) -> Option<Hit> {
     let (mut x, mut y) = (from_x as i32, from_y as i32);
 
     for _ in 0..MAX_RAY_STEPS {
-        x += step_x * TILE;
-        y += step_y * TILE;
+        x += step_x * TILE as i32;
+        y += step_y * TILE as i32;
 
         // Cover. The same generated bitboard movement collides against, so a corridor
         // wall stops a shot exactly where it stops a player — that equivalence is the
@@ -176,6 +197,92 @@ fn raycast(from_x: i16, from_y: i16, dir: u8, boss: &Boss) -> Option<Hit> {
 }
 
 // ---------------------------------------------------------------------------
+// The fight rules
+// ---------------------------------------------------------------------------
+
+/// Everything a shot does to the world, given state that has already been proved to
+/// belong to this arena and this signer.
+///
+/// Split out of [`process`] because this is the only part of the instruction with a
+/// game in it, and an `AccountView` fixture is not a boss fight. The kill chain — shell
+/// down, vent open, core down, match won — is testable end to end against plain structs
+/// only if it lives in a function that takes plain structs, and until this split the
+/// chain had never been executed anywhere, on chain or off (M4).
+fn fire(
+    arena: &mut Arena,
+    boss: &mut Boss,
+    slot: &mut PlayerSlot,
+    dir: u8,
+) -> Result<(), ProgramError> {
+    // Dead players and lobby players have nothing to shoot with or at. Two separate
+    // rules, so two separate codes: "you are dead, wait for respawn" and "you are still
+    // in the lobby" are opposite instructions to the player holding the fire key.
+    if slot.hp == 0 {
+        return Err(HeartrotError::PlayerDead.into());
+    }
+    if slot.zone != ZONE_ARENA {
+        return Err(HeartrotError::WrongZone.into());
+    }
+
+    // Rate limit, in ticks. `saturating_add` rather than `+`: a `last_shot_tick`
+    // close to u32::MAX must fail the comparison, not wrap into "ready".
+    if arena.tick <= slot.last_shot_tick.saturating_add(SHOT_COOLDOWN_TICKS) {
+        return Err(HeartrotError::RateLimited.into());
+    }
+    slot.last_shot_tick = arena.tick;
+
+    // Firing turns you: the client draws the recoil along `facing`, and the next
+    // shot's ray starts from the same direction the player last saw.
+    slot.facing = dir;
+
+    let dealt = match raycast(slot.x, slot.y, dir, boss) {
+        Some(Hit::Part(index)) => {
+            let part = &mut boss.parts[index];
+            // Credit only what was actually removed, or a finishing shot on a
+            // 1 HP part would score a full 40 on the leaderboard.
+            let dealt = (*part).min(SHOT_DAMAGE);
+            // Reaching 0 *is* being destroyed: `raycast` skips a zeroed part, so the
+            // limb detaches and the lane behind it opens with no second flag to set.
+            *part = part.saturating_sub(SHOT_DAMAGE);
+            recompute_vent(boss);
+            dealt
+        }
+
+        // The shell absorbs anything aimed at a sealed vent. The shot is spent, the
+        // cooldown is spent, the core is untouched — which is the pressure that makes
+        // stripping parts the only route to a kill.
+        Some(Hit::Core) if boss.vent_open != VENT_OPEN => 0,
+
+        Some(Hit::Core) => {
+            let dealt = boss.core_hp.min(SHOT_DAMAGE);
+            boss.core_hp = boss.core_hp.saturating_sub(SHOT_DAMAGE);
+            if boss.core_hp == 0 {
+                // The raid has won, and the win is *recorded*: `end_fight` writes
+                // `outcome = OUTCOME_WIN` and the phase together, so a settled match can
+                // still answer "did they win?" long after `phase` has moved on, and the
+                // VRF roll for the next incarnation has the `outcome == OUTCOME_WIN`
+                // it requires.
+                //
+                // The `bool` is deliberately dropped. It is `false` only when the fight
+                // was already over — `boss_tick` can reach the same conclusion in the
+                // same 400 ms window — and the first writer is the true one. Losing that
+                // race is not an error: the core is dead either way, and returning `Err`
+                // here would roll back the damage that killed it.
+                arena.end_fight(OUTCOME_WIN);
+            }
+            dealt
+        }
+
+        // A miss. The cooldown above was already spent — that is deliberate.
+        None => 0,
+    };
+
+    slot.damage_dealt = slot.damage_dealt.saturating_add(dealt as u32);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
@@ -183,7 +290,7 @@ fn raycast(from_x: i16, from_y: i16, dir: u8, boss: &Boss) -> Option<Hit> {
 ///
 /// | # | Account | |
 /// |---|---|---|
-/// | 0 | `Arena` | writable — `tick` is read, `phase` is written on the killing blow |
+/// | 0 | `Arena` | writable — `tick` is read, `phase`/`outcome` are written on the kill |
 /// | 1 | `Boss` | writable — parts, vent, core |
 /// | 2 | `Players` | writable — the acting seat only |
 /// | 3 | `authority` | signer, the browser's session key |
@@ -236,6 +343,9 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
     let mut players_data = players_account.try_borrow_mut()?;
     let players = load_mut::<Players>(&mut players_data)?;
 
+    // Only a live match takes fire. A `SETTLING` arena has its `outcome` written and is
+    // waiting to be committed; a shot landing after that would damage a boss whose match
+    // is already scored.
     if arena.phase != PHASE_FIGHTING {
         return Err(HeartrotError::WrongPhase.into());
     }
@@ -249,80 +359,13 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
     // session key stored on the seat being fired from.
     assert_session_authority(slot, authority)?;
 
-    // Dead players and lobby players have nothing to shoot with or at. Two separate
-    // rules, so two separate codes: "you are dead, wait for respawn" and "you are still
-    // in the lobby" are opposite instructions to the player holding the fire key.
-    if slot.hp == 0 {
-        return Err(HeartrotError::PlayerDead.into());
-    }
-    if slot.zone != ZONE_ARENA {
-        return Err(HeartrotError::WrongZone.into());
-    }
-
-    // Rate limit, in ticks. `saturating_add` rather than `+`: a `last_shot_tick`
-    // close to u32::MAX must fail the comparison, not wrap into "ready".
-    if arena.tick <= slot.last_shot_tick.saturating_add(SHOT_COOLDOWN_TICKS) {
-        return Err(HeartrotError::RateLimited.into());
-    }
-    slot.last_shot_tick = arena.tick;
-
-    // Firing turns you: the client draws the recoil along `facing`, and the next
-    // shot's ray starts from the same direction the player last saw.
-    slot.facing = dir;
-
-    let dealt = match raycast(slot.x, slot.y, dir, boss) {
-        Some(Hit::Part(index)) => {
-            let part = &mut boss.parts[index];
-            // Credit only what was actually removed, or a finishing shot on a
-            // 1 HP part would score a full 40 on the leaderboard.
-            let dealt = (*part).min(SHOT_DAMAGE);
-            *part = part.saturating_sub(SHOT_DAMAGE);
-
-            // The vent is derived state, recomputed from the parts every time they
-            // change — never set independently, or it drifts out of agreement with
-            // the numbers it is supposed to summarise. Integer comparison of
-            // `sum × 100 < sum_max × 35`; the sums cannot overflow u32
-            // (9 × 65,535 × 100 ≈ 59M) but are saturating anyway.
-            let shell: u32 = boss.parts.iter().map(|&hp| hp as u32).sum();
-            let shell_max: u32 = boss.parts_max.iter().map(|&hp| hp as u32).sum();
-            boss.vent_open = u8::from(
-                shell.saturating_mul(VENT_THRESHOLD_DEN)
-                    < shell_max.saturating_mul(VENT_THRESHOLD_NUM),
-            );
-
-            dealt
-        }
-
-        // The shell absorbs anything aimed at a sealed vent. The shot is spent, the
-        // cooldown is spent, the core is untouched — which is the pressure that makes
-        // stripping parts the only route to a kill.
-        Some(Hit::Core) if boss.vent_open != VENT_OPEN => 0,
-
-        Some(Hit::Core) => {
-            let dealt = boss.core_hp.min(SHOT_DAMAGE);
-            boss.core_hp = boss.core_hp.saturating_sub(SHOT_DAMAGE);
-            if boss.core_hp == 0 {
-                // Win. `boss_tick` would reach the same conclusion within 400 ms, but
-                // the killing blow should land on the killer's own screen instantly,
-                // and the crank re-deriving it costs nothing.
-                arena.phase = PHASE_SETTLING;
-            }
-            dealt
-        }
-
-        // A miss. The cooldown above was already spent — that is deliberate.
-        None => 0,
-    };
-
-    slot.damage_dealt = slot.damage_dealt.saturating_add(dealt as u32);
-
-    Ok(())
+    fire(arena, boss, slot, dir)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::N_PARTS;
+    use crate::state::{N_PARTS, OUTCOME_UNDECIDED, PHASE_SETTLING};
     use bytemuck::Zeroable;
 
     const EAST: u8 = 2;
@@ -339,9 +382,13 @@ mod tests {
         boss
     }
 
-    /// The boss spawns at the centre of the heart chamber, tile (32, 32), which is
-    /// where `tick.rs` puts it and what the map generator asserts.
-    const BOSS_XY: i16 = 32 * 16;
+    /// The boss spawns on the drawn `B` heart tile. Read out of the generated map, not
+    /// restated: this used to be `32 * 16` beside a comment claiming `tick.rs` wrote it,
+    /// while `init.rs` actually spawned the boss twelve tiles north of here, in the
+    /// corridor. The comment was right about the map and wrong about the program, and a
+    /// literal cannot notice that.
+    const BOSS_X: i16 = crate::map::BOSS_SPAWN.0;
+    const BOSS_XY: i16 = crate::map::BOSS_SPAWN.1;
 
     /// The whole attack is this function: if it picks the wrong box, or keeps a
     /// destroyed part solid, or walks through a wall, the game is wrong in a way no
@@ -353,7 +400,7 @@ mod tests {
     /// coordinates a second time.
     #[test]
     fn ray_takes_the_first_intact_box() {
-        let mut boss = boss_at(BOSS_XY, BOSS_XY);
+        let mut boss = boss_at(BOSS_X, BOSS_XY);
 
         // Level with the boss centre, twelve tiles west along the open row the west
         // corridor opens onto. Part 7 spans local x −114..−3 at this height, so it is
@@ -372,14 +419,168 @@ mod tests {
     fn walls_stop_the_ray() {
         // Off the map is solid, so a ray that would leave the arena stops at the edge
         // rather than sampling negative space.
-        assert_eq!(raycast(10, BOSS_XY, WEST, &boss_at(BOSS_XY, BOSS_XY)), None);
+        assert_eq!(raycast(10, BOSS_XY, WEST, &boss_at(BOSS_X, BOSS_XY)), None);
 
         // Cover, which is the point of raycasting the map at all. Row y = 28 is a hall
         // row with the chamber's outer rock at tiles 15..23; from tile 10 the geometry
         // would otherwise reach a part, and the wall eats the shot instead.
-        let boss = boss_at(BOSS_XY, BOSS_XY);
+        let boss = boss_at(BOSS_X, BOSS_XY);
         assert!(!is_wall(10 * 16, 28 * 16));
         assert!(is_wall(15 * 16, 28 * 16));
         assert_eq!(raycast(10 * 16, 28 * 16, EAST, &boss), None);
+    }
+
+    /// A seated player, level with the boss on the open west approach.
+    fn shooter() -> PlayerSlot {
+        let mut slot = PlayerSlot::zeroed();
+        slot.zone = ZONE_ARENA;
+        slot.x = 320;
+        slot.y = BOSS_XY;
+        slot.hp = 100;
+        slot.hp_max = 100;
+        slot
+    }
+
+    fn arena_fighting() -> Arena {
+        let mut arena = Arena::zeroed();
+        arena.phase = PHASE_FIGHTING;
+        arena
+    }
+
+    /// Advance past the cooldown and take one shot, which must be accepted.
+    fn shoot_east(arena: &mut Arena, boss: &mut Boss, slot: &mut PlayerSlot) {
+        arena.tick += SHOT_COOLDOWN_TICKS + 1;
+        fire(arena, boss, slot, EAST).expect("a live seat off cooldown may fire");
+    }
+
+    /// M4, the fight nobody had ever run: shell → vent → core → win, in one sequence,
+    /// with the vent crossing its threshold mid-way and the outcome recorded at the end.
+    ///
+    /// The starting shell is deliberately *not* full: parts 3–6 and 8 are already gone,
+    /// which puts `sum(parts)` at 400 of a 900 maximum — above the 35 % vent threshold by
+    /// 85, i.e. close enough that stripping the one part in the ray's path crosses it.
+    /// That is the only way to observe the crossing rather than assert a state that was
+    /// true from the first line.
+    #[test]
+    fn shell_then_vent_then_core_is_a_recorded_win() {
+        let mut arena = arena_fighting();
+        let mut boss = boss_at(BOSS_X, BOSS_XY);
+        let mut slot = shooter();
+        boss.parts = [100, 100, 100, 0, 0, 0, 0, 100, 0];
+        recompute_vent(&mut boss);
+        assert_eq!(boss.vent_open, 0, "400 of 900 is above the threshold");
+
+        // Two shots into part 7: the shell drops to 320/900 (35.5 %), still sealed.
+        shoot_east(&mut arena, &mut boss, &mut slot);
+        assert_eq!(boss.parts[7], 60);
+        shoot_east(&mut arena, &mut boss, &mut slot);
+        assert_eq!(boss.parts[7], 20);
+        assert_eq!(boss.vent_open, 0);
+
+        // A sealed vent absorbs everything: the core is behind the shell and unhurt.
+        assert_eq!(boss.core_hp, 100);
+
+        // The third destroys the part, and 300/900 crosses the threshold: vent open.
+        shoot_east(&mut arena, &mut boss, &mut slot);
+        assert_eq!(boss.parts[7], 0);
+        assert_eq!(boss.vent_open, VENT_OPEN);
+        // Credited 100, never 120: the finishing shot scores only the 20 it removed.
+        assert_eq!(slot.damage_dealt, 100);
+
+        // The destroyed limb has detached, so the same shot now reaches the core.
+        shoot_east(&mut arena, &mut boss, &mut slot);
+        assert_eq!(boss.core_hp, 60);
+        assert_eq!(arena.phase, PHASE_FIGHTING);
+        assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
+
+        shoot_east(&mut arena, &mut boss, &mut slot);
+        assert_eq!(boss.core_hp, 20);
+
+        // The killing blow. The win is recorded, not implied.
+        shoot_east(&mut arena, &mut boss, &mut slot);
+        assert_eq!(boss.core_hp, 0);
+        assert_eq!(arena.phase, PHASE_SETTLING);
+        assert_eq!(arena.outcome, OUTCOME_WIN);
+        // 100 off the shell, 100 off the core, and nothing double-counted.
+        assert_eq!(slot.damage_dealt, 200);
+    }
+
+    /// The shell is not a damage sink with a hole in it: with the vent sealed, a shot
+    /// that geometrically reaches the core scores nothing and the cooldown is still
+    /// spent. Without this the vent threshold is decorative.
+    #[test]
+    fn a_sealed_vent_absorbs_a_core_hit() {
+        let mut arena = arena_fighting();
+        let mut boss = boss_at(BOSS_X, BOSS_XY);
+        let mut slot = shooter();
+        // Part 7 gone so the ray reaches the core, but the shell is otherwise intact,
+        // so the vent stays sealed.
+        boss.parts[7] = 0;
+        recompute_vent(&mut boss);
+        assert_eq!(boss.vent_open, 0);
+        assert_eq!(raycast(slot.x, slot.y, EAST, &boss), Some(Hit::Core));
+
+        shoot_east(&mut arena, &mut boss, &mut slot);
+        assert_eq!(boss.core_hp, 100);
+        assert_eq!(slot.damage_dealt, 0);
+        assert_eq!(slot.last_shot_tick, arena.tick, "the attempt spent the cooldown");
+    }
+
+    /// The rate limiter is the only thing standing between one seat and unlimited free
+    /// damage: ER fees are zero, so a refused shot must be refused on the tick clock and
+    /// on nothing else. A miss spends it exactly like a hit.
+    #[test]
+    fn the_cooldown_is_ticks_and_a_miss_spends_it() {
+        let mut arena = arena_fighting();
+        let mut boss = boss_at(BOSS_X, BOSS_XY);
+        let mut slot = shooter();
+
+        shoot_east(&mut arena, &mut boss, &mut slot);
+        // Same tick, and one tick later: still inside the cooldown window.
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut slot, EAST).unwrap_err(),
+            HeartrotError::RateLimited.into(),
+        );
+        arena.tick += 1;
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut slot, EAST).unwrap_err(),
+            HeartrotError::RateLimited.into(),
+        );
+        assert_eq!(boss.parts[7], 60, "a refused shot deals nothing");
+
+        // A miss into the empty west still burns the shot.
+        arena.tick += 1;
+        fire(&mut arena, &mut boss, &mut slot, WEST).expect("off cooldown");
+        assert_eq!(slot.last_shot_tick, arena.tick);
+        assert_eq!(slot.facing, WEST);
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut slot, EAST).unwrap_err(),
+            HeartrotError::RateLimited.into(),
+        );
+    }
+
+    /// Corpses and lobby-sitters do not shoot, and the two refusals are distinguishable
+    /// because they are opposite instructions to the player holding the fire key.
+    #[test]
+    fn the_dead_and_the_unentered_cannot_fire() {
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        let mut boss = boss_at(BOSS_X, BOSS_XY);
+
+        let mut dead = shooter();
+        dead.hp = 0;
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut dead, EAST).unwrap_err(),
+            HeartrotError::PlayerDead.into(),
+        );
+
+        let mut in_lobby = shooter();
+        in_lobby.zone = crate::state::ZONE_LOBBY;
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut in_lobby, EAST).unwrap_err(),
+            HeartrotError::WrongZone.into(),
+        );
+
+        assert_eq!(boss.parts[7], 100);
     }
 }

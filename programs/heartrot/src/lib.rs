@@ -24,13 +24,17 @@
 //!
 //! ## Wire ABI
 //!
-//! One tag byte, then the handler's own little-endian argument block. Tags 0–10 are the
-//! client-facing set and match `packages/client/src/instructions.ts` byte for byte; 11
-//! and 12 are operator-only and have no builder. They are **append-only**: never
-//! renumber, never reuse a retired one. `8` is frozen harder than the rest — it is
-//! written into the validator's crank row at schedule time and replayed from there for
-//! the life of the match, so it can never move. Its canonical definition is
-//! `handlers::settle::IX_BOSS_TICK`, not this table.
+//! One tag byte, then the handler's own little-endian argument block. Tags 0–10, 13 and
+//! 15 are the client-facing set and match `packages/client/src/instructions.ts` byte for
+//! byte; 11 and 12 are operator-only and have no builder, and 14 has none because the VRF
+//! program builds it. They are **append-only**: never renumber, never reuse a retired one.
+//!
+//! Two of them are frozen harder than the rest, both because a *validator* replays them
+//! from a row we can no longer edit. `8` is written into the crank row at schedule time and
+//! replayed every 400 ms for the life of the match; its canonical definition is
+//! `handlers::settle::IX_BOSS_TICK`, not this table. `14` is written into the VRF request
+//! as the callback discriminator and replayed by the oracle on fulfilment. Renumbering
+//! either one strands every match already in flight.
 //!
 //! | Tag | Handler | Layer | Signer |
 //! |---|---|---|---|
@@ -47,9 +51,16 @@
 //! | 10 | `settle::write_leaderboard` | base | treasury |
 //! | 11 | `delegation::process_commit` | ER | treasury |
 //! | 12 | `delegation::process_commit_and_undelegate` | ER | treasury |
+//! | 13 | `roll::request_roll` | ER | session key (writable — the VRF request needs one) |
+//! | 14 | `roll::consume_roll` | ER | scoped VRF identity PDA (read-only) |
+//! | 15 | `init::next_incarnation` | base | treasury |
 //!
 //! Plus one instruction that carries no tag of ours at all: the delegation program's
 //! undelegation callback, routed by its own 8-byte discriminator before the tag split.
+//! The VRF callback (tag 14) needs no such route *because* its discriminator was chosen to
+//! be the single byte `14`: the oracle prepends the discriminator we handed it at request
+//! time, so it lands in the ordinary tag split. Widening that discriminator past one byte
+//! would silently move it out of the dispatch and into `InvalidInstructionData` forever.
 
 use pinocchio::{entrypoint, error::ProgramError, AccountView, Address, ProgramResult};
 
@@ -78,6 +89,7 @@ pub mod handlers {
     pub mod delegation;
     pub mod init;
     pub mod player;
+    pub mod roll;
     pub mod settle;
     pub mod shoot;
     pub mod tick;
@@ -108,10 +120,14 @@ const MAX_ACCOUNTS: usize = 40;
 /// something to accept quietly, and the handlers that *do* take `data` all reject it.
 ///
 /// `8` is deliberately absent: nothing may stand between the crank and `tick::process`,
-/// the one handler that must never return `Err`. `10` is absent too — the client sends
-/// `write_leaderboard` a 10-byte `(arena_id, incarnation)` block that the handler ignores
-/// in favour of the authoritative pair it reads off the `Arena` account.
-const ZERO_ARG_TAGS: [u8; 5] = [2, 3, 9, 11, 12];
+/// the one handler that must never return `Err`. `14` is absent for exactly the same
+/// reason with a different validator on the other end — it is the VRF oracle's callback,
+/// and an `Err` there reverts the oracle's `ProvideRandomness` transaction, which it then
+/// retries for the request's full 240-slot TTL. `10` is absent too, but only for
+/// compatibility: the client sends `write_leaderboard` a 10-byte
+/// `(arena_id, incarnation)` block that the handler ignores in favour of the authoritative
+/// pair it reads off the `Arena` account.
+const ZERO_ARG_TAGS: [u8; 6] = [2, 3, 9, 11, 12, 15];
 
 entrypoint!(process_instruction, MAX_ACCOUNTS);
 
@@ -167,6 +183,18 @@ pub fn process_instruction(
         10 => handlers::settle::write_leaderboard(program_id, accounts),
         11 => handlers::delegation::process_commit(program_id, accounts),
         12 => handlers::delegation::process_commit_and_undelegate(program_id, accounts),
+        13 => handlers::roll::request_roll(program_id, accounts, data),
+
+        // The VRF oracle's callback. It reaches the ordinary tag split rather than a
+        // pre-tag route because `request_roll` hands the VRF program a one-byte callback
+        // discriminator that *is* this tag; the oracle prepends it and appends the 32
+        // randomness bytes plus our `callback_args`. Like `boss_tick`, this handler must
+        // never return `Err` — an `Err` reverts the oracle's fulfilment transaction and it
+        // retries for the request's whole TTL — so this arm just forwards, and 14 is kept
+        // out of `ZERO_ARG_TAGS` so nothing can reject on its behalf first.
+        14 => handlers::roll::consume_roll(program_id, accounts, data),
+
+        15 => handlers::init::next_incarnation(program_id, accounts),
 
         _ => Err(ProgramError::InvalidInstructionData),
     }
@@ -208,5 +236,53 @@ mod tests {
                 "tag {tag} accepted a trailing byte",
             );
         }
+
+        // Everything above the highest issued tag is unknown, and stays unknown.
+        assert_eq!(
+            process_instruction(&id, &mut none, &[16]).unwrap_err(),
+            ProgramError::InvalidInstructionData,
+        );
+    }
+
+    /// Two tags are replayed by a validator from a row this program can no longer edit:
+    /// `8` from the crank's SQLite row, `14` from the VRF request's frozen callback. Both
+    /// must reach their handler and both must answer `Ok` even when the request is
+    /// unusable — ten consecutive `Err`s delete the crank task permanently, and one `Err`
+    /// on the callback reverts the oracle's fulfilment transaction into a 240-slot retry
+    /// loop. So neither may appear in `ZERO_ARG_TAGS`, where a trailing byte would be
+    /// rejected *before* dispatch and turn a cosmetic mismatch into a dead match.
+    ///
+    /// With an empty account slice both handlers are reached and find nothing to work on,
+    /// which is the cheapest reachable instance of "unusable request": an `Err` here is
+    /// the exact failure this test exists to catch.
+    #[test]
+    fn validator_replayed_tags_never_err_before_their_handler() {
+        assert!(!ZERO_ARG_TAGS.contains(&handlers::settle::IX_BOSS_TICK));
+        assert!(!ZERO_ARG_TAGS.contains(&14));
+
+        let id = Address::new_from_array([0u8; 32]);
+        let mut none: [AccountView; 0] = [];
+
+        // Tag 8 as the crank row holds it: the bare byte, plus the trailing-payload case
+        // that `ZERO_ARG_TAGS` must not be extended to cover.
+        assert!(process_instruction(&id, &mut none, &[handlers::settle::IX_BOSS_TICK]).is_ok());
+        assert!(process_instruction(&id, &mut none, &[handlers::settle::IX_BOSS_TICK, 0]).is_ok());
+
+        // Tag 14 as the oracle builds it — discriminator, 32 randomness bytes,
+        // `for_incarnation` u16 LE — and the truncated block an attacker sends instead.
+        let mut callback = [0u8; 35];
+        callback[0] = 14;
+        assert!(process_instruction(&id, &mut none, &callback).is_ok());
+        assert!(process_instruction(&id, &mut none, &[14]).is_ok());
+        assert!(process_instruction(&id, &mut none, &[14, 1, 2, 3]).is_ok());
+    }
+
+    /// `IX_BOSS_TICK` is frozen into every live crank row, so the dispatch arm above has to
+    /// be the same number. They are written in two files because the crank row is built in
+    /// `settle.rs` and the route lives here; this is the assertion that keeps the two from
+    /// drifting, which is otherwise only discoverable by a match dying 26 s in on devnet.
+    #[test]
+    fn boss_tick_tag_matches_the_crank_row() {
+        assert_eq!(handlers::settle::IX_BOSS_TICK, 8);
     }
 }

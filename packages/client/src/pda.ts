@@ -36,6 +36,26 @@ export const CRANK_PROGRAM_ID = 'Crank11111111111111111111111111111111111111' as
 /** `devnet-as`, Singapore. The one validator every HEARTROT match delegates to (D13). */
 export const DEVNET_AS_IDENTITY = 'MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57' as Address;
 
+/**
+ * MagicBlock VRF program. Verbatim from `ephemeral-rollups-pinocchio`
+ * `src/vrf/consts.rs::VRF_PROGRAM_ID`.
+ */
+export const VRF_PROGRAM_ID = 'Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz' as Address;
+
+/**
+ * The **in-ER** randomness queue (`vrf::consts::DEFAULT_EPHEMERAL_QUEUE`). This is the one
+ * tag 13 requires: it is fee-exempt, so a zero-lamport session key can pay for a request.
+ * The base-layer `DEFAULT_QUEUE` (`Cuj97ggr…`) charges 500,000 lamports and is never used
+ * here.
+ */
+export const VRF_ORACLE_QUEUE_ID = '5hBR571xnXppuCPveTrctfTU7tJLSN94nq7kv7FRK5Tc' as Address;
+
+/** `SlotHashes` sysvar — the VRF request reads it for its own entropy commitment. */
+export const SLOT_HASHES_SYSVAR_ID = 'SysvarS1otHashes111111111111111111111111111' as Address;
+
+/** `vrf::consts::IDENTITY_SEED`. Shared by both identity PDAs, under different programs. */
+const SEED_IDENTITY = 'identity';
+
 // Seeds that belong to the delegation program's own protocol rather than to HEARTROT.
 // Verbatim from `ephemeral-rollups-pinocchio` `src/consts.rs`.
 const SEED_DELEGATION_RECORD = 'delegation';
@@ -151,6 +171,22 @@ export async function delegationMetadataPda(account: Address): Promise<Address> 
   const [pda] = await getProgramDerivedAddress({
     programAddress: DELEGATION_PROGRAM_ID,
     seeds: [SEED_DELEGATION_METADATA, addresses.encode(account)],
+  });
+  return pda;
+}
+
+/**
+ * `[b"identity"]` under **our** program — `vrf::pda::program_identity_pda(heartrot)`.
+ *
+ * The VRF program requires it as a read-only signer on `RequestRandomness`, and tag 13
+ * `invoke_signed`s it from inside the program. So on the *incoming* transaction it is an
+ * ordinary read-only account with no signature: passing it as a signer meta is what fails,
+ * not what works.
+ */
+export async function programIdentityPda(programId: Address): Promise<Address> {
+  const [pda] = await getProgramDerivedAddress({
+    programAddress: programId,
+    seeds: [SEED_IDENTITY],
   });
   return pda;
 }

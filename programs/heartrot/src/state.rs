@@ -37,6 +37,8 @@ use bytemuck::{Pod, Zeroable};
 use core::mem::{align_of, offset_of, size_of};
 use pinocchio::error::ProgramError;
 
+use crate::error::HeartrotError;
+
 // ---------------------------------------------------------------------------
 // Capacities and layout-defining constants
 // ---------------------------------------------------------------------------
@@ -73,11 +75,56 @@ pub const DISC_LEADERBOARD: u8 = 4;
 /// misreading them.
 pub const LAYOUT_VERSION: u8 = 1;
 
-/// `Arena.phase`.
+/// `Arena.phase` — **where the match is**, never **how the fight ended**. The outcome is
+/// [`Arena::outcome`], a separate byte, because a phase cannot carry it past
+/// `PHASE_SETTLED`: "did the raid win?" has to stay answerable after settlement, and
+/// encoding it in the phase would need a `SettledWon` / `SettledWiped` pair and then a
+/// third for every phase after. One axis each. Values 0..3 are frozen (accounts are live
+/// on devnet, and `packages/client` plus `app/` switch on them); 4 and 5 are appended.
+///
+/// The complete legal-transition table is [`Arena::may_transition`], and every phase write
+/// in the program goes through [`Arena::try_set_phase`] or one of the three total helpers
+/// beside it. Assigning `arena.phase` directly is how six handlers come to disagree about
+/// what a phase means.
 pub const PHASE_LOBBY: u8 = 0;
 pub const PHASE_FIGHTING: u8 = 1;
+/// The fight is over and the result is recorded in `outcome`; nothing is committed yet.
+/// Reached on a win, a wipe, an enrage, and on an abandoned VRF roll.
 pub const PHASE_SETTLING: u8 = 2;
 pub const PHASE_SETTLED: u8 = 3;
+/// A VRF request for the next incarnation's seed is in flight. The accounts must **not**
+/// be committed or undelegated here: the callback would land on an account the ER no
+/// longer holds, fail, and be retried by the oracle for the whole 240-slot request TTL.
+pub const PHASE_ROLLING: u8 = 4;
+/// The seed is in `next_affix_seed` and the match is ready to settle.
+pub const PHASE_ROLLED: u8 = 5;
+
+/// `Arena.outcome` — how the fight ended. Write-once per incarnation: set by
+/// [`Arena::end_fight`] while it is [`OUTCOME_UNDECIDED`], cleared only by
+/// [`Arena::begin_next_incarnation`]. It survives settlement, which is the entire reason
+/// it is not a phase.
+pub const OUTCOME_UNDECIDED: u8 = 0;
+/// Core HP reached 0. The only outcome that may roll the next incarnation.
+pub const OUTCOME_WIN: u8 = 1;
+/// Every seat standing in the arena was dead at the same tick.
+pub const OUTCOME_WIPE: u8 = 2;
+/// `enrage_at_tick` passed with the core still alive. A wipe for scoring purposes, kept
+/// distinct because "you ran out of time" and "you all died" are different sentences on
+/// the end screen and there is no other way to tell them apart afterwards.
+pub const OUTCOME_ENRAGE: u8 = 3;
+
+/// Crank ticks a VRF roll may stay in [`PHASE_ROLLING`] before `boss_tick` abandons it.
+///
+/// 25 ticks ≈ 10 s at the crank's 400 ms target, against a documented in-ER fulfilment of
+/// ~100 ms and a hard floor of one ER slot — so this is far past any legitimate callback
+/// while still short enough that a VRF outage does not look like a hang.
+///
+/// Abandoning writes **no seed**. The fallback is deliberately not "derive one from
+/// SlotHashes and carry on": a validator-influenceable seed is not verifiable randomness,
+/// and an incarnation whose ruleset was quietly chosen by whoever produced a block is the
+/// exact property the VRF exists to deny. `begin_next_incarnation` then refuses with
+/// `WrongPhase` — loud and recoverable, rather than silent and wrong.
+pub const ROLL_TIMEOUT_TICKS: u32 = 25;
 
 /// `PlayerSlot.zone`.
 pub const ZONE_LOBBY: u8 = 0;
@@ -217,7 +264,13 @@ pub struct Arena {
     /// Next slot `boss_tick` probes when claiming a free bullet. Wraps at
     /// `MAX_BULLETS`; a full pool simply drops the spawn.
     pub bullet_cursor: u8,
-    pub _pad0: [u8; 2],
+    /// `OUTCOME_*`. How the fight ended, orthogonal to `phase` and outliving it.
+    ///
+    /// Claimed out of `_pad0`, which cost nothing: no field moved, the account did not
+    /// grow, and every account already on chain carries 0 there — which decodes as
+    /// `OUTCOME_UNDECIDED`, the correct reading for a match that has not ended.
+    pub outcome: u8,
+    pub _pad0: u8,
     /// Match identity. Also the `Arena` PDA seed.
     pub arena_id: u64,
     /// Validator-**global** crank namespace, so it must be a wide random positive
@@ -243,11 +296,37 @@ pub struct Arena {
     /// the wrong one and see a correctly-owned, silently frozen world with zero errors
     /// — the single most likely production failure (R2), and this field is the fix.
     pub validator_identity: [u8; 32],
-    /// `hashv([arena_key, incarnation])` in v1; a VRF callback fills it in v1.1 and
-    /// nothing else changes. Per-tick bullet entropy is `hashv([affix_seed, tick])`,
-    /// which the client can reproduce locally without waiting on chain state.
+    /// The seed **this** incarnation is being fought under, and the only stored source of
+    /// its ruleset. Incarnation 0 gets `hashv([arena_key, incarnation])` from `init_arena`;
+    /// every incarnation after it gets a VRF seed, moved here out of `next_affix_seed` by
+    /// [`Arena::begin_next_incarnation`].
+    ///
+    /// Affixes are **derived from these bytes, never stored** — see `06-game-loop.md` §6
+    /// for the byte-range contract. A stored affix table would be the seed twice over, and
+    /// the second copy is the one that drifts. Per-tick bullet entropy is likewise derived
+    /// (`mix64(seed[0..8] ^ mix64(tick))`), so the client reproduces the volley locally
+    /// without waiting on chain state.
     pub affix_seed: [u8; 32],
     pub bullets: [Bullet; MAX_BULLETS],
+    // --- appended after `bullets`: everything above keeps its offset ---------------
+    /// `tick` at which [`PHASE_ROLLING`] was entered. Ticks, never a slot or a
+    /// wall-clock: `tick` is the only clock this program agrees on, and it is the only
+    /// one `boss_tick` — the sole handler that can time the roll out — can read.
+    ///
+    /// Meaningful only while `phase == PHASE_ROLLING`; `begin_next_incarnation` clears it.
+    pub roll_requested_tick: u32,
+    pub _pad2: [u8; 4],
+    /// The VRF seed for the **next** incarnation, or all-zero for "none".
+    ///
+    /// Separate from `affix_seed` because the two answer different questions and a late
+    /// callback must never be able to rewrite the seed of the fight that was just played
+    /// — that seed is the audit trail the `ProvideRandomness` proof is checked against.
+    ///
+    /// All-zero is the whole verification: the only writer is [`Arena::accept_roll`],
+    /// reached only from the tag-14 callback, which the scoped VRF identity signs. So
+    /// "non-zero" *means* "a proof was verified on chain", and no separate `verified` flag
+    /// exists to fall out of agreement with it.
+    pub next_affix_seed: [u8; 32],
 }
 
 impl AccountLayout for Arena {
@@ -255,7 +334,7 @@ impl AccountLayout for Arena {
 }
 
 const _: () = {
-    assert!(size_of::<Arena>() == 1160);
+    assert!(size_of::<Arena>() == 1200);
     assert!(align_of::<Arena>() == 8);
     assert!(offset_of!(Arena, discriminator) == 0);
     assert!(offset_of!(Arena, version) == 1);
@@ -263,6 +342,7 @@ const _: () = {
     assert!(offset_of!(Arena, phase) == 3);
     assert!(offset_of!(Arena, alive_count) == 4);
     assert!(offset_of!(Arena, bullet_cursor) == 5);
+    assert!(offset_of!(Arena, outcome) == 6);
     assert!(offset_of!(Arena, arena_id) == 8);
     assert!(offset_of!(Arena, crank_task_id) == 16);
     assert!(offset_of!(Arena, tick) == 24);
@@ -273,7 +353,226 @@ const _: () = {
     assert!(offset_of!(Arena, validator_identity) == 72);
     assert!(offset_of!(Arena, affix_seed) == 104);
     assert!(offset_of!(Arena, bullets) == 136);
+    assert!(offset_of!(Arena, roll_requested_tick) == 1160);
+    assert!(offset_of!(Arena, next_affix_seed) == 1168);
 };
+
+// ---------------------------------------------------------------------------
+// The phase machine
+// ---------------------------------------------------------------------------
+
+/// Every legal `(from, to)` phase edge, once.
+///
+/// This table *is* the game loop's control flow. It lives here rather than as an `if` in
+/// each handler because the handlers that write `phase` are five files owned by different
+/// people, and five independently-edited gates are five chances for two of them to disagree
+/// about whether, say, a `ROLLING` arena may be committed. (It may not: the VRF callback
+/// would land on an undelegated account and be retried by the oracle for two minutes.)
+///
+/// Read as "from → the set of `to`":
+///
+/// | From | To | Performed by |
+/// |---|---|---|
+/// | `LOBBY` | `FIGHTING` | tag 3 `start_match` |
+/// | `FIGHTING` | `SETTLING` | tag 7 `shoot` (killing blow) · tag 8 `boss_tick` |
+/// | `FIGHTING` | `SETTLED` | tag 9 `settle` — dead-crank recovery, must stay legal |
+/// | `SETTLING` | `ROLLING` | tag 13 `request_roll`, and only when `outcome == OUTCOME_WIN` |
+/// | `SETTLING` | `SETTLED` | tag 9 `settle` · tag 12 `commit_and_undelegate` |
+/// | `ROLLING` | `ROLLED` | tag 14 `consume_roll`, the VRF callback |
+/// | `ROLLING` | `SETTLING` | tag 8 `boss_tick`, after [`ROLL_TIMEOUT_TICKS`] |
+/// | `ROLLED` | `SETTLED` | tag 9 `settle` |
+/// | `SETTLED` | `SETTLED` | tag 9 retried, and the delegation program's undelegation callback |
+/// | `SETTLED` | `LOBBY` | tag 15 `next_incarnation` |
+///
+/// **The state is the triple `(phase, outcome, next_affix_seed)`, not the phase byte
+/// alone**, and two edges above carry a second condition the table cannot express:
+/// `SETTLING → ROLLING` additionally requires `outcome == OUTCOME_WIN`, and
+/// `SETTLED → LOBBY` additionally requires a non-zero `next_affix_seed`. Both are enforced
+/// in the method that performs the edge, and both are refused with the same
+/// [`HeartrotError::WrongPhase`] — "this instruction is not legal from this state" is one
+/// condition, and the *reason* is readable straight off the account (`outcome` says the
+/// raid wiped; an all-zero `next_affix_seed` says the oracle never answered), so a second
+/// error code would carry no information the caller does not already hold.
+///
+/// Everything else is rejected. Three absences carry weight: `ROLLING → SETTLED` (the
+/// commit-during-fulfilment hazard above), `LOBBY → SETTLED` (an arena that was never
+/// fought has nothing to record — the rule `settle` already enforces), and `LOBBY → LOBBY`
+/// (which is what makes a second `next_incarnation` a rejection rather than a second reset,
+/// and therefore what stops two settlements racing the incarnation counter).
+const PHASE_EDGES: [(u8, u8); 10] = [
+    (PHASE_LOBBY, PHASE_FIGHTING),
+    (PHASE_FIGHTING, PHASE_SETTLING),
+    (PHASE_FIGHTING, PHASE_SETTLED),
+    (PHASE_SETTLING, PHASE_ROLLING),
+    (PHASE_SETTLING, PHASE_SETTLED),
+    (PHASE_ROLLING, PHASE_ROLLED),
+    (PHASE_ROLLING, PHASE_SETTLING),
+    (PHASE_ROLLED, PHASE_SETTLED),
+    (PHASE_SETTLED, PHASE_SETTLED),
+    (PHASE_SETTLED, PHASE_LOBBY),
+];
+
+impl Arena {
+    /// Is `from → to` in [`PHASE_EDGES`]? `const` so callers can assert on it at compile
+    /// time, and so the test below can walk the whole 6×6 product.
+    pub const fn may_transition(from: u8, to: u8) -> bool {
+        let mut index = 0;
+        while index < PHASE_EDGES.len() {
+            let (a, b) = PHASE_EDGES[index];
+            if a == from && b == to {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    /// Move to `to`, or reject the transition.
+    ///
+    /// The only sanctioned way to write `phase` from a handler that is allowed to fail.
+    /// `boss_tick` cannot use it — a crank that returns `Err` ten times is deleted — and
+    /// uses [`Self::end_fight`] / [`Self::abandon_roll`], which are total by construction.
+    pub fn try_set_phase(&mut self, to: u8) -> Result<(), ProgramError> {
+        if !Self::may_transition(self.phase, to) {
+            return Err(HeartrotError::WrongPhase.into());
+        }
+        self.phase = to;
+        Ok(())
+    }
+
+    /// End the fight: record `outcome` and move `FIGHTING → SETTLING`.
+    ///
+    /// Total, and idempotent — it returns `false` and writes nothing if the fight is
+    /// already over or `outcome` is not a real result. Both matter: `boss_tick` and
+    /// `shoot` can reach the same conclusion in the same 400 ms window (a killing blow the
+    /// crank also observes), and the *first* one is the true one. Whichever loses must not
+    /// overwrite `outcome`, or a win recorded by the killer becomes an enrage recorded by
+    /// the crank one tick later.
+    ///
+    /// One function, so the phase and the outcome cannot be written apart — a `SETTLING`
+    /// arena with `OUTCOME_UNDECIDED` is a match nobody can score.
+    pub fn end_fight(&mut self, outcome: u8) -> bool {
+        if outcome == OUTCOME_UNDECIDED || outcome > OUTCOME_ENRAGE {
+            return false;
+        }
+        if self.phase != PHASE_FIGHTING || self.outcome != OUTCOME_UNDECIDED {
+            return false;
+        }
+        self.outcome = outcome;
+        self.phase = PHASE_SETTLING;
+        true
+    }
+
+    /// `SETTLING → ROLLING` for a won match.
+    ///
+    /// A wipe earns no roll, and is refused with the same [`HeartrotError::WrongPhase`] as
+    /// an illegal phase — the state is `(phase, outcome)` and this pair has no edge. A
+    /// caller that wants to know which half failed reads `outcome` off the account it just
+    /// passed.
+    ///
+    /// `tick` is stamped here, so the crank's timeout is measured from the request rather
+    /// than from anything the caller supplies.
+    pub fn begin_roll(&mut self) -> Result<(), ProgramError> {
+        if self.outcome != OUTCOME_WIN {
+            return Err(HeartrotError::WrongPhase.into());
+        }
+        self.try_set_phase(PHASE_ROLLING)?;
+        self.roll_requested_tick = self.tick;
+        Ok(())
+    }
+
+    /// Consume a VRF fulfilment: store `seed` and move `ROLLING → ROLLED`.
+    ///
+    /// **Total on purpose, and it must stay that way.** The VRF program invokes the
+    /// callback with `?` inside its own `ProvideRandomness` transaction, so an `Err` here
+    /// reverts that transaction *including the queue removal* — the oracle then retries
+    /// the same request until the 240-slot TTL expires. A stale roll, a duplicate, a roll
+    /// for another incarnation and an all-zero seed are therefore dropped with `false`,
+    /// never raised.
+    ///
+    /// The all-zero rejection is load-bearing rather than defensive: all-zero is the
+    /// "no seed" sentinel `begin_next_incarnation` refuses on, so storing one would be
+    /// storing "verified" and "absent" in the same bytes.
+    pub fn accept_roll(&mut self, seed: &[u8; 32], for_incarnation: u16) -> bool {
+        if self.phase != PHASE_ROLLING || self.incarnation != for_incarnation {
+            return false;
+        }
+        if *seed == [0u8; 32] {
+            return false;
+        }
+        self.next_affix_seed = *seed;
+        self.phase = PHASE_ROLLED;
+        true
+    }
+
+    /// `ROLLING → SETTLING` once [`ROLL_TIMEOUT_TICKS`] have passed with no callback.
+    ///
+    /// Total, because its only caller is `boss_tick`. It writes **no seed**, which is what
+    /// makes the failure loud: `begin_next_incarnation` then refuses, and a human decides
+    /// whether to re-roll or to open a fresh chain. The match itself still settles
+    /// normally, so a VRF outage costs the progression loop and not the raid.
+    ///
+    /// Requires `boss_tick` to advance `tick` on **every** execution rather than only
+    /// while fighting — see `06-game-loop.md` §5. A clock that stops outside `FIGHTING`
+    /// would leave this comparison frozen and wedge the arena in `ROLLING` for good.
+    pub fn abandon_roll(&mut self) -> bool {
+        if self.phase != PHASE_ROLLING {
+            return false;
+        }
+        if self.tick.saturating_sub(self.roll_requested_tick) <= ROLL_TIMEOUT_TICKS {
+            return false;
+        }
+        self.phase = PHASE_SETTLING;
+        true
+    }
+
+    /// `SETTLED → LOBBY` for incarnation N+1, in place, in the same three accounts.
+    ///
+    /// Returns the new incarnation so the caller can scale the boss with it. Refuses with
+    /// [`HeartrotError::WrongPhase`] when no verified seed is present — an all-zero
+    /// `next_affix_seed` is a state with no edge out of `SETTLED`, and the account itself
+    /// says which half failed. This refusal is the design's "refuse to start": the
+    /// alternative, reusing the old seed or deriving a
+    /// new one from chain state, is an incarnation whose ruleset was not rolled by anyone
+    /// who can prove it, silently indistinguishable from one that was.
+    ///
+    /// What carries over: `arena_id`, `bump`, `crank_authority`, `validator_identity`,
+    /// `enrage_at_tick` (a rule of the fight, not match state), and — because it is a
+    /// different account entirely — the whole `Leaderboard` ring. What
+    /// resets: the clock, the phase, the outcome, the bullet pool, the seat bitmask, and
+    /// (through [`Players::reset_for_incarnation`] and [`Boss::reset_for_incarnation`])
+    /// every seat and every point of boss HP.
+    ///
+    /// `crank_task_id` is deliberately left alone: `start_match` mints a fresh one over it
+    /// before scheduling, and zeroing it here would only invite a caller to schedule
+    /// against 0 — the most collision-prone id on a validator-global namespace.
+    ///
+    /// The incarnation counter is this field and nothing else. Two settlements cannot race
+    /// it: this runs only from `SETTLED` and leaves `LOBBY`, and `LOBBY → LOBBY` is not a
+    /// legal edge, so the second transaction is rejected rather than advancing twice.
+    pub fn begin_next_incarnation(&mut self) -> Result<u16, ProgramError> {
+        if self.next_affix_seed == [0u8; 32] {
+            return Err(HeartrotError::WrongPhase.into());
+        }
+        self.try_set_phase(PHASE_LOBBY)?;
+
+        self.affix_seed = self.next_affix_seed;
+        self.next_affix_seed = [0u8; 32];
+        self.roll_requested_tick = 0;
+        // Saturating rather than checked: at u16::MAX the progression stops advancing,
+        // which is harmless — boss part HP already saturates around incarnation 41, so the
+        // fight stopped getting harder tens of thousands of incarnations earlier. An error
+        // here would name a failure mode no raid can reach.
+        self.incarnation = self.incarnation.saturating_add(1);
+        self.outcome = OUTCOME_UNDECIDED;
+        self.tick = 0;
+        self.alive_count = 0;
+        self.bullet_cursor = 0;
+        self.seat_occupied = 0;
+        self.bullets = [Bullet::zeroed(); MAX_BULLETS];
+        Ok(self.incarnation)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Boss — the shell, the core, the aggro target
@@ -314,6 +613,34 @@ pub struct Boss {
 
 impl AccountLayout for Boss {
     const DISCRIMINATOR: u8 = DISC_BOSS;
+}
+
+impl Boss {
+    /// Re-arm the boss for a new incarnation, in place.
+    ///
+    /// Takes the already-scaled numbers rather than computing them: `handlers::init` owns
+    /// `BOSS_PARTS_BASE` and `scale_for_incarnation`, and a second scaling site here would
+    /// be the balance table stored twice — a boss that is one difficulty curve when a match
+    /// is created and another when it respawns. This file owns *which fields reset*; that
+    /// one owns *what the numbers are*.
+    ///
+    /// `parts_max` is set from the same array as `parts`, which is what keeps the vent
+    /// threshold (`sum(parts) × 100 < sum(parts_max) × 35`) meaningful: a full shell is
+    /// exactly 100 % by construction, on every incarnation.
+    pub fn reset_for_incarnation(&mut self, parts: [u16; N_PARTS], core_hp: u16, x: i16, y: i16) {
+        self.x = x;
+        self.y = y;
+        self.core_hp = core_hp;
+        self.core_hp_max = core_hp;
+        self.parts = parts;
+        self.parts_max = parts;
+        // A full shell is sealed, the first attack beat is the crank's to schedule, and
+        // nobody is in the arena yet. `NO_TARGET` rather than 0 so a stale index cannot
+        // read as "aiming at seat 0".
+        self.vent_open = 0;
+        self.attack_timer = 0;
+        self.target_seat = NO_TARGET;
+    }
 }
 
 const _: () = {
@@ -358,7 +685,19 @@ pub struct PlayerSlot {
     /// position is ambiguous as to which input produced it and prediction cannot be
     /// reconciled; the symptom is rubber-banding for every player (D14).
     pub last_move_seq: u16,
-    pub _pad1: [u8; 2],
+    /// Times this seat has hit 0 HP during the current incarnation.
+    ///
+    /// Claimed out of `_pad1`: no field moved, the account did not grow, and every seat
+    /// already on chain reads 0, which is true of a match nobody has died in yet.
+    ///
+    /// Incremented on exactly the line that stamps `respawn_at_tick`, so there is one
+    /// death event and one place it is counted. Saturating — a seat that somehow died
+    /// 65,535 times stops counting rather than wrapping to zero and reading as flawless.
+    /// It is the only record that a wipe-heavy raid happened: `survived` on the
+    /// leaderboard row is a single bit sampled at settle time, and a player who died
+    /// nineteen times and respawned before the end is indistinguishable from one who
+    /// never took a hit.
+    pub deaths: u16,
     /// Tick at which `boss_tick` returns this player to the arena entrance.
     pub respawn_at_tick: u32,
     /// Rate limit for `shoot`. ER transaction fees are zero and the ER runs no
@@ -393,6 +732,7 @@ const _: () = {
     assert!(offset_of!(PlayerSlot, hp) == 8);
     assert!(offset_of!(PlayerSlot, hp_max) == 10);
     assert!(offset_of!(PlayerSlot, last_move_seq) == 12);
+    assert!(offset_of!(PlayerSlot, deaths) == 14);
     assert!(offset_of!(PlayerSlot, respawn_at_tick) == 16);
     assert!(offset_of!(PlayerSlot, last_shot_tick) == 20);
     assert!(offset_of!(PlayerSlot, last_move_tick) == 24);
@@ -423,6 +763,29 @@ pub struct Players {
 
 impl AccountLayout for Players {
     const DISCRIMINATOR: u8 = DISC_PLAYERS;
+}
+
+impl Players {
+    /// Empty every seat for a new incarnation.
+    ///
+    /// Seats do **not** carry over, and that is a decision rather than an omission. A seat
+    /// is a session key plus a live position, and both are stale by the time a raid
+    /// respawns: the browser that held the key may be closed, and `/session/init` is
+    /// already idempotent per `identity`, so a returning player is re-seated for free by
+    /// the path that seats everyone else. Carrying them would instead mean `seat_occupied`
+    /// on `Arena` and `session_pubkey` here disagreeing the moment one player does not come
+    /// back, with no instruction able to notice.
+    ///
+    /// What survives an incarnation is on the `Leaderboard`, which is a base-layer account
+    /// this never touches — one row per player per incarnation, keyed on the durable
+    /// `identity` rather than on the session key. That is the whole carry-over model.
+    ///
+    /// A zeroed slot is the unclaimed slot: `session_pubkey == [0; 32]`, `zone == ZONE_LOBBY`,
+    /// `hp == 0`. There is no field here whose correct default is non-zero, which is what
+    /// makes this one assignment rather than a loop with twenty exceptions.
+    pub fn reset_for_incarnation(&mut self) {
+        self.slots = [PlayerSlot::zeroed(); MAX_SEATS];
+    }
 }
 
 const _: () = {
@@ -564,9 +927,177 @@ mod tests {
     /// TypeScript decoder and the rent math are written against.
     #[test]
     fn sizes_match_the_contract() {
-        assert_eq!(size_of::<Arena>(), 1160);
+        assert_eq!(size_of::<Arena>(), 1200);
         assert_eq!(size_of::<Boss>(), 50);
         assert_eq!(size_of::<Players>(), 1924);
         assert_eq!(size_of::<Leaderboard>(), 6176);
+    }
+
+    const PHASES: [u8; 6] = [
+        PHASE_LOBBY,
+        PHASE_FIGHTING,
+        PHASE_SETTLING,
+        PHASE_SETTLED,
+        PHASE_ROLLING,
+        PHASE_ROLLED,
+    ];
+
+    /// The whole 6×6 product, so a widened `PHASE_EDGES` cannot quietly legalise an edge
+    /// nobody argued for. The four spelled out below are the ones with consequences.
+    #[test]
+    fn only_declared_transitions_are_legal() {
+        let mut legal = 0;
+        for from in PHASES {
+            for to in PHASES {
+                if Arena::may_transition(from, to) {
+                    legal += 1;
+                }
+            }
+        }
+        assert_eq!(legal, PHASE_EDGES.len(), "an edge is declared twice, or outside PHASES");
+
+        // Committing an arena whose VRF callback is still in flight lands the callback on
+        // an undelegated account; the oracle then retries it for the request's whole TTL.
+        assert!(!Arena::may_transition(PHASE_ROLLING, PHASE_SETTLED));
+        // A second `next_incarnation` must be rejected, not advance the counter twice.
+        assert!(!Arena::may_transition(PHASE_LOBBY, PHASE_LOBBY));
+        // A retried `settle` is by design — `GetCommitmentSignature` throws on every
+        // failure path, so "unknown" is the only answer the settle route ever gets.
+        assert!(Arena::may_transition(PHASE_SETTLED, PHASE_SETTLED));
+        // Dead-crank recovery: a match whose task died can only ever end this way.
+        assert!(Arena::may_transition(PHASE_FIGHTING, PHASE_SETTLED));
+    }
+
+    /// The outcome is written exactly once, by whichever of `shoot` and `boss_tick` sees
+    /// the end of the fight first. If the loser could overwrite it, a win recorded by the
+    /// killing blow becomes an enrage recorded by the crank 400 ms later.
+    #[test]
+    fn the_fight_ends_once() {
+        let mut arena = Arena::zeroed();
+        arena.phase = PHASE_FIGHTING;
+
+        assert!(arena.end_fight(OUTCOME_WIN));
+        assert_eq!(arena.phase, PHASE_SETTLING);
+        assert_eq!(arena.outcome, OUTCOME_WIN);
+
+        // The crank reaching the same tick loses, and changes nothing.
+        assert!(!arena.end_fight(OUTCOME_ENRAGE));
+        assert_eq!(arena.outcome, OUTCOME_WIN);
+
+        // Not a result, and not a phase this can start from.
+        let mut fresh = Arena::zeroed();
+        fresh.phase = PHASE_FIGHTING;
+        assert!(!fresh.end_fight(OUTCOME_UNDECIDED));
+        assert!(!fresh.end_fight(OUTCOME_ENRAGE + 1));
+        assert_eq!(fresh.phase, PHASE_FIGHTING);
+        fresh.phase = PHASE_LOBBY;
+        assert!(!fresh.end_fight(OUTCOME_WIN));
+    }
+
+    /// The full win → roll → settle → respawn loop, and the two ways it must refuse.
+    #[test]
+    fn the_incarnation_loop_closes() {
+        let mut arena = Arena::zeroed();
+        arena.phase = PHASE_FIGHTING;
+        arena.arena_id = 7;
+        arena.affix_seed = [1u8; 32];
+        arena.tick = 400;
+        arena.alive_count = 5;
+        arena.seat_occupied = 0b1_1111;
+        arena.bullets[3].active = BULLET_ACTIVE;
+
+        assert!(arena.end_fight(OUTCOME_WIN));
+        arena.begin_roll().expect("a won match may roll");
+        assert_eq!(arena.phase, PHASE_ROLLING);
+        assert_eq!(arena.roll_requested_tick, 400);
+
+        // A roll for another incarnation, and an all-zero seed, are dropped rather than
+        // raised: an `Err` here reverts the oracle's whole transaction and it retries.
+        assert!(!arena.accept_roll(&[9u8; 32], 99));
+        assert!(!arena.accept_roll(&[0u8; 32], 0));
+        assert_eq!(arena.phase, PHASE_ROLLING);
+
+        assert!(arena.accept_roll(&[9u8; 32], 0));
+        assert_eq!(arena.phase, PHASE_ROLLED);
+        // A duplicate fulfilment is a no-op, not a second write.
+        assert!(!arena.accept_roll(&[8u8; 32], 0));
+        assert_eq!(arena.next_affix_seed, [9u8; 32]);
+
+        arena.try_set_phase(PHASE_SETTLED).expect("a rolled match settles");
+        let next = arena.begin_next_incarnation().expect("a verified seed advances");
+
+        assert_eq!(next, 1);
+        assert_eq!(arena.phase, PHASE_LOBBY);
+        assert_eq!(arena.affix_seed, [9u8; 32], "the rolled seed becomes this fight's seed");
+        assert_eq!(arena.next_affix_seed, [0u8; 32]);
+        assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
+        assert_eq!((arena.tick, arena.alive_count, arena.seat_occupied), (0, 0, 0));
+        assert!(arena.bullets.iter().all(|b| b.active == BULLET_FREE));
+        assert_eq!(arena.arena_id, 7, "identity carries over; the match does not");
+
+        // Two settlements cannot race the counter: the second call is a rejected
+        // transition, not a second advance.
+        assert!(arena.begin_next_incarnation().is_err());
+        assert_eq!(arena.incarnation, 1);
+    }
+
+    /// A losing raid may not roll, and a raid whose oracle never answered may not start
+    /// the next incarnation at all. Both refusals are the point of the design: the
+    /// alternative to "refuse" is an incarnation whose ruleset nobody can prove was rolled.
+    #[test]
+    fn a_missing_roll_refuses_rather_than_degrading() {
+        let mut arena = Arena::zeroed();
+        arena.phase = PHASE_FIGHTING;
+        assert!(arena.end_fight(OUTCOME_WIPE));
+        assert_eq!(
+            arena.begin_roll().unwrap_err(),
+            HeartrotError::WrongPhase.into(),
+            "a wipe does not earn a roll"
+        );
+
+        // A win whose callback never landed: the crank abandons it after the timeout, and
+        // no seed is written.
+        let mut arena = Arena::zeroed();
+        arena.phase = PHASE_FIGHTING;
+        assert!(arena.end_fight(OUTCOME_WIN));
+        arena.begin_roll().unwrap();
+        assert!(!arena.abandon_roll(), "not yet — the oracle still has time");
+        arena.tick = ROLL_TIMEOUT_TICKS + 1;
+        assert!(arena.abandon_roll());
+        assert_eq!(arena.phase, PHASE_SETTLING);
+        assert_eq!(arena.next_affix_seed, [0u8; 32], "no seed is invented");
+        assert!(!arena.abandon_roll(), "and it fires once");
+
+        // The match still settles; only the progression stops, and it stops loudly.
+        arena.try_set_phase(PHASE_SETTLED).unwrap();
+        assert_eq!(
+            arena.begin_next_incarnation().unwrap_err(),
+            HeartrotError::WrongPhase.into(),
+        );
+        assert_eq!(arena.phase, PHASE_SETTLED, "a refusal changes nothing");
+        assert_eq!(arena.incarnation, 0);
+    }
+
+    /// A new incarnation must not leave a seat holding a dead browser's session key, and
+    /// must not leave the boss on the HP the raid just stripped it to.
+    #[test]
+    fn a_respawn_clears_seats_and_re_arms_the_boss() {
+        let mut players = Players::zeroed();
+        players.slots[4].session_pubkey = [3u8; 32];
+        players.slots[4].damage_dealt = 5_000;
+        players.slots[4].deaths = 2;
+        players.reset_for_incarnation();
+        assert!(players.slots.iter().all(|s| s.session_pubkey == [0u8; 32]));
+        assert!(players.slots.iter().all(|s| s.damage_dealt == 0 && s.deaths == 0));
+
+        let mut boss = Boss::zeroed();
+        boss.core_hp = 0;
+        boss.vent_open = 1;
+        boss.target_seat = 4;
+        boss.reset_for_incarnation([1_500; N_PARTS], 2_300, 512, 320);
+        assert_eq!(boss.core_hp, 2_300);
+        assert_eq!(boss.core_hp_max, 2_300);
+        assert_eq!(boss.parts, boss.parts_max, "a full shell is exactly 100 %");
+        assert_eq!((boss.vent_open, boss.target_seat), (0, NO_TARGET));
     }
 }
