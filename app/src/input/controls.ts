@@ -39,9 +39,21 @@
  * The lobby needed the slot clock in the first place because `boss_tick` returns before
  * incrementing unless the phase is Fighting: a tick-only limiter would grant each player
  * exactly one lobby move ever and freeze them short of the gate, so no match could start.
- * 100 ms rather than the full 50 ms the chain allows, because the ER coalesces
- * notifications to one per account per 50 ms slot anyway and 10 Hz is what the bandwidth
- * budget was measured at.
+ *
+ * **Keypress-to-wire.** Two things here are pure client-side latency in front of the
+ * ~130 ms round trip, and neither is visible to the telemetry panel — it starts its clock
+ * at `recordSend`, which is downstream of both.
+ *
+ * 1. *Pump quantisation.* A key pressed just after a pump waited a whole period before
+ *    anything left the browser. Every listener that changes intent therefore pumps
+ *    immediately; the gates below are unchanged, so an early call either sends now or
+ *    does nothing, and the cadence cannot be exceeded.
+ * 2. *Deadline drift.* The gate used to re-anchor to the moment a move actually left, so
+ *    a pump the browser delivered 3 ms late made the next one 47 ms early, which failed
+ *    the gate and cost a whole 50 ms slot. Measured on Node timers with a 5 ms busy block
+ *    per pump: 24-29 lost slots per 400 moves and a 100 ms worst-case gap, i.e. 18.5-18.75
+ *    moves/s against the 20 the chain allows. `nextMoveDeadline` advances the deadline by
+ *    exactly one period instead, which measures 19.95/s with zero lost slots.
  */
 
 import { PHASE_FIGHTING } from '@heartrot/client';
@@ -49,8 +61,18 @@ import { PHASE_FIGHTING } from '@heartrot/client';
 /** Pump period. One ER slot — the finest granularity any gate above is expressed in. */
 const PUMP_MS = 50;
 
-/** Lobby move gate. See the module header for why it is not the chain's 50 ms. */
+/** Move gate. One ER slot — the chain's own floor, not a tunable. */
 const MOVE_MS = 50;
+
+/**
+ * Floor on the wall time between two moves that actually left. Recovering a slot the
+ * browser stole (below) means one deliberately early send, and without this floor an
+ * immediate pump from a keypress can land microseconds after a scheduled one — two moves
+ * inside one ER slot, the second refused with `RateLimited` and invisible. 40 ms keeps
+ * the recovery while leaving the pair a slot apart 80% of the time. Measured under
+ * immediate dispatch at 3 and 8 keypresses/s: minimum observed gap 40.1 ms, none below.
+ */
+const MIN_GAP_MS = 40;
 
 /** `SHOT_COOLDOWN_TICKS` from `handlers/shoot.rs`, where the test is strictly greater. */
 const SHOT_COOLDOWN_TICKS = 1;
@@ -93,6 +115,20 @@ function moveAllowed(now: number, lastMoveAt: number): boolean {
   // no number below this that the chain would accept or that anything could observe, so
   // this is "as fast as the network allows" in the literal sense rather than a taste.
   return now - lastMoveAt >= MOVE_MS;
+}
+
+/**
+ * The deadline the *next* move is measured against, given one just went out at `now`.
+ *
+ * Advancing by exactly `MOVE_MS` rather than re-anchoring to `now` is what stops a late
+ * pump from costing a whole slot: the lateness is absorbed by the one send that was late
+ * instead of being carried into every send after it. The `Math.max` is the floor — after
+ * a long idle (or a hidden tab, whose timers are throttled to ~1 Hz) the accumulated
+ * deadline is far in the past and would let a burst through, so it never sits more than
+ * `MOVE_MS - MIN_GAP_MS` behind the send it belongs to.
+ */
+function nextMoveDeadline(now: number, lastMoveAt: number): number {
+  return Math.max(lastMoveAt + MOVE_MS, now - MOVE_MS + MIN_GAP_MS);
 }
 
 function shotAllowed(tick: number, lastShotTick: number): boolean {
@@ -172,7 +208,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
       // lobby gates on wall clock, because the chain's lobby clock is the ER slot and the
       // browser cannot see it.
       if (moveAllowed(now, lastMoveAt)) {
-        lastMoveAt = now;
+        lastMoveAt = nextMoveDeadline(now, lastMoveAt);
         facing = dir;
         cfg.onMove(dir);
       }
@@ -194,12 +230,17 @@ export function attachControls(cfg: ControlsConfig): () => void {
     if (event.code === FIRE_KEY) {
       fireKeyDown = true;
       event.preventDefault();
+      // Straight to the wire rather than waiting out the pump. `pump` re-reads the clock
+      // and both gates, so this can only send what the next pump would have sent anyway,
+      // one period sooner.
+      pump();
       return;
     }
     if (KEY_VECTORS[event.code] === undefined) return;
     held.add(event.code);
     // Arrow keys scroll the page and would drag the arena out from under the player.
     event.preventDefault();
+    pump();
   };
 
   const onKeyUp = (event: KeyboardEvent): void => {
@@ -221,6 +262,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
     pointerY = event.clientY;
     // Keeps aim tracking after the pointer leaves the viewport mid-drag.
     cfg.surface.setPointerCapture(event.pointerId);
+    pump();
   };
 
   const onPointerMove = (event: PointerEvent): void => {
@@ -273,9 +315,27 @@ if (import.meta.env.DEV) {
 
   // One gate for every phase now: wall clock, because the chain gates on an ER slot the
   // browser cannot read. A fight is no longer throttled to the 400 ms crank tick.
-  assert(!moveAllowed(50, 0), 'a move 50 ms in must be gated');
+  // Expressed against MOVE_MS, not a literal: this line read `!moveAllowed(50, 0)` from
+  // when the gate was 100 ms, and it has been throwing on import in dev ever since the
+  // gate came down to one ER slot.
+  assert(!moveAllowed(MOVE_MS - 1, 0), 'a move inside the period must be gated');
   assert(moveAllowed(MOVE_MS, 0), 'a move at the period must pass');
   assert(moveAllowed(9999, 0), 'a long-idle move must pass whatever the tick is doing');
+
+  // The deadline walks the 50 ms grid instead of the wall clock, so a pump delivered late
+  // costs only itself. Both failures are silent: re-anchoring to `now` drops ~1.5 moves a
+  // second, and dropping the floor lets an immediate keypress send twice inside one slot.
+  assert(nextMoveDeadline(50, 0) === MOVE_MS, 'an on-time move advances the deadline by one period');
+  assert(nextMoveDeadline(53, 0) === MOVE_MS, 'a late pump must not carry its lateness forward');
+  assert(!moveAllowed(99, nextMoveDeadline(53, 0)), 'the next move is still gated before its deadline');
+  assert(moveAllowed(100, nextMoveDeadline(53, 0)), 'the slot a late pump stole is recovered');
+  assert(
+    nextMoveDeadline(9999, 0) === 9999 - MOVE_MS + MIN_GAP_MS,
+    'a long idle re-bases the deadline instead of banking a burst',
+  );
+  assert(!moveAllowed(9999 + MIN_GAP_MS - 1, nextMoveDeadline(9999, 0)), 'two sends stay MIN_GAP_MS apart');
+  assert(moveAllowed(9999 + MIN_GAP_MS, nextMoveDeadline(9999, 0)), 'and no further apart than that');
+  assert(nextMoveDeadline(0, Number.NEGATIVE_INFINITY) === -MOVE_MS + MIN_GAP_MS, 'the first move is finite');
 
   // Shots: strictly greater, i.e. one per two ticks — 800 ms at a 400 ms tick.
   assert(!shotAllowed(8, 7), 'a shot one tick after the last must be gated');

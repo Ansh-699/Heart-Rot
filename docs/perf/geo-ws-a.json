@@ -1,0 +1,76 @@
+{
+  "at": "2026-09-01T16:24:13.580Z",
+  "seconds": 30,
+  "regions": [
+    {
+      "name": "devnet-as",
+      "url": "wss://devnet-as.magicblock.app/",
+      "wsOpenMs": 422.4,
+      "subAckMs": 541.9,
+      "notifications": 630,
+      "consecutiveGaps": 629,
+      "gapMs": {
+        "p50": 50,
+        "p90": 54.4,
+        "p95": 55.6,
+        "max": 81
+      },
+      "error": null
+    },
+    {
+      "name": "devnet-tee",
+      "url": "wss://devnet-tee.magicblock.app/",
+      "wsOpenMs": 310.1,
+      "subAckMs": 405,
+      "notifications": 632,
+      "consecutiveGaps": 631,
+      "gapMs": {
+        "p50": 50,
+        "p90": 52.4,
+        "p95": 54,
+        "max": 68.4
+      },
+      "error": null
+    },
+    {
+      "name": "devnet-eu",
+      "url": "wss://devnet-eu.magicblock.app/",
+      "wsOpenMs": 2019.5,
+      "subAckMs": 2237.2,
+      "notifications": 595,
+      "consecutiveGaps": 594,
+      "gapMs": {
+        "p50": 50,
+        "p90": 54.3,
+        "p95": 55.4,
+        "max": 66.5
+      },
+      "error": null
+    },
+    {
+      "name": "devnet-us",
+      "url": "wss://devnet-us.magicblock.app/",
+      "wsOpenMs": 1143.4,
+      "subAckMs": 1432.2,
+      "notifications": 612,
+      "consecutiveGaps": 611,
+      "gapMs": {
+        "p50": 50,
+        "p90": 54.5,
+        "p95": 56,
+        "max": 78.4
+      },
+      "error": null
+    },
+    {
+      "name": "router",
+      "url": "wss://devnet-router.magicblock.app/",
+      "wsOpenMs": 942.4,
+      "subAckMs": 1237.7,
+      "notifications": 0,
+      "consecutiveGaps": 0,
+      "gapMs": null,
+      "error": null
+    }
+  ]
+}

@@ -79,6 +79,15 @@ const BASE_RPC = 'https://api.devnet.solana.com';
 const COMPUTE_BUDGET_ID = address('ComputeBudget111111111111111111111111111111');
 const TREASURY_KEY = `${homedir()}/.config/heartrot/treasury.json`;
 const MOVE_SAMPLES = 25;
+
+/**
+ * Which ER to pin the arena to. Defaults to devnet-as, the region the app ships on.
+ * Override with `SP1_VALIDATOR=<identity>` to run the whole round trip — delegate, ER
+ * write, crank, commit, undelegate — against a different region and read its
+ * write-to-visible p50 off step 6. That is the only way to prove a region works: RTT
+ * alone does not tell you whether its cloner and its crank scheduler serve this program.
+ */
+const VALIDATOR = address(process.env.SP1_VALIDATOR ?? DEVNET_AS_IDENTITY);
 const SEAT = 0;
 
 const decodeAddress = getAddressDecoder();
@@ -313,7 +322,7 @@ async function main(): Promise<void> {
         players,
         arenaId,
         incarnation: 1,
-        validatorIdentity: DEVNET_AS_IDENTITY,
+        validatorIdentity: VALIDATOR,
         crankAuthority: treasury.address,
       }),
     ],
@@ -325,7 +334,7 @@ async function main(): Promise<void> {
     if (a.phase !== PHASE_LOBBY) surprise(`arena phase after init is ${a.phase}, expected LOBBY`);
     const vid = decodeAddress.decode(a.validatorIdentity);
     say(`  arena.validator_identity = ${vid}, crank_task_id = ${a.crankTaskId}`);
-    if (vid !== DEVNET_AS_IDENTITY) surprise(`validator_identity round-tripped as ${vid}`);
+    if (vid !== VALIDATOR) surprise(`validator_identity round-tripped as ${vid}`);
   }
 
   // -- 1b. rent top-up ------------------------------------------------------
@@ -359,18 +368,18 @@ async function main(): Promise<void> {
   // -- 3. resolve the ER, prove ownership both sides -------------------------
   say('\n[3] router + ownership');
   const routes = await getRoutes(ROUTER_ENDPOINT);
-  const route = routes.find((r) => r.identity === DEVNET_AS_IDENTITY);
-  if (route === undefined) throw new Error('devnet-as absent from getRoutes');
+  const route = routes.find((r) => r.identity === VALIDATOR);
+  if (route === undefined) throw new Error(`${VALIDATOR} absent from getRoutes`);
   say(`  route ${route.identity} -> ${route.fqdn} (${route.countryCode}, ${route.blockTimeMs}ms blocks)`);
   const er = rpcFor(route.fqdn);
   const { identity: erIdentity } = await er.getIdentity().send();
   say(`  ER getIdentity = ${erIdentity}`);
-  if (erIdentity !== DEVNET_AS_IDENTITY) surprise(`ER identity is ${erIdentity}`);
+  if (erIdentity !== VALIDATOR) surprise(`ER identity is ${erIdentity}`);
 
   for (const [name, acct] of [['arena', arena], ['boss', boss], ['players', players]] as const) {
     const st = await getDelegationStatus(acct, ROUTER_ENDPOINT);
     say(`  ${name}: isDelegated=${st.isDelegated} authority=${st.delegationRecord?.authority} fqdn=${st.fqdn}`);
-    if (st.delegationRecord?.authority !== DEVNET_AS_IDENTITY) {
+    if (st.delegationRecord?.authority !== VALIDATOR) {
       surprise(`${name} delegation authority is ${st.delegationRecord?.authority}`);
     }
     const baseOwner = await ownerOf(base, acct);

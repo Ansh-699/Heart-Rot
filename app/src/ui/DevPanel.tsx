@@ -28,8 +28,8 @@ const SAMPLE_MS = 250;
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
-/** The chain's own cadence: `boss_tick` is scheduled at 400 ms. */
-const TARGET_HZ = 2.5;
+/** The chain's own cadence. Mirrors `state::TICK_MS`; the crank is scheduled at 100 ms. */
+const TARGET_HZ = 1000 / 100;
 
 interface Treasury {
   readonly lamports: number;
@@ -220,7 +220,7 @@ export default function DevPanel() {
           value={m.tickHz === null ? '—' : m.tickHz.toFixed(2)}
           unit="/s"
           tone={m.tickHz === null ? '' : grade(Math.abs(m.tickHz - TARGET_HZ), 0.4, 1)}
-          note="chain targets 2.5"
+          note={`chain targets ${TARGET_HZ.toFixed(1)}`}
         />
         <Row
           label="feed age"

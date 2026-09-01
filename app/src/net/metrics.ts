@@ -17,6 +17,14 @@
  * `DROP_AFTER_MS` is counted as dropped. That is a proxy for rejection and the UI labels
  * it as one rather than dressing it up as a chain-reported error.
  *
+ * **Only the exact seq is a latency sample.** `last_move_seq` is a high-water mark, so an
+ * update carrying seq M settles every earlier send too — but a send the chain *refused*
+ * never echoes its own seq, and charging it with the wait for a later write reports a
+ * round trip nobody made. The client sends one move per 50 ms ER slot and `move_player`
+ * refuses a second move in the same slot (`slot.last_move_tick == now -> RateLimited`),
+ * so at this cadence refusals are ordinary traffic, not an error condition. They are
+ * counted separately as `refusedRate` and kept out of the percentiles entirely.
+ *
  * No dependencies, fixed-size buffers, no allocation per frame: this runs beside a 60 fps
  * renderer and must never be the reason a frame is late.
  */
@@ -45,6 +53,12 @@ export interface Snapshot {
   readonly pending: number;
   /** Share of sends that were never acknowledged, over the window. 0–1. */
   readonly dropRate: number;
+  /**
+   * Share of moves the chain superseded — a later seq came back first, so this one was
+   * refused (one move per ER slot) or lost. Over the window, 0–1. Ordinary traffic at a
+   * 50 ms send cadence; it is a rejection rate, not a fault.
+   */
+  readonly refusedRate: number;
   /** Milliseconds since the last account update arrived. `null` before the first. */
   readonly feedAge: number | null;
   /** Total submitted this session. */
@@ -54,6 +68,7 @@ export interface Snapshot {
 const sendTimes: number[] = [];
 const ackTimes: number[] = [];
 const dropTimes: number[] = [];
+const refusedTimes: number[] = [];
 const latencies: number[] = [];
 const ticks: Array<{ t: number; tick: number }> = [];
 /** seq -> the moment it was submitted. */
@@ -73,6 +88,11 @@ function trim(buf: number[], now: number): void {
 
 function emit(): void {
   for (const fn of listeners) fn();
+}
+
+/** `seq` is at or behind the acknowledged high-water mark, across the u16 wrap. */
+function isSettled(lastSeq: number, seq: number): boolean {
+  return ((lastSeq - seq) & 0xffff) < 0x8000;
 }
 
 /**
@@ -109,13 +129,23 @@ export function recordWorld(tick?: number, lastSeq?: number): void {
 
   if (lastSeq !== undefined) {
     for (const [seq, at] of pending) {
-      if (seq > lastSeq) continue;
+      // Wrap-safe, same test `predict.ts` reconciles with: `seq` is a u16 and a plain `>`
+      // inverts once every 65,536 moves — 55 minutes at this cadence, which is inside a
+      // long match.
+      if (!isSettled(lastSeq, seq)) continue;
       pending.delete(seq);
-      latencies.push(now - at);
-      if (latencies.length > SAMPLES) latencies.shift();
-      ackTimes.push(now);
+      if (seq === lastSeq) {
+        latencies.push(now - at);
+        if (latencies.length > SAMPLES) latencies.shift();
+        ackTimes.push(now);
+      } else {
+        // Superseded: this seq never came back on its own, so there is no round trip to
+        // record. Timing it against a later write would report a number nothing measured.
+        refusedTimes.push(now);
+      }
     }
     trim(ackTimes, now);
+    trim(refusedTimes, now);
   }
 
   // Anything still outstanding past the deadline was refused or lost. Because sends are
@@ -141,11 +171,13 @@ export function snapshot(): Snapshot {
   trim(sendTimes, now);
   trim(ackTimes, now);
   trim(dropTimes, now);
+  trim(refusedTimes, now);
 
   const sorted = [...latencies].sort((a, b) => a - b);
   const acked = ackTimes.length;
   const dropped = dropTimes.length;
-  const settled = acked + dropped;
+  const refused = refusedTimes.length;
+  const settled = acked + dropped + refused;
 
   // Tick rate needs two observations at different times, or the divisor is zero.
   const first = ticks[0];
@@ -162,6 +194,7 @@ export function snapshot(): Snapshot {
     tickHz,
     pending: pending.size,
     dropRate: settled > 0 ? dropped / settled : 0,
+    refusedRate: settled > 0 ? refused / settled : 0,
     feedAge: lastFeedAt === null ? null : now - lastFeedAt,
     txTotal,
   };
@@ -175,11 +208,40 @@ export function onMetrics(fn: () => void): () => void {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Self-check. Both failures here are quiet and both inflate the headline number: charging
+// a refused move with the wait for a later one overstates p50 by roughly a round trip, and
+// a non-wrap-safe seq compare stops acknowledging anything at all after 65,536 moves.
+// Dev-only, and it resets what it recorded.
+// ---------------------------------------------------------------------------
+
+if (import.meta.env.DEV) {
+  const assert = (ok: boolean, what: string): void => {
+    if (!ok) throw new Error(`metrics self-check: ${what}`);
+  };
+
+  recordSend(7);
+  recordSend(8);
+  recordWorld(1, 8);
+  const m = snapshot();
+  assert(m.pending === 0, 'both moves must settle');
+  assert(m.refusedRate === 0.5, 'the superseded seq must be counted as refused, not acknowledged');
+  assert(latencies.length === 1, 'only the seq that came back is a latency sample');
+
+  resetMetrics();
+  recordSend(0xfffe);
+  recordWorld(1, 1); // seq wrapped past 0xffff
+  assert(snapshot().pending === 0, 'a seq before the u16 wrap must still settle');
+
+  resetMetrics();
+}
+
 /** Drop every sample. Used when a match ends so the next one starts clean. */
 export function resetMetrics(): void {
   sendTimes.length = 0;
   ackTimes.length = 0;
   dropTimes.length = 0;
+  refusedTimes.length = 0;
   latencies.length = 0;
   ticks.length = 0;
   pending.clear();

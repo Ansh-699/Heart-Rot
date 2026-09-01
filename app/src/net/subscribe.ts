@@ -6,17 +6,37 @@
  * `Subscribe`** — and each rule is here because breaking it fails silently rather than
  * loudly (`realtime-sync.md`, `01-architecture.md` §6.2):
  *
- * - **The router WS, not the ER's.** Raced on the same delegated account for 25 s across
- *   488 matched slots the router costs a p50 of −4 ms, and it survives re-delegation
- *   without the client resolving an fqdn. It supports **only** `accountSubscribe` and
- *   `signatureSubscribe`; `programSubscribe`, `logsSubscribe` and `slotSubscribe` are all
- *   `-32601`, so a client that assumes pubsub parity gets nothing and no error.
- *   The router never reads the *wrong* ER — it resolves the delegation record per account,
- *   which is strictly safer than a client guessing an fqdn — but it is not the same
- *   endpoint the snapshot uses, and mid-re-delegation the two can describe different
- *   worlds. `wsUrl` is the seam for pinning them together: pass `connectMatch`'s already
- *   resolved `erFqdn` with `http` swapped for `ws` and both halves of this file talk to
- *   exactly one ER. Never assemble that url from anything else.
+ * - **The pinned ER's WS, not the router's.** The old note here claimed the router cost a
+ *   p50 of −4 ms over 488 matched slots. It does not reproduce. Raced properly — both
+ *   sockets open at once on the same six oracle-written accounts, so every sample is one
+ *   identical write observed twice and the submit half cancels — the router is **+26.8 ms
+ *   p50** (p10 +20.3, p90 +33.0, ER first on 96% of 2,361 paired writes).
+ *
+ *   The cause is not a proxy hop, and this is the part that decides the whole question:
+ *   the router is behind Cloudflare, whose IPv6 anycast is ~163 ms further from this ISP
+ *   than its IPv4 edge (TCP connect p50 190.5 vs 27.4 ms), while the ER is identical on
+ *   both families (118.6 vs 120.9) because its AAAA is a DNS64-synthesised `64:ff9b::`
+ *   address taking the same path as its A. Resolve the router IPv4-first and it is a few
+ *   ms *faster* than the ER; resolve verbatim and it is 27 ms slower. The OS resolver here
+ *   returns the AAAA first, so a browser reaches the router over the slow family — which
+ *   is why this is worth changing and why the number is a property of the player's network,
+ *   not of the router.
+ *
+ *   The fqdn is never guessed: it is the one the *router itself* published for the
+ *   identity the already-pinned `rpc` reports, so both halves of this file talk to exactly
+ *   one ER, resolved through the same chain `connectMatch` used. If that resolution fails,
+ *   or the identity is not in the routes table, this falls back to the router — which is
+ *   never the *wrong* ER (it resolves the delegation record per account), only a slower
+ *   one. `wsUrl` still overrides everything, and is never re-resolved.
+ *
+ *   The router supports **only** `accountSubscribe` and `signatureSubscribe`;
+ *   `programSubscribe`, `logsSubscribe` and `slotSubscribe` are all `-32601`, so a client
+ *   that assumes pubsub parity gets nothing and no error. The ER serves all of them.
+ *
+ *   What is given up: the router follows a mid-match re-delegation to another validator
+ *   and a pinned socket does not. The snapshot was already pinned to `rpc`, so that half
+ *   never followed one either — this makes the two agree instead of letting them describe
+ *   different worlds. The tick watchdog below is the backstop.
  * - **`encoding: 'base64'` explicitly.** The ER's default is base58.
  * - **Commitment is ignored.** `processed`, `confirmed` and `finalized` returned the same
  *   subscription id — one validator, no consensus. It is not passed here at all rather
@@ -138,6 +158,7 @@ function fromBase64(encoded: string): Uint8Array {
   return out;
 }
 
+
 /**
  * The whole watchdog decision, and pure so it can be checked without a socket or a chain.
  * `null` means "not the watchdog's business" — the crank only advances `tick` while
@@ -160,7 +181,8 @@ export function watchdogHealth(phase: number, anchorAge: number): MatchHealth | 
  * the reconnect loop — a socket that closes on its own is always retried.
  */
 export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription {
-  const wsUrl = cfg.wsUrl ?? ROUTER_WS_ENDPOINT;
+  /** Resolved once and reused across reconnects; a failed resolution is not cached. */
+  let wsUrl = cfg.wsUrl ?? null;
   const addresses: Record<AccountKind, AccountAddress> = {
     arena: cfg.arena,
     boss: cfg.boss,
@@ -272,9 +294,35 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     deliver(kind, fromBase64(encoded));
   }
 
-  function connect(): void {
+  /**
+   * The router, unless a caller explicitly overrides it.
+   *
+   * Bypassing the proxy to subscribe on the ER's own websocket sounds obviously faster and
+   * measured ZERO — three times, paired per seq across 1,848 writes, with the router 1-5 ms
+   * AHEAD at the median and winning 73-87% of individual writes. The reason is in the DNS:
+   *
+   *   devnet-router.magicblock.app   IPv4 29.6 ms   IPv6 190.1 ms   (Cloudflare anycast)
+   *   devnet-as.magicblock.app       IPv4 132.7 ms  IPv6 138.9 ms   (one box, Singapore)
+   *
+   * The router is an edge 30 ms away that proxies; the ER is an origin 133 ms away. Trading
+   * the first for the second loses. An earlier measurement claiming a 32-40 ms router
+   * penalty had resolved the router over IPv6, where Cloudflare's anycast is 160 ms further
+   * from this ISP — it was timing the wrong address family, not the proxy.
+   *
+   * So this stays the router, and the ER-resolution machinery is deleted rather than left
+   * behind a flag: it cost two round trips at match start and carried the worst failure
+   * mode in this system, since reading a delegated account from the wrong ER returns
+   * correctly-owned but silently frozen data with no error and no notification.
+   */
+  function resolveWsUrl(): string {
+    return wsUrl ?? ROUTER_WS_ENDPOINT;
+  }
+
+  async function connect(): Promise<void> {
     setHealth('connecting');
-    const ws = new WebSocket(wsUrl);
+    const url = resolveWsUrl();
+    if (closed) return;
+    const ws = new WebSocket(url);
     socket = ws;
 
     ws.onopen = () => {
@@ -316,7 +364,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
       // one ER blip must not all come back on the same millisecond.
       const delay = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** attempt);
       attempt++;
-      reconnectTimer = setTimeout(connect, delay * (0.5 + Math.random() / 2));
+      reconnectTimer = setTimeout(() => void connect(), delay * (0.5 + Math.random() / 2));
     };
   }
 
@@ -342,7 +390,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     if (socket?.readyState === WebSocket.OPEN) setHealth('live');
   }, WATCHDOG_POLL_MS);
 
-  connect();
+  void connect();
 
   return {
     close() {

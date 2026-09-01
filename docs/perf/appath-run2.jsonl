@@ -1,0 +1,21 @@
+{"t":"2026-09-01T17:06:23.425Z","event":"start","arenaId":"1788282383","arena":"8XXUvhHWCAMKkH7WDsqTba8dixm9js5RaxaJq199QrEj","boss":"4WAcBtRVNM9kqiR7FE7MCehAgSSudAH7CgiJu8Ucux69","players":"ArrpBtHTu3cpT69wv6gM9wfMf3evxdJqfGeLMxbMcBJ3","samplesPerArm":320,"block":25,"sendEveryMs":250}
+{"t":"2026-09-01T17:06:25.101Z","event":"init_arena","signature":"4sQAewvSmQfdZh2gSX6K368U9UTi3ypuN5qgfUyHQt6zNUffKfvdYYF59vzQK5RN9hSLkezX7CYi64XwcGXFb2Cr"}
+{"t":"2026-09-01T17:06:26.500Z","event":"delegate","signature":"45L6aZV5Cr3KGWtuKKLTEg2g8iTnw8dom2dXKK83qEqLGbcbXshRHwRqcP9gnQLWfMMrh3tByzhgMRZchrCKydE3"}
+{"t":"2026-09-01T17:06:28.412Z","event":"connected","erFqdn":"https://devnet-as.magicblock.app/","routerWs":"wss://devnet-router.magicblock.app/"}
+{"t":"2026-09-01T17:06:28.846Z","event":"start_match","signature":"5pz5RzSCuRTdpkpUY3xqWvZdpZFrAtpXFybckXJAAwctjwmDPoZnjwsoDrB9Hdu2e9rJQ7SW3iM8FVugNmGZN7gw"}
+{"t":"2026-09-01T17:06:29.110Z","event":"claim_seat","signature":"2NBic5Z2VsnZ9bEe1ciAhHq6vYwYeqFcMqEAZywh3whKgUqKLotSiPd9F7T3LaNV45dBmy6tV2gpa8E2WcFRF54T","seat":0,"session":"CDB1ktAEe4EJeEcd41rLTgBhxM4gY72dy5BgFrbFCyZg"}
+{"t":"2026-09-01T17:06:29.253Z","event":"axis","x":208,"y":832,"dirs":[0,4]}
+{"t":"2026-09-01T17:06:30.053Z","event":"feeds_live","er":3,"router":4}
+{"t":"2026-09-01T17:06:55.077Z","event":"progress","seq":100,"erAcked":99,"routerAcked":99}
+{"t":"2026-09-01T17:07:20.093Z","event":"progress","seq":200,"erAcked":194,"routerAcked":194}
+{"t":"2026-09-01T17:07:45.114Z","event":"progress","seq":300,"erAcked":291,"routerAcked":291}
+{"t":"2026-09-01T17:08:10.132Z","event":"progress","seq":400,"erAcked":384,"routerAcked":384}
+{"t":"2026-09-01T17:08:35.155Z","event":"progress","seq":500,"erAcked":480,"routerAcked":480}
+{"t":"2026-09-01T17:09:00.174Z","event":"progress","seq":600,"erAcked":577,"routerAcked":577}
+{"t":"2026-09-01T17:09:14.183Z","event":"drained","failures":{"before":0,"after":0},"postMs":{"before":{"n":315,"min":234,"p50":255,"p90":280,"p95":342,"p99":848,"max":1087,"mean":275},"after":{"n":325,"min":114,"p50":126,"p90":225,"p95":376,"p99":659,"max":1167,"mean":159.8}}}
+{"t":"2026-09-01T17:09:14.183Z","event":"headline","BEFORE":{"what":"fresh blockhash per send, router websocket","writeToVisibleMs":{"n":308,"min":232,"p50":254,"p90":321,"p95":392,"p99":610,"max":935,"mean":275.6}},"AFTER":{"what":"cached blockhash, pinned ER websocket","writeToVisibleMs":{"n":308,"min":116,"p50":125,"p90":141,"p95":236,"p99":568,"max":665,"mean":143.3}}}
+{"t":"2026-09-01T17:09:14.184Z","event":"levers","wsLeverOnly":{"what":"fresh blockhash, ER websocket","writeToVisibleMs":{"n":308,"min":234,"p50":254,"p90":276,"p95":300,"p99":481,"max":936,"mean":264.5}},"blockhashLeverOnly":{"what":"cached blockhash, router websocket","writeToVisibleMs":{"n":308,"min":113,"p50":125,"p90":162,"p95":236,"p99":567,"max":664,"mean":144.6}}}
+{"t":"2026-09-01T17:09:14.184Z","event":"histograms","BEFORE":{"200":119,"250":153,"300":13,"350":8,"400":3,"450":3,"500":2,"550":2,"600":2,"750":1,"800":1,"900":1},"AFTER":{"100":283,"150":6,"200":4,"250":3,"300":2,"350":4,"500":2,"550":2,"600":1,"650":1}}
+{"t":"2026-09-01T17:09:14.184Z","event":"paired_router_minus_er","n":616,"erFirstShare":0.19,"deltaMs":{"n":616,"min":-18,"p50":-1,"p90":1,"p95":30,"p99":190,"max":356,"mean":6.2}}
+{"t":"2026-09-01T17:09:14.313Z","event":"summary","sent":640,"perArm":320,"failures":{"before":0,"after":0},"seqsAcked":{"er":616,"router":616},"seqsNeverSeen":{"er":24,"router":24},"playersUpdates":{"er":2267,"router":4522},"arena":{"phase":1,"tick":1656}}
+{"t":"2026-09-01T17:09:14.860Z","event":"settled","signature":"yB3erjwJEQ6CqzSM35kavQ8cioAm1Gwvf2vh5euLHMy8zZn8LRd4NtEzotWLNhbLqVpLrMDUX2YWQVYKf5YPkW8","arenaId":"1788282383"}

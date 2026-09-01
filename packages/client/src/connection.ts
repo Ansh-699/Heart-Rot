@@ -433,6 +433,76 @@ export async function connectMatch(cfg: {
 // ---------------------------------------------------------------------------
 
 /**
+ * How long a cached blockhash is served before a refresh is kicked off. The ER's real
+ * window was probed at ~59 s (last accepted at age 58.0 s, first refused at 60.2 s, on two
+ * runs), so 2 s runs at ~30x margin; base devnet's 150 blocks at 400 ms is comparable.
+ */
+const BLOCKHASH_TTL_MS = 2_000;
+
+/**
+ * Past this age the caller *waits* for a new blockhash instead of being served the held
+ * one. Only reachable when every background refresh since has failed, and still 2x inside
+ * the measured window.
+ */
+const BLOCKHASH_MAX_AGE_MS = 30_000;
+
+type CachedBlockhash = {
+  lifetime: Parameters<typeof setTransactionMessageLifetimeUsingBlockhash>[0];
+  fetchedAt: number;
+  /** Set while a background refresh is running, so only one is ever in flight. */
+  refreshing?: Promise<void>;
+  /** Signatures already sent under this blockhash. See the dedupe in `sendInstructions`. */
+  sent: Set<Signature>;
+};
+
+/**
+ * Keyed by the `rpc` handle itself, not by URL. Each `createRpc` call makes a distinct
+ * object, so an ER blockhash can never be served to a base-layer send — the failure
+ * `connectMatch`'s docstring exists to prevent — without a URL-normalisation rule to get
+ * wrong. A `WeakMap` also means a finished match's cache dies with its connections.
+ */
+const blockhashCache = new WeakMap<HeartrotRpc, CachedBlockhash>();
+
+async function refreshBlockhash(rpc: HeartrotRpc): Promise<CachedBlockhash> {
+  const { value } = await rpc.getLatestBlockhash().send();
+  const entry: CachedBlockhash = { lifetime: value, fetchedAt: Date.now(), sent: new Set() };
+  blockhashCache.set(rpc, entry);
+  return entry;
+}
+
+/**
+ * A blockhash for `rpc` without a round trip on the critical path.
+ *
+ * This is the single largest win available on the submit half. `sendInstructions` used to
+ * open with `await rpc.getLatestBlockhash().send()`, so every keypress was **two serial
+ * round trips** to Singapore rather than one — measured at 265 ms end-to-end against
+ * 135 ms with a cached hash, over three interleaved A/B runs of 130 samples per arm, and
+ * again as +130.5/+143.4/+139.6/+167.1 ms on four runs of 224 sends.
+ *
+ * Stale-while-revalidate rather than a timer: a hash older than the TTL is still ~57 s
+ * from expiry, so the send that notices serves the old one and lets the refresh land
+ * behind it. No caller owns a timer, and an idle match makes no requests.
+ */
+async function blockhashFor(rpc: HeartrotRpc): Promise<CachedBlockhash> {
+  const entry = blockhashCache.get(rpc);
+  if (entry === undefined) return refreshBlockhash(rpc);
+
+  const age = Date.now() - entry.fetchedAt;
+  if (age >= BLOCKHASH_MAX_AGE_MS) return refreshBlockhash(rpc);
+  if (age >= BLOCKHASH_TTL_MS && entry.refreshing === undefined) {
+    entry.refreshing = refreshBlockhash(rpc).then(
+      () => undefined,
+      // Swallowed on purpose: the held hash is still valid, and clearing the latch lets
+      // the next send retry. An unhandled rejection here would kill a Worker request.
+      () => {
+        entry.refreshing = undefined;
+      },
+    );
+  }
+  return entry;
+}
+
+/**
  * Build, sign and send. The blockhash comes from `rpc` — the same endpoint the
  * transaction is sent to — which is the whole of the base/ER discipline in one line.
  *
@@ -445,27 +515,53 @@ export async function connectMatch(cfg: {
  * the delegation program, so simulating an ER transaction anywhere rejects it before it
  * is sent. The cost is that a malformed transaction returns a signature and then fails
  * silently — use `confirmSignature` on any path where that matters.
+ *
+ * The blockhash is **cached** per `rpc` (see `blockhashFor`), which is what keeps a
+ * keypress to one round trip instead of two. The cost of holding one is that a repeated
+ * instruction becomes a byte-identical transaction with the same signature, and the node
+ * refuses the repeat with `-32003 … already been processed` — so the repeat is detected
+ * here and re-signed against a fresh hash rather than dropped.
  */
 export async function sendInstructions(
   rpc: HeartrotRpc,
   feePayer: TransactionSigner,
   instructions: readonly Instruction[],
 ): Promise<Signature> {
-  const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
-  const message = pipe(
-    createTransactionMessage({ version: 0 }),
-    (m) => setTransactionMessageFeePayerSigner(feePayer, m),
-    (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
-    (m) => appendTransactionMessageInstructions(instructions, m),
-  );
-  const signed = await signTransactionMessageWithSigners(message);
+  const sign = async (entry: CachedBlockhash) =>
+    signTransactionMessageWithSigners(
+      pipe(
+        createTransactionMessage({ version: 0 }),
+        (m) => setTransactionMessageFeePayerSigner(feePayer, m),
+        (m) => setTransactionMessageLifetimeUsingBlockhash(entry.lifetime, m),
+        (m) => appendTransactionMessageInstructions(instructions, m),
+      ),
+    );
+
+  let entry = await blockhashFor(rpc);
+  let signed = await sign(entry);
+  let signature = getSignatureFromTransaction(signed);
+
+  if (entry.sent.has(signature)) {
+    // `move` carries a monotonic u16 seq so it can never land here; `shoot` is
+    // [tag, seat, dir] with no nonce, so a player holding fire in one direction produces
+    // the identical message every time. A fresh-blockhash-per-send used to make each one
+    // unique by accident. One extra round trip on a repeat beats a silently dropped shot
+    // — App.tsx swallows a `-32003` with no custom code, so the loss would be invisible.
+    // ponytail: two repeats inside one 50 ms ER slot can still collide, since the refresh
+    // may return the same hash. Fix properly by giving `shoot` a nonce in instructions.ts.
+    entry = await refreshBlockhash(rpc);
+    signed = await sign(entry);
+    signature = getSignatureFromTransaction(signed);
+  }
+  entry.sent.add(signature);
+
   await rpc
     .sendTransaction(getBase64EncodedWireTransaction(signed), {
       encoding: 'base64',
       skipPreflight: true,
     })
     .send();
-  return getSignatureFromTransaction(signed);
+  return signature;
 }
 
 /**

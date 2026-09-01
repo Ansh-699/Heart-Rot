@@ -1,0 +1,93 @@
+{
+  "host": "devnet-as.magicblock.app",
+  "samplesPerArm": 60,
+  "tcpConnectRttMs": {
+    "n": 25,
+    "min": 0,
+    "p50": 258.9,
+    "p90": 277.9,
+    "p95": 280.1,
+    "max": 300.4
+  },
+  "rows": [
+    {
+      "arm": "slice0",
+      "respBytes": 235,
+      "n": 60,
+      "min": 0,
+      "p50": 126.1,
+      "p90": 131.6,
+      "p95": 137.7,
+      "max": 202.1
+    },
+    {
+      "arm": "slice96",
+      "respBytes": 363,
+      "n": 60,
+      "min": 0,
+      "p50": 128.8,
+      "p90": 138.2,
+      "p95": 168.5,
+      "max": 307.2
+    },
+    {
+      "arm": "slice1200",
+      "respBytes": 1835,
+      "n": 60,
+      "min": 0,
+      "p50": 133.7,
+      "p90": 143,
+      "p95": 151.7,
+      "max": 178.2
+    },
+    {
+      "arm": "slice1924",
+      "respBytes": 2803,
+      "n": 60,
+      "min": 0,
+      "p50": 130.3,
+      "p90": 139.7,
+      "p95": 142.1,
+      "max": 238
+    },
+    {
+      "arm": "multi4",
+      "respBytes": 10998,
+      "n": 60,
+      "min": 0,
+      "p50": 130.4,
+      "p90": 142.9,
+      "p95": 175.1,
+      "max": 260.9
+    },
+    {
+      "arm": "multi10",
+      "respBytes": 27384,
+      "n": 60,
+      "min": 0,
+      "p50": 137.7,
+      "p90": 160.2,
+      "p95": 181.9,
+      "max": 248.5
+    },
+    {
+      "arm": "multi20",
+      "respBytes": 54694,
+      "n": 60,
+      "min": 0,
+      "p50": 135.5,
+      "p90": 151.9,
+      "p95": 154.9,
+      "max": 248.7
+    }
+  ],
+  "fitP50": {
+    "msPerKB": 0.142,
+    "interceptMs": 129.8
+  },
+  "fitP90": {
+    "msPerKB": 0.35,
+    "interceptMs": 139.1
+  },
+  "arenaControl": "5Anv1RGLGMVmMUz4XzH6XvdPUC4pbA82siRP6QtdvCF8"
+}
