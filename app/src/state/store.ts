@@ -27,6 +27,8 @@ import {
   type ReactNode,
 } from 'react';
 
+import { recordWorld } from '../net/metrics';
+
 import {
   ZONE_ARENA,
   loadOrCreateSession,
@@ -355,6 +357,13 @@ export function createStore(): Store {
     },
 
     setWorld(update) {
+      // The one place every account update lands, so the one place telemetry needs to
+      // observe. `lastMoveSeq` on the local seat is what turns a fire-and-forget send
+      // into a measurable round trip; without a seat there is throughput but no latency.
+      const seat = state.match?.seat;
+      const slot = seat === undefined || seat === null ? undefined : update.players?.slots?.[seat];
+      recordWorld(update.arena?.tick, slot?.lastMoveSeq);
+
       set({
         ...update,
         updatedAt: Date.now(),

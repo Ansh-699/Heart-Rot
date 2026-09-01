@@ -47,6 +47,8 @@ import {
 } from '@heartrot/client';
 
 import { attachControls } from './input/controls';
+import { recordSend } from './net/metrics';
+import DevPanel from './ui/DevPanel';
 import { GATE_MAX, GATE_MIN } from './render/sprites';
 import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
@@ -146,6 +148,7 @@ export default function App() {
       </main>
       <World screen={screen} link={link} />
       <ErrorBar />
+      <DevPanel />
     </div>
   );
 }
@@ -163,12 +166,19 @@ function Header() {
   return (
     <header className="header">
       <h1 className="wordmark">HEARTROT</h1>
-      <span className="tag">incarnation {incarnation}</span>
-      {seat !== null && <span className="tag">seat {seat}</span>}
+      {/* Two clusters, not five loose tags: what match this is on the left, how it is
+          running on the right. Tight gaps inside a cluster and a wide one between them
+          do the grouping, so nothing needs a divider. */}
+      <div className="header-group">
+        <span className="tag">incarnation {incarnation}</span>
+        {seat !== null && <span className="tag">seat {seat}</span>}
+      </div>
       <span className="spacer" />
-      <span className="tag tabular">tick {tick}</span>
-      <span className={`dot dot-${status}`} aria-hidden="true" />
-      <span className="tag">{STATUS_LABEL[status]}</span>
+      <div className="header-group">
+        <span className="tag tabular">tick {tick}</span>
+        <span className={`dot dot-${status}`} aria-hidden="true" />
+        <span className="tag">{STATUS_LABEL[status]}</span>
+      </div>
     </header>
   );
 }
@@ -390,9 +400,15 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // table and cannot disagree.
         const seq = predictor.push(dir);
         if (seq === null) return;
+        // Recorded before the send, so a transaction that never resolves still counts as
+        // in flight and ages into the unacked bucket rather than vanishing.
+        recordSend(seq);
         send(movePlayer({ ...common, session, seat: match.seat, dir, seq }));
       },
       onShoot: (dir) => {
+        // No `seq` on the wire for `shoot`, so it counts toward throughput and never
+        // toward latency. Inventing a round trip for it would be a made-up number.
+        recordSend();
         send(shoot({ ...common, boss: match.boss, session, seat: match.seat, dir }));
       },
     });
