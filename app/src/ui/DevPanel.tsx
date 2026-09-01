@@ -78,6 +78,13 @@ export default function DevPanel() {
   const [treasury, setTreasury] = useState<Treasury | null>(null);
   const [opening, setOpening] = useState<number | null>(null);
   const status = useSelect((s) => s.status);
+  // Match identity, because "the chain says one thing and the screen says another" is the
+  // failure this project keeps hitting, and it is unanswerable without knowing WHICH
+  // arena and WHICH validator the tab is actually reading.
+  const arenaId = useSelect((s) => s.match?.arenaId ?? null);
+  const mySeat = useSelect((s) => s.match?.seat ?? null);
+  const erEndpoint = useSelect((s) => s.match?.erEndpoint ?? null);
+  const seated = useSelect((s) => s.players?.slots.filter((x) => x.occupied).length ?? null);
 
   // Backtick toggles. Ignored while typing so it never eats a keystroke meant for a field.
   useEffect(() => {
@@ -212,6 +219,23 @@ export default function DevPanel() {
           tone={grade(m.feedAge, 1500, 3000)}
         />
         <Row label="socket" value={status} />
+      </div>
+
+      <div className="dev-group">
+        <h3>Match</h3>
+        <Row label="arena" value={arenaId === null ? '—' : String(arenaId)} />
+        <Row label="your seat" value={mySeat === null ? '—' : String(mySeat)} />
+        <Row
+          label="roster"
+          value={seated === null ? '—' : String(seated)}
+          unit="seated"
+          note={seated === 0 && mySeat !== null ? 'you hold a seat the roster does not show' : undefined}
+          tone={seated === 0 && mySeat !== null ? 'is-bad' : ''}
+        />
+        <Row
+          label="validator"
+          value={erEndpoint ? erEndpoint.replace(/^https?:\/\//, '').replace(/\/$/, '') : '—'}
+        />
       </div>
 
       <div className="dev-group">

@@ -229,11 +229,27 @@ fn on_gate(x: i16, y: i16) -> bool {
 /// (~6.8 years of ER uptime). Widening `last_move_tick` is a layout change; it is
 /// not worth one.
 fn move_clock(arena: &Arena) -> Result<u32, ProgramError> {
-    if arena.phase == PHASE_FIGHTING {
-        Ok(arena.tick)
-    } else {
-        Ok(Clock::get()?.slot as u32)
-    }
+    // The ER slot, in every phase.
+    //
+    // This used to return `arena.tick` during a fight, and that single line was the whole
+    // of "the game feels sluggish": `MOVE_STEP` is one 16-unit tile and the gate is one
+    // move per clock unit, so a 400 ms tick capped movement at 2.5 tiles a second across
+    // a 64-tile arena — twenty-five seconds to cross it. The lobby, which already used
+    // the 50 ms slot, moved eight times faster, so walking to the gate felt fine and the
+    // raid itself felt like wading.
+    //
+    // Raising the crank instead would have worked and cost far more: every tick-denominated
+    // constant in the simulation (bullet velocity, RESPAWN_TICKS, the enrage deadline,
+    // the shot cooldown) is expressed in ticks and would have to be rescaled together,
+    // and the validator would do 4-8x the work to produce a purely visual result that
+    // interpolation already provides. The boss simulation is genuinely happy at 400 ms;
+    // only the player's input gate needed to be finer than the simulation it feeds.
+    //
+    // The limiter is not weakened, only re-scaled: still exactly one move per clock unit,
+    // and the ER coalesces account notifications to one per 50 ms slot anyway, so this is
+    // the finest granularity a client could observe its own move landing at.
+    let _ = arena;
+    Ok(Clock::get()?.slot as u32)
 }
 
 /// Accounts must be validated before any state is touched, and every guard below
@@ -674,15 +690,23 @@ mod tests {
             );
         }
 
-        // While fighting, the move limiter runs off the match clock — one accepted move per
-        // crank tick, the same budget for all twenty seats. (The lobby branch reads the ER
-        // slot clock through a syscall that does not exist off chain, so it is not
-        // exercised here; `move_clock`'s doc comment carries why it has to be a second
-        // clock at all.)
+        // The move limiter runs off the ER slot in EVERY phase, so a fight is gated at
+        // 50 ms rather than at the 400 ms crank tick. That is the whole difference between
+        // 2.5 tiles a second and twenty.
+        //
+        // The slot arrives through a syscall that does not exist off chain, so the host
+        // cannot read a value here — but it CAN prove the branch is gone. Under the old
+        // code a fighting arena returned `arena.tick` without touching a sysvar, so
+        // seeing the sysvar error is exactly the evidence that a fight no longer reads
+        // the tick. Asserting `Ok(41)` here is what would mean the regression came back.
         let mut arena = Arena::zeroed();
         arena.phase = PHASE_FIGHTING;
         arena.tick = 41;
-        assert_eq!(move_clock(&arena), Ok(41));
+        assert_eq!(
+            move_clock(&arena),
+            Err(ProgramError::UnsupportedSysvar),
+            "a fight must read the ER slot, never arena.tick",
+        );
     }
 
     /// Incarnation N+1 must hand `join` twenty claimable seats and no live key.

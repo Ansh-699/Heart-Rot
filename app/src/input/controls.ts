@@ -19,8 +19,7 @@
  *
  * | Action | Chain rule | Mirrored as |
  * |---|---|---|
- * | `move`, fighting | `last_move_tick != arena.tick` | one send per observed `tick` |
- * | `move`, lobby | `last_move_tick != clock.slot` (50 ms slots) | one send per 100 ms |
+ * | `move`, any phase | `last_move_tick != clock.slot` (50 ms slots) | one send per 100 ms |
  * | `shoot` | `arena.tick > last_shot_tick + 1` | one send per two observed ticks |
  * | either, dead | `hp == 0` -> `PlayerDead` (Custom 8) | `clock().alive === false` sends nothing |
  *
@@ -31,7 +30,13 @@
  * cleared by the respawn eight ticks later), which costs no round trip. Without it a
  * corpse holding fire sends one doomed `shoot` every 800 ms for the rest of the match.
  *
- * The lobby uses the ER slot rather than `arena.tick` because `boss_tick` returns before
+ * Movement is gated on the ER slot in every phase. It used to gate a fight on `arena.tick`
+ * instead, and that made the raid feel like wading: one 16-unit tile per 400 ms crank tick
+ * is 2.5 tiles a second across a 64-tile arena, while the lobby — already on the slot
+ * clock — moved eight times faster. The chain now reads the slot in both, so this mirror
+ * does too.
+ *
+ * The lobby needed the slot clock in the first place because `boss_tick` returns before
  * incrementing unless the phase is Fighting: a tick-only limiter would grant each player
  * exactly one lobby move ever and freeze them short of the gate, so no match could start.
  * 100 ms rather than the full 50 ms the chain allows, because the ER coalesces
@@ -39,13 +44,13 @@
  * budget was measured at.
  */
 
-import { PHASE_FIGHTING, PHASE_LOBBY } from '@heartrot/client';
+import { PHASE_FIGHTING } from '@heartrot/client';
 
 /** Pump period. One ER slot — the finest granularity any gate above is expressed in. */
 const PUMP_MS = 50;
 
 /** Lobby move gate. See the module header for why it is not the chain's 50 ms. */
-const LOBBY_MOVE_MS = 100;
+const MOVE_MS = 100;
 
 /** `SHOT_COOLDOWN_TICKS` from `handlers/shoot.rs`, where the test is strictly greater. */
 const SHOT_COOLDOWN_TICKS = 1;
@@ -81,14 +86,12 @@ export function dirFromVector(dx: number, dy: number): number {
  * The two cadence gates, pulled out of the pump so they can be asserted without a DOM.
  * They are the whole reason this module exists and both fail silently when wrong.
  */
-function moveAllowed(
-  phase: number,
-  tick: number,
-  now: number,
-  lastMoveTick: number,
-  lastMoveAt: number,
-): boolean {
-  return phase === PHASE_FIGHTING ? tick !== lastMoveTick : now - lastMoveAt >= LOBBY_MOVE_MS;
+function moveAllowed(now: number, lastMoveAt: number): boolean {
+  // One rule for every phase, because the chain now has one rule for every phase. The
+  // budget is wall clock rather than the observed tick: the gate it mirrors is the ER
+  // slot, and a client cannot see slots — 100 ms is two of them, which is the finest
+  // cadence at which the ER will actually notify this account of its own move landing.
+  return now - lastMoveAt >= MOVE_MS;
 }
 
 function shotAllowed(tick: number, lastShotTick: number): boolean {
@@ -127,7 +130,6 @@ export function attachControls(cfg: ControlsConfig): () => void {
   // so this tracks it locally for the keyboard-fire path, which has no aim vector.
   let facing = 0;
 
-  let lastMoveTick = -1;
   let lastMoveAt = Number.NEGATIVE_INFINITY;
   // Two below any real tick, so the first shot of a match is never gated.
   let lastShotTick = -(SHOT_COOLDOWN_TICKS + 1);
@@ -168,8 +170,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
       // Fighting gates on the tick itself, which is what the chain compares against;
       // lobby gates on wall clock, because the chain's lobby clock is the ER slot and the
       // browser cannot see it.
-      if (moveAllowed(phase, tick, now, lastMoveTick, lastMoveAt)) {
-        lastMoveTick = tick;
+      if (moveAllowed(now, lastMoveAt)) {
         lastMoveAt = now;
         facing = dir;
         cfg.onMove(dir);
@@ -269,13 +270,11 @@ if (import.meta.env.DEV) {
     if (!ok) throw new Error(`controls self-check: ${what}`);
   };
 
-  // Fighting: exactly one move per observed tick, whatever the wall clock says.
-  assert(moveAllowed(PHASE_FIGHTING, 7, 1000, 6, 0), 'a fresh tick must pass the move gate');
-  assert(!moveAllowed(PHASE_FIGHTING, 7, 9999, 7, 0), 'the same tick twice must be gated');
-
-  // Lobby: wall clock, because the chain gates on an ER slot the browser cannot read.
-  assert(!moveAllowed(PHASE_LOBBY, 7, 50, 7, 0), 'a lobby move 50 ms in must be gated');
-  assert(moveAllowed(PHASE_LOBBY, 7, LOBBY_MOVE_MS, 7, 0), 'a lobby move at the period must pass');
+  // One gate for every phase now: wall clock, because the chain gates on an ER slot the
+  // browser cannot read. A fight is no longer throttled to the 400 ms crank tick.
+  assert(!moveAllowed(50, 0), 'a move 50 ms in must be gated');
+  assert(moveAllowed(MOVE_MS, 0), 'a move at the period must pass');
+  assert(moveAllowed(9999, 0), 'a long-idle move must pass whatever the tick is doing');
 
   // Shots: strictly greater, i.e. one per two ticks — 800 ms at a 400 ms tick.
   assert(!shotAllowed(8, 7), 'a shot one tick after the last must be gated');
