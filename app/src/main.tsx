@@ -15,11 +15,24 @@
  * signature comes from the non-extractable WebCrypto key `store.signIn()` resolves. Hence
  * `createOnLogin: 'off'` below: an embedded wallet we would never sign with is a liability
  * (a recovery prompt in the login flow) with no upside.
+ *
+ * **Wallet detection only.** `loginMethods: ['wallet']` — no email, no social, no
+ * seed-phrase-less onboarding. A visitor without Phantom / Solflare / Backpack installed
+ * cannot play, and that is the accepted trade: the alternative is an embedded wallet we
+ * have just established we would never sign with. The wallet proves who you are once, and
+ * then never appears again for the life of the match.
+ *
+ * **No `defaultSolanaRpcsPlugin`.** It is opt-in for a reason — registering it routes
+ * Solana RPC through Privy's hosted endpoints, and every RPC this app makes must go to the
+ * ER that `/api/session/init` named. Privy v3 has no cluster field outside that plugin, so
+ * "devnet" is configured exactly where it belongs: `erEndpoint` / `routerEndpoint` in the
+ * store's `MatchInfo`, and `SOLANA_RPC_URL` in the Worker.
  */
 
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { PrivyProvider, getAccessToken } from '@privy-io/react-auth';
+import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana';
 
 import App from './App';
 import { setAuthSource, StoreProvider } from './state/store';
@@ -74,8 +87,29 @@ if (!PRIVY_APP_ID) {
       <PrivyProvider
         appId={PRIVY_APP_ID}
         config={{
-          loginMethods: ['email', 'google', 'wallet'],
-          appearance: { walletChainType: 'solana-only' },
+          loginMethods: ['wallet'],
+          appearance: {
+            walletChainType: 'solana-only',
+            showWalletLoginFirst: true,
+            // `detected_solana_wallets` is the whole feature: whatever Wallet Standard
+            // announced itself in this browser. The three named entries only fix the
+            // ordering of the ones we expect; an unlisted Solana wallet still shows up
+            // under the detected bucket.
+            walletList: ['detected_solana_wallets', 'phantom', 'solflare', 'backpack'],
+          },
+          // Without this, Privy registers no Solana Wallet Standard connectors, cannot see
+          // an installed Phantom, and sends the user to the Chrome Web Store to install a
+          // wallet they already have. `walletList` above only orders connectors that
+          // exist; it does not create them. Confirmed against 3.39.0's own types:
+          // ExternalWalletsConfig.solana.connectors is the only consumer of
+          // SolanaWalletConnectorsConfig.
+          //
+          // Its peer deps (@solana-program/{system,token,memo}) are marked OPTIONAL by
+          // Privy, so installing @privy-io/react-auth alone leaves this entrypoint
+          // unloadable — they are now direct dependencies of this app for that reason.
+          externalWallets: {
+            solana: { connectors: toSolanaWalletConnectors() },
+          },
           embeddedWallets: {
             ethereum: { createOnLogin: 'off' },
             solana: { createOnLogin: 'off' },

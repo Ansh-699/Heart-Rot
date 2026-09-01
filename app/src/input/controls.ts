@@ -22,6 +22,14 @@
  * | `move`, fighting | `last_move_tick != arena.tick` | one send per observed `tick` |
  * | `move`, lobby | `last_move_tick != clock.slot` (50 ms slots) | one send per 100 ms |
  * | `shoot` | `arena.tick > last_shot_tick + 1` | one send per two observed ticks |
+ * | either, dead | `hp == 0` -> `PlayerDead` (Custom 8) | `clock().alive === false` sends nothing |
+ *
+ * The dead gate is prevention, not reaction, and it has to be: gameplay is sent with
+ * `skipPreflight` and never confirmed, so `Custom(7)`/`Custom(8)` are not observable on
+ * the hot path at all — the transaction returns a signature and quietly does nothing.
+ * The authoritative signal is the roster the world feed already delivers (`hp == 0`,
+ * cleared by the respawn eight ticks later), which costs no round trip. Without it a
+ * corpse holding fire sends one doomed `shoot` every 800 ms for the rest of the match.
  *
  * The lobby uses the ER slot rather than `arena.tick` because `boss_tick` returns before
  * incrementing unless the phase is Fighting: a tick-only limiter would grant each player
@@ -31,7 +39,7 @@
  * budget was measured at.
  */
 
-import { PHASE_FIGHTING } from '@heartrot/client';
+import { PHASE_FIGHTING, PHASE_LOBBY } from '@heartrot/client';
 
 /** Pump period. One ER slot — the finest granularity any gate above is expressed in. */
 const PUMP_MS = 50;
@@ -69,11 +77,35 @@ export function dirFromVector(dx: number, dy: number): number {
   return Math.round(Math.atan2(dx, -dy) / (Math.PI / 4)) & 7;
 }
 
+/**
+ * The two cadence gates, pulled out of the pump so they can be asserted without a DOM.
+ * They are the whole reason this module exists and both fail silently when wrong.
+ */
+function moveAllowed(
+  phase: number,
+  tick: number,
+  now: number,
+  lastMoveTick: number,
+  lastMoveAt: number,
+): boolean {
+  return phase === PHASE_FIGHTING ? tick !== lastMoveTick : now - lastMoveAt >= LOBBY_MOVE_MS;
+}
+
+function shotAllowed(tick: number, lastShotTick: number): boolean {
+  return tick > lastShotTick + SHOT_COOLDOWN_TICKS;
+}
+
 export interface ControlsConfig {
   /** Element the pointer aims over — the arena viewport. Keyboard binds to `window`. */
   readonly surface: HTMLElement;
-  /** The live arena clock, read on every pump. `tick` is authoritative; wall clock is not. */
-  clock(): { readonly phase: number; readonly tick: number };
+  /**
+   * The live arena clock, read on every pump. `tick` is authoritative; wall clock is not.
+   *
+   * `alive` is the local seat's `hp > 0` off the last roster notification. Optional, and
+   * omitting it means "assume alive" — a caller that cannot see the roster yet gets the
+   * old behaviour rather than a frozen player.
+   */
+  clock(): { readonly phase: number; readonly tick: number; readonly alive?: boolean };
   /**
    * The local player's position in client pixels, or `null` when it is off screen or not
    * yet known. Pointer aim needs an origin; without one, shots follow the last `facing`.
@@ -123,17 +155,20 @@ export function attachControls(cfg: ControlsConfig): () => void {
   }
 
   function pump(): void {
-    const { phase, tick } = cfg.clock();
+    const { phase, tick, alive } = cfg.clock();
     const now = performance.now();
+
+    // Dead. Every move and shot would come back `PlayerDead`, invisibly. Held keys are
+    // deliberately NOT cleared: the respawn eight ticks later resumes whatever the player
+    // is still pressing, and clearing would strand them standing still at the entrance.
+    if (alive === false) return;
 
     const dir = heldDirection();
     if (dir !== null) {
       // Fighting gates on the tick itself, which is what the chain compares against;
       // lobby gates on wall clock, because the chain's lobby clock is the ER slot and the
       // browser cannot see it.
-      const allowed =
-        phase === PHASE_FIGHTING ? tick !== lastMoveTick : now - lastMoveAt >= LOBBY_MOVE_MS;
-      if (allowed) {
+      if (moveAllowed(phase, tick, now, lastMoveTick, lastMoveAt)) {
         lastMoveTick = tick;
         lastMoveAt = now;
         facing = dir;
@@ -144,7 +179,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // Shooting is Fighting-only on chain (`phase != PHASE_FIGHTING` is a hard reject), so
     // a lobby trigger-pull is dropped here rather than sent and silently failed.
     if ((pointerDown || fireKeyDown) && phase === PHASE_FIGHTING) {
-      if (tick > lastShotTick + SHOT_COOLDOWN_TICKS) {
+      if (shotAllowed(tick, lastShotTick)) {
         lastShotTick = tick;
         facing = aimDirection();
         cfg.onShoot(facing);
@@ -222,12 +257,31 @@ export function attachControls(cfg: ControlsConfig): () => void {
 // ---------------------------------------------------------------------------
 // Self-check
 //
-// The direction mapping is the one thing here that is wrong *quietly*: an off-by-one in
-// the octant index sends the player north-east when they pressed north, which reads as a
-// physics bug rather than an input bug. Dev-only.
+// Two things here are wrong *quietly*. An off-by-one in the octant index sends the player
+// north-east when they pressed north, which reads as a physics bug rather than an input
+// bug. And an off-by-one in either cadence gate is invisible in both directions: too fast
+// and the sends come back rejected under `skipPreflight` with no error anywhere (61% of
+// moves, measured, at 150 ms), too slow and the player is simply sluggish. Dev-only.
 // ---------------------------------------------------------------------------
 
 if (import.meta.env.DEV) {
+  const assert = (ok: boolean, what: string): void => {
+    if (!ok) throw new Error(`controls self-check: ${what}`);
+  };
+
+  // Fighting: exactly one move per observed tick, whatever the wall clock says.
+  assert(moveAllowed(PHASE_FIGHTING, 7, 1000, 6, 0), 'a fresh tick must pass the move gate');
+  assert(!moveAllowed(PHASE_FIGHTING, 7, 9999, 7, 0), 'the same tick twice must be gated');
+
+  // Lobby: wall clock, because the chain gates on an ER slot the browser cannot read.
+  assert(!moveAllowed(PHASE_LOBBY, 7, 50, 7, 0), 'a lobby move 50 ms in must be gated');
+  assert(moveAllowed(PHASE_LOBBY, 7, LOBBY_MOVE_MS, 7, 0), 'a lobby move at the period must pass');
+
+  // Shots: strictly greater, i.e. one per two ticks — 800 ms at a 400 ms tick.
+  assert(!shotAllowed(8, 7), 'a shot one tick after the last must be gated');
+  assert(shotAllowed(9, 7), 'a shot two ticks after the last must pass');
+  assert(shotAllowed(0, -(SHOT_COOLDOWN_TICKS + 1)), 'the first shot of a match must pass');
+
   const expected: readonly (readonly [number, number, number])[] = [
     [0, -1, 0],
     [1, -1, 1],

@@ -11,6 +11,12 @@
  *   without the client resolving an fqdn. It supports **only** `accountSubscribe` and
  *   `signatureSubscribe`; `programSubscribe`, `logsSubscribe` and `slotSubscribe` are all
  *   `-32601`, so a client that assumes pubsub parity gets nothing and no error.
+ *   The router never reads the *wrong* ER — it resolves the delegation record per account,
+ *   which is strictly safer than a client guessing an fqdn — but it is not the same
+ *   endpoint the snapshot uses, and mid-re-delegation the two can describe different
+ *   worlds. `wsUrl` is the seam for pinning them together: pass `connectMatch`'s already
+ *   resolved `erFqdn` with `http` swapped for `ws` and both halves of this file talk to
+ *   exactly one ER. Never assemble that url from anything else.
  * - **`encoding: 'base64'` explicitly.** The ER's default is base58.
  * - **Commitment is ignored.** `processed`, `confirmed` and `finalized` returned the same
  *   subscription id — one validator, no consensus. It is not passed here at all rather
@@ -133,6 +139,23 @@ function fromBase64(encoded: string): Uint8Array {
 }
 
 /**
+ * The whole watchdog decision, and pure so it can be checked without a socket or a chain.
+ * `null` means "not the watchdog's business" — the crank only advances `tick` while
+ * `phase == Fighting` (`boss_tick` returns early otherwise), so a lobby with a perfectly
+ * healthy socket has a frozen tick by design and judging it would settle every match
+ * before it started.
+ *
+ * `anchorAge` is measured from the newer of the last tick change and the moment the arena
+ * entered `Fighting`; see the note in `deliver`.
+ */
+export function watchdogHealth(phase: number, anchorAge: number): MatchHealth | null {
+  if (phase !== PHASE_FIGHTING) return null;
+  if (anchorAge >= TICK_STALL_HARD_MS) return 'dead';
+  if (anchorAge >= TICK_STALL_SOFT_MS) return 'stalled';
+  return 'live';
+}
+
+/**
  * Subscribe to one match. Returns a handle whose `close()` is the only thing that stops
  * the reconnect loop — a socket that closes on its own is always retried.
  */
@@ -159,6 +182,8 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
   let phase = -1;
   let lastTick = -1;
   let tickAt = 0;
+  /** When the arena entered `Fighting`. The watchdog's other anchor — see `deliver`. */
+  let fightingAt = 0;
   let lastResnapshotAt = 0;
   let previousPlayers: PlayersAccount | null = null;
 
@@ -172,6 +197,19 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     switch (kind) {
       case 'arena': {
         const arena = decodeArena(data);
+        // Entering `Fighting` re-arms the watchdog, and it has to: `start_match` flips the
+        // phase without touching `tick`, which sits at the 0 `init` wrote until the first
+        // `boss_tick` lands ~400 ms later. Anchoring on `tick` alone hands the watchdog an
+        // anchor as old as the whole lobby wait, so a match that waited 45 s for a fourth
+        // player is reported `dead` in the first watchdog poll after it starts — and the
+        // caller's response to `dead` is to settle the raid that just began.
+        //
+        // Deliberately a second variable and not a write to `tickAt`: that one is the
+        // interpolation anchor `tickAlpha` reads, and moving it on anything but a real
+        // tick makes every knight on screen lurch.
+        if (arena.phase !== phase && arena.phase === PHASE_FIGHTING) {
+          fightingAt = performance.now();
+        }
         phase = arena.phase;
         // Only a *tick change* re-anchors the clock. `shoot` rewrites `Arena` without
         // advancing `tick`, and treating that as a tick would make the interpolation
@@ -283,17 +321,14 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
   }
 
   const watchdog = setInterval(() => {
-    // The crank only advances `tick` while `phase == Fighting` — `boss_tick` returns
-    // early otherwise — so a lobby with a perfectly healthy socket has a frozen tick by
-    // design. Running the watchdog there would settle every match before it started.
-    if (phase !== PHASE_FIGHTING || tickAt === 0) return;
-
-    const age = performance.now() - tickAt;
-    if (age >= TICK_STALL_HARD_MS) {
+    if (tickAt === 0) return;
+    const verdict = watchdogHealth(phase, performance.now() - Math.max(tickAt, fightingAt));
+    if (verdict === null) return;
+    if (verdict === 'dead') {
       setHealth('dead');
       return;
     }
-    if (age >= TICK_STALL_SOFT_MS) {
+    if (verdict === 'stalled') {
       setHealth('stalled');
       const now = performance.now();
       if (now - lastResnapshotAt >= RESNAPSHOT_MIN_GAP_MS) {
@@ -303,6 +338,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
       }
       return;
     }
+    // Only claim `live` while the pipe carrying the world is actually open.
     if (socket?.readyState === WebSocket.OPEN) setHealth('live');
   }, WATCHDOG_POLL_MS);
 
@@ -317,4 +353,46 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
       socket = null;
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Self-check
+// ---------------------------------------------------------------------------
+
+/**
+ * The watchdog is the one branch here whose every failure is silent and expensive: a false
+ * `dead` settles a live raid, and a missed one leaves twenty players staring at a frozen
+ * world. Dev-only, in the same style as `state/store.ts`'s `screenOf` check.
+ *
+ * The anchor is restated rather than imported because it *is* the thing under test — the
+ * `Math.max` in the watchdog body and the `fightingAt` write in `deliver` are one rule
+ * split across two places, and case 3 is the regression that rule exists for.
+ */
+if (import.meta.env.DEV) {
+  const NOW = 1_000_000;
+  const anchorAge = (tickAt: number, fightingAt: number): number => NOW - Math.max(tickAt, fightingAt);
+
+  const cases: readonly (readonly [string, number, number, MatchHealth | null])[] = [
+    // [name, phase, anchorAge, expected]
+    ['lobby ticks are frozen by design', 0, 600_000, null],
+    ['a fresh tick is a live crank', PHASE_FIGHTING, 400, 'live'],
+    ['seven missed ticks is a warning, not a death', PHASE_FIGHTING, TICK_STALL_SOFT_MS, 'stalled'],
+    // The crank's own retry ladder is ~26 s of sleeps plus each attempt's round trip, so
+    // anything tighter than this reports a recovering match as a dead one.
+    ['26 s of crank retries is still not dead', PHASE_FIGHTING, 26_000, 'stalled'],
+    ['past the hard limit the task is gone', PHASE_FIGHTING, TICK_STALL_HARD_MS, 'dead'],
+    // 3: `start_match` flips the phase without touching `tick`, so a 90 s lobby wait leaves
+    // `tickAt` 90 s old at the instant the fight begins. Without `fightingAt` this is
+    // 'dead' and the caller settles a raid one poll into its first tick.
+    ['a long lobby wait does not kill a fresh fight', PHASE_FIGHTING, anchorAge(NOW - 90_000, NOW), 'live'],
+    // ...and once the fight is genuinely stalled, the fight-start anchor stops mattering.
+    ['a real stall outlives the fight-start anchor', PHASE_FIGHTING, anchorAge(NOW - 60_000, NOW - 50_000), 'dead'],
+  ];
+
+  for (const [name, phase, age, expected] of cases) {
+    const actual = watchdogHealth(phase, age);
+    if (actual !== expected) {
+      throw new Error(`subscribe self-check: ${name} should be '${expected}', got '${actual}'`);
+    }
+  }
 }

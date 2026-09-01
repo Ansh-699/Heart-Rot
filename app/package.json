@@ -12,6 +12,9 @@
   "dependencies": {
     "@heartrot/client": "workspace:*",
     "@privy-io/react-auth": "3.39.0",
+    "@solana-program/memo": "^0.13.0",
+    "@solana-program/system": "^0.14.0",
+    "@solana-program/token": "^0.16.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

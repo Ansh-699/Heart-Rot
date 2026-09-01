@@ -126,7 +126,13 @@ export type Store = {
 // Identity
 // ---------------------------------------------------------------------------
 
-/** Returns a currently-valid Privy access token. Called fresh for every request. */
+/**
+ * Returns a currently-valid Privy access token. Called fresh for every request.
+ *
+ * The whole of the app's dependency on Privy is this one function type. `main.tsx` is the
+ * only file that knows the SDK exists (plus `screens/Onboarding.tsx`, which needs the
+ * connect modal itself), and `setAuthSource` is the seam between them.
+ */
 export type AuthSource = () => Promise<string>;
 
 let authSource: AuthSource = () =>
@@ -234,11 +240,33 @@ export function createStore(): Store {
     set({ status: 'error', error: readable(error) });
   };
 
+  /**
+   * The one place a Privy token is fetched, so the one place its absence is handled.
+   *
+   * A browser wallet has a Disconnect button, and pressing it invalidates the session that
+   * `authSource` refreshes against. Left alone that strands the player: `authenticated`
+   * stays true, `screenOf` keeps returning `'select'`, and every "Take a seat" fails
+   * forever with no way back to the connect card. Clearing the flag here sends them back
+   * to the one screen that can fix it.
+   *
+   * Only before a seat exists, though. Gameplay is signed by the session key and needs no
+   * token at all, so evicting a live raider to the connect card because a `settle` token
+   * fetch blipped would be strictly worse than letting `settle` retry.
+   */
+  const token = async (): Promise<string> => {
+    try {
+      return await authSource();
+    } catch (error) {
+      if (!state.match) set({ authenticated: false });
+      throw error;
+    }
+  };
+
   /** Every route wants a token and most want the arena id. One place to get both wrong. */
   const credentials = async (): Promise<{ privyToken: string; arenaId: string }> => {
     const { match } = state;
     if (!match) throw new Error('no match joined');
-    return { privyToken: await authSource(), arenaId: match.arenaId };
+    return { privyToken: await token(), arenaId: match.arenaId };
   };
 
   return {
@@ -257,7 +285,7 @@ export function createStore(): Store {
         // Both in flight: the key generation is local and the token is a network hop, and
         // neither needs the other. `loadOrCreateSession` is single-flight per page, so
         // React 19's double-invoked effects cannot race two keys into existence.
-        const [sessionKey] = await Promise.all([loadOrCreateSession(), authSource()]);
+        const [sessionKey] = await Promise.all([loadOrCreateSession(), token()]);
         set({ authenticated: true, sessionKey, status: 'idle' });
       } catch (error) {
         fail(error);
@@ -274,7 +302,7 @@ export function createStore(): Store {
       try {
         if (!sessionKey) throw new Error('Sign in before taking a seat.');
         const match = await postJson<MatchInfo>('/api/session/init', {
-          privyToken: await authSource(),
+          privyToken: await token(),
           sessionPubkey: sessionKey.address,
           skinId,
         });
@@ -400,4 +428,40 @@ export function useStore(): Store {
 export function useSelect<T>(select: (state: State) => T): T {
   const store = useStore();
   return useSyncExternalStore(store.subscribe, () => select(store.getState()));
+}
+
+// ---------------------------------------------------------------------------
+// Self-check
+//
+// `screenOf` is the router, and four other modules render off it. Every one of its
+// failures is silent — a wrong branch shows the wrong screen, never an error — and the
+// one that has actually happened is the first line: a client that never installed an
+// `AuthSource`, so `authenticated` stayed false and the app never left onboarding. Dev-only.
+// ---------------------------------------------------------------------------
+
+if (import.meta.env.DEV) {
+  const slot = (zone: number): PlayerSlot => ({ zone }) as PlayerSlot;
+  const seated = (zone: number): Partial<State> => ({
+    authenticated: true,
+    match: { seat: 3 } as MatchInfo,
+    players: { slots: [slot(0), slot(0), slot(0), slot(zone)] } as PlayersAccount,
+  });
+
+  const cases: readonly (readonly [string, Partial<State>, Screen])[] = [
+    ['signed out', {}, 'onboarding'],
+    ['no seat yet', { authenticated: true }, 'select'],
+    // A seat with no roster yet is still the lobby, not the arena: `mySeatSlot` is null
+    // until the first `Players` notification lands, and guessing "arena" there would drop
+    // the player into a stage with nothing on it.
+    ['seat, roster pending', { authenticated: true, match: { seat: 3 } as MatchInfo }, 'lobby'],
+    ['in the lobby', seated(0), 'lobby'],
+    ['through the gate', seated(ZONE_ARENA), 'arena'],
+  ];
+
+  for (const [name, patch, expected] of cases) {
+    const actual = screenOf({ ...INITIAL, ...patch });
+    if (actual !== expected) {
+      throw new Error(`store self-check: ${name} should be '${expected}', got '${actual}'`);
+    }
+  }
 }

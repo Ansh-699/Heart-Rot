@@ -6,9 +6,9 @@
  * with the only hard part, which is keeping the pixel art crisp.
  *
  * Two rules do the actual work and both are load-bearing rather than aesthetic:
- * `image-rendering: pixelated` stops the browser bilinear-smoothing a 32px sprite scaled
- * up 4×, and `shape-rendering: crispEdges` stops it antialiasing the SVG rects the rig is
- * built from. Without them the art reads as a blurry upscale of itself.
+ * `image-rendering: pixelated` stops the browser bilinear-smoothing anything scaled to an
+ * integer multiple, and `shape-rendering: crispEdges` stops it antialiasing the primitive
+ * shapes the stage is drawn from. Without them the world reads as a blurry upscale.
  */
 
 @import url('https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
@@ -193,7 +193,9 @@ h3 {
   background: radial-gradient(120% 90% at 50% 18%, #2a2231 0%, #16131a 72%);
 }
 
-.stage > svg {
+/* The renderer may draw with either tag; App.tsx's `aimOrigin` accepts both too. */
+.stage > svg,
+.stage > canvas {
   display: block;
   width: 100%;
   height: 100%;
@@ -297,12 +299,6 @@ h3 {
   border-color: var(--olive);
 }
 
-.skin-chip {
-  width: 100%;
-  height: 28px;
-  border: 1px solid var(--line);
-}
-
 /* --------------------------------------------------------------------------
    Side panel — roster and boss telemetry
    -------------------------------------------------------------------------- */
@@ -385,10 +381,12 @@ h3 {
   list-style: none;
 }
 
+/* The first column carries "3 Beast head" — the index ties the row to the shape the
+   renderer drew, which primitive art cannot say on its own. */
 .parts li,
 .vent-row {
   display: grid;
-  grid-template-columns: 8.5ch minmax(0, 1fr) auto;
+  grid-template-columns: 11ch minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   font-size: 11.5px;
@@ -442,17 +440,88 @@ h3 {
   border-top: 1px solid var(--line);
 }
 
+.vent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
 .pill {
   font: 10px var(--pixel);
   letter-spacing: 0.08em;
   padding: 3px 6px;
   border: 1px solid var(--line);
   color: var(--dim);
+  white-space: nowrap;
 }
 
 .pill-open {
   color: var(--olive);
   border-color: var(--olive-dim);
+}
+
+/*
+ * Cadence and death are information, not faults: the program refuses a second move in one
+ * tick (Custom 7) and anything at all from a dead seat (Custom 8), both by design and both
+ * many times a minute. So they get the panel's ordinary greys and the one warning colour —
+ * never the error bar, which is reserved for things a player can do something about.
+ */
+.cadence {
+  display: flex;
+  gap: 6px;
+}
+
+.pill-down {
+  color: var(--flesh);
+  border-color: var(--maroon);
+  background: #241820;
+}
+
+/* --------------------------------------------------------------------------
+   The verdict — WIN / WIPE / ENRAGE
+
+   Three separate bytes on chain and three separate colours here. A win is olive, a wipe is
+   the dead maroon, an enrage is torchlight: you did not get wiped, you ran out of clock,
+   and a raid that cannot tell those apart cannot fix either.
+   -------------------------------------------------------------------------- */
+
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.verdict-label {
+  font: 15px var(--pixel);
+  letter-spacing: 0.14em;
+}
+
+.verdict-win {
+  border-color: var(--olive-dim);
+}
+
+.verdict-win .verdict-label {
+  color: var(--olive);
+}
+
+.verdict-wipe {
+  border-color: var(--maroon);
+}
+
+.verdict-wipe .verdict-label {
+  color: var(--flesh);
+}
+
+.verdict-enrage {
+  border-color: var(--torch);
+}
+
+.verdict-enrage .verdict-label {
+  color: var(--torch);
 }
 
 /* --------------------------------------------------------------------------

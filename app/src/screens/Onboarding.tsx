@@ -1,34 +1,32 @@
 /**
- * Onboarding — two cards.
+ * Onboarding — two cards, one action.
  *
- * Card 1 is identity. Card 2 is a loader. That is the whole of it.
+ * Card 1 connects a browser wallet. Card 2 is the wait while the seat is created. That is
+ * the whole of it.
+ *
+ * **Wallet detection only.** `main.tsx` configures Privy with `loginMethods: ['wallet']`
+ * and embedded-wallet creation off on both chains, so there is no email path, no social
+ * path and no seed-phrase-less onboarding to offer. A visitor with no Solana wallet
+ * extension cannot play, and this card has to say so plainly rather than open a modal that
+ * dead-ends in an empty list.
  *
  * **The funding card is deleted and must not come back.** ER transaction fees are zero and
  * the ER's vendored SVM has no `validate_transaction_fee_payer` at all, so the session
- * keypair needs no SOL on either layer (D6). A card asking a first-time player to acquire
- * devnet SOL would be asking them to solve a problem that does not exist — and every tier
- * of the ladder it replaced was near-useless anyway, since devnet's airdrop limit is one
- * per IP per 24 h and a whole lobby behind one CGNAT gets a single airdrop between them.
- * The game design spec's three-card §7 is superseded by `01-architecture.md` §7.2.
+ * keypair needs no SOL on either layer. A card asking a first-time player to acquire devnet
+ * SOL would be asking them to solve a problem that does not exist.
  *
  * **Privy is identity only, and that is a constraint rather than a preference.** It hands
  * back a DID and a JWT; it never signs a transaction. Its headless path runs
  * `initializeWalletProxy(15_000)` and a wallet recovery before the *first* signature of a
- * session — a 15-second ceiling, and under user-controlled recovery it throws with no
- * modal fallback — and signatures meter at $0.01 each above 50K/month, which twenty
- * players at gameplay rates burn through in under an hour. On a 400 ms tick none of that
- * is survivable. Every gameplay signature comes from the non-extractable WebCrypto key
- * `store.signIn()` resolves alongside the token.
- *
- * Both buttons below call the same function on purpose. Privy exposes email, social *and*
- * Phantom / Backpack / WalletConnect through one Wallet Standard connector list, so the
- * spec's "two paths" is one code path and two labels — and `@solana/wallet-adapter-*` is
- * not a dependency anywhere.
+ * session — a 15-second ceiling, and under user-controlled recovery it throws with no modal
+ * fallback — and signatures meter at $0.01 each above 50K/month, which twenty players at
+ * gameplay rates burn through in under an hour. On a 400 ms tick none of that is
+ * survivable. Every gameplay signature comes from the non-extractable WebCrypto key
+ * `store.signIn()` resolves alongside the token, and the wallet is never asked again.
  *
  * This is the only file in `app/src` besides `main.tsx` that imports the Privy SDK, and it
- * imports exactly one hook: the modal is the one thing the store's `AuthSource` seam —
- * "give me a token" — cannot express. Everything downstream of the modal goes through the
- * store, so this card never handles a token itself.
+ * imports exactly one hook: the connect modal is the one thing the store's `AuthSource`
+ * seam — "give me a token" — cannot express.
  */
 
 import { useEffect } from 'react';
@@ -61,7 +59,7 @@ export function Onboarding() {
    * Already authenticated means the modal has nothing left to ask — this press is a retry
    * after a failed token fetch or a failed key unwrap — so it goes straight at `signIn`.
    */
-  const enter = () => {
+  const connect = () => {
     if (authenticated) void store.signIn();
     else login();
   };
@@ -71,24 +69,25 @@ export function Onboarding() {
       <p className="eyebrow">A co-op raid that lives entirely on chain</p>
       <h2>Twenty of you. One boss. No health bar.</h2>
       <p className="lede">
-        The boss is a shell, not a number. Break its crown, its heads and its thorn
-        clusters — the thorns are what fire at you — and when enough of it is gone the
-        chest vent opens and the face underneath becomes killable.
+        The boss is a shell, not a number. Break its crown, its heads and its thorn clusters
+        — the thorns are what fire at you — and when enough of it is gone the chest vent
+        opens and the core underneath becomes killable.
       </p>
       <p className="fine">
-        Sign in once, so your seat and your damage survive a closed tab. After that there
-        is no wallet popup during play, no seed phrase, and nothing to fund: your play key
-        is generated inside this browser, holds zero SOL, and never leaves it.
+        You need a Solana wallet extension in this browser — Phantom, Solflare or Backpack.
+        There is no email or guest sign-in. The wallet proves who you are once and is never
+        asked again: your play key is generated inside this browser, holds zero SOL, signs
+        every move locally, and never leaves the tab.
       </p>
       <div className="row">
-        <button className="btn btn-primary" onClick={enter} disabled={!ready || busy}>
-          {busy ? 'Signing in…' : 'Enter with email or social'}
-        </button>
-        <button className="btn" onClick={enter} disabled={!ready || busy}>
-          I already have a wallet
+        <button className="btn btn-primary" onClick={connect} disabled={!ready || busy}>
+          {busy ? 'Signing in…' : 'Connect your Solana wallet'}
         </button>
       </div>
-      <p className="fine">Devnet only. No token, no NFT, nothing to buy.</p>
+      <p className="fine">
+        Devnet only. No token, no NFT, nothing to buy, no transaction to approve after this
+        one connect.
+      </p>
     </section>
   );
 }
@@ -97,20 +96,19 @@ export function Onboarding() {
  * Card 2 — the wait while `POST /api/session/init` runs.
  *
  * It lives here because it is the second onboarding card, but it is rendered by
- * `CharacterSelect`: the screen is derived from `authenticated` and `match`, so the
- * moment sign-in succeeds the shell has already moved on, and the seat is not claimed
- * until a skin has been chosen (`skin_id` travels inside `claim_seat` and no route edits
- * it afterwards).
+ * `CharacterSelect`: the screen is derived from `authenticated` and `match`, so the moment
+ * sign-in succeeds the shell has already moved on, and the seat is not claimed until a
+ * colour has been chosen (`skin_id` travels inside `claim_seat` and no route edits it
+ * afterwards).
  *
- * The steps are named rather than hidden behind a spinner because this is genuinely five
- * to fifteen seconds of devnet round trips — creating three accounts, delegating them,
- * then waiting for the rollup to finish cloning all three — and an unlabelled spinner
- * that long reads as broken rather than as slow.
+ * The steps are named rather than hidden behind a spinner because this is a measured ~2.8 s
+ * to the first usable ER write on devnet, and longer when the route has to pay for a fresh
+ * arena. An unlabelled spinner that long reads as broken rather than as slow.
  */
 const SEAT_STEPS = [
-  'Checking your sign-in',
+  'Checking your wallet sign-in',
   'Finding the open arena, or paying for a new one',
-  'Delegating it to the rollup and taking your seat',
+  'Delegating it to the rollup and claiming your seat',
 ] as const;
 
 export function SeatLoader() {
@@ -126,7 +124,8 @@ export function SeatLoader() {
         ))}
       </ol>
       <p className="fine">
-        A few seconds. Devnet is slow; the rollup the raid actually runs on is not.
+        Around three seconds, sometimes longer. Devnet is slow; the rollup the raid actually
+        runs on answers in about 200 ms.
       </p>
     </section>
   );

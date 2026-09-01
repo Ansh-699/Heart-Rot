@@ -28,12 +28,16 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
+  MAP_TILE,
+  MAP_TILES,
   PHASE_LOBBY,
   PHASE_SETTLED,
   PHASE_SETTLING,
   ZONE_LOBBY,
+  confirmSignature,
   connectMatch,
   createSessionSigner,
+  decodeTransactionError,
   enterGate,
   movePlayer,
   sendInstructions,
@@ -43,10 +47,10 @@ import {
 } from '@heartrot/client';
 
 import { attachControls } from './input/controls';
-import { TILE, createPredictor, type Predictor } from './net/predict';
+import { GATE_MAX, GATE_MIN } from './render/sprites';
+import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
 import { Arena } from './render/Arena';
-import { ARENA_UNITS } from './render/sprites';
 import { CharacterSelect } from './screens/CharacterSelect';
 import { Lobby } from './screens/Lobby';
 import { Onboarding } from './screens/Onboarding';
@@ -79,18 +83,27 @@ type Addr = Parameters<HeartrotRpc['getAccountInfo']>[0];
 const addr = (value: string): Addr => value as Addr;
 
 /**
+ * The arena's own coordinate space, straight from the generated map table — not from
+ * `render/sprites`. The renderer is free to be an `<svg>`, a `<canvas>` or a pile of
+ * `<div>`s, and this file has no business knowing which; what it needs is the number both
+ * ends agree the world is measured in, and `tools/gen_map.py` emits that for both sides.
+ */
+const ARENA_UNITS = MAP_TILES * MAP_TILE;
+
+/**
  * The gate tile block, mirrored from `GATE_MIN_X`..`GATE_MAX_Y` in
  * `programs/heartrot/src/handlers/player.rs`. There is no "enter the gate" button by
  * design — the gate is a place you walk to — so the client has to know where it is in
  * order to send `enter_gate` when the player arrives.
  *
- * ponytail: a second copy of a chain constant, like the wall ring in `net/predict.ts`.
- * Both retire together when the tilemap build step emits the map data for both sides;
- * until then a disagreement here costs a player who stands on the gate and never enters.
+ * The numbers live in `render/sprites.ts` because the renderer has to draw the same block
+ * it fires on — two copies is how the marker ends up somewhere the gate is not.
+ *
+ * ponytail: still a second copy of a chain constant, like the wall ring in
+ * `net/predict.ts`. Both retire together when the tilemap build step emits the map data
+ * for both sides; until then a disagreement costs a player who stands on the gate and
+ * never enters.
  */
-const GATE_MIN = 30 * TILE;
-const GATE_MAX = 34 * TILE - 1;
-
 function onGate(x: number, y: number): boolean {
   return x >= GATE_MIN && x <= GATE_MAX && y >= GATE_MIN && y <= GATE_MAX;
 }
@@ -101,6 +114,9 @@ function onGate(x: number, y: number): boolean {
  * invisible. Retry on this period until the seat's `zone` actually flips.
  */
 const GATE_RETRY_MS = 500;
+
+/** How long a refused-instruction line stays in the error bar. */
+const NOTICE_MS = 2_500;
 
 export default function App() {
   const screen = useSelect(screenOf);
@@ -286,27 +302,79 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
     const session = signer.address;
     const common = { programId: match.programId, arena: match.arena, players: match.players };
 
-    const send = (instruction: Parameters<typeof sendInstructions>[2][number]): void => {
-      void sendInstructions(er, signer, [instruction]).catch((error: unknown) => {
-        // Not `setStatus('error')`: that is a held status the world feed cannot clear, and
-        // one dropped datagram out of ten a second must not brick the session. The
-        // watchdog in `subscribe.ts` is what reports a feed that has actually stopped.
-        console.error('heartrot: gameplay send failed', error);
-      });
+    // A transient line in the error bar. `setStatus(currentStatus, message)` writes the
+    // message without moving the status, so the connection dot stays honest and the world
+    // feed keeps clearing it — an unclearable 'error' status over a rejected datagram is
+    // exactly the brick this avoids.
+    let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+    const notice = (message: string): void => {
+      store.setStatus(store.getState().status, message);
+      clearTimeout(noticeTimer);
+      noticeTimer = setTimeout(() => {
+        if (store.getState().error === message) store.setStatus(store.getState().status);
+      }, NOTICE_MS);
     };
 
-    return attachControls({
+    // `sendInstructions` runs `skipPreflight`, so a refused instruction returns a
+    // signature and then fails in silence — a player who is rate-limited or dead sees
+    // their dot simply not move and has no way to learn why. One confirm at a time
+    // samples that: `RateLimited` and `PlayerDead` are conditions that repeat every
+    // tick, so a sample catches them within a tick or two.
+    //
+    // ponytail: one outstanding confirm per client, ~2 status polls a second. Confirm
+    // every send if a one-off rejection ever needs to be attributed exactly.
+    let confirming = false;
+
+    const send = (instruction: Parameters<typeof sendInstructions>[2][number]): void => {
+      void sendInstructions(er, signer, [instruction])
+        .then(async (signature) => {
+          if (confirming) return;
+          confirming = true;
+          try {
+            await confirmSignature(er, signature, { timeoutMs: 2_000, pollMs: 400 });
+          } finally {
+            confirming = false;
+          }
+        })
+        .catch((error: unknown) => {
+          // `decodeTransactionError`, never a hand-rolled parse: the ER writes
+          // `InstructionError` members as JSON strings where base devnet writes numbers
+          // and kit hands back bigints, and only this decoder reads all three.
+          const decoded = decodeTransactionError(
+            error instanceof Error && error.cause !== undefined ? error.cause : error,
+          );
+          // `BlockedByWall` is expected traffic — one per tick from anyone holding a
+          // direction into a wall — and a timeout is the ER being slow, not a refusal.
+          if (decoded.code === 14 || decoded.code === undefined) return;
+          // Not `setStatus('error')`: that status is held and the world feed cannot clear
+          // it, so one refused datagram out of ten a second would brick the session. The
+          // watchdog in `subscribe.ts` is what reports a feed that has actually stopped.
+          notice(`${decoded.name ?? `Custom(${decoded.code})`} — ${decoded.message}`);
+        });
+    };
+
+    const detach = attachControls({
       surface: host,
       // Read live rather than captured: the gates mirror `arena.tick`, and a stale clock
-      // here would rate-limit against a tick that passed seconds ago.
+      // here would rate-limit against a tick that passed seconds ago. `alive` stops a
+      // downed player spending the whole respawn window sending shots the chain answers
+      // with PlayerDead.
       clock: () => {
         const { arena } = store.getState();
-        return { phase: arena?.phase ?? PHASE_LOBBY, tick: arena?.tick ?? 0 };
+        const slot = mySeatSlot(store.getState());
+        return {
+          phase: arena?.phase ?? PHASE_LOBBY,
+          tick: arena?.tick ?? 0,
+          alive: slot === null || slot.hp > 0,
+        };
       },
       aimOrigin: () => {
-        const svg = host.querySelector('svg');
-        if (svg === null) return null;
-        const box = svg.getBoundingClientRect();
+        // Whichever drawing surface the renderer chose. Its box is the arena square, so
+        // its width is the scale; `null` when there is none yet, which `attachControls`
+        // reads as "keep the last facing" rather than as an aim at the origin.
+        const surface = host.querySelector('svg, canvas');
+        if (surface === null) return null;
+        const box = surface.getBoundingClientRect();
         if (box.width === 0) return null;
         const scale = box.width / ARENA_UNITS;
         return {
@@ -328,6 +396,11 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         send(shoot({ ...common, boss: match.boss, session, seat: match.seat, dir }));
       },
     });
+
+    return () => {
+      clearTimeout(noticeTimer);
+      detach();
+    };
   }, [host, link, store]);
 }
 

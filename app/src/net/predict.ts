@@ -48,13 +48,16 @@ import {
  * the chain's `programs/heartrot/src/map.rs`. A hand-mirrored wall test here would put the
  * dungeon in two places again, and one disagreeing tile is a permanent snap-back that
  * reads as lag rather than as a map bug.
+ *
+ * Not re-exported. `TILE`, `MAP_MAX_XY`, `MOVE_STEP` and `stepFrom` were all public here
+ * and had zero importers — a re-export of a generated constant is just a second name for
+ * it, and the second name is how a map ends up in two places. Everyone else imports
+ * `MAP_TILE` / `MAP_TILES` / `isWall` from `@heartrot/client` directly.
  */
-export const TILE = MAP_TILE;
-
-export { MAP_MAX_XY };
+const TILE = MAP_TILE;
 
 /** Crank period. A *target*, not a contract — never derive game state from wall clock. */
-export const TICK_MS = 400;
+const TICK_MS = 400;
 
 const STEP = TILE;
 
@@ -68,7 +71,7 @@ const STEP_DIAG = 11;
  * `move` instruction builder, so the direction it predicts and the direction it sends
  * cannot come from two different tables.
  */
-export const MOVE_STEP: readonly (readonly [number, number])[] = [
+const MOVE_STEP: readonly (readonly [number, number])[] = [
   [0, -STEP],
   [STEP_DIAG, -STEP_DIAG],
   [STEP, 0],
@@ -93,7 +96,7 @@ function clamp(v: number, lo: number, hi: number): number {
  * `null` means the chain would have returned `Err` — the caller must not move *or* turn,
  * because a rejected move leaves `facing` untouched on chain too.
  */
-export function stepFrom(x: number, y: number, dir: number): Point | null {
+function stepFrom(x: number, y: number, dir: number): Point | null {
   const step = MOVE_STEP[dir];
   if (step === undefined) throw new RangeError(`predict: dir ${dir} is not 0..7`);
   const nx = clamp(x + step[0], 0, MAP_MAX_XY);
@@ -236,8 +239,8 @@ export function createPredictor(): Predictor {
  * advancing the clock. `arena.tick` is the authoritative clock; a free-running local
  * counter drifts from the crank, and the crank is what decides whether a bullet hit you.
  */
-export function tickAlpha(tickAt: number, now = performance.now()): number {
-  return clamp((now - tickAt) / TICK_MS, 0, 1);
+export function tickAlpha(tickAt: number, now = performance.now(), tickMs = TICK_MS): number {
+  return clamp((now - tickAt) / tickMs, 0, 1);
 }
 
 /**
@@ -261,7 +264,7 @@ export function bulletAt(bullet: Bullet, alpha: number): Point {
  * behind costs ~400 ms of staleness on people you are not aiming at, which nobody can
  * see, and never overshoots (§6.3).
  */
-export function interpolateSeat(previous: PlayerSlot, next: PlayerSlot, alpha: number): Point {
+function interpolateSeat(previous: PlayerSlot, next: PlayerSlot, alpha: number): Point {
   const t = clamp(alpha, 0, 1);
   return {
     x: previous.x + (next.x - previous.x) * t,
@@ -288,16 +291,25 @@ function teleported(from: PlayerSlot, to: PlayerSlot): boolean {
   );
 }
 
+/** Anything with a `style.transform`. `<g>`, `<circle>`, a `<div>` — the hook does not care. */
+type Placeable = SVGElement | HTMLElement;
+
 export interface SeatInterpolation {
   /**
-   * Ref callback for seat `seat`'s outermost `<g>`. Stable for the life of the hook, so
+   * Ref callback for seat `seat`'s outermost node. Stable for the life of the hook, so
    * React does not detach and reattach twenty nodes on every 2.5 Hz update.
    *
    * The hook owns that element's `transform` outright — give it no transform attribute of
-   * its own, and hang the facing flip on a child, exactly as the bullet loop owns a
+   * its own, and hang any facing flip on a child, exactly as the bullet loop owns a
    * `<rect>`'s style transform.
    */
-  ref(seat: number): (el: SVGGElement | null) => void;
+  ref(seat: number): (el: Placeable | null) => void;
+  /**
+   * The same interpolated position as a value, for a renderer that has no per-seat node
+   * to hand a ref to — a `<canvas>` draw loop calls this once per seat per frame instead.
+   * `null` when the seat is empty. Use `ref` **or** `at`, never both for one seat.
+   */
+  at(seat: number, now?: number): Point | null;
 }
 
 /**
@@ -315,31 +327,51 @@ export interface SeatInterpolation {
  * the same media query in two places. Under it, seats simply snap to each published
  * position — which is what they do today.
  */
-export function useSeatInterpolation(players: PlayersAccount, reduced = false): SeatInterpolation {
-  const nodes = useRef(new Map<number, SVGGElement>());
-  const callbacks = useRef(new Map<number, (el: SVGGElement | null) => void>());
+export function useSeatInterpolation(
+  players: PlayersAccount,
+  reduced = false,
+  tickMs = TICK_MS,
+): SeatInterpolation {
+  const nodes = useRef(new Map<number, Placeable>());
+  const callbacks = useRef(new Map<number, (el: Placeable | null) => void>());
   const reducedRef = useRef(reduced);
+  const paceRef = useRef(tickMs);
+  paceRef.current = tickMs;
   const snapshot = useRef<{
     previous: PlayersAccount | null;
     next: PlayersAccount;
     at: number;
   }>({ previous: null, next: players, at: 0 });
 
-  const place = useCallback((seat: number, el: SVGGElement, alpha: number): void => {
+  const seatAt = useCallback((seat: number, alpha: number): Point | null => {
     const { previous, next } = snapshot.current;
     const to = next.slots[seat];
-    if (to === undefined) return;
+    if (to === undefined) return null;
     const from = previous?.slots[seat];
     // No previous snapshot means nothing to lerp from, and drawing the halfway point of a
     // guess is worse than being one update stale.
-    const at = from === undefined || teleported(from, to) ? to : interpolateSeat(from, to, alpha);
-    el.style.transform = `translate(${at.x}px, ${at.y}px)`;
+    return from === undefined || teleported(from, to) ? to : interpolateSeat(from, to, alpha);
   }, []);
 
+  const alphaNow = useCallback(
+    (now = performance.now()): number =>
+      reducedRef.current ? 1 : tickAlpha(snapshot.current.at, now, paceRef.current),
+    [],
+  );
+
+  const place = useCallback(
+    (seat: number, el: Placeable, alpha: number): void => {
+      const at = seatAt(seat, alpha);
+      if (at === null) return;
+      el.style.transform = `translate(${at.x}px, ${at.y}px)`;
+    },
+    [seatAt],
+  );
+
   const paint = useCallback((): void => {
-    const alpha = reducedRef.current ? 1 : tickAlpha(snapshot.current.at);
+    const alpha = alphaNow();
     for (const [seat, el] of nodes.current) place(seat, el, alpha);
-  }, [place]);
+  }, [place, alphaNow]);
 
   useEffect(() => {
     snapshot.current = { previous: snapshot.current.next, next: players, at: performance.now() };
@@ -365,22 +397,27 @@ export function useSeatInterpolation(players: PlayersAccount, reduced = false): 
     (seat: number) => {
       let cb = callbacks.current.get(seat);
       if (cb === undefined) {
-        cb = (el: SVGGElement | null) => {
+        cb = (el: Placeable | null) => {
           if (el === null) {
             nodes.current.delete(seat);
             return;
           }
           nodes.current.set(seat, el);
-          place(seat, el, reducedRef.current ? 1 : tickAlpha(snapshot.current.at));
+          place(seat, el, alphaNow());
         };
         callbacks.current.set(seat, cb);
       }
       return cb;
     },
-    [place],
+    [place, alphaNow],
   );
 
-  return { ref };
+  const at = useCallback(
+    (seat: number, now = performance.now()): Point | null => seatAt(seat, alphaNow(now)),
+    [seatAt, alphaNow],
+  );
+
+  return { ref, at };
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +476,8 @@ if (import.meta.env.DEV) {
   ok(interpolateSeat(here, step, 0.5).x === 100 + TILE / 2, 'seat lerps to the midpoint');
   ok(interpolateSeat(here, step, 2).x === 100 + TILE, 'seat alpha is clamped, not extrapolated');
   ok(tickAlpha(0, TICK_MS * 2) === 1 && tickAlpha(100, 0) === 0, 'tick alpha clamps both ends');
+  // The crank period is a target, not a contract; `MatchInfo.tickMs` overrides it.
+  ok(tickAlpha(0, 100, 200) === 0.5, 'tick alpha honours a caller-supplied tickMs');
 
   // A respawn crosses the map in one update. Lerping it walks a corpse through walls.
   ok(!teleported(here, step), 'one step is a walk');
