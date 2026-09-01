@@ -1,0 +1,68 @@
+{
+  "idealPerFrame": 5.333333333333334,
+  "frameMs": 16.666666666666668,
+  "rttMs": 127,
+  "tickMs": 100,
+  "leg": 30,
+  "reversals": 13,
+  "arms": {
+    "clean": {
+      "before": {
+        "frames": 1199,
+        "staticFrames": 200,
+        "staticPct": 16.680567139282736,
+        "longestStaticRun": 1,
+        "maxJump": 14.986666666666679,
+        "mean": 5.3369363358354285,
+        "stdDev": 5.52297446981952
+      },
+      "rawPrediction": {
+        "frames": 1199,
+        "staticFrames": 787,
+        "staticPct": 65.63803169307756,
+        "longestStaticRun": 4,
+        "maxJump": 32,
+        "mean": 5.67139282735613,
+        "stdDev": 8.008051035018742
+      },
+      "after": {
+        "frames": 1199,
+        "staticFrames": 52,
+        "staticPct": 4.336947456213511,
+        "longestStaticRun": 2,
+        "maxJump": 5.333333333333712,
+        "mean": 5.1020294690019465,
+        "stdDev": 1.08633288273564
+      }
+    },
+    "router-doubled": {
+      "before": {
+        "frames": 1199,
+        "staticFrames": 800,
+        "staticPct": 66.72226855713095,
+        "longestStaticRun": 2,
+        "maxJump": 16,
+        "mean": 5.324437030859049,
+        "stdDev": 7.539321109898569
+      },
+      "rawPrediction": {
+        "frames": 1199,
+        "staticFrames": 787,
+        "staticPct": 65.63803169307756,
+        "longestStaticRun": 4,
+        "maxJump": 32,
+        "mean": 5.67139282735613,
+        "stdDev": 8.008051035018742
+      },
+      "after": {
+        "frames": 1199,
+        "staticFrames": 52,
+        "staticPct": 4.336947456213511,
+        "longestStaticRun": 2,
+        "maxJump": 5.333333333333712,
+        "mean": 5.1020294690019465,
+        "stdDev": 1.08633288273564
+      }
+    }
+  }
+}

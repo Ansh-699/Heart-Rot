@@ -210,6 +210,13 @@ export default function DevPanel() {
           tone={grade(m.dropRate, 0.05, 0.25)}
           note="rate limited or lost"
         />
+        <Row
+          label="refused"
+          value={(m.refusedRate * 100).toFixed(0)}
+          unit="%"
+          tone={grade(m.refusedRate, 0.1, 0.3)}
+          note="two sends, one ER slot"
+        />
         <Row label="session" value={String(m.txTotal)} unit="tx" />
       </div>
 

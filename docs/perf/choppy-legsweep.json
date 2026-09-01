@@ -1,0 +1,54 @@
+[
+  {
+    "leg": 10,
+    "reversals": 40,
+    "after": {
+      "frames": 1199,
+      "staticFrames": 156,
+      "staticPct": 13.010842368640533,
+      "longestStaticRun": 2,
+      "maxJump": 5.333333333333712,
+      "mean": 4.639421740339169,
+      "stdDev": 1.7942543104059845
+    }
+  },
+  {
+    "leg": 20,
+    "reversals": 20,
+    "after": {
+      "frames": 1199,
+      "staticFrames": 76,
+      "staticPct": 6.33861551292744,
+      "longestStaticRun": 2,
+      "maxJump": 5.333333333333712,
+      "mean": 4.995273839310536,
+      "stdDev": 1.2994998063187957
+    }
+  },
+  {
+    "leg": 30,
+    "reversals": 13,
+    "after": {
+      "frames": 1199,
+      "staticFrames": 52,
+      "staticPct": 4.336947456213511,
+      "longestStaticRun": 2,
+      "maxJump": 5.333333333333712,
+      "mean": 5.1020294690019465,
+      "stdDev": 1.08633288273564
+    }
+  },
+  {
+    "leg": 40,
+    "reversals": 10,
+    "after": {
+      "frames": 1199,
+      "staticFrames": 36,
+      "staticPct": 3.0025020850708923,
+      "longestStaticRun": 2,
+      "maxJump": 5.333333333333712,
+      "mean": 5.173199888796218,
+      "stdDev": 0.9101660933433726
+    }
+  }
+]

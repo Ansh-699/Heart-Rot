@@ -13,7 +13,7 @@
  * | Class | Treatment |
  * |---|---|
  * | **Own player** | Predict on input, reconcile on `PlayerSlot.last_move_seq`. This file. |
- * | **Other players** | Interpolate ~1 update behind. **Never extrapolate** — `interpolateSeat`. |
+ * | **Other players** | Interpolate ~1 update behind. **Never extrapolate** — `SeatTrack`. |
  * | **Bullets** | Extrapolate exactly — integer state, float only in the transform. `bulletAt`. |
  *
  * The whole scheme rests on `PlayerSlot.last_move_seq`, which exists for exactly this
@@ -139,10 +139,33 @@ interface PendingInput {
 
 export interface Predictor {
   /**
-   * Where the renderer should draw the local player, this instant. Mutated in place on
-   * every `push` and `reconcile`; read it, do not hold it across frames.
+   * Where the renderer should draw the local player, this instant.
+   *
+   * **This is the local seat's render source.** `useSeatInterpolation` is for everybody
+   * else: it lerps between *authoritative* snapshots, and once the boss activates
+   * `boss_tick` rewrites `Players` every 100 ms for collisions and respawns — most of
+   * those carrying no position change — so a seat driven from it holds, holds, holds and
+   * jumps. Prediction is driven by input and no chain write can re-anchor it.
+   *
+   * The object identity is stable for the life of the predictor and the fields are
+   * mutated in place on every `push` and `reconcile`, so a rAF loop reads `.x` / `.y`
+   * per frame and allocates nothing. Read it, never hold it across frames, never write
+   * to it — `reconcile` overwrites all three fields from the chain.
+   *
+   * Position is a 20 Hz staircase: one whole `MAP_TILE` per accepted input, nothing in
+   * between. Measured, drawing it raw is *more* discrete than today's interpolated seat
+   * (68% of frames identical, 16-unit teleports). A renderer chases it rather than
+   * assigning it; see `render/Arena.tsx`.
+   *
+   * Meaningless until `ready`.
    */
   readonly self: PredictedSelf;
+  /**
+   * Whether `self` has ever been anchored to the chain. `false` means no `PlayerSlot` has
+   * arrived yet and `self` is still `{0, 0}` — the top-left corner of the arena, not the
+   * player. A frame loop must fall back to the authoritative seat until this is true.
+   */
+  readonly ready: boolean;
   /** Unacknowledged inputs. A number that only grows means the ER stopped accepting. */
   readonly pending: number;
   /**
@@ -178,6 +201,9 @@ export function createPredictor(): Predictor {
     self,
     get pending(): number {
       return pending.length;
+    },
+    get ready(): boolean {
+      return authoritative !== null;
     },
 
     push(dir, now = performance.now()): number | null {
@@ -257,19 +283,88 @@ export function bulletAt(bullet: Bullet, alpha: number): Point {
 }
 
 /**
- * Where to draw somebody else, one update behind.
+ * Shortest window a seat may be given to cross a step. One frame at 60 Hz.
  *
- * `alpha` is clamped, which is the whole point: extrapolating another player overshoots
- * the moment they stop, and every stop then ends in a snap-back. Interpolating one update
- * behind costs ~400 ms of staleness on people you are not aiming at, which nobody can
- * see, and never overshoots (§6.3).
+ * A `span` of zero divides by zero in `tickAlpha`; anything under a frame is a snap with
+ * extra arithmetic. Two position changes closer together than this is a duplicated
+ * notification arriving out of order, not a player walking twice in 16 ms.
  */
-function interpolateSeat(previous: PlayerSlot, next: PlayerSlot, alpha: number): Point {
-  const t = clamp(alpha, 0, 1);
-  return {
-    x: previous.x + (next.x - previous.x) * t,
-    y: previous.y + (next.y - previous.y) * t,
-  };
+const MIN_SPAN_MS = 16;
+
+/**
+ * One seat's interpolation, walking `from` → `slot` over `span` ms starting at `at`.
+ *
+ * Per seat and per *position change*, which is the whole correction. The hook used to
+ * hold one global `{previous, next, at}` and re-anchor every seat whenever any `Players`
+ * write arrived. Two measured consequences, both only in a fight:
+ *
+ *   - `boss_tick` rewrites `Players` every 100 ms for bullet collisions and respawns and
+ *     the ER notifies a written account whether or not its bytes changed. Measured on
+ *     devnet: 0% of lobby notifications carry no position change, 39.8% of fight ones do
+ *     on the ER socket and 68.4% on the router the client actually opens. Each of those
+ *     re-anchored the lerp from P to P — a seat that holds still for a whole window and
+ *     then jumps the distance it owed. That is the reported chop, and it is why it starts
+ *     exactly when the boss does.
+ *   - The window was the 100 ms crank period while motion arrives on the 50 ms ER slot,
+ *     so `alpha` only ever reached ~0.5 before being reset and 63% of all travel was
+ *     delivered as 11-13 unit jumps *even in the lobby*.
+ *
+ * So: a snapshot that does not move a seat does not touch that seat's track, and `span`
+ * is the observed gap between that seat's own last two position changes rather than an
+ * assumed crank period. A stream of crank writes now interpolates through, and a seat
+ * walking on the ER slot gets a 50 ms window because that is the cadence it is walking at.
+ */
+interface SeatTrack {
+  /** The authoritative snapshot this track ends at, and the value the next one is diffed against. */
+  slot: PlayerSlot;
+  fromX: number;
+  fromY: number;
+  /** `performance.now()` when `slot`'s *position* landed. Not when a notification arrived. */
+  at: number;
+  /** Milliseconds to cross. The observed inter-arrival gap of this seat's motion. */
+  span: number;
+}
+
+/**
+ * Where a track is at `alpha`. Writes into `out` because this runs per seat per frame and
+ * twenty allocations a frame is exactly the cost the bullet layer already refuses to pay.
+ *
+ * `alpha` is clamped by the caller, which is the whole point: extrapolating another player
+ * overshoots the moment they stop, and every stop then ends in a snap-back (§6.3).
+ */
+function trackAt(track: SeatTrack, alpha: number, out: { x: number; y: number }): void {
+  out.x = track.fromX + (track.slot.x - track.fromX) * alpha;
+  out.y = track.fromY + (track.slot.y - track.fromY) * alpha;
+}
+
+/**
+ * Fold one authoritative snapshot into a seat's track.
+ *
+ * Three cases, and the middle one is the fix: a teleport snaps, a real step re-anchors,
+ * and a snapshot that leaves the seat where it already was updates the stored slot and
+ * lets the running lerp finish undisturbed.
+ *
+ * A re-anchor starts from where the seat is *drawn* right now, not from the previous
+ * authoritative position. They are the same point when the feed is on cadence; when a
+ * notification is late the lerp has already finished and they still agree; when it is
+ * early the drawn point is short of it and starting from the stored slot would step the
+ * sprite backwards. `ceiling` caps the window so a seat that stood still for five seconds
+ * and then took one step does not crawl that step over five seconds.
+ */
+function retarget(track: SeatTrack, to: PlayerSlot, now: number, ceiling: number): void {
+  if (teleported(track.slot, to)) {
+    track.fromX = to.x;
+    track.fromY = to.y;
+    track.at = now;
+    track.span = ceiling;
+  } else if (to.x !== track.slot.x || to.y !== track.slot.y) {
+    const alpha = tickAlpha(track.at, now, track.span);
+    track.fromX = track.fromX + (track.slot.x - track.fromX) * alpha;
+    track.fromY = track.fromY + (track.slot.y - track.fromY) * alpha;
+    track.span = clamp(now - track.at, MIN_SPAN_MS, ceiling);
+    track.at = now;
+  }
+  track.slot = to;
 }
 
 /**
@@ -313,14 +408,21 @@ export interface SeatInterpolation {
 }
 
 /**
- * Draw the other twenty knights between updates instead of at 2.5 Hz.
+ * Draw the other twenty knights between updates instead of at the notification rate.
+ *
+ * **Remote seats only.** The local seat is drawn from `Predictor.self`; see its doc for
+ * why interpolation is the wrong source for the one seat that has inputs to predict from.
  *
  * Positions are written straight to the DOM from a rAF loop, never through React: a
  * re-render per frame per seat is exactly the cost the bullet layer already refuses to
- * pay, and none of this changes a single React-visible value. `previous` is captured here
- * rather than threaded down from `subscribeMatch` because the renderer only ever holds the
- * latest `PlayersAccount`, and one hook remembering the last one it saw is a smaller
- * contract than three components passing a pair around.
+ * pay, and none of this changes a single React-visible value. Each seat's `SeatTrack` is
+ * captured here rather than threaded down from `subscribeMatch` because the renderer only
+ * ever holds the latest `PlayersAccount`, and one hook remembering what it last saw per
+ * seat is a smaller contract than three components passing a history around.
+ *
+ * `tickMs` is a *ceiling* on the interpolation window, not the window — `SeatTrack`
+ * explains why assuming the crank period jumps every seat twice a second. Pass the crank
+ * period; each seat paces itself from the cadence its own motion actually arrives at.
  *
  * `reduced` comes from the caller because the renderer already resolves
  * `prefers-reduced-motion` for the bullet loop; resolving it a second time here would put
@@ -334,47 +436,56 @@ export function useSeatInterpolation(
 ): SeatInterpolation {
   const nodes = useRef(new Map<number, Placeable>());
   const callbacks = useRef(new Map<number, (el: Placeable | null) => void>());
+  const tracks = useRef(new Map<number, SeatTrack>());
   const reducedRef = useRef(reduced);
   const paceRef = useRef(tickMs);
   paceRef.current = tickMs;
-  const snapshot = useRef<{
-    previous: PlayersAccount | null;
-    next: PlayersAccount;
-    at: number;
-  }>({ previous: null, next: players, at: 0 });
+  // One scratch point for the whole hook. `place` runs per seat per frame and the only
+  // thing it does with the result is format a transform string.
+  const scratch = useRef({ x: 0, y: 0 });
 
-  const seatAt = useCallback((seat: number, alpha: number): Point | null => {
-    const { previous, next } = snapshot.current;
-    const to = next.slots[seat];
-    if (to === undefined) return null;
-    const from = previous?.slots[seat];
-    // No previous snapshot means nothing to lerp from, and drawing the halfway point of a
-    // guess is worse than being one update stale.
-    return from === undefined || teleported(from, to) ? to : interpolateSeat(from, to, alpha);
-  }, []);
-
-  const alphaNow = useCallback(
-    (now = performance.now()): number =>
-      reducedRef.current ? 1 : tickAlpha(snapshot.current.at, now, paceRef.current),
+  const seatXY = useCallback(
+    (seat: number, now: number, out: { x: number; y: number }): boolean => {
+      const track = tracks.current.get(seat);
+      if (track === undefined) return false;
+      trackAt(track, reducedRef.current ? 1 : tickAlpha(track.at, now, track.span), out);
+      return true;
+    },
     [],
   );
 
   const place = useCallback(
-    (seat: number, el: Placeable, alpha: number): void => {
-      const at = seatAt(seat, alpha);
-      if (at === null) return;
-      el.style.transform = `translate(${at.x}px, ${at.y}px)`;
+    (seat: number, el: Placeable, now: number): void => {
+      const out = scratch.current;
+      if (!seatXY(seat, now, out)) return;
+      el.style.transform = `translate(${out.x}px, ${out.y}px)`;
     },
-    [seatAt],
+    [seatXY],
   );
 
   const paint = useCallback((): void => {
-    const alpha = alphaNow();
-    for (const [seat, el] of nodes.current) place(seat, el, alpha);
-  }, [place, alphaNow]);
+    const now = performance.now();
+    for (const [seat, el] of nodes.current) place(seat, el, now);
+  }, [place]);
 
   useEffect(() => {
-    snapshot.current = { previous: snapshot.current.next, next: players, at: performance.now() };
+    const now = performance.now();
+    for (const to of players.slots) {
+      const track = tracks.current.get(to.seat);
+      // First sight of a seat: there is nothing to lerp from, and drawing the halfway
+      // point of a guess is worse than being one update stale.
+      if (track === undefined) {
+        tracks.current.set(to.seat, {
+          slot: to,
+          fromX: to.x,
+          fromY: to.y,
+          at: now,
+          span: paceRef.current,
+        });
+      } else {
+        retarget(track, to, now, paceRef.current);
+      }
+    }
     // Paint immediately: waiting for the next frame leaves a seat that was just mounted
     // sitting at the SVG origin, which reads as a knight teleporting to the corner.
     paint();
@@ -403,18 +514,21 @@ export function useSeatInterpolation(
             return;
           }
           nodes.current.set(seat, el);
-          place(seat, el, alphaNow());
+          place(seat, el, performance.now());
         };
         callbacks.current.set(seat, cb);
       }
       return cb;
     },
-    [place, alphaNow],
+    [place],
   );
 
   const at = useCallback(
-    (seat: number, now = performance.now()): Point | null => seatAt(seat, alphaNow(now)),
-    [seatAt, alphaNow],
+    (seat: number, now = performance.now()): Point | null => {
+      const out = { x: 0, y: 0 };
+      return seatXY(seat, now, out) ? out : null;
+    },
+    [seatXY],
   );
 
   return { ref, at };
@@ -448,7 +562,11 @@ if (import.meta.env.DEV) {
 
   // Predict three east steps, acknowledge two, keep the third.
   const p = createPredictor();
+  // `self` is the arena's top-left corner until the chain says otherwise, which is why the
+  // renderer has to gate its frame loop on `ready` rather than on the predictor existing.
+  ok(!p.ready && p.self.x === 0 && p.self.y === 0, 'prediction is not ready before a slot');
   p.reconcile(slot({}), 0);
+  ok(p.ready, 'a reconcile makes prediction ready');
   ok(p.push(2, 0) === 1 && p.push(2, 0) === 2 && p.push(2, 0) === 3, 'seq increments from 1');
   ok(p.self.x === 320 + 3 * TILE && p.pending === 3, 'three steps predicted');
   p.reconcile(slot({ x: 320 + 2 * TILE, lastMoveSeq: 2 }), 10);
@@ -473,9 +591,35 @@ if (import.meta.env.DEV) {
   // Remote seats: lerp, and — the whole reason `alpha` is clamped — never overshoot.
   const here = slot({ x: 100, y: 100, occupied: true, zone: 1 });
   const step = slot({ x: 100 + TILE, y: 100, occupied: true, zone: 1 });
-  ok(interpolateSeat(here, step, 0.5).x === 100 + TILE / 2, 'seat lerps to the midpoint');
-  ok(interpolateSeat(here, step, 2).x === 100 + TILE, 'seat alpha is clamped, not extrapolated');
+  const out = { x: 0, y: 0 };
+  const track: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 50 };
+  trackAt(track, 0.5, out);
+  ok(out.x === 100 + TILE / 2, 'seat lerps to the midpoint');
+  trackAt(track, tickAlpha(track.at, 500, track.span), out);
+  ok(out.x === 100 + TILE, 'seat alpha is clamped, not extrapolated');
   ok(tickAlpha(0, TICK_MS * 2) === 1 && tickAlpha(100, 0) === 0, 'tick alpha clamps both ends');
+
+  // The chop, and the only assertion in this file that is about the *fight*. A crank write
+  // rewrites `Players` without moving anybody; folding one in must not touch the running
+  // lerp, or the seat holds for a window and then jumps the distance it owed.
+  const cranked: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 50 };
+  retarget(cranked, slot({ ...step, hp: 40, occupied: true, zone: 1 }), 25, TICK_MS);
+  ok(cranked.at === 0 && cranked.span === 50 && cranked.fromX === here.x, 'a crank write does not re-anchor');
+  trackAt(cranked, tickAlpha(cranked.at, 25, cranked.span), out);
+  ok(out.x === 100 + TILE / 2, 'the lerp keeps running through a crank write');
+  ok(cranked.slot.hp === 40, 'a crank write still updates the stored slot');
+
+  // Motion arrives on the 50 ms ER slot; the window must follow that, not the 100 ms crank.
+  const paced: SeatTrack = { slot: here, fromX: here.x, fromY: here.y, at: 0, span: TICK_MS };
+  retarget(paced, step, 50, TICK_MS);
+  ok(paced.span === 50 && paced.at === 50, 'window is the observed motion cadence');
+  retarget(paced, slot({ x: 100 + 2 * TILE, y: 100, occupied: true, zone: 1 }), 5_000, TICK_MS);
+  ok(paced.span === TICK_MS, 'a long pause is capped at the ceiling, not crawled across');
+
+  // A re-anchor starts from the drawn point, so an early snapshot never steps backwards.
+  const early: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 100 };
+  retarget(early, slot({ x: 100 + 2 * TILE, y: 100, occupied: true, zone: 1 }), 50, TICK_MS);
+  ok(early.fromX === 100 + TILE / 2, 're-anchor starts where the seat is drawn');
   // The crank period is a target, not a contract; `MatchInfo.tickMs` overrides it.
   ok(tickAlpha(0, 100, 200) === 0.5, 'tick alpha honours a caller-supplied tickMs');
 

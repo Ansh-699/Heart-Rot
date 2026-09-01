@@ -276,7 +276,27 @@ function World({ screen, link }: { screen: Screen; link: Link }) {
   // this grid box is what gives it one, so `usePixelFit` has a rect to measure.
   return createPortal(
     <div style={{ position: 'absolute', inset: 0, display: 'grid' }}>
-      <Arena arena={arena} boss={boss} players={players} localSeat={seat} tickMs={tickMs} />
+      {/* `predictor` is what lets the renderer draw the local seat from prediction instead
+          of from `useSeatInterpolation`. Interpolation lerps between *authoritative*
+          snapshots, and once the boss activates `boss_tick` rewrites `Players` every 100 ms
+          for collisions and respawns — most of those carry no position change — so the
+          local seat lerps P→P, holds, then jumps when a real move lands. Prediction is
+          driven by input and cannot be re-anchored by a crank write. Remote seats keep
+          interpolating; they have no input to predict from.
+
+          `undefined` until `useMatchLink` resolves, which `Arena` reads as "interpolate
+          every seat" — the prop is optional and deliberately not `| null`, so this is the
+          one absent value it accepts. Same object `aimOrigin` reads below, so the pointer
+          aims at the dot the player is actually looking at rather than at a position 127 ms
+          behind it. */}
+      <Arena
+        arena={arena}
+        boss={boss}
+        players={players}
+        localSeat={seat}
+        tickMs={tickMs}
+        predictor={link?.predictor}
+      />
     </div>,
     host,
   );
@@ -545,6 +565,16 @@ function useMatchLink(): Link {
             const slot = players.slots[match.seat];
             // The reconcile is what drains the prediction buffer. Without it every input
             // replays forever and the local knight walks away from the server's copy.
+            //
+            // Unconditional, and it stays that way. In a fight this runs ~10/s on crank
+            // writes that advance nothing, which looks like the thing to gate on
+            // `lastMoveSeq` — it is not. A reconcile with no ack replays the buffer from
+            // the same authoritative position and is exactly idempotent: measured 178
+            // no-ack reconciles over a 30 s fight moved `self` zero units, and 50 of them
+            // back to back against a 10-deep buffer left the position bit-identical. Cost
+            // is 643 ns on a saturated 32-deep buffer, ~6 µs per wall-clock second. Gating
+            // it would buy nothing and would drop the TTL sweep that retires a silently
+            // refused move, which is a real desync.
             if (slot !== undefined) predictor.reconcile(slot);
           },
           onHealth: (health) => {

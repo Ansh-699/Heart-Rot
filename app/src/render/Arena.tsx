@@ -8,8 +8,9 @@
  *            element reference and never walks the dungeon again on a 2.5 Hz state stream.
  *   boss     a body circle plus one `<rect>` per part, straight out of `PART_HITBOXES`,
  *            plus the vent circle from `CORE`. Live parts are lit, destroyed ones dark.
- *   players  one `<circle>` per occupied seat, positioned imperatively by
- *            `useSeatInterpolation`.
+ *   players  one `<circle>` per occupied seat. REMOTE seats are positioned imperatively by
+ *            `useSeatInterpolation`, between authoritative snapshots. The LOCAL seat is
+ *            positioned from `predictor.self` in the frame loop below — see `MOVE_MS`.
  *   bullets  one `<rect>` per active slot, positioned imperatively from a rAF loop.
  *
  * No sprite rig, no tileset, no image assets, no hand-copied geometry. Every coordinate
@@ -24,10 +25,11 @@
  * publish — same integers, same fixed step, zero prediction error. Anything cleverer here
  * would be wrong, not smoother.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   CORE,
+  MAP_TILE,
   PART_HITBOXES,
   ZONE_ARENA,
   type ArenaAccount,
@@ -35,7 +37,7 @@ import {
   type PlayersAccount,
 } from '@heartrot/client';
 
-import { useSeatInterpolation } from '../net/predict';
+import { useSeatInterpolation, type Predictor } from '../net/predict';
 import {
   ARENA_UNITS,
   BOSS_R,
@@ -54,12 +56,61 @@ import {
 /** The vent circle, from the squared radius the chain compares against. */
 const CORE_R = Math.round(Math.sqrt(CORE.radiusSq));
 
+/**
+ * The input period the local seat is chased at: one move per 50 ms ER slot, so the chase
+ * covers exactly one `MOVE_STEP` in the time it takes the next one to arrive. It lands
+ * within a frame of the prediction and never overshoots it.
+ *
+ * Chasing rather than assigning `predictor.self` outright is deliberate. Prediction alone
+ * is not smoothness: `self` teleports one whole tile at 20 Hz, so two thirds of frames
+ * would draw no movement at all — measurably *more* discrete than the interpolated seat it
+ * replaces. The chase is what turns 16 units every 50 ms into 5.3 units every frame, at the
+ * cost of ~32 ms of lag behind the keypress (against 165 ms for the interpolated seat).
+ */
+export const MOVE_MS = 50;
+
+/**
+ * Past this the prediction did not walk, it was moved — a reconcile onto a respawn at an
+ * entrance. Chasing that draws a corpse gliding across the dungeon for two seconds, so it
+ * snaps, exactly as `teleported` makes remote seats snap.
+ */
+const SELF_SNAP = 4 * MAP_TILE;
+
+/**
+ * Move `at` toward `to` by at most `step` units. Snaps when the target is within reach, or
+ * when the gap is a teleport rather than a walk. Mutated in place: this runs every frame.
+ *
+ * Exported with `MOVE_MS` so `scripts/spike/perf_choppy.ts` measures the frame-by-frame
+ * displacement of the *real* chase against the real predictor, rather than a copy of it
+ * that could be smooth while the shipped one is not.
+ */
+export function chase(at: { x: number; y: number }, to: { x: number; y: number }, step: number): void {
+  const dx = to.x - at.x;
+  const dy = to.y - at.y;
+  const d = Math.hypot(dx, dy);
+  if (d <= step || d > SELF_SNAP) {
+    at.x = to.x;
+    at.y = to.y;
+    return;
+  }
+  at.x += (dx * step) / d;
+  at.y += (dy * step) / d;
+}
+
 export interface ArenaProps {
   arena: ArenaAccount;
   boss: BossAccount;
   players: PlayersAccount;
   /** Seat the local player drives, ringed so they can find themselves among twenty. */
   localSeat?: number;
+  /**
+   * The local player's prediction. Given one, `localSeat` is drawn from `predictor.self`
+   * at input rate instead of from the authoritative snapshot stream — the crank rewrites
+   * `Players` every 100 ms with no position change in it, and interpolating P→P is the
+   * "still, still, still, JUMP" the fight is reported to move with. Omit it and every
+   * seat interpolates, which is what a spectator wants anyway.
+   */
+  predictor?: Predictor;
   /**
    * Target ms between ticks, from `/api/session/init`. Only ever used to pace bullet
    * extrapolation — never to derive game state. `arena.tick` is the clock; 400 ms is a
@@ -69,7 +120,15 @@ export interface ArenaProps {
   className?: string;
 }
 
-export function Arena({ arena, boss, players, localSeat, tickMs = 400, className }: ArenaProps) {
+export function Arena({
+  arena,
+  boss,
+  players,
+  localSeat,
+  predictor,
+  tickMs = 400,
+  className,
+}: ArenaProps) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const reduced = usePrefersReducedMotion();
@@ -92,23 +151,63 @@ export function Arena({ arena, boss, players, localSeat, tickMs = 400, className
   }, [arena.tick]);
 
   const nodes = useRef(new Map<number, SVGRectElement>());
+  // The local seat's `<g>`, owned by the frame loop the way `nodes` owns the bullets.
+  const selfNode = useRef<SVGGElement | null>(null);
+  const drawn = useRef<{ x: number; y: number } | null>(null);
+  const frameAt = useRef(0);
+  // Placed on attach, not on the next frame: a seat that waits for one sits at the SVG
+  // origin, which reads as the knight teleporting to the corner. Stable while `predictor`
+  // is, so React does not detach and reattach the node on every update.
+  const selfRef = useCallback(
+    (el: SVGGElement | null) => {
+      selfNode.current = el;
+      // A new node starts where the prediction is; chasing from wherever the last one
+      // stopped would drag the knight in from the old seat's position.
+      drawn.current = null;
+      if (el === null || predictor === undefined) return;
+      el.style.transform = `translate(${predictor.self.x}px, ${predictor.self.y}px)`;
+    },
+    [predictor],
+  );
   useEffect(() => {
     // Under reduced motion bullets snap to each published position: React already writes
-    // that transform, so there is nothing left for a frame loop to do.
-    if (reduced) return;
+    // that transform, so there is nothing left for a frame loop to do — but the local
+    // seat has no transform of its own to snap to, so the loop still runs for it.
+    if (reduced && predictor === undefined) return;
     let raf = 0;
     const frame = () => {
-      const f = Math.min(1, (performance.now() - tickAt.current) / pace.current);
-      for (const [slot, el] of nodes.current) {
-        const b = bullets.current[slot];
-        if (b === undefined) continue;
-        el.style.transform = `translate(${b.x + b.dx * f}px, ${b.y + b.dy * f}px)`;
+      const now = performance.now();
+      if (!reduced) {
+        const f = Math.min(1, (now - tickAt.current) / pace.current);
+        for (const [slot, el] of nodes.current) {
+          const b = bullets.current[slot];
+          if (b === undefined) continue;
+          el.style.transform = `translate(${b.x + b.dx * f}px, ${b.y + b.dy * f}px)`;
+        }
       }
+
+      // One more node per frame, off the predicted position rather than the feed, so the
+      // knight the player is watching moves when they press a key and not when Singapore
+      // says so. Under reduced motion the step is unbounded, which is a snap.
+      const el = selfNode.current;
+      if (el !== null && predictor !== undefined) {
+        let at = drawn.current;
+        if (at === null) at = drawn.current = { x: predictor.self.x, y: predictor.self.y };
+        // Real elapsed time, not an assumed 1/60: a 144 Hz screen would otherwise chase
+        // 2.4× too slowly. Capped at one input period so a backgrounded tab resumes with
+        // a single step rather than a sprint across the room.
+        const dt = Math.min(MOVE_MS, now - frameAt.current);
+        chase(at, predictor.self, reduced ? Infinity : (MAP_TILE * dt) / MOVE_MS);
+        el.style.transform = `translate(${at.x}px, ${at.y}px)`;
+      }
+
+      frameAt.current = now;
       raf = requestAnimationFrame(frame);
     };
+    frameAt.current = performance.now();
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [reduced]);
+  }, [reduced, predictor]);
 
   // The dungeon never changes for the life of the scene. One memo, one stable element
   // reference, and React skips the whole subtree on every update from here on.
@@ -208,13 +307,23 @@ export function Arena({ arena, boss, players, localSeat, tickMs = 400, className
             const dead = slot.hp === 0;
             const lobby = slot.zone !== ZONE_ARENA;
             const mine = slot.seat === localSeat;
+            // Prediction for the seat the player drives, interpolation for everyone else.
+            // Both machines already existed; this is the line that stops the local knight
+            // being drawn from ~127 ms-old chain state that the crank re-anchors.
+            // `ready` and not merely `predictor !== undefined`: `self` is the arena's
+            // top-left corner until the first reconcile, so an ungated seat would be drawn
+            // in the corner. Unreachable through the live path — a seat only becomes
+            // `occupied` in the same notification that reconciles it — but the fallback
+            // here is interpolation, which is correct, rather than a teleport.
+            const predicted = mine && predictor !== undefined && predictor.ready;
             const colour = dead ? PAL.dead : mine ? PAL.self : PAL.ally;
             const unit = FACING_UNIT[slot.facing] ?? FACING_UNIT[0]!;
             const hp = slot.hpMax > 0 ? Math.max(0, Math.min(1, slot.hp / slot.hpMax)) : 0;
             return (
-              // `useSeatInterpolation` owns this node's transform outright — nothing else
-              // may put a transform attribute on it.
-              <g key={slot.seat} ref={seats.ref(slot.seat)}>
+              // The frame loop (local seat) or `useSeatInterpolation` (everyone else) owns
+              // this node's transform outright — nothing else may put a transform
+              // attribute on it.
+              <g key={slot.seat} ref={predicted ? selfRef : seats.ref(slot.seat)}>
                 {mine && (
                   <circle
                     r={PLAYER_R + 5}
@@ -353,4 +462,37 @@ function usePrefersReducedMotion(): boolean {
     return () => mq.removeEventListener('change', on);
   }, []);
   return reduced;
+}
+
+// ---------------------------------------------------------------------------
+// Self-check
+//
+// The chase is the whole of the smoothness fix and it fails silently: too small a step
+// floats behind the input, too large a one is the 16-unit teleport it exists to remove,
+// and a missing snap slides a respawning corpse across the dungeon. Dev-only.
+// ---------------------------------------------------------------------------
+
+if (import.meta.env.DEV) {
+  const ok = (cond: boolean, what: string): void => {
+    if (!cond) throw new Error(`Arena self-check: ${what}`);
+  };
+
+  // One 50 ms input period covers exactly one tile — the step the chain itself applies —
+  // so the render never lags the prediction by more than the move it has not seen yet.
+  const at = { x: 0, y: 0 };
+  chase(at, { x: 2 * MAP_TILE, y: 0 }, MAP_TILE);
+  ok(at.x === MAP_TILE && at.y === 0, 'chase covers one tile per input period');
+
+  // Within reach it lands exactly on the prediction rather than orbiting it.
+  chase(at, { x: MAP_TILE + 4, y: 0 }, MAP_TILE);
+  ok(at.x === MAP_TILE + 4, 'chase snaps once the target is within a step');
+
+  // Reduced motion asks for no animation at all: an unbounded step is a snap.
+  chase(at, { x: 300, y: 300 }, Infinity);
+  ok(at.x === 300 && at.y === 300, 'an unbounded step snaps');
+
+  // A reconcile onto a respawn is not a walk, and lerping it draws a corpse gliding
+  // through walls for two seconds.
+  chase(at, { x: 900, y: 900 }, MAP_TILE);
+  ok(at.x === 900 && at.y === 900, 'a respawn-sized gap snaps instead of chasing');
 }
