@@ -294,7 +294,7 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
     assert_playable(arena.phase)?;
     // Seats are administered, not self-served — see the module header.
     if treasury_key.as_ref() != arena.crank_authority.as_slice() {
-        return Err(ProgramError::IncorrectAuthority);
+        return Err(HeartrotError::NotArenaAuthority.into());
     }
 
     let mut players_data = players_ai.try_borrow_mut()?;
@@ -312,7 +312,7 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
             continue;
         }
         if slot.session_pubkey == session_pubkey {
-            return Err(ProgramError::AccountAlreadyInitialized);
+            return Err(HeartrotError::SessionKeyInUse.into());
         }
     }
 
@@ -442,14 +442,11 @@ pub fn move_player(
 
     // Walls are the real dungeon out of `crate::map`, not a border ring: a corridor
     // mouth or a pillar rejects the step here exactly as the client's copy of the same
-    // generated grid predicted it would. `InvalidArgument` is left to mean this one
-    // thing in this file — every other rejection above carries its own custom code —
-    // so "you walked into a wall" stays distinguishable in a failed ER transaction,
-    // which is the only diagnostic the client gets back.
+    // generated grid predicted it would.
     let nx = slot.x.saturating_add(dx).clamp(0, MAP_MAX_XY);
     let ny = slot.y.saturating_add(dy).clamp(0, MAP_MAX_XY);
     if is_wall(nx, ny) {
-        return Err(ProgramError::InvalidArgument);
+        return Err(HeartrotError::BlockedByWall.into());
     }
 
     slot.x = nx;
@@ -508,12 +505,10 @@ pub fn enter_gate(
     if slot.zone != ZONE_LOBBY {
         return Err(HeartrotError::WrongZone.into());
     }
-    // Standing off the gate is the same class of failure and shares its code, per the
-    // table in `error.rs`. The client retries this instruction while the player stands
-    // on the tile, so it has to be able to tell "not there yet" from every other reason
-    // a gate entry can fail.
+    // The client retries this instruction while the player walks onto the tile, so
+    // "not there yet" must be tellable apart from every other gate failure.
     if !on_gate(slot.x, slot.y) {
-        return Err(HeartrotError::WrongZone.into());
+        return Err(HeartrotError::NotOnGate.into());
     }
     // Aliveness is derived as `hp != 0 && zone == ZONE_ARENA`, so a seat with a zero
     // `hp_max` would count toward `alive_count` while never being alive. `join`

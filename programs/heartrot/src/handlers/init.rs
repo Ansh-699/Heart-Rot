@@ -38,7 +38,8 @@ use pinocchio::{
     error::ProgramError,
     AccountView, Address, ProgramResult,
 };
-use pinocchio_system::create_account_with_minimum_balance_signed;
+use pinocchio_system::instructions::CreateAccount;
+use pinocchio::sysvars::{rent::Rent, Sysvar};
 
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
 use crate::state::{
@@ -240,6 +241,43 @@ const _: () = {
 // Shared plumbing
 // ---------------------------------------------------------------------------
 
+/// Solana's DEFAULT rent rate: `lamports_per_byte_year` 3480, `exemption_threshold` 2.0,
+/// over `space` plus the 128-byte account overhead.
+const DEFAULT_RENT_PER_BYTE_YEAR: u64 = 3480;
+const ACCOUNT_STORAGE_OVERHEAD: u64 = 128;
+
+/// Lamports that make an account rent-exempt on *this* cluster **and** clonable by the
+/// ephemeral rollup.
+///
+/// These are not the same number, and assuming they were cost a devnet run. Devnet's rent
+/// schedule is about 9% cheaper than Solana's default, `Rent::get()` returns the cluster's
+/// rate, and the ER's cloner computes rent with the DEFAULT rate. Funding the cluster
+/// minimum therefore creates an account the ER refuses to clone — measured on devnet:
+///
+/// | account | space | devnet minimum | ER expects | shortfall |
+/// |---------|-------|----------------|------------|-----------|
+/// | Arena   | 1160  |      8,156,904 |  8,964,480 |   807,576 |
+/// | Boss    |   50  |      1,127,274 |  1,238,880 |   111,606 |
+/// | Players | 1924  |     12,995,316 | 14,281,920 | 1,286,604 |
+///
+/// The failure is silent and misdirected: delegation succeeds, `getDelegationStatus`
+/// reports `isDelegated: true`, and the ER's `getAccountInfo` returns `null`. The account
+/// is simply never pulled in, and the ER says so only when a transaction touches it —
+/// as `Cloner error: ... InsufficientFundsForRent`, which reads like an ER bug rather than
+/// a funding one. Every account this program created on devnet was unclonable by
+/// construction, so no match could ever have started.
+///
+/// Taking the max of both rates is exempt under whichever is stricter, so this is correct
+/// on any cluster including localnet and mainnet, where the two rates coincide.
+fn er_clonable_rent(space: usize) -> Result<u64, ProgramError> {
+    let cluster = Rent::get()?.try_minimum_balance(space)?;
+    let er_default = (ACCOUNT_STORAGE_OVERHEAD + space as u64)
+        .checked_mul(DEFAULT_RENT_PER_BYTE_YEAR)
+        .and_then(|v| v.checked_mul(2))
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(cluster.max(er_default))
+}
+
 /// Derive `seeds` against this program, prove `account` is exactly that address, and
 /// create it rent-exempt and program-owned, signed by the derivation.
 ///
@@ -302,16 +340,14 @@ fn create_pda_account<const N: usize>(
     signer_seeds[N] = Seed::from(&bump_seed[..]);
     let signer = Signer::from(&signer_seeds[..N + 1]);
 
-    create_account_with_minimum_balance_signed(
-        account,
-        space,
-        program_id,
-        payer,
-        // No rent sysvar account: the frozen account list carries none, so the rent rate
-        // comes from the `Rent::get()` syscall instead.
-        None,
-        &[signer],
-    )?;
+    CreateAccount {
+        from: payer,
+        to: account,
+        lamports: er_clonable_rent(space)?,
+        space: space as u64,
+        owner: program_id,
+    }
+    .invoke_signed(&[signer])?;
 
     Ok(bump)
 }

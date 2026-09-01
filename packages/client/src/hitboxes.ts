@@ -56,3 +56,26 @@ export const CORE: { readonly x: number; readonly y: number; readonly radiusSq: 
   y: -18,
   radiusSq: 400,
 };
+
+/** Where a volley leaves the boss: the `BossAccount.parts` index that fires, and the
+ * boss-local point it fires from. */
+export interface Muzzle {
+  readonly part: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * The volley emitters — the exact points `programs/heartrot/src/hitboxes.rs` spawns
+ * bullets at, emitted from the same JSON in the same pass, so a locally predicted volley
+ * and the chain's volley leave the same thorn.
+ *
+ * Each point is its thorn box's centre: inside the box by construction, and needing no
+ * notion of "outward", which is a direction the art does not carry.
+ */
+export const MUZZLES: readonly [Muzzle, Muzzle, Muzzle, Muzzle] = [
+  { part: 3, x: -6, y: -89 }, // thorn0
+  { part: 4, x: 89, y: -66 }, // thorn1
+  { part: 5, x: -20, y: -26 }, // thorn2
+  { part: 6, x: 100, y: 0 }, // thorn3
+];

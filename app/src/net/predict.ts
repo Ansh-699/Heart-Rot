@@ -27,7 +27,16 @@
  * contract went out of its way to remove.
  */
 
-import { MAP_MAX_XY, MAP_TILE, isWall, type Bullet, type PlayerSlot } from '@heartrot/client';
+import { useCallback, useEffect, useRef } from 'react';
+
+import {
+  MAP_MAX_XY,
+  MAP_TILE,
+  isWall,
+  type Bullet,
+  type PlayerSlot,
+  type PlayersAccount,
+} from '@heartrot/client';
 
 // ---------------------------------------------------------------------------
 // Map geometry — the generated table, not a copy of it
@@ -260,6 +269,120 @@ export function interpolateSeat(previous: PlayerSlot, next: PlayerSlot, alpha: n
   };
 }
 
+/**
+ * Distance past which a position change is a teleport, not a walk.
+ *
+ * `move_player` advances one `MOVE_STEP` — at most one tile — per accepted input, so any
+ * larger jump is `boss_tick` returning a dead player to an entrance. Lerping a respawn
+ * draws a corpse sliding diagonally through the dungeon for a full tick; four tiles is
+ * comfortably above any real step and far below the shortest respawn.
+ */
+const SNAP_DISTANCE = 4 * TILE;
+
+function teleported(from: PlayerSlot, to: PlayerSlot): boolean {
+  return (
+    from.occupied !== to.occupied ||
+    from.zone !== to.zone ||
+    Math.abs(to.x - from.x) > SNAP_DISTANCE ||
+    Math.abs(to.y - from.y) > SNAP_DISTANCE
+  );
+}
+
+export interface SeatInterpolation {
+  /**
+   * Ref callback for seat `seat`'s outermost `<g>`. Stable for the life of the hook, so
+   * React does not detach and reattach twenty nodes on every 2.5 Hz update.
+   *
+   * The hook owns that element's `transform` outright — give it no transform attribute of
+   * its own, and hang the facing flip on a child, exactly as the bullet loop owns a
+   * `<rect>`'s style transform.
+   */
+  ref(seat: number): (el: SVGGElement | null) => void;
+}
+
+/**
+ * Draw the other twenty knights between updates instead of at 2.5 Hz.
+ *
+ * Positions are written straight to the DOM from a rAF loop, never through React: a
+ * re-render per frame per seat is exactly the cost the bullet layer already refuses to
+ * pay, and none of this changes a single React-visible value. `previous` is captured here
+ * rather than threaded down from `subscribeMatch` because the renderer only ever holds the
+ * latest `PlayersAccount`, and one hook remembering the last one it saw is a smaller
+ * contract than three components passing a pair around.
+ *
+ * `reduced` comes from the caller because the renderer already resolves
+ * `prefers-reduced-motion` for the bullet loop; resolving it a second time here would put
+ * the same media query in two places. Under it, seats simply snap to each published
+ * position — which is what they do today.
+ */
+export function useSeatInterpolation(players: PlayersAccount, reduced = false): SeatInterpolation {
+  const nodes = useRef(new Map<number, SVGGElement>());
+  const callbacks = useRef(new Map<number, (el: SVGGElement | null) => void>());
+  const reducedRef = useRef(reduced);
+  const snapshot = useRef<{
+    previous: PlayersAccount | null;
+    next: PlayersAccount;
+    at: number;
+  }>({ previous: null, next: players, at: 0 });
+
+  const place = useCallback((seat: number, el: SVGGElement, alpha: number): void => {
+    const { previous, next } = snapshot.current;
+    const to = next.slots[seat];
+    if (to === undefined) return;
+    const from = previous?.slots[seat];
+    // No previous snapshot means nothing to lerp from, and drawing the halfway point of a
+    // guess is worse than being one update stale.
+    const at = from === undefined || teleported(from, to) ? to : interpolateSeat(from, to, alpha);
+    el.style.transform = `translate(${at.x}px, ${at.y}px)`;
+  }, []);
+
+  const paint = useCallback((): void => {
+    const alpha = reducedRef.current ? 1 : tickAlpha(snapshot.current.at);
+    for (const [seat, el] of nodes.current) place(seat, el, alpha);
+  }, [place]);
+
+  useEffect(() => {
+    snapshot.current = { previous: snapshot.current.next, next: players, at: performance.now() };
+    // Paint immediately: waiting for the next frame leaves a seat that was just mounted
+    // sitting at the SVG origin, which reads as a knight teleporting to the corner.
+    paint();
+  }, [players, paint]);
+
+  useEffect(() => {
+    reducedRef.current = reduced;
+    paint();
+    if (reduced) return;
+    let raf = 0;
+    const frame = () => {
+      paint();
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [reduced, paint]);
+
+  const ref = useCallback(
+    (seat: number) => {
+      let cb = callbacks.current.get(seat);
+      if (cb === undefined) {
+        cb = (el: SVGGElement | null) => {
+          if (el === null) {
+            nodes.current.delete(seat);
+            return;
+          }
+          nodes.current.set(seat, el);
+          place(seat, el, reducedRef.current ? 1 : tickAlpha(snapshot.current.at));
+        };
+        callbacks.current.set(seat, cb);
+      }
+      return cb;
+    },
+    [place],
+  );
+
+  return { ref };
+}
+
 // ---------------------------------------------------------------------------
 // Self-check
 //
@@ -309,4 +432,16 @@ if (import.meta.env.DEV) {
   dead.reconcile(slot({ hp: 0 }), 0);
   ok(dead.push(2, 0) === null, 'dead player cannot move');
   ok(bulletAt({ x: 10, y: 10, dx: 48, dy: 0, active: 1 }, 1).x === 58, 'bullet lands exact');
+
+  // Remote seats: lerp, and — the whole reason `alpha` is clamped — never overshoot.
+  const here = slot({ x: 100, y: 100, occupied: true, zone: 1 });
+  const step = slot({ x: 100 + TILE, y: 100, occupied: true, zone: 1 });
+  ok(interpolateSeat(here, step, 0.5).x === 100 + TILE / 2, 'seat lerps to the midpoint');
+  ok(interpolateSeat(here, step, 2).x === 100 + TILE, 'seat alpha is clamped, not extrapolated');
+  ok(tickAlpha(0, TICK_MS * 2) === 1 && tickAlpha(100, 0) === 0, 'tick alpha clamps both ends');
+
+  // A respawn crosses the map in one update. Lerping it walks a corpse through walls.
+  ok(!teleported(here, step), 'one step is a walk');
+  ok(teleported(here, slot({ x: 900, y: 900, occupied: true, zone: 1 })), 'a respawn snaps');
+  ok(teleported(here, slot({ x: 100, y: 100, occupied: true, zone: 0 })), 'a zone change snaps');
 }

@@ -188,14 +188,19 @@ async function readArena(
   arena: Address,
 ): Promise<{ state: ArenaAccount | null; erFqdn?: string }> {
   const status = await getDelegationStatus(arena, c.env.ROUTER_ENDPOINT);
-  const rpc = status.isDelegated && status.fqdn ? createRpc(status.fqdn) : c.base;
+  // One expression decides both "which layer did this state come from" and "which layer
+  // may be written to". Reporting `status.fqdn` on its own would be the same fact stored
+  // twice: a router that answered `isDelegated: false` *with* an fqdn would have callers
+  // reading the base layer and then sending to the ER.
+  const erFqdn = status.isDelegated ? status.fqdn : undefined;
+  const rpc = erFqdn === undefined ? c.base : createRpc(erFqdn);
   const data = await accountData(rpc, arena);
-  if (!data) return { state: null, erFqdn: status.fqdn };
+  if (!data) return { state: null, erFqdn };
   try {
-    return { state: decodeArena(data), erFqdn: status.fqdn };
+    return { state: decodeArena(data), erFqdn };
   } catch {
     // Wrong discriminator or wrong version: a husk, or an account we must not touch.
-    return { state: null, erFqdn: status.fqdn };
+    return { state: null, erFqdn };
   }
 }
 
@@ -569,10 +574,15 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
   );
   if (!seated) return json({ error: 'not_in_match' }, 403);
 
-  // An arena sitting in the lobby on the base layer was never delegated and has nothing
-  // to commit. Settling it would write a leaderboard row of twenty empty seats and burn
-  // the arena id, which is a griefing primitive rather than a recovery path.
-  if (erFqdn === undefined && state.phase === PHASE_LOBBY) {
+  // A lobby arena has nothing to commit: it holds a roster and no match. Settling it
+  // would write a leaderboard row of twenty untouched seats and burn the arena id, which
+  // is a griefing primitive rather than a recovery path — and `settle.rs` says so too,
+  // raising `WrongPhase` on `PHASE_LOBBY`. That refusal holds on *either* layer, so this
+  // one must as well: a seated player who calls this route between `/session/init` and
+  // `/match/start` finds the arena already delegated and still in the lobby, and without
+  // this the Worker sends an instruction the program rejects and reports it as an opaque
+  // 500 rather than the 409 it is.
+  if (state.phase === PHASE_LOBBY) {
     return json({ error: 'nothing_to_settle' }, 409);
   }
 

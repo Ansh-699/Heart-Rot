@@ -100,6 +100,34 @@ def to_local(boxes, order, w, h):
     return parts, (ax, ay), core
 
 
+def to_muzzles(parts):
+    """-> [(part index, name, muzzle x, muzzle y)] for every thorn, in chain order.
+
+    A thorn is a part the slicer named `thorn*`; the emitters are not a separate list
+    living somewhere else, or that list is the next thing to drift.
+
+    THE POINT IS THE BOX CENTRE, not the outward edge. Two reasons, both structural:
+    `Rect::contains` is half-open, so the outward edge (`x + w`) is the first pixel
+    *outside* the thorn -- a muzzle there is provably not on the part it claims to fire
+    from; and "outward" needs a facing direction, which is a fact the art does not carry
+    and which would therefore have to be hand-written here. The centre needs nothing but
+    the box. Floor division on `w`/`h`, which the loader has already proven >= TILE > 0,
+    so Rust's truncating `/` and Python's `//` cannot disagree about the sign.
+    """
+    out = []
+    for i, (name, x, y, w, h) in enumerate(parts):
+        if not name.startswith("thorn"):
+            continue
+        mx, my = x + w // 2, y + h // 2
+        # Half-open containment, the same test the Rust emits. Unreachable while the
+        # loader enforces w,h >= TILE -- which is exactly why it is cheap to keep.
+        assert x <= mx < x + w and y <= my < y + h, f"{name} muzzle escaped its own box"
+        out.append((i, name, mx, my))
+    if not out:
+        raise SystemExit("no part is named thorn*: the boss has no volley emitters")
+    return out
+
+
 def header(src, p):
     """`p` is the line prefix: `//!` for a Rust inner doc comment, `//` for TS."""
     return (f"{p} @generated from {src} by `{REGEN}` -- DO NOT EDIT.\n"
@@ -109,12 +137,15 @@ def header(src, p):
             f"{p} `python3 tools/svg_slice.py`, then re-run the command above.\n")
 
 
-def emit_rust(parts, anchor, core, src, w, h):
+def emit_rust(parts, anchor, core, muzzles, src, w, h):
     ax, ay = anchor
     cx, cy, crsq = core
     rows = "\n".join(
         f"    Rect {{ x: {x:4}, y: {y:4}, w: {rw:3}, h: {rh:3} }}, // {i} {name}"
         for i, (name, x, y, rw, rh) in enumerate(parts))
+    muzzle_rows = "\n".join(
+        f"    Muzzle {{ part: {i}, x: {mx:4}, y: {my:4} }}, // {name}"
+        for i, name, mx, my in muzzles)
     return f"""{header(src, "//!")}//!
 //! Boss-local hitboxes, in arena units relative to `Boss.x` / `Boss.y`.
 //!
@@ -156,16 +187,64 @@ pub const PART_HITBOXES: [Rect; crate::state::N_PARTS] = [
 pub const CORE_X: i32 = {cx};
 pub const CORE_Y: i32 = {cy};
 pub const CORE_RADIUS_SQ: i32 = {crsq};
+
+/// Where a volley leaves the boss: the `Boss.parts` index of the thorn that fires, and
+/// the boss-local point it fires from.
+#[derive(Clone, Copy)]
+pub struct Muzzle {{
+    /// Index into `Boss.parts` / [`PART_HITBOXES`]. Destroy that part and the emitter
+    /// goes quiet — the gate is this index, so it cannot name a different limb than the
+    /// one the muzzle sits in.
+    pub part: usize,
+    pub x: i32,
+    pub y: i32,
+}}
+
+/// One entry per thorn the slicer found, in chain order.
+pub const N_MUZZLES: usize = {len(muzzles)};
+
+/// The volley emitters, derived from the same boxes `PART_HITBOXES` is derived from, in
+/// the same pass. `tick.rs` used to describe the boss a second time here — first as
+/// hand-written offsets that had drifted into the mace and the claws, then as a `const`
+/// block re-deriving the centres beside its own copy of "which parts are thorns". Both
+/// are the same defect: geometry stated twice. Move a thorn in the art, re-run the
+/// command at the top of this file, and the muzzles move with it.
+///
+/// Each point is its thorn box's centre — inside the box by construction, and needing no
+/// notion of "outward", which is a direction the art does not carry.
+pub const MUZZLES: [Muzzle; N_MUZZLES] = [
+{muzzle_rows}
+];
+
+const _: () = {{
+    // Every muzzle stands in the thorn it names. Holds by construction (the generator
+    // refuses a box thinner than one tile, so a centre cannot escape it); it fires only
+    // if someone hand-edits this file, which is the failure it is here to catch.
+    let mut i = 0;
+    while i < N_MUZZLES {{
+        let m = MUZZLES[i];
+        assert!(m.part < crate::state::N_PARTS);
+        assert!(
+            PART_HITBOXES[m.part].contains(m.x, m.y),
+            "a muzzle is outside its own hitbox -- this file is generated, do not edit it",
+        );
+        i += 1;
+    }}
+}};
 """
 
 
-def emit_ts(parts, anchor, core, src, w, h):
+def emit_ts(parts, anchor, core, muzzles, src, w, h):
     ax, ay = anchor
     cx, cy, crsq = core
     rows = "\n".join(
         f"  {{ x: {x}, y: {y}, w: {rw}, h: {rh} }}, // {i} {name}"
         for i, (name, x, y, rw, rh) in enumerate(parts))
     tuple_t = ", ".join(["Rect"] * len(parts))
+    muzzle_rows = "\n".join(
+        f"  {{ part: {i}, x: {mx}, y: {my} }}, // {name}"
+        for i, name, mx, my in muzzles)
+    muzzle_t = ", ".join(["Muzzle"] * len(muzzles))
     return f"""{header(src, "//")}/**
  * Boss-local hitboxes, in arena units relative to `Boss.x` / `Boss.y` -- the exact
  * numbers `programs/heartrot/src/hitboxes.rs` raycasts against, emitted from the same
@@ -211,6 +290,26 @@ export const CORE: {{ readonly x: number; readonly y: number; readonly radiusSq:
   y: {cy},
   radiusSq: {crsq},
 }};
+
+/** Where a volley leaves the boss: the `BossAccount.parts` index that fires, and the
+ * boss-local point it fires from. */
+export interface Muzzle {{
+  readonly part: number;
+  readonly x: number;
+  readonly y: number;
+}}
+
+/**
+ * The volley emitters — the exact points `programs/heartrot/src/hitboxes.rs` spawns
+ * bullets at, emitted from the same JSON in the same pass, so a locally predicted volley
+ * and the chain's volley leave the same thorn.
+ *
+ * Each point is its thorn box's centre: inside the box by construction, and needing no
+ * notion of "outward", which is a direction the art does not carry.
+ */
+export const MUZZLES: readonly [{muzzle_t}] = [
+{muzzle_rows}
+];
 """
 
 
@@ -228,9 +327,10 @@ if __name__ == '__main__':
 
     order, boxes, w, h = load(n.src)
     parts, anchor, core = to_local(boxes, order, w, h)
+    muzzles = to_muzzles(parts)
     rel = os.path.relpath(n.src, root)
-    want = {n.out_rust: emit_rust(parts, anchor, core, rel, w, h),
-            n.out_ts: emit_ts(parts, anchor, core, rel, w, h)}
+    want = {n.out_rust: emit_rust(parts, anchor, core, muzzles, rel, w, h),
+            n.out_ts: emit_ts(parts, anchor, core, muzzles, rel, w, h)}
 
     # `--check` IS the test for this tool: it re-derives both files and proves the
     # committed ones are what the art currently says. Anything that would silently
@@ -249,4 +349,6 @@ if __name__ == '__main__':
     for i, (name, x, y, rw, rh) in enumerate(parts):
         print(f"{i:>2}  {name:<8} {x:4},{y:4} {rw:3}x{rh:3}")
     print(f" -  core     {core[0]:4},{core[1]:4} r^2={core[2]}")
+    for i, name, mx, my in muzzles:
+        print(f"{i:>2}  {name:<8} muzzle {mx:4},{my:4}")
     print(f"\n{n.out_rust}\n{n.out_ts}")

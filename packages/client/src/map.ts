@@ -90,6 +90,20 @@ export const MAP_GRID: readonly string[] = [
   '################################################################',
 ];
 
+/**
+ * The four `E` marks, in arena-space units at the tile's top-left corner -- the exact
+ * pairs `map::ENTRANCES` holds on the chain, so the browser can draw and predict a
+ * respawn at the same place the program puts one.
+ *
+ * Row-major scan order (top to bottom, then left to right), *not* compass order.
+ */
+export const MAP_ENTRANCES: readonly (readonly [number, number])[] = [
+  [512, 16], // tile (32, 1)
+  [16, 512], // tile (1, 32)
+  [992, 512], // tile (62, 32)
+  [512, 992], // tile (32, 62)
+];
+
 /** Is this tile solid? Off-map is solid, so a caller that skips the clamp fails closed. */
 export function isWallTile(tx: number, ty: number): boolean {
   if (tx < 0 || ty < 0 || tx >= MAP_TILES || ty >= MAP_TILES) return true;

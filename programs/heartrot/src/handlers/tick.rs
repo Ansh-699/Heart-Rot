@@ -53,13 +53,14 @@ use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable}
 use crate::handlers::settle::{CRANK_PROGRAM_ID, CRANK_SIGNER_SEED};
 // The boss's geometry, generated from `assets/sprites/hitboxes.json` by
 // `tools/gen_hitboxes.py` alongside the TypeScript the renderer draws with. `shoot.rs`
-// raycasts against this same table in this same frame, so importing it is what makes the
-// thorn a bullet leaves and the thorn a player shoots off one object.
-use crate::hitboxes::PART_HITBOXES;
+// raycasts against the boxes these muzzles were cut from in this same frame, so
+// importing them is what makes the thorn a bullet leaves and the thorn a player shoots
+// off one object.
+use crate::hitboxes::{Muzzle, MUZZLES, N_MUZZLES};
 use crate::map;
 use crate::state::{
     load_mut, Arena, Boss, Players, BULLET_ACTIVE, BULLET_FREE, MAX_BULLETS, MAX_SEATS, NO_TARGET,
-    N_PARTS, PHASE_FIGHTING, PHASE_SETTLING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
+    PHASE_FIGHTING, PHASE_SETTLING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
@@ -67,45 +68,21 @@ use crate::state::{
 // ---------------------------------------------------------------------------
 
 /// 16 units per tile over the 64×64 map, so 0..1024 on both axes, `y` growing
-/// downward. Identical to the constants in `shoot.rs`; the layout contract mandates one
-/// shared unit for `PlayerSlot.x`, `Boss.x` and `Bullet.x` without naming it.
+/// downward. The layout contract mandates one shared unit for `PlayerSlot.x`, `Boss.x`
+/// and `Bullet.x` without naming it.
 ///
-/// ponytail: duplicated rather than shared because no `constants.rs` exists yet and
-/// `shoot.rs`'s copy is private to that module. Upgrade path: one `arena.rs` holding
-/// `TILE`, `ARENA_SIZE` and the facing table, imported by both (the hitboxes already
-/// live in one place — `crate::hitboxes`). The numbers must not drift in the meantime —
-/// a bullet pool that wraps at a different boundary than the raycast walks is a desync
-/// no test in either module would see.
-const TILE: i32 = 16;
-const ARENA_SIZE: i32 = 64 * TILE;
+/// Widened from the generated `crate::map` values rather than restated: `map.rs` is
+/// compiled from `assets/map/arena.json` by `tools/gen_map.py` together with the
+/// `WALLS` bitboard these two index into, so the grid this file steps bullets across is
+/// the grid the map was drawn on by construction. `shoot.rs` and `player.rs` read the
+/// same source. (This file used to spell both numbers out with an `assert!` underneath
+/// — a copy plus a guard is still a copy; a cast is not.)
+const TILE: i32 = map::TILE as i32;
+const ARENA_SIZE: i32 = (map::MAP_TILES as i32) * TILE;
 
-// These two are literals on purpose: `tools/gen_map.py` reads them back out of this
-// file by regex and evaluates them, so it can validate `assets/map/arena.json` against
-// the grid the simulation actually uses. Writing them as `map::TILE as i32` would leave
-// the generator unable to parse its own inputs. The asserts are the other half of that
-// contract — a redrawn map with a different tile size or edge length fails this build
-// rather than putting bullets and players on two different grids.
-const _: () = assert!(TILE == map::TILE as i32);
-const _: () = assert!(ARENA_SIZE == (map::MAP_TILES as i32) * TILE);
-
-/// Where a respawning player is put back: the mouth of the south corridor approach, on
-/// the entrance side of the map, so a wipe-and-respawn does not drop anyone on top of
-/// the boss.
-///
-/// Still a pair of constants rather than a lookup into `crate::map`, because the
-/// generated table is a *wall bitboard* — the grid's four `E` tiles are floor bits like
-/// any other and survive the compile as nothing. What does survive is the assertion
-/// under [`entrance_for`]: every one of the twenty respawn points is proved to be floor
-/// in `map::WALLS` at compile time, and `gen_map.py` independently proves the same
-/// points can reach the heart chamber. So the pair cannot silently disagree with the
-/// map the way it did before — but it is not yet *derived* from it. See the note on
-/// [`entrance_for`].
-const ENTRANCE_X: i32 = ARENA_SIZE / 2;
-const ENTRANCE_Y: i32 = ARENA_SIZE - 6 * TILE;
-
-/// Seats fan out sideways from the entrance so twenty simultaneous respawns are twenty
-/// visible knights rather than one. `(seat − 10) × 24` spans 272..728, well inside the
-/// arena, so the clamp below is a belt not a brace.
+/// Seats fan out along the wall their door is set into, so five simultaneous respawns
+/// at one door are five visible knights rather than one. 24 units is 1½ tiles, and the
+/// widest rank is ±2 — ±48 units, three tiles either side of the `E`.
 const ENTRANCE_SPACING: i32 = 24;
 
 // ---------------------------------------------------------------------------
@@ -187,37 +164,14 @@ const VENT_THRESHOLD_DEN: u32 = 100;
 // Emitters
 // ---------------------------------------------------------------------------
 
-/// `Boss.parts` indices of the four thorn clusters, index-aligned with
-/// [`PART_HITBOXES`] (crown, wolf_l, beast_r, thorn0..3, mace, claws) — the generator
-/// emits that order straight from the slicer's `part_index`.
-const THORN_PART_FIRST: usize = 3;
-const N_THORN_EMITTERS: usize = 4;
-
-/// Muzzle offsets from `Boss.x`/`Boss.y`, in arena units: the centre of each thorn's
-/// box in the generated table. Bullets leave the thorn the player can see and shoot off,
-/// which is what makes "strip the thorns and the volleys stop" readable counterplay
-/// rather than a hidden rule.
-///
-/// *Computed* from [`PART_HITBOXES`], not restated from it. The four pairs used to be
-/// hand-written here and had drifted onto the deleted fictional lattice — two of the
-/// four muzzles sat inside the mace and the claws, so the boss fired out of limbs while
-/// the thorns were silent, and only the `boss.parts[3 + i]` gate below (an *index*, not
-/// a position) kept the counterplay looking like it worked. Written as a const block
-/// there is nothing left to hand-edit: move a thorn in the art, re-run
-/// `tools/gen_hitboxes.py`, and the muzzles move with it at compile time.
-const THORN_MUZZLE: [(i32, i32); N_THORN_EMITTERS] = {
-    let mut muzzle = [(0i32, 0i32); N_THORN_EMITTERS];
-    let mut i = 0;
-    while i < N_THORN_EMITTERS {
-        // `w`/`h` are positive by construction — the generator refuses to emit a box
-        // thinner than one tile — so the halving needs no sign handling and the centre
-        // is always inside the box it names.
-        let rect = PART_HITBOXES[THORN_PART_FIRST + i];
-        muzzle[i] = (rect.x + rect.w / 2, rect.y + rect.h / 2);
-        i += 1;
-    }
-    muzzle
-};
+// Where a volley leaves the boss is [`crate::hitboxes::MUZZLES`] — one entry per thorn,
+// each carrying the `Boss.parts` index it fires from and the boss-local point it fires
+// at, generated from the same slice of the art `PART_HITBOXES` comes from. This file
+// held two hand-written copies of that in turn: first a table of four offsets that had
+// drifted into the mace and the claws while the thorns sat silent, then a `const` block
+// re-deriving the centres beside its own `THORN_PART_FIRST` guess at which parts were
+// thorns. Neither is here any more. Move a thorn in the art, re-run
+// `tools/gen_hitboxes.py`, and both the muzzle and the part it is gated on move with it.
 
 const _: () = {
     // `dx`/`dy` are i8. A speed that does not fit truncates silently into a bullet
@@ -225,24 +179,7 @@ const _: () = {
     assert!(BULLET_SPEED > 0 && BULLET_SPEED <= i8::MAX as i32);
     // A full volley must be spawnable without the pool being the binding constraint.
     assert!(BASE_VOLLEY_BULLETS + MAX_SEATS <= MAX_BULLETS);
-    assert!(THORN_PART_FIRST + N_THORN_EMITTERS <= N_PARTS);
     assert!(PLAYER_HIT_RADIUS > 0);
-
-    // Every muzzle stands in the thorn it fires from. This is the defect that shipped:
-    // the old hand-written offsets put two of the four inside the mace and the claws,
-    // and nothing in the program disagreed. Re-slicing the art can only move a muzzle
-    // *with* its box, so this holds by construction — it fires only if someone puts the
-    // offsets back under hand control.
-    let mut i = 0;
-    while i < N_THORN_EMITTERS {
-        let (x, y) = THORN_MUZZLE[i];
-        assert!(
-            PART_HITBOXES[THORN_PART_FIRST + i].contains(x, y),
-            "a thorn muzzle is outside its own hitbox -- THORN_MUZZLE must stay derived \
-             from crate::hitboxes, never hand-written",
-        );
-        i += 1;
-    }
 };
 
 // ---------------------------------------------------------------------------
@@ -556,24 +493,47 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     }
 }
 
-/// Where seat `seat` comes back, fanned out sideways from the entrance so twenty
-/// simultaneous respawns do not stack into one sprite. Clamped to the arena because a
-/// position outside it would be un-hittable and un-renderable.
+/// Which way a door's seats fan: *along* the wall it is set into, never through it.
+///
+/// The `E` marks sit one tile inside the border ring, so for any door the axis it is
+/// near the edge on is the axis the wall runs across — fan along the other one. Derived
+/// rather than tabulated, so redrawing `assets/map/arena.json` with a door on a
+/// different wall re-orients its fan without anyone remembering to.
+#[inline]
+const fn fans_along_x(ex: i16, ey: i16) -> bool {
+    let (x, y) = (ex as i32, ey as i32);
+    let to_x_edge = if x < ARENA_SIZE - x { x } else { ARENA_SIZE - x };
+    let to_y_edge = if y < ARENA_SIZE - y { y } else { ARENA_SIZE - y };
+    to_y_edge <= to_x_edge
+}
+
+/// Where seat `seat` comes back: at one of the map's drawn doors, fanned out along that
+/// door's wall so simultaneous respawns do not stack into one sprite. Clamped to the
+/// arena because a position outside it would be un-hittable and un-renderable.
+///
+/// The door is `map::ENTRANCES[seat % 4]` — the four `E` tiles `tools/gen_map.py`
+/// compiles out of the drawn grid — so the respawn point *is* the mark on the map
+/// rather than a pair of constants that used to sit here describing the arena a second
+/// time. Round-robin, so twenty players come back through all four doors instead of
+/// funnelling into one, and each door carries `20 / 4 = 5` ranks centred on the `E`.
 ///
 /// `pub(crate)` for `enter_gate`, which has to put a player through the gate at the same
 /// place a respawn puts them. Two definitions of "the entrance" is exactly the kind of
 /// duplication that drifts and then reads as a teleport bug.
 ///
-/// `const fn` so the assertion below can run it on every seat at compile time. That
-/// assertion is the whole point: before the map was generated these coordinates were a
-/// free-floating pair that nothing checked, and the arena entrance the respawn used and
-/// the arena the map drew had stopped being the same place.
+/// `const fn` so the assertion below can run it on every seat at compile time.
 pub(crate) const fn entrance_for(seat: usize) -> (i16, i16) {
-    let offset = (seat as i32)
-        .saturating_sub(MAX_SEATS as i32 / 2)
+    let doors = map::ENTRANCES.len();
+    let (ex, ey) = map::ENTRANCES[seat % doors];
+    // Rank within the door, centred so the fan is symmetric about the `E` tile.
+    let offset = ((seat / doors) as i32)
+        .saturating_sub((MAX_SEATS / doors / 2) as i32)
         .saturating_mul(ENTRANCE_SPACING);
-    let x = clamp_arena(ENTRANCE_X.saturating_add(offset));
-    let y = clamp_arena(ENTRANCE_Y);
+    let (x, y) = if fans_along_x(ex, ey) {
+        (clamp_arena((ex as i32).saturating_add(offset)), ey as i32)
+    } else {
+        (ex as i32, clamp_arena((ey as i32).saturating_add(offset)))
+    };
     (x as i16, y as i16)
 }
 
@@ -591,12 +551,13 @@ const fn clamp_arena(v: i32) -> i32 {
 
 /// Every respawn point stands on floor in the generated map.
 ///
-/// `tools/gen_map.py` already reads `ENTRANCE_X`/`_Y`/`_SPACING` back out of this file
-/// and refuses to emit a map that walls one of these tiles in or seals it off from the
-/// heart chamber — but that check only fires when someone runs the tool. This one fires
-/// on every `cargo check`, against the table that actually shipped. A respawn inside a
-/// wall is a player who cannot move in any direction for the rest of the match, and
-/// there is no runtime signal for it at all: they simply stop.
+/// The doors themselves are `E` tiles and floor by construction, but the *fan* is not:
+/// a rank three tiles along the wall can still land in a pillar if the map is redrawn
+/// with one there. `tools/gen_map.py` proves the same points plus reachability to the
+/// heart chamber — but only when someone runs the tool. This fires on every
+/// `cargo check`, against the table that actually shipped. A respawn inside a wall is a
+/// player who cannot move in any direction for the rest of the match, and there is no
+/// runtime signal for it at all: they simply stop.
 const _: () = {
     let mut seat = 0;
     while seat < MAX_SEATS {
@@ -604,7 +565,7 @@ const _: () = {
         assert!(
             !wall_at(x as i32, y as i32),
             "a respawn point lands in a wall in map::WALLS -- redraw assets/map/arena.json \
-             or move ENTRANCE_X/ENTRANCE_Y, then re-run tools/gen_map.py",
+             (move an `E`, or clear the tiles beside it) and re-run tools/gen_map.py",
         );
         seat += 1;
     }
@@ -618,11 +579,13 @@ const _: () = {
 /// volleys stop" is a property of the data rather than a rule someone has to remember.
 /// With every thorn gone the boss fires nothing at all.
 fn spawn_volley(arena: &mut Arena, boss: &Boss, target: (i32, i32), tick: u32, alive: usize) {
-    let mut muzzles = [(0i32, 0i32); N_THORN_EMITTERS];
+    let mut muzzles = [(0i32, 0i32); N_MUZZLES];
     let mut muzzle_n = 0usize;
-    for (i, offset) in THORN_MUZZLE.iter().enumerate() {
-        if boss.parts[THORN_PART_FIRST + i] != 0 {
-            muzzles[muzzle_n] = (boss.x as i32 + offset.0, boss.y as i32 + offset.1);
+    for &Muzzle { part, x, y } in MUZZLES.iter() {
+        // The gate is the muzzle's own `part` index, so the emitter that goes quiet is
+        // always the thorn the player just shot off — not a limb an index guess landed on.
+        if boss.parts[part] != 0 {
+            muzzles[muzzle_n] = (boss.x as i32 + x, boss.y as i32 + y);
             muzzle_n += 1;
         }
     }
@@ -821,7 +784,8 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Bullet;
+    // N_PARTS sizes the fixtures' part arrays; the handler itself never names it.
+    use crate::state::{Bullet, N_PARTS};
     use bytemuck::Zeroable;
 
     fn fight() -> (Arena, Boss, Players) {
@@ -999,8 +963,8 @@ mod tests {
         for b in arena.bullets.iter_mut() {
             b.active = BULLET_FREE;
         }
-        for i in 0..N_THORN_EMITTERS {
-            boss.parts[THORN_PART_FIRST + i] = 0;
+        for m in MUZZLES.iter() {
+            boss.parts[m.part] = 0;
         }
         for _ in 0..=VOLLEY_INTERVAL_TICKS {
             step(&mut arena, &mut boss, &mut players);
@@ -1009,6 +973,31 @@ mod tests {
             arena.bullets.iter().all(|b| b.active == BULLET_FREE),
             "no thorns, no volleys"
         );
+    }
+
+    /// Respawns are read out of the drawn map, not restated beside it. The compile-time
+    /// assertion already proves every point is floor; this proves it is floor *at a
+    /// door* — every seat sits on one of the four `E` marks, all four doors are used,
+    /// and the fan runs along the wall the door is set into rather than into it.
+    #[test]
+    fn respawns_come_out_of_the_drawn_doors() {
+        const DOORS: usize = map::ENTRANCES.len();
+        let mut used = [0usize; DOORS];
+        let span = (ENTRANCE_SPACING * (MAX_SEATS / DOORS / 2) as i32) as i16;
+
+        for seat in 0..MAX_SEATS {
+            let (x, y) = entrance_for(seat);
+            let (dx, dy) = map::ENTRANCES[seat % DOORS];
+            used[seat % DOORS] += 1;
+            if fans_along_x(dx, dy) {
+                assert_eq!(y, dy, "seat {seat} fanned through its own wall");
+                assert!((x - dx).abs() <= span, "seat {seat} fanned past its door");
+            } else {
+                assert_eq!(x, dx, "seat {seat} fanned through its own wall");
+                assert!((y - dy).abs() <= span, "seat {seat} fanned past its door");
+            }
+        }
+        assert_eq!(used, [MAX_SEATS / DOORS; DOORS], "every door carries seats");
     }
 
     /// The three ways a match ends, and the one way it must not.

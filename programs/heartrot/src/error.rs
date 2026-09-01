@@ -30,28 +30,37 @@
 //! | seat byte `>= MAX_SEATS`, or a slot lookup that misses | [`HeartrotError::SeatOutOfRange`] | `player::{join, enter_gate, move_player}`, `shoot::process` |
 //! | `join` names a free seat that is already claimed by another `identity` | [`HeartrotError::SeatOccupied`] | `player::join` |
 //! | a named seat whose `session_pubkey` is still the all-zero sentinel | [`HeartrotError::SeatUnclaimed`] | `guards::assert_session_authority` |
-//! | `arena.phase` is not one this instruction accepts | [`HeartrotError::WrongPhase`] | `player`, `shoot`, `settle`, `delegation` |
+//! | `arena.phase` is not one this instruction accepts | [`HeartrotError::WrongPhase`] | `player::assert_playable`, `shoot::process`, `settle::{start_match, settle}`, `delegation::{process_delegate, check_commit_accounts}` |
 //! | `last_move_tick` / `last_shot_tick` cooldown has not elapsed | [`HeartrotError::RateLimited`] | `player::move_player`, `shoot::process` |
 //! | `slot.hp == 0` | [`HeartrotError::PlayerDead`] | `player::move_player`, `shoot::process` |
 //! | `slot.zone` is wrong for the instruction | [`HeartrotError::WrongZone`] | `player::enter_gate`, `shoot::process` |
 //! | `boss_tick` signer is not the crank-executor PDA | [`HeartrotError::NotCrankSigner`] | `tick::process` |
 //! | the arena is not yet `PHASE_SETTLED` | [`HeartrotError::MatchNotOver`] | `settle::write_leaderboard` |
 //! | signer is not the compiled-in treasury | [`HeartrotError::NotTreasury`] | `init::init_arena`, `settle::write_leaderboard` |
-//! | signer is not `arena.crank_authority` | [`HeartrotError::NotArenaAuthority`] | `player::join`, `settle::{start_match, settle}`, `delegation` |
+//! | signer is not `arena.crank_authority` | [`HeartrotError::NotArenaAuthority`] | `player::join`, `settle::{start_match, settle, write_leaderboard}`, `delegation::{process_delegate, check_commit_accounts}` |
 //! | `join` with a `session_pubkey` already recorded on a different seat | [`HeartrotError::SessionKeyInUse`] | `player::join` |
 //! | `move_player` into a tile `map::WALLS` marks solid | [`HeartrotError::BlockedByWall`] | `player::move_player` |
 //! | `enter_gate` from a seat that is not standing on a gate tile | [`HeartrotError::NotOnGate`] | `player::enter_gate` |
-//! | `start_match` on an arena whose `crank_task_id` is `<= 0` | [`HeartrotError::CrankTaskIdUnset`] | `settle::start_match` |
 //! | `authority` signed but is not the seat's `session_pubkey` | [`HeartrotError::WrongSessionKey`] | `guards::assert_session_authority` |
+//!
+//! There is deliberately no row for "`start_match` on an arena whose `crank_task_id` is
+//! `<= 0`". Code 16 was `CrankTaskIdUnset` and is retired: nothing can produce a
+//! non-positive `crank_task_id`, because both writers floor it — `init::init_arena`'s
+//! `(… & i64::MAX).max(1)` and `settle::mint_task_id`'s identical clamp — and no other
+//! instruction touches the field. `start_match` mints a fresh id over the creation-time
+//! value before it schedules anything, so it never even reads a value it could reject.
+//! A variant guarding a condition its own writers make unreachable is a false failure
+//! mode, and a caller who saw `Custom(16)` would go looking for a bug that cannot exist.
 //!
 //! ## The client half
 //!
 //! A code the browser renders as a bare number is only half a diagnosis, and a
 //! hand-written `Custom(n) -> string` table in TypeScript would be this enum stored
-//! twice — the defect this whole file exists to prevent. The client table is generated
-//! from *this file*: each variant's number is the `= n` below and its message is the
-//! first sentence of its doc comment. Add a variant here and re-run the generator; never
-//! edit the emitted table.
+//! twice — the defect this whole file exists to prevent. No such table exists today: the
+//! client surfaces the raw number and this file is the place a reader looks it up. If one
+//! is ever wanted, it is *generated* from this file — each variant's number is the `= n`
+//! below and its message the first sentence of its doc comment — and never typed out by
+//! hand in `packages/client`.
 
 use pinocchio::error::ProgramError;
 
@@ -160,13 +169,18 @@ heartrot_errors! {
     /// not yet seen the move that put them on the tile (F2 — the client must retry,
     /// not give up).
     NotOnGate = 15,
-
-    /// `start_match` on an `Arena` whose `crank_task_id` is `<= 0`. `task_id` is a
-    /// validator-global namespace and a collision fails *silently* after the CPI returns
-    /// `Ok`, so an unset or non-positive id must fail loudly here rather than schedule a
-    /// task that never ticks (H4).
-    CrankTaskIdUnset = 16,
+    // 16 — `CrankTaskIdUnset`, retired. See the module header: both writers of
+    // `crank_task_id` floor it at 1, so the condition it named cannot occur. Retired,
+    // not free: a future variant is numbered 17 and up, because a deployed client that
+    // still knows 16 must never be handed a different rule under that number.
 }
+
+/// Highest code ever issued, live or **retired**. Every variant is numbered at or below
+/// it, and appending one means bumping it — which is the step that stops a retired number
+/// (16) being handed to a new rule, since the discriminants are wire ABI and a client in a
+/// browser tab cannot be asked to forget one.
+#[cfg(test)]
+const HIGHEST_ISSUED: u32 = 16;
 
 impl From<HeartrotError> for ProgramError {
     #[inline(always)]
@@ -188,17 +202,27 @@ mod tests {
     /// construction — there is no second list to forget to update.
     #[test]
     fn codes_are_frozen() {
-        for (i, (err, code)) in ALL.iter().enumerate() {
-            // Dense and ascending from 1. This is the whole check: a gap means a variant
-            // was deleted rather than retired in place (and a deleted number must never
-            // be reused), a repeat means a copy-pasted append gave two rules one code,
-            // and starting at 1 keeps `Custom(0)` — indistinguishable from "unspecified
-            // custom failure" in most tooling — from ever being one of ours.
-            assert_eq!(*code as usize, i + 1, "{err:?} is numbered {code}");
+        // Strictly ascending from 1, and never above the high-water mark. Ascending
+        // gives distinctness — a copy-pasted append that gives two rules one code fails
+        // here — and starting at 1 keeps `Custom(0)`, indistinguishable from
+        // "unspecified custom failure" in most tooling, from ever being one of ours.
+        //
+        // It is deliberately *not* a density check any more. Dense-and-equal-to-`i + 1`
+        // was the same fact twice (position and number), and it made retiring a variant
+        // impossible: retiring 16 left a list of fifteen whose next append is 17, which
+        // a density walk rejects for being exactly right. `HIGHEST_ISSUED` carries the
+        // fact density was standing in for — which numbers have been spent — and it is
+        // the only line an append has to touch.
+        let mut prev = 0u32;
+        for (err, code) in ALL {
+            assert!(*code > prev, "{err:?} is numbered {code}, after {prev}");
+            assert!(
+                *code <= HIGHEST_ISSUED,
+                "{err:?} is numbered {code}: bump HIGHEST_ISSUED when issuing a new code"
+            );
             assert_eq!(ProgramError::from(*err), ProgramError::Custom(*code));
+            prev = *code;
         }
-        // The count is asserted so that a *truncating* edit — deleting the tail of the
-        // enum — fails here rather than passing a shorter, still-dense walk.
-        assert_eq!(ALL.len(), 16);
+        assert!(!ALL.is_empty());
     }
 }

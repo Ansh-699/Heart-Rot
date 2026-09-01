@@ -226,6 +226,15 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
 /// through `sol_get_sysvar`, which needs no account: the frozen tag-3 account list has no
 /// room for one, and the ~38-key ceiling has no room to spare either.
 ///
+/// That syscall is also why there is no address or owner check to write here, and why the
+/// absence of one is not the usual pinocchio-validates-nothing hole. `fetch_into` addresses
+/// the sysvar by `slot_hashes::SLOTHASHES_ID`, a constant compiled into the SDK
+/// (`SysvarS1otHashes111111111111111111111111111`, verified by round-trip), and the runtime
+/// resolves it from its own sysvar cache. No account reaches this function, so there is
+/// nothing a caller can substitute: the guard an account-based read would need is replaced
+/// by there being no account. A sysvar the runtime does not hold returns `SYSVAR_NOT_FOUND`
+/// → `UnsupportedSysvar` rather than any attacker-shaped data.
+///
 /// There is deliberately **no fallback**. The obvious one is the `Clock`, and it is not
 /// entropy at all against this attacker: slot, timestamp and the two epochs are public and
 /// enumerable, so an outsider can grind candidate tuples across the window between
@@ -236,18 +245,31 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
 /// no crank re-arm possible. A `start_match` that refuses is recoverable and visible; a
 /// match scheduled under a guessable id is neither.
 ///
-/// So a missing sysvar, a short read, or an all-zero hash (present but unpopulated) all
-/// fail loudly with `UnsupportedSysvar`. If that ever fires on the target ER, the fix is
-/// to give the validator a SlotHashes sysvar, not to soften this.
+/// So a missing sysvar (`UnsupportedSysvar`), a rejected read (`InvalidArgument`), an empty
+/// sysvar or an all-zero hash all fail loudly and `start_match` reverts. If that ever fires
+/// on the target ER, the fix is to give the validator a SlotHashes sysvar, not to soften
+/// this. The two distinct errors are kept apart on purpose: the first time this fires on
+/// devnet, "the ER has no SlotHashes at all" and "the read was malformed" want different
+/// fixes and there is no other signal to tell them apart.
 fn schedule_entropy() -> Result<[u8; 32], ProgramError> {
-    // Entries start at byte 8 and are `[slot: u64 | hash: [u8; 32]]`, most recent first.
-    let mut entry = [0u8; 40];
-    if slot_hashes::raw::fetch_into(&mut entry, 8).is_err() || entry[8..].iter().all(|b| *b == 0) {
+    // `[count: u64 | slot: u64 | hash: [u8; 32]]` — the header plus the most recent entry,
+    // which is the only one wanted. The header is read rather than skipped so an *empty*
+    // sysvar is a declared fact rather than something inferred from the bytes: reading from
+    // offset 8 makes `fetch_into` return the buffer's capacity instead of the real count,
+    // and then a validator that hands back a populated-looking zero region is
+    // indistinguishable from one that has entries.
+    //
+    // Both checks below are load-bearing rather than paranoia. Off-chain — every host build
+    // and every `cargo test` — `get_sysvar_unchecked` returns `Ok` without writing a byte,
+    // so a buffer that did not start zeroed would mint an id from uninitialised stack.
+    let mut head = [0u8; 48];
+    let entries = slot_hashes::raw::fetch_into(&mut head, 0)?;
+    if entries == 0 || head[16..].iter().all(|b| *b == 0) {
         return Err(ProgramError::UnsupportedSysvar);
     }
 
     let mut out = [0u8; 32];
-    out.copy_from_slice(&entry[8..]);
+    out.copy_from_slice(&head[16..]);
     Ok(out)
 }
 
@@ -564,6 +586,18 @@ mod tests {
         // `start_match` scheduled — the id is stored, but a wandering derivation would
         // mean the stored value and the scheduled one could ever disagree.
         assert_eq!(a, mint_task_id(&program_id, &arena, 7, &[1u8; 32]));
+    }
+
+    /// The degraded path L4 is about, in the one shape a host test can reach: off-chain,
+    /// `sol_get_sysvar` returns `Ok` and writes nothing, so the read "succeeds" and yields
+    /// no entropy at all. It must refuse. If this ever passes, `start_match` is minting a
+    /// task id from a constant — precomputable, squattable, and silent when squatted.
+    #[test]
+    fn entropy_refuses_rather_than_degrading() {
+        assert_eq!(
+            schedule_entropy().unwrap_err(),
+            ProgramError::UnsupportedSysvar
+        );
     }
 
     /// The three ways this write goes wrong in production: a retried settle duplicating

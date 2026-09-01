@@ -64,11 +64,13 @@ def die(msg: str) -> None:
 # `tick::entrance_for` -- a rewrite of either function's shape (not its constants)
 # is the one drift this tool cannot see.
 #
-# `TILE` and `MAP_TILES` are deliberately NOT read from the Rust: this tool emits
-# them into `map.rs`, and `player.rs` re-exports them from there, so reading them
-# back would validate the map against the tool's own last output. They come from
-# `arena.json` -- the source -- and are cross-checked against the only definitions
-# the Rust still owns independently, `tick.rs`'s `TILE` and `ARENA_SIZE`.
+# `TILE`, `MAP_TILES` and `ARENA_SIZE` are deliberately NOT read from the Rust and
+# are not cross-checked against it either: the Rust no longer owns them. This tool
+# emits `TILE`/`MAP_TILES` into `map.rs`, `player.rs` re-exports them, and `tick.rs`
+# is `const TILE: i32 = map::TILE as i32` with `ARENA_SIZE` derived from it -- so
+# every "check" against the Rust would be this tool reading back its own last
+# output and agreeing with itself. They come from `arena.json`, the source, and
+# `ARENA_SIZE` is computed here the way `tick.rs` computes it: tiles * TILE.
 
 
 def rust_const(src: Path, name: str, env: dict[str, object]) -> object:
@@ -89,17 +91,8 @@ def rust_const(src: Path, name: str, env: dict[str, object]) -> object:
 
 
 def read_rust_geometry(tile: int, map_tiles: int) -> dict[str, object]:
-    env = {"TILE": tile, "MAP_TILES": map_tiles}
-
-    tick_tile = rust_const(TICK_RS, "TILE", {})
-    if tick_tile != tile:
-        die(f"TILE disagrees: arena.json tile_size {tile}, tick.rs {tick_tile}")
-
-    arena_size = rust_const(TICK_RS, "ARENA_SIZE", env)
-    if arena_size != map_tiles * tile:
-        die(f"tick.rs ARENA_SIZE {arena_size} != arena.json grid {map_tiles} tiles "
-            f"* {tile} = {map_tiles * tile}")
-    env["ARENA_SIZE"] = arena_size
+    arena_size = map_tiles * tile
+    env = {"TILE": tile, "MAP_TILES": map_tiles, "ARENA_SIZE": arena_size}
 
     g = {
         "TILE": tile,
@@ -108,8 +101,6 @@ def read_rust_geometry(tile: int, map_tiles: int) -> dict[str, object]:
         "MAX_SEATS": rust_const(STATE_RS, "MAX_SEATS", {}),
         "LOBBY_ENTRANCE": rust_const(PLAYER_RS, "LOBBY_ENTRANCE", env),
         "LOBBY_SPACING": rust_const(PLAYER_RS, "LOBBY_SPACING", env),
-        "ENTRANCE_X": rust_const(TICK_RS, "ENTRANCE_X", env),
-        "ENTRANCE_Y": rust_const(TICK_RS, "ENTRANCE_Y", env),
         "ENTRANCE_SPACING": rust_const(TICK_RS, "ENTRANCE_SPACING", env),
     }
     for corner in ("GATE_MIN_X", "GATE_MAX_X", "GATE_MIN_Y", "GATE_MAX_Y"):
@@ -117,7 +108,30 @@ def read_rust_geometry(tile: int, map_tiles: int) -> dict[str, object]:
     return g
 
 
-def spawn_tiles(g: dict[str, object]) -> list[tuple[str, tuple[int, int]]]:
+def fans_along_x(ex: int, ey: int, arena_size: int) -> bool:
+    """`tick::fans_along_x`: a door's seats fan along the wall it is set into."""
+    to_x_edge = min(ex, arena_size - ex)
+    to_y_edge = min(ey, arena_size - ey)
+    return to_y_edge <= to_x_edge
+
+
+def entrance_for(seat: int, doors: list[tuple[int, int]], g: dict[str, object]) -> tuple[int, int]:
+    """`tick::entrance_for` in Python: seat -> respawn point, in world units.
+
+    Round-robin over the drawn `E` marks, each door carrying `MAX_SEATS / doors`
+    ranks centred on the mark and fanned along that door's wall. The Rust reads the
+    same `doors` list -- it is `map::ENTRANCES`, emitted below -- so only the *shape*
+    of this formula is a transcription; every number in it is read back from source.
+    """
+    clamp = lambda v: min(max(v, 0), g["ARENA_SIZE"] - 1)  # noqa: E731 - tick::clamp_arena
+    ex, ey = doors[seat % len(doors)]
+    offset = (seat // len(doors) - g["MAX_SEATS"] // len(doors) // 2) * g["ENTRANCE_SPACING"]
+    if fans_along_x(ex, ey, g["ARENA_SIZE"]):
+        return clamp(ex + offset), ey
+    return ex, clamp(ey + offset)
+
+
+def spawn_tiles(grid: list[str], g: dict[str, object]) -> list[tuple[str, tuple[int, int]]]:
     """Every point the program can place a player on, as tile coordinates.
 
     Mirrors `player::lobby_spawn` (lobby side) and `tick::entrance_for` (arena
@@ -128,13 +142,13 @@ def spawn_tiles(g: dict[str, object]) -> list[tuple[str, tuple[int, int]]]:
     """
     tile, max_xy = g["TILE"], g["MAP_TILES"] * g["TILE"] - 1
     half = g["MAX_SEATS"] // 2
+    doors = entrance_world(grid, tile)
     out = []
     for seat in range(g["MAX_SEATS"]):
         lx = min(max(g["LOBBY_ENTRANCE"][0] + (seat - half) * g["LOBBY_SPACING"], 0), max_xy)
         ly = min(max(g["LOBBY_ENTRANCE"][1], 0), max_xy)
         out.append((f"lobby_spawn({seat})", (lx // tile, ly // tile)))
-        ax = min(max(g["ENTRANCE_X"] + (seat - half) * g["ENTRANCE_SPACING"], 0), max_xy)
-        ay = min(max(g["ENTRANCE_Y"], 0), max_xy)
+        ax, ay = entrance_for(seat, doors, g)
         out.append((f"entrance_for({seat})", (ax // tile, ay // tile)))
     return out
 
@@ -159,9 +173,26 @@ def load_grid() -> tuple[list[str], int, int]:
     return grid, tile, len(grid)
 
 
+def entrance_points(grid: list[str]) -> list[tuple[int, int]]:
+    """The `E` tiles in row-major scan order -- the order `ENTRANCES` is emitted in."""
+    return [(x, y) for y in range(len(grid)) for x, c in enumerate(grid[y]) if c == ENTRANCE]
+
+
+def entrance_world(grid: list[str], tile: int) -> list[tuple[int, int]]:
+    """`entrance_points` in world units: the tile's top-left corner.
+
+    That is the convention every position in the program is written in --
+    `player::LOBBY_ENTRANCE` is `(28 * TILE, 52 * TILE)`, `player::GATE_MIN_X` is
+    `30 * TILE`, and `player::is_wall` recovers the tile with `pos / TILE`. Emitting
+    tile centres instead would be a half-tile drift nothing downstream could see.
+    """
+    return [(x * tile, y * tile) for x, y in entrance_points(grid)]
+
+
 def validate(grid: list[str], g: dict[str, object]) -> None:
     n = g["MAP_TILES"]
     tile = g["TILE"]
+    max_xy = n * tile - 1
     solid = lambda x, y: grid[y][x] == WALL  # noqa: E731
 
     if len(grid) != n:
@@ -191,9 +222,10 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
         die(f"heart tile {heart} is not the boss spawn {boss} that "
             "tick.rs::start_match writes (ARENA_SIZE/2, ARENA_SIZE/2)")
 
-    entrances = [(x, y) for y in range(n) for x, c in enumerate(grid[y]) if c == ENTRANCE]
+    entrances = entrance_points(grid)
     if len(entrances) != 4:
-        die(f"expected four `{ENTRANCE}` edge entrances, found {len(entrances)}")
+        die(f"expected four `{ENTRANCE}` edge entrances, found {len(entrances)} -- "
+            "`ENTRANCES` is a fixed-length array, so the count is part of the ABI")
 
     # 4-connected on purpose. Movement is 8-way and only tests the destination
     # tile, so a diagonal can squeeze past a corner -- accepting that here would
@@ -207,12 +239,23 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
                 seen.add((nx, ny))
                 q.append((nx, ny))
 
-    for e in entrances:
-        if e not in seen:
-            die(f"entrance {e} cannot reach the heart chamber {heart} -- "
+    # Each entrance has to survive the trip the program makes: mark -> world pair (the
+    # emitted `ENTRANCES`) -> a floor tile that reaches the heart. `E` is floor by
+    # construction, but the emitted pair is not free: `ENTRANCES` is `(i16, i16)` and a
+    # position in this program is `i16` everywhere, so a map big enough to push
+    # `tile * TILE` past 32767 would wrap into a coordinate inside the arena -- a
+    # plausible-looking respawn in the wrong place, which is worse than a crash.
+    for (tx, ty), (wx, wy) in zip(entrances, entrance_world(grid, tile)):
+        if solid(tx, ty):
+            die(f"entrance ({tx}, {ty}) is wall")
+        if not (0 <= wx <= max_xy and 0 <= wy <= max_xy) or max(wx, wy) > 32767:
+            die(f"entrance ({tx}, {ty}) emits world ({wx}, {wy}), which is outside "
+                f"0..={max_xy} or past the i16 `ENTRANCES` is typed as")
+        if (tx, ty) not in seen:
+            die(f"entrance ({tx}, {ty}) cannot reach the heart chamber {heart} -- "
                 "the dungeon is cut in two")
 
-    for label, t in spawn_tiles(g):
+    for label, t in spawn_tiles(grid, g):
         if solid(*t):
             die(f"{label} lands on tile {t}, which is wall")
         if t not in seen:
@@ -248,6 +291,10 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
         bits = sum(1 << x for x, c in enumerate(row) if c == WALL)
         rows.append(f"    0x{bits:016x}, // y={y:<2} {row}")
     body = "\n".join(rows)
+    ents = "\n".join(
+        f"    ({wx}, {wy}), // tile ({tx}, {ty})"
+        for (tx, ty), (wx, wy) in zip(entrance_points(grid), entrance_world(grid, g["TILE"]))
+    )
     return f'''//! Arena wall bitboard.
 //!
 //! {BANNER.replace(chr(10), chr(10) + "//! ")}
@@ -265,19 +312,20 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
 //! on `Arena` selecting between them; still no account, still no key.
 
 /// Map edge in tiles -- the width of the ASCII grid in `assets/map/arena.json`,
-/// which is also what sizes the table below. `handlers::player` re-exports this
-/// rather than declaring its own; the assertion under it is what turns a
-/// re-declaration back into a compile error instead of a silent second copy.
+/// which is also what sizes the table below.
+///
+/// This is the only declaration of it in the program: `handlers::player` re-exports
+/// this constant and `handlers::tick` casts it, so there is nothing left to assert it
+/// against. An `assert!(MAP_TILES == player::MAP_TILES)` used to sit here, and once
+/// `player.rs` became a `pub use` it was comparing this value to itself -- a drift
+/// guard over a fact that is no longer stored twice is theatre, so it is gone.
 pub const MAP_TILES: usize = {n};
 
-const _: () = assert!(MAP_TILES == crate::handlers::player::MAP_TILES);
-
-/// Arena-space units per tile, compiled from `arena.json`'s `tile_size` and checked
-/// by the generator against `handlers::tick::TILE` -- the one place the Rust still
-/// spells this number out for itself.
+/// Arena-space units per tile, compiled from `arena.json`'s `tile_size`.
+///
+/// Same story as `MAP_TILES`: sole declaration, re-exported rather than restated, and
+/// `handlers::tick::ARENA_SIZE` is `MAP_TILES * TILE` derived from these two.
 pub const TILE: i16 = {g["TILE"]};
-
-const _: () = assert!(TILE == crate::handlers::player::TILE);
 
 /// Wall bitboard: bit *x* of row *y* set means tile (x, y) is solid.
 ///
@@ -289,12 +337,57 @@ const _: () = assert!(TILE == crate::handlers::player::TILE);
 pub const WALLS: [u64; MAP_TILES] = [
 {body}
 ];
+
+/// The four `E` marks on the drawn map, in world units at the tile's top-left corner --
+/// the same convention `handlers::player::LOBBY_ENTRANCE` and `GATE_MIN_X` are written
+/// in, and the one `is_wall` inverts with `pos / TILE`.
+///
+/// Row-major scan order (top to bottom, then left to right), *not* compass order: for
+/// the map as drawn that happens to be north, west, east, south, but redrawing the grid
+/// re-orders this array and nothing may assume otherwise.
+///
+/// This exists so respawn points are *read out of the map* instead of restated beside it.
+/// `handlers::tick::entrance_for` picks `ENTRANCES[seat % 4]` and fans that door's ranks
+/// along the wall it is set into; the `ENTRANCE_X`/`ENTRANCE_Y` pair that used to
+/// describe the arena a second time is gone. Move an `E` in the grid, re-run the tool,
+/// and the respawn moves with it.
+pub const ENTRANCES: [(i16, i16); 4] = [
+{ents}
+];
+
+/// Every entrance stands on floor in the table above.
+///
+/// The generator proves the same thing plus reachability, but only when someone runs it.
+/// This fires on every `cargo check`, against the table that actually shipped -- and it
+/// is also what keeps `ENTRANCES` from being an unread constant that quietly rots.
+const _: () = {{
+    let mut i = 0;
+    while i < ENTRANCES.len() {{
+        let (x, y) = ENTRANCES[i];
+        let tx = (x / TILE) as usize;
+        let ty = (y / TILE) as usize;
+        assert!(
+            x >= 0 && y >= 0 && tx < MAP_TILES && ty < MAP_TILES,
+            "an entrance in map::ENTRANCES is off the map -- re-run tools/gen_map.py",
+        );
+        assert!(
+            WALLS[ty] & (1u64 << tx) == 0,
+            "an entrance in map::ENTRANCES lands in a wall -- redraw assets/map/arena.json \\
+             and re-run tools/gen_map.py",
+        );
+        i += 1;
+    }}
+}};
 '''
 
 
 def emit_ts(grid: list[str], g: dict[str, object]) -> str:
     n = g["MAP_TILES"]
     rows = "\n".join(f"  '{row}'," for row in grid)
+    ents = "\n".join(
+        f"  [{wx}, {wy}], // tile ({tx}, {ty})"
+        for (tx, ty), (wx, wy) in zip(entrance_points(grid), entrance_world(grid, g["TILE"]))
+    )
     return f'''/**
  * Arena wall map -- the browser's copy of the table the chain raycasts against.
  *
@@ -321,6 +414,17 @@ export const MAP_MAX_XY = MAP_TILES * MAP_TILE - 1;
  */
 export const MAP_GRID: readonly string[] = [
 {rows}
+];
+
+/**
+ * The four `E` marks, in arena-space units at the tile's top-left corner -- the exact
+ * pairs `map::ENTRANCES` holds on the chain, so the browser can draw and predict a
+ * respawn at the same place the program puts one.
+ *
+ * Row-major scan order (top to bottom, then left to right), *not* compass order.
+ */
+export const MAP_ENTRANCES: readonly (readonly [number, number])[] = [
+{ents}
 ];
 
 /** Is this tile solid? Off-map is solid, so a caller that skips the clamp fails closed. */
@@ -357,10 +461,15 @@ def self_test(grid: list[str], g: dict[str, object]) -> None:
         return out
 
     n = g["MAP_TILES"]
+    # Seat 0's respawn: a rank *beside* its door, not the `E` tile itself, so walling it
+    # is caught by the spawn sweep rather than by the entrance check above it.
+    rx, ry = entrance_for(0, entrance_world(grid, g["TILE"]), g)
     cases = {
         "entrance walled in": poke(poke(grid, 31, 1, WALL), 33, 1, WALL),
+        "entrance erased": poke(grid, 32, 1, FLOOR),
+        "fifth entrance": poke(grid, 1, 2, ENTRANCE),
         "floor sealed off": poke(poke(grid, 2, 1, WALL), 1, 2, WALL),
-        "spawn in a wall": poke(grid, g["ENTRANCE_X"] // g["TILE"], g["ENTRANCE_Y"] // g["TILE"], WALL),
+        "spawn in a wall": poke(grid, rx // g["TILE"], ry // g["TILE"], WALL),
         "gate walled off": poke(grid, g["GATE_MIN_X"] // g["TILE"], g["GATE_MIN_Y"] // g["TILE"], WALL),
         "border breached": poke(grid, n // 2, 0, FLOOR),
         "heart deleted": poke(grid, n // 2, n // 2, FLOOR),

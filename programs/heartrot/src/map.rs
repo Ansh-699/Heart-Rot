@@ -16,19 +16,20 @@
 //! on `Arena` selecting between them; still no account, still no key.
 
 /// Map edge in tiles -- the width of the ASCII grid in `assets/map/arena.json`,
-/// which is also what sizes the table below. `handlers::player` re-exports this
-/// rather than declaring its own; the assertion under it is what turns a
-/// re-declaration back into a compile error instead of a silent second copy.
+/// which is also what sizes the table below.
+///
+/// This is the only declaration of it in the program: `handlers::player` re-exports
+/// this constant and `handlers::tick` casts it, so there is nothing left to assert it
+/// against. An `assert!(MAP_TILES == player::MAP_TILES)` used to sit here, and once
+/// `player.rs` became a `pub use` it was comparing this value to itself -- a drift
+/// guard over a fact that is no longer stored twice is theatre, so it is gone.
 pub const MAP_TILES: usize = 64;
 
-const _: () = assert!(MAP_TILES == crate::handlers::player::MAP_TILES);
-
-/// Arena-space units per tile, compiled from `arena.json`'s `tile_size` and checked
-/// by the generator against `handlers::tick::TILE` -- the one place the Rust still
-/// spells this number out for itself.
+/// Arena-space units per tile, compiled from `arena.json`'s `tile_size`.
+///
+/// Same story as `MAP_TILES`: sole declaration, re-exported rather than restated, and
+/// `handlers::tick::ARENA_SIZE` is `MAP_TILES * TILE` derived from these two.
 pub const TILE: i16 = 16;
-
-const _: () = assert!(TILE == crate::handlers::player::TILE);
 
 /// Wall bitboard: bit *x* of row *y* set means tile (x, y) is solid.
 ///
@@ -103,3 +104,47 @@ pub const WALLS: [u64; MAP_TILES] = [
     0x8000000000000001, // y=62 #...............................E..............................#
     0xffffffffffffffff, // y=63 ################################################################
 ];
+
+/// The four `E` marks on the drawn map, in world units at the tile's top-left corner --
+/// the same convention `handlers::player::LOBBY_ENTRANCE` and `GATE_MIN_X` are written
+/// in, and the one `is_wall` inverts with `pos / TILE`.
+///
+/// Row-major scan order (top to bottom, then left to right), *not* compass order: for
+/// the map as drawn that happens to be north, west, east, south, but redrawing the grid
+/// re-orders this array and nothing may assume otherwise.
+///
+/// This exists so respawn points are *read out of the map* instead of restated beside it.
+/// `handlers::tick::entrance_for` picks `ENTRANCES[seat % 4]` and fans that door's ranks
+/// along the wall it is set into; the `ENTRANCE_X`/`ENTRANCE_Y` pair that used to
+/// describe the arena a second time is gone. Move an `E` in the grid, re-run the tool,
+/// and the respawn moves with it.
+pub const ENTRANCES: [(i16, i16); 4] = [
+    (512, 16), // tile (32, 1)
+    (16, 512), // tile (1, 32)
+    (992, 512), // tile (62, 32)
+    (512, 992), // tile (32, 62)
+];
+
+/// Every entrance stands on floor in the table above.
+///
+/// The generator proves the same thing plus reachability, but only when someone runs it.
+/// This fires on every `cargo check`, against the table that actually shipped -- and it
+/// is also what keeps `ENTRANCES` from being an unread constant that quietly rots.
+const _: () = {
+    let mut i = 0;
+    while i < ENTRANCES.len() {
+        let (x, y) = ENTRANCES[i];
+        let tx = (x / TILE) as usize;
+        let ty = (y / TILE) as usize;
+        assert!(
+            x >= 0 && y >= 0 && tx < MAP_TILES && ty < MAP_TILES,
+            "an entrance in map::ENTRANCES is off the map -- re-run tools/gen_map.py",
+        );
+        assert!(
+            WALLS[ty] & (1u64 << tx) == 0,
+            "an entrance in map::ENTRANCES lands in a wall -- redraw assets/map/arena.json \
+             and re-run tools/gen_map.py",
+        );
+        i += 1;
+    }
+};
