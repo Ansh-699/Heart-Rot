@@ -274,8 +274,24 @@ async function rollForward(
  * How many arena ids past the leaderboard's head to consider before giving up. Each step
  * costs a router call and an RPC read, and every step past the first means that many
  * raids are running at once.
+ *
+ * Why this is not 3. A scan step is only reusable if the arena is absent, in the lobby, or
+ * a settled WIN that can roll forward. Anything else — a settled loss, a match abandoned
+ * mid-fight, one stranded in `SETTLING` on the ER — occupies its id permanently, because
+ * `lastArenaId` only advances when a match actually writes to the leaderboard. Dead ids
+ * therefore pile up at the head of the scan and never clear.
+ *
+ * With 3, three consecutive dead arenas from one afternoon of spike runs put the first
+ * free id one step past the horizon and the Worker answered `no_open_arena` to every
+ * player, forever, with a free slot sitting immediately behind the wall. Observed on
+ * devnet: 1788266869 settled-enrage, 1788266870 stranded SETTLING on the ER, 1788266871
+ * settled-enrage, 1788266872 absent and perfectly usable.
+ *
+ * The loop already creates an arena when it finds an absent id, so the width is the only
+ * thing standing between a wall of dead matches and a working game. The common case still
+ * returns on step 0 or 1; the wide bound is only paid when the head is genuinely blocked.
  */
-const ARENA_SCAN = 3;
+const ARENA_SCAN = 12;
 
 /**
  * The open arena, derived from chain state alone.
@@ -314,6 +330,13 @@ async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number
     }
     // Mid-fight, mid-settlement, or a chain that ended: the next id is untouched.
   }
+  // Every id in the window is occupied by a match nobody can join. That is a real
+  // operational state, not a transient one, so name the range that was tried — a bare
+  // null here previously turned into an unexplainable 503 on the player's screen.
+  console.warn(
+    `openArena: ids ${head}..${head + BigInt(ARENA_SCAN - 1)} are all unusable; ` +
+      'every one is mid-fight, mid-settlement, or a settled loss that cannot roll forward.',
+  );
   return null;
 }
 
