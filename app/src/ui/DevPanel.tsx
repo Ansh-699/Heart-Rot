@@ -73,10 +73,13 @@ function Row({
 }
 
 export default function DevPanel() {
-  const [open, setOpen] = useState(false);
+  // Open by default. This is a devnet demo whose entire claim is measurable — what the
+  // round trip costs and what the player pays — so hiding that behind a keypress buried
+  // the point of the thing. Still dismissible, and the choice does not persist.
+  const [open, setOpen] = useState(true);
   const [m, setM] = useState<Snapshot>(() => snapshot());
   const [treasury, setTreasury] = useState<Treasury | null>(null);
-  const [opening, setOpening] = useState<number | null>(null);
+  const [opening, setOpening] = useState<{ lamports: number; at: number } | null>(null);
   const status = useSelect((s) => s.status);
   // Match identity, because "the chain says one thing and the screen says another" is the
   // failure this project keeps hitting, and it is unanswerable without knowing WHICH
@@ -132,7 +135,7 @@ export default function DevPanel() {
         const lamports = Number(j.treasuryLamports);
         if (!Number.isFinite(lamports) || !live) return;
         setTreasury({ lamports, matches: j.estimatedMatches });
-        setOpening((v) => (v === null ? lamports : v));
+        setOpening((v) => v ?? { lamports, at: Date.now() });
       } catch {
         // A failed poll leaves the last reading on screen. The treasury is a gauge, not a
         // control, so a gap is not worth an error state.
@@ -154,7 +157,14 @@ export default function DevPanel() {
     );
   }
 
-  const burn = treasury && opening !== null ? opening - treasury.lamports : null;
+  const burn = treasury && opening ? opening.lamports - treasury.lamports : null;
+  // A rate needs a baseline long enough to mean something. Under a minute the arithmetic
+  // is dominated by whichever single match happened to land, so it stays "—" rather than
+  // reporting a number that swings by 10x between polls.
+  const elapsedMin = opening ? (Date.now() - opening.at) / 60_000 : 0;
+  const burnRate = burn !== null && elapsedMin >= 1 ? burn / elapsedMin : null;
+  // The Worker's own gauge, turned around: what it thinks one match costs.
+  const perMatch = treasury && treasury.matches > 0 ? treasury.lamports / treasury.matches : null;
 
   return (
     <aside className="dev" aria-label="Telemetry">
@@ -252,6 +262,18 @@ export default function DevPanel() {
           value={burn === null ? '—' : sol(Math.max(0, burn), 5)}
           unit="SOL"
           note="since you loaded the page"
+        />
+        <Row
+          label="burn rate"
+          value={burnRate === null ? '—' : sol(Math.max(0, burnRate), 5)}
+          unit="SOL/min"
+          note={burnRate === null ? 'needs a minute of baseline' : undefined}
+        />
+        <Row
+          label="per match"
+          value={perMatch === null ? '—' : sol(perMatch, 5)}
+          unit="SOL"
+          note="rent and delegation for one raid"
         />
       </div>
 

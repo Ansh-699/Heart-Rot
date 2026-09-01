@@ -59,7 +59,7 @@ import type { Env } from './index';
 const COMPUTE_BUDGET_PROGRAM = address('ComputeBudget111111111111111111111111111111');
 
 /** Crank interval the program schedules. Returned so the client can size its watchdog. */
-const TICK_MS = 400;
+const TICK_MS = 100;
 
 /**
  * Selectable knight skins, from the reference sheet (game design spec §6). The program

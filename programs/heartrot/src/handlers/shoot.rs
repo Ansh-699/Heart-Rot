@@ -91,7 +91,7 @@ const FACING_STEP: [(i32, i32); 8] = [
 /// One accepted shot every two ticks (~800 ms at the crank's target rate). The
 /// comparison is `arena.tick > last_shot_tick + SHOT_COOLDOWN_TICKS`, so 0 would mean
 /// one shot per tick — the hard ceiling the tick clock can express.
-const SHOT_COOLDOWN_TICKS: u32 = 1;
+const SHOT_COOLDOWN_TICKS: u32 = crate::state::ticks_for(800) - 1;
 
 /// Damage per landed shot, to a part or to the core. Balance against whatever
 /// `parts_max` / `core_hp_max` the boss is spawned with; this is the knob to turn
@@ -548,8 +548,11 @@ mod tests {
         );
         assert_eq!(boss.parts[7], 60, "a refused shot deals nothing");
 
-        // A miss into the empty west still burns the shot.
-        arena.tick += 1;
+        // A miss into the empty west still burns the shot. Advancing by the cooldown
+        // itself, not by a hardcoded 1: the window is a duration (800 ms) divided by
+        // TICK_MS, so a literal here would silently stop testing the boundary the moment
+        // the tick rate moved — which is exactly what it did.
+        arena.tick += SHOT_COOLDOWN_TICKS + 1;
         fire(&mut arena, &mut boss, &mut slot, WEST).expect("off cooldown");
         assert_eq!(slot.last_shot_tick, arena.tick);
         assert_eq!(slot.facing, WEST);

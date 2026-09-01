@@ -19,7 +19,7 @@
  *
  * | Action | Chain rule | Mirrored as |
  * |---|---|---|
- * | `move`, any phase | `last_move_tick != clock.slot` (50 ms slots) | one send per 100 ms |
+ * | `move`, any phase | `last_move_tick != clock.slot` (50 ms slots) | one send per 50 ms |
  * | `shoot` | `arena.tick > last_shot_tick + 1` | one send per two observed ticks |
  * | either, dead | `hp == 0` -> `PlayerDead` (Custom 8) | `clock().alive === false` sends nothing |
  *
@@ -50,7 +50,7 @@ import { PHASE_FIGHTING } from '@heartrot/client';
 const PUMP_MS = 50;
 
 /** Lobby move gate. See the module header for why it is not the chain's 50 ms. */
-const MOVE_MS = 100;
+const MOVE_MS = 50;
 
 /** `SHOT_COOLDOWN_TICKS` from `handlers/shoot.rs`, where the test is strictly greater. */
 const SHOT_COOLDOWN_TICKS = 1;
@@ -89,8 +89,9 @@ export function dirFromVector(dx: number, dy: number): number {
 function moveAllowed(now: number, lastMoveAt: number): boolean {
   // One rule for every phase, because the chain now has one rule for every phase. The
   // budget is wall clock rather than the observed tick: the gate it mirrors is the ER
-  // slot, and a client cannot see slots — 100 ms is two of them, which is the finest
-  // cadence at which the ER will actually notify this account of its own move landing.
+  // slot, and a client cannot see slots — 50 ms IS one slot, which is the floor. There is
+  // no number below this that the chain would accept or that anything could observe, so
+  // this is "as fast as the network allows" in the literal sense rather than a taste.
   return now - lastMoveAt >= MOVE_MS;
 }
 

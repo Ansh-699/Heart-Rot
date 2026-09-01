@@ -187,7 +187,7 @@ const fn decode_base58_address(text: &str) -> [u8; 32] {
 /// Hardcoded rather than passed in: it is a rule of the fight, and the one place it could
 /// legitimately vary (a validator ticking slower than 400 ms) is not something the caller
 /// knows either. `tick` is the only clock; wall-clock never enters this program.
-pub const ENRAGE_AT_TICK: u32 = 900;
+pub const ENRAGE_AT_TICK: u32 = crate::state::ticks_for(360_000);
 
 /// `arena_id` u64 `[0..8]` ‖ `incarnation` u16 `[8..10]` ‖ `validator_identity`
 /// `[10..42]` ‖ `crank_authority` `[42..74]`. Frozen; `packages/client/src/instructions.ts`

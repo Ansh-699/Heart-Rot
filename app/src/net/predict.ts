@@ -57,7 +57,7 @@ import {
 const TILE = MAP_TILE;
 
 /** Crank period. A *target*, not a contract — never derive game state from wall clock. */
-const TICK_MS = 400;
+const TICK_MS = 100;
 
 const STEP = TILE;
 

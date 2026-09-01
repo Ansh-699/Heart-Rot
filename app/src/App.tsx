@@ -266,7 +266,7 @@ function World({ screen, link }: { screen: Screen; link: Link }) {
   const boss = useSelect((s) => s.boss);
   const players = useSelect((s) => s.players);
   const seat = useSelect((s) => s.match?.seat ?? -1);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? 400);
+  const tickMs = useSelect((s) => s.match?.tickMs ?? 100);
 
   useGameplay(host, link);
 

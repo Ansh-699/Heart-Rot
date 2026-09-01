@@ -124,7 +124,36 @@ pub const OUTCOME_ENRAGE: u8 = 3;
 /// and an incarnation whose ruleset was quietly chosen by whoever produced a block is the
 /// exact property the VRF exists to deny. `begin_next_incarnation` then refuses with
 /// `WrongPhase` — loud and recoverable, rather than silent and wrong.
-pub const ROLL_TIMEOUT_TICKS: u32 = 25;
+/// The crank period, and the only place a simulation rate is chosen.
+///
+/// Every duration in this program is written in MILLISECONDS and converted through
+/// [`ticks_for`], so changing this one number rescales the whole simulation correctly
+/// instead of leaving six hand-tuned tick counts to be found and divided by hand. That
+/// mattered: a tick count is a duration stored in units of a constant somewhere else,
+/// which is the fact-stored-twice shape behind every serious defect this project has had.
+///
+/// Why 100 ms and not the 50 ms ER slot, which is genuinely the floor: bullet velocity is
+/// integer units per tick in an `i8`, so a faster tick makes each step smaller and the
+/// direction quantisation coarser. At 400 ms a step was 48 units and the worst angular
+/// error ~0.6 degrees; at 100 ms it is 12 units and ~2.4 degrees; at 50 ms it would be 6
+/// units and ~4.8 degrees, which is about 2.6 tiles of lateral drift over a long shot —
+/// far enough to miss a player the boss was aiming at. Going below 100 ms wants
+/// sub-unit velocity in the `Bullet` layout first, which is a layout change, not a knob.
+pub const TICK_MS: u32 = 100;
+
+/// A duration in milliseconds as a whole number of ticks, never rounding down to zero —
+/// a zero-tick cooldown would be no cooldown at all.
+pub const fn ticks_for(ms: u32) -> u32 {
+    let n = ms / TICK_MS;
+    if n == 0 {
+        1
+    } else {
+        n
+    }
+}
+
+/// Ten seconds. A roll that has not been fulfilled by then is abandoned.
+pub const ROLL_TIMEOUT_TICKS: u32 = ticks_for(10_000);
 
 /// `PlayerSlot.zone`.
 pub const ZONE_LOBBY: u8 = 0;
@@ -1107,5 +1136,24 @@ mod tests {
         assert_eq!(boss.core_hp_max, 2_300);
         assert_eq!(boss.parts, boss.parts_max, "a full shell is exactly 100 %");
         assert_eq!((boss.vent_open, boss.target_seat), (0, NO_TARGET));
+    }
+}
+
+#[cfg(test)]
+mod rate_tests {
+    use super::*;
+
+    /// The rescale is only correct if the DURATIONS survive it. Ticks are an
+    /// implementation detail of the crank period; these are the numbers a player feels,
+    /// and they must not move when `TICK_MS` does.
+    #[test]
+    fn durations_survive_the_tick_rate() {
+        assert_eq!(ticks_for(3_200) * TICK_MS, 3_200, "respawn stays 3.2 s");
+        assert_eq!(ticks_for(10_000) * TICK_MS, 10_000, "roll timeout stays 10 s");
+        assert_eq!(ticks_for(360_000) * TICK_MS, 360_000, "enrage stays 6 min");
+        assert_eq!(ticks_for(800) * TICK_MS, 800, "shot cooldown stays 800 ms");
+        // A duration shorter than one tick must still cost a tick, never zero.
+        assert_eq!(ticks_for(1), 1, "a sub-tick cooldown is still a cooldown");
+        assert_eq!(ticks_for(0), 1);
     }
 }

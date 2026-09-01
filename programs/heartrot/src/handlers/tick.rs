@@ -126,14 +126,17 @@ const fn wall_at(x: i32, y: i32) -> bool {
 // Balance knobs
 // ---------------------------------------------------------------------------
 
-/// Bullet speed in arena units per tick — 3 tiles per 400 ms. Boss centre to a player
+/// Bullet speed, derived from a real-world speed so the tick rate can change under it.
+/// 120 units/s is 7.5 tiles a second — 3 tiles per 400 ms, the rate this was balanced at.
+/// Originally: 3 tiles per 400 ms. Boss centre to a player
 /// at mid-range is ~8 ticks of travel, which is the dodge window the whole design rests
 /// on: hitscan for the player, travel time for the boss (spec §3).
 ///
 /// It must fit `Bullet.dx`/`dy`, which are `i8`. Collision is swept (see
 /// [`bullet_hits`]), so raising this does *not* let bullets tunnel through players —
 /// that coupling is the usual reason a number like this is stuck too low.
-const BULLET_SPEED: i32 = 48;
+const BULLET_UNITS_PER_SEC: i32 = 120;
+const BULLET_SPEED: i32 = BULLET_UNITS_PER_SEC * crate::state::TICK_MS as i32 / 1_000;
 
 /// Player collision radius, ~¾ of a tile. Compared as a squared distance against a
 /// squared radius; there is no `sqrt` in this program.
@@ -146,10 +149,10 @@ const BULLET_DAMAGE: u16 = 8;
 /// Death lasts 8 ticks ≈ 3.2 s at the crank's target rate (spec §3: "dead for 3
 /// seconds"). Counted in ticks, never milliseconds — the crank makes no wall-clock
 /// promise and a millisecond timer would run at a different speed on a slower validator.
-const RESPAWN_TICKS: u32 = 8;
+const RESPAWN_TICKS: u32 = crate::state::ticks_for(3_200);
 
 /// One volley every 8 ticks (spec §2, `volley_interval = 8 ticks`).
-const VOLLEY_INTERVAL_TICKS: u8 = 8;
+const VOLLEY_INTERVAL_TICKS: u8 = crate::state::ticks_for(3_200) as u8;
 
 /// `bullets_per_volley = 3 + alive_players` — difficulty as bullet density, so twenty
 /// players make a visibly harder fight rather than a boss with a hidden HP multiplier.
@@ -949,6 +952,20 @@ mod tests {
         assert!(!bullet_hits((100, 100), (148, 100), 40, 100));
     }
 
+    /// Ticks a bullet needs to cover `units`.
+    ///
+    /// The wall and pillar cases below were written against a 48-unit step and describe
+    /// DISTANCES — "across the corridor", "through a 32-unit pillar". Asserting them
+    /// after a single `tick_once` quietly encoded the step size into the geometry, so
+    /// they broke the moment `TICK_MS` changed under them. Travelling a stated distance
+    /// keeps the intent and survives the next rate change.
+    const fn ticks_to_travel(units: i32) -> usize {
+        ((units + BULLET_SPEED - 1) / BULLET_SPEED) as usize
+    }
+
+    /// The distance the bullet-vs-geometry cases are drawn around.
+    const PROBE_UNITS: i32 = 48;
+
     /// The dungeon is only tactical if it stops bullets, and both halves of that have
     /// to hold: a volley fired across a corridor dies on the corridor wall, and a volley
     /// fired *along* the corridor lives. The pillar case is the one an endpoint-only
@@ -960,7 +977,12 @@ mod tests {
             // No thorns, so nothing else can spawn into the pool and confuse the count.
             boss.parts = [0; N_PARTS];
             arena.bullets[0] = Bullet { x, y, dx, dy, active: BULLET_ACTIVE, _pad0: 0 };
-            tick_once(&mut arena, &mut boss, &mut players);
+            for _ in 0..ticks_to_travel(PROBE_UNITS) {
+                if arena.bullets[0].active != BULLET_ACTIVE {
+                    break;
+                }
+                tick_once(&mut arena, &mut boss, &mut players);
+            }
             arena.bullets[0].active == BULLET_ACTIVE
         };
 
@@ -1153,7 +1175,12 @@ mod tests {
                 active: BULLET_ACTIVE,
                 _pad0: 0,
             };
-            tick_once(&mut arena, &mut boss, &mut players);
+            for _ in 0..ticks_to_travel(PROBE_UNITS) {
+                if arena.bullets[0].active != BULLET_ACTIVE {
+                    break;
+                }
+                tick_once(&mut arena, &mut boss, &mut players);
+            }
             (players.slots[0].hp, arena.bullets[0].active)
         };
 

@@ -93,7 +93,7 @@ pub const IX_BOSS_TICK: u8 = 8;
 /// Target gap between ticks. A floor, not a guarantee — the scheduler re-queues at
 /// `last_execution + interval`, so ticks drift under load rather than catching up.
 /// Nothing in the game may read wall-clock time; `Arena.tick` is the only clock.
-const TICK_INTERVAL_MS: i64 = 400;
+const TICK_INTERVAL_MS: i64 = crate::state::TICK_MS as i64;
 
 /// Ticks the crank is armed for. A match is bounded by `enrage_at_tick` (900 ticks =
 /// 6 minutes), so this is 5× headroom. Sized generously rather than exactly because a
