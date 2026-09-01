@@ -1,67 +1,64 @@
 /**
- * The shell: four screens, one linear flow, no router.
+ * The shell: four screens, one linear flow, no router — plus the two seams that make the
+ * rest of `app/` reachable.
  *
  * Onboarding → character select → lobby → arena, and the only way back is a settled
  * match. A route table would buy history, deep links and code splitting for a flow with
  * no branches, no shareable URLs and one bundle — so the "route" is `screenOf(state)`,
  * which reads the seat's `zone` straight off the chain.
  *
- * What this file draws is the chrome: identity, roster, boss telemetry, the match clock,
- * the result. It does not draw the world. That is `#stage`, which the SVG renderer mounts
- * into — the two are kept apart deliberately, because everything below re-renders on state
- * changes and the renderer must not: a React re-render at 2.5 Hz that touches `d`, `fill`
- * or `x` is a full repaint landing at exactly the moment a bullet volley spawns.
+ * This file draws the chrome (identity, the match clock, the result) and owns two things
+ * nothing else can own, because nothing else sees both the store and the match:
+ *
+ *   **In** — `useMatchLink` pins the ER with `connectMatch`, opens `subscribeMatch` and
+ *   feeds every account notification into `store.setWorld`. Without it `arena`, `boss` and
+ *   `players` stay `null` for the life of the page and the world never moves.
+ *
+ *   **Out** — `World` attaches `attachControls` to the stage and turns each intent into a
+ *   `move` / `shoot` / `enter_gate` signed by the session key and sent straight to the ER.
+ *   This is the only path from a keypress to the chain; a Worker round trip here would
+ *   throw away the entire reason for the rollup.
+ *
+ * The panels themselves live in `screens/` and `ui/Hud.tsx`, and the world is drawn by
+ * `render/Arena.tsx`. They are imported, never re-implemented: a second copy of the part
+ * list or the skin table drifts from the chain layout the moment either is touched.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
-  BULLET_ACTIVE,
-  MAX_SEATS,
-  NO_TARGET,
   PHASE_LOBBY,
   PHASE_SETTLED,
   PHASE_SETTLING,
-  ZONE_ARENA,
-  type BossAccount,
+  ZONE_LOBBY,
+  connectMatch,
+  createSessionSigner,
+  enterGate,
+  movePlayer,
+  sendInstructions,
+  shoot,
+  type HeartrotRpc,
+  type SessionSigner,
 } from '@heartrot/client';
 
+import { attachControls } from './input/controls';
+import { TILE, createPredictor, type Predictor } from './net/predict';
+import { subscribeMatch, type MatchSubscription } from './net/subscribe';
+import { Arena } from './render/Arena';
+import { ARENA_UNITS } from './render/sprites';
+import { CharacterSelect } from './screens/CharacterSelect';
+import { Lobby } from './screens/Lobby';
+import { Onboarding } from './screens/Onboarding';
 import {
   mySeatSlot,
   screenOf,
   useSelect,
   useStore,
   type ConnectionStatus,
+  type Screen,
 } from './state/store';
-
-/**
- * Index-aligned with `Boss.parts`, which is index-aligned with the hitbox JSON
- * `tools/svg_slice.py` emits. One build step produces the `<g>` the browser animates and
- * the rectangle the program raycasts against, so this list may be renamed but never
- * reordered.
- */
-const PART_NAMES = [
-  'Ram crown',
-  'Wolf head',
-  'Beast head',
-  'Thorns I',
-  'Thorns II',
-  'Thorns III',
-  'Thorns IV',
-  'Mace arm',
-  'Claw arms',
-] as const;
-
-/**
- * `skin_id` is a render hint, not an index into chain state — the program does not
- * range-check it — so the count here and the Worker's `SKIN_COUNT` are the only bound,
- * and they have to agree.
- */
-const SKINS = [
-  { name: 'Vanguard', colour: '#4a7fd4', blurb: 'Plate and a tower shield. Slow, and hard to move.' },
-  { name: 'Warden', colour: '#b5b56a', blurb: 'Chain and a poleaxe. Reads the room before it swings.' },
-  { name: 'Reaver', colour: '#a06a80', blurb: 'Light mail, two blades. Alive only while it is moving.' },
-] as const;
+import { Hud } from './ui/Hud';
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   idle: 'offline',
@@ -73,17 +70,45 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   error: 'error',
 };
 
-/** Ticks to `m:ss`. `tick` is the only clock — wall time is never authoritative here. */
-function clock(ticks: number, tickMs: number): string {
-  const total = Math.max(0, Math.round((ticks * tickMs) / 1000));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+/**
+ * `Address` without importing `@solana/kit`: `app/package.json` does not depend on it
+ * directly, and under pnpm's non-hoisted layout a bare import would not resolve here.
+ * Same trick as `net/subscribe.ts`. The Worker hands these back as plain strings.
+ */
+type Addr = Parameters<HeartrotRpc['getAccountInfo']>[0];
+const addr = (value: string): Addr => value as Addr;
+
+/**
+ * The gate tile block, mirrored from `GATE_MIN_X`..`GATE_MAX_Y` in
+ * `programs/heartrot/src/handlers/player.rs`. There is no "enter the gate" button by
+ * design — the gate is a place you walk to — so the client has to know where it is in
+ * order to send `enter_gate` when the player arrives.
+ *
+ * ponytail: a second copy of a chain constant, like the wall ring in `net/predict.ts`.
+ * Both retire together when the tilemap build step emits the map data for both sides;
+ * until then a disagreement here costs a player who stands on the gate and never enters.
+ */
+const GATE_MIN = 30 * TILE;
+const GATE_MAX = 34 * TILE - 1;
+
+function onGate(x: number, y: number): boolean {
+  return x >= GATE_MIN && x <= GATE_MAX && y >= GATE_MIN && y <= GATE_MAX;
 }
+
+/**
+ * `enter_gate` is rejected silently while the chain still has you off the tile, and
+ * gameplay is sent with `skipPreflight`, so a single attempt that loses the race is
+ * invisible. Retry on this period until the seat's `zone` actually flips.
+ */
+const GATE_RETRY_MS = 500;
 
 export default function App() {
   const screen = useSelect(screenOf);
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
   const status = useSelect((s) => s.status);
   const store = useStore();
+
+  const link = useMatchLink();
 
   // The chain decides a match is over; somebody has to tell the base layer. `settle()`
   // is self-debouncing, so all twenty clients seeing this notification is fine.
@@ -98,8 +123,9 @@ export default function App() {
         {screen === 'onboarding' && <Onboarding />}
         {screen === 'select' && <CharacterSelect />}
         {screen === 'lobby' && <Lobby />}
-        {screen === 'arena' && <Arena />}
+        {screen === 'arena' && <ArenaScreen />}
       </main>
+      <World screen={screen} link={link} />
       <ErrorBar />
     </div>
   );
@@ -143,298 +169,26 @@ function ErrorBar() {
   );
 }
 
-/**
- * Where the SVG world is drawn. Owned by the renderer, not by this file: React manages
- * the chrome around it and never the nodes inside it, so a HUD re-render cannot schedule
- * a repaint of 128 bullets.
- */
-function Stage() {
-  return <div id="stage" className="stage" role="presentation" />;
-}
-
-function Meter({ value, max, tone }: { value: number; max: number; tone?: string }) {
-  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
-  return (
-    <span className="meter">
-      <span className="meter-fill" style={{ width: `${pct}%`, background: tone }} />
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Screen 1 — onboarding
-// ---------------------------------------------------------------------------
-
-function Onboarding() {
-  const store = useStore();
-  const busy = useSelect((s) => s.status === 'joining');
-
-  // Both buttons are the same call on purpose. Privy exposes email, social *and*
-  // Phantom/Backpack/WalletConnect through one Wallet Standard connector list, so the
-  // spec's "two paths" is one code path — and the wallet, if there is one, is used for
-  // identity only. It never signs a gameplay transaction and never sees a popup in play.
-  const signIn = () => void store.signIn();
-
-  return (
-    <section className="card">
-      <p className="eyebrow">A co-op raid that lives entirely on chain</p>
-      <h2>Twenty of you. One boss. No health bar.</h2>
-      <p className="lede">
-        The boss is a shell, not a number. Break its crown, its heads, its thorn clusters —
-        the thorns are what fire at you — and when enough of it is gone the chest vent opens
-        and the face underneath becomes killable.
-      </p>
-      <p className="fine">
-        Sign in once. There is no wallet popup during play, no seed phrase, and nothing to
-        fund: your play key is generated in this browser, holds zero SOL, and never leaves.
-      </p>
-      <div className="row">
-        <button className="btn btn-primary" onClick={signIn} disabled={busy}>
-          {busy ? 'Signing in…' : 'Enter with email or social'}
-        </button>
-        <button className="btn" onClick={signIn} disabled={busy}>
-          I already have a wallet
-        </button>
-      </div>
-      <p className="fine">Devnet only. No token, no NFT, nothing to buy.</p>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Screen 2 — character select
-// ---------------------------------------------------------------------------
-
-function CharacterSelect() {
-  const store = useStore();
-  const skinId = useSelect((s) => s.skinId);
-  const busy = useSelect((s) => s.status === 'joining');
-
-  return (
-    <section className="card">
-      <p className="eyebrow">Choose a body</p>
-      <h2>Character select</h2>
-      <div className="skins">
-        {SKINS.map((skin, index) => (
-          <button
-            key={skin.name}
-            className="skin"
-            aria-pressed={index === skinId}
-            onClick={() => store.setSkin(index)}
-          >
-            <span className="skin-chip" style={{ background: skin.colour }} />
-            <b>{skin.name}</b>
-            <span className="fine">{skin.blurb}</span>
-          </button>
-        ))}
-      </div>
-      <p className="fine">
-        Armour is cosmetic. Every knight has the same reach, the same speed and the same
-        health — what changes the fight is which part of the boss the raid agrees to break
-        first.
-      </p>
-      <button className="btn btn-primary" onClick={() => void store.join()} disabled={busy}>
-        {busy ? 'Claiming a seat…' : 'Take a seat'}
-      </button>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Screen 3 — lobby
-// ---------------------------------------------------------------------------
-
-function Lobby() {
-  const players = useSelect((s) => s.players);
-  const seat = useSelect((s) => s.match?.seat ?? -1);
-  const seated = useSelect((s) => s.players?.slots.filter((slot) => slot.occupied).length ?? 0);
-  const throughGate = useSelect((s) => s.arena?.aliveCount ?? 0);
-
-  return (
-    <>
-      <Stage />
-      <aside className="panel">
-        <h3>The lobby</h3>
-        <p className="fine">
-          Walk onto the gate. Enough of you standing on it starts the raid — that is the
-          whole of matchmaking.
-        </p>
-        <dl className="stats">
-          <div>
-            <dt>Seated</dt>
-            <dd className="tabular">
-              {seated} / {MAX_SEATS}
-            </dd>
-          </div>
-          <div>
-            <dt>Through the gate</dt>
-            <dd className="tabular">{throughGate}</dd>
-          </div>
-        </dl>
-        <h3>Roster</h3>
-        <ol className="roster">
-          {(players?.slots ?? []).map((slot) => (
-            <li
-              key={slot.seat}
-              className={slot.occupied ? (slot.zone === ZONE_ARENA ? 'in-gate' : '') : 'empty'}
-            >
-              <span className="tabular">{String(slot.seat).padStart(2, '0')}</span>
-              <span>{slot.occupied ? (slot.seat === seat ? 'you' : 'knight') : '—'}</span>
-              <span className="fine">{slot.zone === ZONE_ARENA ? 'gate' : ''}</span>
-            </li>
-          ))}
-        </ol>
-        {!players && <p className="fine">Waiting for the first roster update…</p>}
-      </aside>
-    </>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Screen 4 — arena
+//
+// Named `ArenaScreen`, not `Arena`: `render/Arena` is the renderer and this is the panel
+// beside it. Screens 1–3 are `screens/*`; the arena's panel is `ui/Hud`, so all this
+// screen owns is the stage node and the layout around it.
 // ---------------------------------------------------------------------------
 
-function Arena() {
+function ArenaScreen() {
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
 
   return (
     <>
-      <Stage />
+      {/* The renderer's territory — see `World`. React never touches what is inside it. */}
+      <div id="stage" className="stage" role="presentation" />
       <aside className="panel">
-        {phase === PHASE_LOBBY ? <Muster /> : <BossPanel />}
-        <SelfPanel />
+        <Hud />
       </aside>
       {phase === PHASE_SETTLED && <Result />}
     </>
-  );
-}
-
-/** Through the gate, boss not yet armed. Someone has to ask the Worker to start it. */
-function Muster() {
-  const store = useStore();
-  const throughGate = useSelect((s) => s.arena?.aliveCount ?? 0);
-  const busy = useSelect((s) => s.status === 'joining');
-
-  return (
-    <>
-      <h3>Muster</h3>
-      <p className="fine">
-        {throughGate} through the gate. More knights mean more incoming fire, not a longer
-        fight: each volley carries three bullets plus one per living raider.
-      </p>
-      <button
-        className="btn btn-primary"
-        onClick={() => void store.startMatch()}
-        disabled={busy || throughGate === 0}
-      >
-        Wake it up
-      </button>
-      <p className="fine">
-        Arming the raid delegates the arena to the rollup and schedules every boss tick up
-        front. It takes five to fifteen seconds and cannot be undone.
-      </p>
-    </>
-  );
-}
-
-function BossPanel() {
-  const boss = useSelect((s) => s.boss);
-  const tick = useSelect((s) => s.arena?.tick ?? 0);
-  const enrageAtTick = useSelect((s) => s.arena?.enrageAtTick ?? 0);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? 400);
-  const alive = useSelect((s) => s.arena?.aliveCount ?? 0);
-  const bullets = useSelect(
-    (s) => s.arena?.bullets.reduce((n, b) => n + (b.active === BULLET_ACTIVE ? 1 : 0), 0) ?? 0,
-  );
-
-  if (!boss) return <p className="fine">Waiting for the boss to load…</p>;
-
-  return (
-    <>
-      <h3>The amalgam</h3>
-      <ul className="parts">
-        {boss.parts.map((hp, index) => {
-          const max = boss.partsMax[index] ?? 0;
-          return (
-            <li key={index} className={hp === 0 ? 'dead' : ''}>
-              <span>{PART_NAMES[index]}</span>
-              <Meter value={hp} max={max} />
-              <span className="fine tabular">{hp === 0 ? 'gone' : hp}</span>
-            </li>
-          );
-        })}
-      </ul>
-      <Vent boss={boss} />
-      <dl className="stats">
-        <div>
-          <dt>Enrage in</dt>
-          <dd className="tabular">{clock(Math.max(0, enrageAtTick - tick), tickMs)}</dd>
-        </div>
-        <div>
-          <dt>Alive</dt>
-          <dd className="tabular">{alive}</dd>
-        </div>
-        <div>
-          <dt>Incoming</dt>
-          <dd className="tabular">{bullets}</dd>
-        </div>
-        <div>
-          <dt>Hunting</dt>
-          <dd className="tabular">
-            {boss.targetSeat === NO_TARGET ? '—' : `seat ${boss.targetSeat}`}
-          </dd>
-        </div>
-      </dl>
-    </>
-  );
-}
-
-/**
- * The vent is derived on chain from the parts every tick and cached for us. Showing the
- * shell total next to it is what makes "shoot the shell off, then the face" legible
- * without a tutorial.
- */
-function Vent({ boss }: { boss: BossAccount }) {
-  const shell = boss.parts.reduce((a, b) => a + b, 0);
-  const shellMax = boss.partsMax.reduce((a, b) => a + b, 0);
-  const open = boss.ventOpen === 1;
-  return (
-    <div className="vent">
-      <div className="vent-row">
-        <span>Shell</span>
-        <Meter value={shell} max={shellMax} tone="var(--flesh)" />
-        <span className={`pill ${open ? 'pill-open' : ''}`}>
-          {open ? 'VENT OPEN' : 'VENT SEALED'}
-        </span>
-      </div>
-      <div className="vent-row">
-        <span>Core</span>
-        <Meter value={boss.coreHp} max={boss.coreHpMax} tone="var(--olive)" />
-        <span className="fine">{open ? 'killable' : 'invulnerable'}</span>
-      </div>
-    </div>
-  );
-}
-
-function SelfPanel() {
-  const slot = useSelect(mySeatSlot);
-  const tick = useSelect((s) => s.arena?.tick ?? 0);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? 400);
-  if (!slot) return null;
-
-  const dead = slot.hp === 0;
-  return (
-    <div className="self">
-      <h3>You</h3>
-      <div className="vent-row">
-        <span>Health</span>
-        <Meter value={slot.hp} max={slot.hpMax} tone={dead ? 'var(--gone)' : 'var(--ok)'} />
-        <span className="fine tabular">
-          {dead ? `respawn ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}` : slot.hp}
-        </span>
-      </div>
-      <p className="fine tabular">damage dealt {slot.damageDealt}</p>
-    </div>
   );
 }
 
@@ -463,4 +217,265 @@ function Result() {
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// The world, and the way out of it
+// ---------------------------------------------------------------------------
+
+/**
+ * Draws the scene into whichever screen currently owns `#stage`, and binds input to it.
+ *
+ * A portal rather than a child, because the two screens that have a stage declare it
+ * themselves — `screens/Lobby.tsx` owns the lobby's node — and duplicating the id here to
+ * host the renderer would put two `#stage` elements in the document. One portal covers
+ * both screens and the id stays declared exactly once.
+ */
+function World({ screen, link }: { screen: Screen; link: Link }) {
+  const host = useStageHost(screen);
+  const arena = useSelect((s) => s.arena);
+  const boss = useSelect((s) => s.boss);
+  const players = useSelect((s) => s.players);
+  const seat = useSelect((s) => s.match?.seat ?? -1);
+  const tickMs = useSelect((s) => s.match?.tickMs ?? 400);
+
+  useGameplay(host, link);
+
+  if (!host || !arena || !boss || !players) return null;
+
+  // `.hr-stage` sizes itself from its parent, and a portal's parent is the stage cell:
+  // this grid box is what gives it one, so `usePixelFit` has a rect to measure.
+  return createPortal(
+    <div style={{ position: 'absolute', inset: 0, display: 'grid' }}>
+      <Arena arena={arena} boss={boss} players={players} localSeat={seat} tickMs={tickMs} />
+    </div>,
+    host,
+  );
+}
+
+/**
+ * The `#stage` node of the screen that is currently mounted, or `null` on the two screens
+ * that have none. Keyed on the screen because that is exactly when the node is replaced;
+ * re-reading the same element is a no-op, so this settles in one pass.
+ */
+function useStageHost(screen: Screen): HTMLElement | null {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setHost(document.getElementById('stage'));
+  }, [screen]);
+  return host;
+}
+
+/**
+ * Input → transaction. The only place in the app that signs anything.
+ *
+ * Every send is fire-and-forget: `sendInstructions` uses `skipPreflight` by design, so
+ * awaiting a confirmation on the hot path would cost a round trip per keypress and still
+ * not prevent anything. A rejected move is corrected by the next reconcile, which is what
+ * the prediction buffer is for.
+ */
+function useGameplay(host: HTMLElement | null, link: Link): void {
+  const store = useStore();
+
+  useEffect(() => {
+    if (host === null || link === null) return;
+    const { er, signer, predictor, match } = link;
+    const session = signer.address;
+    const common = { programId: match.programId, arena: match.arena, players: match.players };
+
+    const send = (instruction: Parameters<typeof sendInstructions>[2][number]): void => {
+      void sendInstructions(er, signer, [instruction]).catch((error: unknown) => {
+        // Not `setStatus('error')`: that is a held status the world feed cannot clear, and
+        // one dropped datagram out of ten a second must not brick the session. The
+        // watchdog in `subscribe.ts` is what reports a feed that has actually stopped.
+        console.error('heartrot: gameplay send failed', error);
+      });
+    };
+
+    let lastGateAt = Number.NEGATIVE_INFINITY;
+    const maybeEnterGate = (): void => {
+      const slot = mySeatSlot(store.getState());
+      if (!slot || slot.zone !== ZONE_LOBBY) return;
+      if (!onGate(predictor.self.x, predictor.self.y)) return;
+      const now = performance.now();
+      if (now - lastGateAt < GATE_RETRY_MS) return;
+      lastGateAt = now;
+      send(enterGate({ ...common, session, seat: match.seat }));
+    };
+
+    return attachControls({
+      surface: host,
+      // Read live rather than captured: the gates mirror `arena.tick`, and a stale clock
+      // here would rate-limit against a tick that passed seconds ago.
+      clock: () => {
+        const { arena } = store.getState();
+        return { phase: arena?.phase ?? PHASE_LOBBY, tick: arena?.tick ?? 0 };
+      },
+      aimOrigin: () => {
+        const svg = host.querySelector('svg');
+        if (svg === null) return null;
+        const box = svg.getBoundingClientRect();
+        if (box.width === 0) return null;
+        const scale = box.width / ARENA_UNITS;
+        return {
+          x: box.left + predictor.self.x * scale,
+          y: box.top + predictor.self.y * scale,
+        };
+      },
+      onMove: (dir) => {
+        // `push` returns `null` when the chain would reject the move anyway — a wall, or a
+        // dead player — and sending it then would burn a slot in the one-move-per-tick
+        // budget on a transaction that cannot land. It also applies the same `MOVE_STEP`
+        // the handler indexes with `dir`, so the predicted step and the chain's are one
+        // table and cannot disagree.
+        const seq = predictor.push(dir);
+        if (seq === null) return;
+        send(movePlayer({ ...common, session, seat: match.seat, dir, seq }));
+        maybeEnterGate();
+      },
+      onShoot: (dir) => {
+        send(shoot({ ...common, boss: match.boss, session, seat: match.seat, dir }));
+      },
+    });
+  }, [host, link, store]);
+}
+
+// ---------------------------------------------------------------------------
+// The world feed
+// ---------------------------------------------------------------------------
+
+/** Everything the gameplay path needs, resolved once per match. */
+type Link = {
+  readonly er: HeartrotRpc;
+  readonly signer: SessionSigner;
+  readonly predictor: Predictor;
+  readonly match: {
+    readonly seat: number;
+    readonly programId: Addr;
+    readonly arena: Addr;
+    readonly boss: Addr;
+    readonly players: Addr;
+  };
+} | null;
+
+/**
+ * Pin the ER, subscribe to the three accounts, and push every update into the store.
+ *
+ * The subscription is deliberately keyed on `match` alone and not on the screen: the
+ * lobby↔arena transition must not tear it down, because the measured reconnect outage is
+ * ~1.7 s and in a bullet-hell fight that is a death and a visible teleport.
+ */
+function useMatchLink(): Link {
+  const store = useStore();
+  const match = useSelect((s) => s.match);
+  const session = useSelect((s) => s.sessionKey);
+  const [link, setLink] = useState<Link>(null);
+
+  useEffect(() => {
+    if (match === null || session === null) {
+      setLink(null);
+      return;
+    }
+
+    let cancelled = false;
+    let subscription: MatchSubscription | null = null;
+    const predictor = createPredictor();
+    const accounts = {
+      arena: addr(match.arenaPda),
+      boss: addr(match.bossPda),
+      players: addr(match.playersPda),
+    };
+
+    void (async () => {
+      try {
+        // `baseUrl` is only used for the base-layer handle this client never touches —
+        // the ER itself is resolved from the router by `validatorIdentity`, which is the
+        // one thing that must never be guessed: the wrong ER answers with correctly-owned,
+        // silently frozen data.
+        const { er } = await connectMatch({
+          baseUrl: match.erEndpoint,
+          routerUrl: match.routerEndpoint,
+          accounts: [accounts.arena, accounts.boss, accounts.players],
+          validatorIdentity: addr(match.validatorIdentity),
+          ownerProgram: addr(match.programId),
+        });
+        if (cancelled) return;
+
+        subscription = subscribeMatch({
+          rpc: er,
+          ...accounts,
+          onArena: (arena) => store.setWorld({ arena }),
+          onBoss: (boss) => store.setWorld({ boss }),
+          onPlayers: (players) => {
+            store.setWorld({ players });
+            const slot = players.slots[match.seat];
+            // The reconcile is what drains the prediction buffer. Without it every input
+            // replays forever and the local knight walks away from the server's copy.
+            if (slot !== undefined) predictor.reconcile(slot);
+          },
+          onHealth: (health) => {
+            // `live` and `connecting` are already carried by `setWorld` and `join`, and
+            // writing them here would stomp the held statuses the player is waiting on.
+            if (health === 'stalled') store.setStatus('stale');
+            // `Arena.tick` is the only crank-liveness signal there is; a dead one means
+            // the scheduled task is gone and the match has to be settled from outside.
+            if (health === 'dead') void store.settle();
+          },
+        });
+
+        setLink({
+          er,
+          signer: createSessionSigner(session),
+          predictor,
+          match: {
+            seat: match.seat,
+            programId: addr(match.programId),
+            arena: accounts.arena,
+            boss: accounts.boss,
+            players: accounts.players,
+          },
+        });
+      } catch (error) {
+        if (cancelled) return;
+        // Fatal for this match: no ER means no world and no gameplay, and a silent retry
+        // loop would look exactly like a frozen game.
+        store.setStatus('error', error instanceof Error ? error.message : String(error));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      subscription?.close();
+      setLink(null);
+    };
+  }, [match, session, store]);
+
+  return link;
+}
+
+// ---------------------------------------------------------------------------
+// Self-check
+//
+// The gate block is a copy of a chain constant, and a wrong copy fails the way a copy
+// always does: the player stands on the gate, `enter_gate` is never sent or never
+// accepted, and the raid simply never starts. Dev-only.
+// ---------------------------------------------------------------------------
+
+if (import.meta.env.DEV) {
+  const corners: readonly (readonly [number, number, boolean])[] = [
+    [GATE_MIN, GATE_MIN, true],
+    [GATE_MAX, GATE_MAX, true],
+    [GATE_MIN - 1, GATE_MIN, false],
+    [GATE_MAX + 1, GATE_MAX, false],
+    [GATE_MIN, GATE_MAX + 1, false],
+  ];
+  for (const [x, y, expected] of corners) {
+    if (onGate(x, y) !== expected) {
+      throw new Error(`App self-check: onGate(${x}, ${y}) should be ${String(expected)}`);
+    }
+  }
+  // 30..34 tiles inclusive-exclusive, exactly as `player.rs` writes it.
+  if (GATE_MIN !== 480 || GATE_MAX !== 543) {
+    throw new Error(`App self-check: gate block is ${GATE_MIN}..${GATE_MAX}, expected 480..543`);
+  }
 }

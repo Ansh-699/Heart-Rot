@@ -32,6 +32,13 @@
 use pinocchio::{AccountView, Address, ProgramResult};
 
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
+// The crank identity, imported rather than re-declared. `settle::start_match` derives the
+// signer it freezes into the crank row from these two values and this handler re-derives
+// the signer it authorizes against from them: they are the write side and the verify side
+// of one authorization, and two editable copies let the two drift with nothing failing to
+// compile. A drift is invisible in production — the task fails every tick, burns its ten
+// retries and is deleted ~26 s into the match while every path here still returns `Ok(())`.
+use crate::handlers::settle::{CRANK_PROGRAM_ID, CRANK_SIGNER_SEED};
 use crate::state::{
     load_mut, Arena, Boss, Players, BULLET_ACTIVE, BULLET_FREE, MAX_BULLETS, MAX_SEATS, NO_TARGET,
     N_PARTS, PHASE_FIGHTING, PHASE_SETTLING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
@@ -608,7 +615,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
     // plus one curve check per bump attempt (~1.2 attempts expected), a rounding error
     // against 400 K.
     let Some((expected_signer, _bump)) = Address::derive_program_address::<2>(
-        &[CRANK_SEED, arena.crank_authority.as_slice()],
+        &[CRANK_SIGNER_SEED, arena.crank_authority.as_slice()],
         &CRANK_PROGRAM_ID,
     ) else {
         return Ok(());
@@ -642,18 +649,6 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
 
     Ok(())
 }
-
-/// PDA seed of the crank executor, owned by the ER's crank program. The signer the
-/// validator uses for every scheduled instruction; nothing else can produce it.
-const CRANK_SEED: &[u8] = b"crank-executor";
-
-/// `Crank11111111111111111111111111111111111111`, written as bytes because
-/// `pinocchio-pubkey` requires `pinocchio ^0.9` and would drag a second, semver-
-/// incompatible Pinocchio into the build (see the workspace manifest).
-const CRANK_PROGRAM_ID: Address = Address::new_from_array([
-    3, 9, 115, 187, 171, 86, 176, 95, 66, 206, 3, 79, 119, 118, 67, 48, 79, 137, 61, 97, 116, 104,
-    235, 217, 161, 243, 44, 64, 0, 0, 0, 0,
-]);
 
 #[cfg(test)]
 mod tests {

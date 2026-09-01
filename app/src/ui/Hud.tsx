@@ -20,6 +20,8 @@
  * spawns.
  */
 
+import type { CSSProperties } from 'react';
+
 import {
   BULLET_ACTIVE,
   NO_TARGET,
@@ -81,11 +83,40 @@ export function Hud() {
   );
 }
 
-function Meter({ value, max, tone }: { value: number; max: number; tone?: string }) {
+/**
+ * A bar is a picture of a number, and a screen reader sees neither. `role="meter"` plus
+ * the three values is what makes it a number again; `label` is required rather than
+ * optional because an unnamed meter reads as "45 percent" of nothing.
+ *
+ * The fill drives a `--fill` custom property and a composited `scaleX`, never `width`:
+ * ~30 of these redraw on the same 2.5 Hz notification and animating `width` relayouts
+ * every one of them on every frame. Do not revert it.
+ */
+function Meter({
+  label,
+  value,
+  max,
+  tone,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  tone?: string;
+}) {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
-    <span className="meter">
-      <span className="meter-fill" style={{ width: `${pct}%`, background: tone }} />
+    <span
+      className="meter"
+      role="meter"
+      aria-label={label}
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={max}
+    >
+      <span
+        className="meter-fill"
+        style={{ ['--fill']: pct / 100, background: tone } as CSSProperties}
+      />
     </span>
   );
 }
@@ -150,7 +181,7 @@ function BossPanel() {
           return (
             <li key={PART_NAMES[index]} className={hp === 0 ? 'dead' : ''}>
               <span>{PART_NAMES[index]}</span>
-              <Meter value={hp} max={max} />
+              <Meter label={PART_NAMES[index] ?? `part ${index}`} value={hp} max={max} />
               <span className="fine tabular">{hp === 0 ? (silenced ? 'silent' : 'gone') : hp}</span>
             </li>
           );
@@ -203,14 +234,14 @@ function Vent({ boss }: { boss: BossAccount }) {
     <div className="vent">
       <div className="vent-row">
         <span>Shell</span>
-        <Meter value={shell} max={shellMax} tone="var(--flesh)" />
+        <Meter label="Shell" value={shell} max={shellMax} tone="var(--flesh)" />
         <span className={`pill ${open ? 'pill-open' : ''}`}>
           {open ? 'VENT OPEN' : 'VENT SEALED'}
         </span>
       </div>
       <div className="vent-row">
         <span>Core</span>
-        <Meter value={boss.coreHp} max={boss.coreHpMax} tone="var(--olive)" />
+        <Meter label="Core" value={boss.coreHp} max={boss.coreHpMax} tone="var(--olive)" />
         <span className="fine">{open ? 'killable' : 'invulnerable'}</span>
       </div>
       <p className="fine">
@@ -234,7 +265,12 @@ function SelfPanel() {
       <h3>You</h3>
       <div className="vent-row">
         <span>Health</span>
-        <Meter value={slot.hp} max={slot.hpMax} tone={dead ? 'var(--gone)' : 'var(--ok)'} />
+        <Meter
+          label="Your health"
+          value={slot.hp}
+          max={slot.hpMax}
+          tone={dead ? 'var(--gone)' : 'var(--ok)'}
+        />
         <span className="fine tabular">
           {/* `respawn_at_tick` is absolute, so a stale account reads 0 rather than
               counting backwards from a tick that has already passed. */}

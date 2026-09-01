@@ -30,10 +30,40 @@
 
   "observability": { "enabled": true },
 
+  // src/index.ts fails CLOSED when this binding is absent — every /api/* request answers
+  // 503 rate_limiter_unconfigured before it reaches a route — so this block is not
+  // optional hardening, it is what makes the Worker answer at all. It is also the only
+  // brake in the system: ER fees are zero and the ER runs no fee-payer validation, so
+  // nothing economic limits request volume.
+  //
+  // `namespace_id` is a developer-chosen id, unique within this Worker; it is not
+  // allocated by the API and nothing needs to be created for it. `period` accepts only
+  // 10 or 60. The limiter counts per Cloudflare location, not globally, so an abuser
+  // spread across colos multiplies this allowance — the treasury tier check in each
+  // route is what actually bounds the spend.
+  //
+  // 30/min is sized by the noisiest legitimate caller: /api/match/settle answers 202
+  // with retryAfterMs 2000, so one client polling a slow commit is ~30 requests in a
+  // minute on that path alone. The key is `${ip}:${pathname}`, so the budget is per
+  // route, not shared across them.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMIT",
+      "namespace_id": "1001",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
+
   // Public routing constants — not secrets. Secrets go in .dev.vars / `wrangler secret put`;
-  // see .env.example. PROGRAM_ID is filled in after the first `solana program deploy`.
+  // see .env.example.
   "vars": {
-    "PROGRAM_ID": "",
+    // The deployed program id — `solana address -k target/deploy/heartrot-keypair.json`.
+    // Nothing derives this at build time, so a redeploy to a fresh keypair MUST be
+    // copied here by hand or every PDA the Worker derives points at the old program.
+    // Leaving it empty is not inert: routes.ts `context()` passes it straight to
+    // @solana/kit's `address()`, which throws on '', and index.ts's catch-all turns
+    // that into an opaque 500 on every single request.
+    "PROGRAM_ID": "JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5",
     "ER_ENDPOINT": "https://devnet-as.magicblock.app/",
     "ROUTER_ENDPOINT": "https://devnet-router.magicblock.app/",
     "VALIDATOR_IDENTITY": "MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"

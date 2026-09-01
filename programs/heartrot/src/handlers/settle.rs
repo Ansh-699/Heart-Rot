@@ -38,6 +38,11 @@ use pinocchio::{
 };
 
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
+// The single deploy-time treasury key, declared once in `handlers::init`. It is imported
+// rather than re-declared here on purpose: a second copy is a second thing to fill in at
+// deploy time, and forgetting one half bricks either arena creation or result recording
+// with nothing failing to compile.
+use crate::handlers::init::TREASURY;
 use crate::state::{
     load, load_mut, Arena, Leaderboard, LeaderboardEntry, Players, LEADERBOARD_CAP, PHASE_FIGHTING,
     PHASE_LOBBY, PHASE_SETTLED, SEED_BOSS, SEED_LEADERBOARD, SEED_PLAYERS,
@@ -66,21 +71,6 @@ pub const CRANK_SIGNER_SEED: &[u8] = b"crank-executor";
 /// the validator replays it at us every 400 ms, so `lib.rs` must keep routing it to
 /// `tick::process` or the whole match goes inert with nothing to look at.
 pub const IX_BOSS_TICK: u8 = 8;
-
-/// The one key allowed to write the global `Leaderboard`.
-///
-/// It cannot be `Arena.crank_authority`, which is what the rest of this module
-/// authorizes against: `init_arena` is permissionless and stamps that field with whoever
-/// paid the rent, so an attacker's own arena names an authority the attacker holds. Seven
-/// throwaway matches — 7 × 20 rows against a 128-entry ring — would then erase every real
-/// result. A program-wide singleton needs a program-wide gate, and the frozen layout has
-/// no spare bytes to hold one on the account itself.
-///
-/// **Deployment step.** Set this to the public key of the Worker's `TREASURY_SECRET_KEY`
-/// and rebuild, the same way `PROGRAM_ID` is filled into `worker/wrangler.jsonc` after the
-/// first `solana program deploy`. Until it is set no signer can match it, so
-/// `write_leaderboard` rejects every caller — which is the direction a gate should fail.
-pub const TREASURY: Address = Address::new_from_array([0u8; 32]);
 
 /// Target gap between ticks. A floor, not a guarantee — the scheduler re-queues at
 /// `last_execution + interval`, so ticks drift under load rather than catching up.
@@ -316,8 +306,12 @@ pub fn write_leaderboard(program_id: &Address, accounts: &mut [AccountView]) -> 
     assert_signer(payer)?;
     // The program-wide gate, and the only one that matters here. Everything below merely
     // proves the *rows* are well formed; this is what proves the writer is allowed to add
-    // rows at all. An arena-scoped check cannot do it — anyone can create an arena that
-    // names them as its authority, settle it, and append twenty rows of their choosing.
+    // rows at all. `Arena.crank_authority` alone cannot do it: `init_arena` is
+    // treasury-gated, but it takes `crank_authority` from the tag-1 argument block rather
+    // than from the payer, so an arena can legitimately name an authority that is not the
+    // treasury — and the ring is a program-wide singleton that such an authority must not
+    // be able to fill with twenty rows of its choosing. The frozen layout has no spare
+    // bytes to hold an admin key on the account itself, so the gate is this constant.
     if payer.address() != &TREASURY {
         return Err(ProgramError::IncorrectAuthority);
     }

@@ -116,8 +116,11 @@ const MOVE_STEP: [(i16, i16); 8] = [
 /// `PlayerSlot.session_pubkey` sentinel for "seat never claimed".
 const UNCLAIMED: [u8; 32] = [0u8; 32];
 
-const JOIN_DATA_LEN: usize = 1 + 32 + 32;
-const MOVE_DATA_LEN: usize = 1 + 2;
+/// Tag 4 argument block: `seat` u8 `[0]`, `skin_id` u8 `[1]`, `session_pubkey` `[2..34]`,
+/// `identity` `[34..66]`. This slicing *is* the frozen ABI — `instruction.rs` and
+/// `docs/architecture/05-wire-abi.md` describe it, and TypeScript conforms to it. When
+/// a client disagrees, the client is what changes.
+const JOIN_DATA_LEN: usize = 1 + 1 + 32 + 32;
 
 // ---------------------------------------------------------------------------
 // Pure geometry helpers
@@ -223,20 +226,31 @@ fn validate_pair(
     Ok(arena_key)
 }
 
-/// Which seat this signer holds. Scanning 20 fixed-size slots is cheaper than
-/// trusting a client-supplied seat index and then having to prove it, and it keeps
-/// the instruction data to what the client actually knows.
+/// Quantize the client's requested direction vector to one of the eight `facing`
+/// octants, indexing `MOVE_STEP`.
 ///
-/// The unclaimed sentinel is the all-zero address, which no signer can hold, so an
-/// empty seat can never match.
-fn seat_of(players: &Players, authority: &Address) -> Result<usize, ProgramError> {
-    let key = authority.as_ref();
-    for (seat, slot) in players.slots.iter().enumerate() {
-        if slot.session_pubkey.as_slice() == key {
-            return Ok(seat);
-        }
-    }
-    Err(ProgramError::InvalidArgument)
+/// The wire carries `dx`/`dy` (frozen ABI, tag 6) but the *displacement* is not the
+/// client's to choose: only the sign of each component is read, and the step itself
+/// comes off `MOVE_STEP` here. That is the "per-tick speed cap" `instruction.rs`
+/// defers to the handler — a client that sends (127, 127) moves exactly one diagonal
+/// step south-east, the same as one that sends (1, 1). Magnitude is ignored rather
+/// than rejected so the caller may send either a unit vector or a full step vector.
+///
+/// The mapping is the one `app/src/input/controls.ts::dirFromVector` computes with
+/// `atan2`, evaluated on the sign quadrant: 0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W,
+/// 7 NW, y down. `(0, 0)` is not a direction and is rejected at the boundary.
+fn octant(dx: i8, dy: i8) -> Result<u8, ProgramError> {
+    Ok(match (dx.signum(), dy.signum()) {
+        (0, -1) => 0,
+        (1, -1) => 1,
+        (1, 0) => 2,
+        (1, 1) => 3,
+        (0, 1) => 4,
+        (-1, 1) => 5,
+        (-1, 0) => 6,
+        (-1, -1) => 7,
+        _ => return Err(ProgramError::InvalidInstructionData),
+    })
 }
 
 /// A match that is settling or settled accepts no player input at all — the accounts
@@ -254,12 +268,12 @@ fn assert_playable(phase: u8) -> Result<(), ProgramError> {
 // join
 // ---------------------------------------------------------------------------
 
-/// `join(skin_id, session_pubkey, identity)` — accounts
+/// `join(seat, skin_id, session_pubkey, identity)` — accounts
 /// `[arena (w), players (w), treasury (signer)]`.
 ///
-/// Claims a free seat for a browser session key, or rotates the key on the seat this
-/// identity already holds. Rejects a full arena and rejects a session key that is
-/// already seated elsewhere.
+/// Claims the Worker's chosen seat for a browser session key, or rotates the key on the
+/// seat this identity already holds. Rejects an occupied seat and rejects a session key
+/// that is already seated elsewhere.
 pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
     let [arena_ai, players_ai, treasury_ai, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
@@ -268,11 +282,16 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
     if data.len() != JOIN_DATA_LEN {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let skin_id = data[0];
+    // The Worker picks the seat — it is the thing holding the Privy identity map and the
+    // `seat_occupied` read that decided the arena had room. Honouring its choice is what
+    // makes the seat it reported to the browser the seat the browser actually gets;
+    // picking a different free slot here would hand the client a stale index.
+    let seat = data[0] as usize;
+    let skin_id = data[1];
     let mut session_pubkey = [0u8; 32];
-    session_pubkey.copy_from_slice(&data[1..33]);
+    session_pubkey.copy_from_slice(&data[2..34]);
     let mut identity = [0u8; 32];
-    identity.copy_from_slice(&data[33..65]);
+    identity.copy_from_slice(&data[34..66]);
     // The all-zero session key is the "unclaimed" sentinel and the all-zero identity
     // is what an unwritten slot carries; accepting either would let two joins collide
     // onto one seat and would make the leaderboard key meaningless.
@@ -294,13 +313,9 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
     let mut players_data = players_ai.try_borrow_mut()?;
     let players = state::load_mut::<Players>(&mut players_data)?;
 
-    let mut free: Option<usize> = None;
     let mut returning: Option<usize> = None;
     for (i, slot) in players.slots.iter().enumerate() {
         if slot.session_pubkey == UNCLAIMED {
-            if free.is_none() {
-                free = Some(i);
-            }
             continue;
         }
         // Privy identity is the durable record; the session key is not. A player who
@@ -314,6 +329,9 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
         }
     }
 
+    // An identity that is already seated keeps the seat it holds, whatever the Worker
+    // asked for: moving a live player to a different index mid-match would strip their
+    // position, HP and damage, and `seat_occupied` would then describe two seats.
     if let Some(seat) = returning {
         let slot = players
             .slots
@@ -329,14 +347,20 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
         return Ok(());
     }
 
-    // ponytail: "arena full" and "seat index out of range" both surface as
+    // ponytail: "seat taken" and "seat index out of range" both surface as
     // `InvalidArgument` because this program has no shared error enum yet. The Worker
     // distinguishes full from everything else by reading `seat_occupied` before it
     // sends, so nothing depends on the code today.
-    let seat = free.ok_or(ProgramError::InvalidArgument)?;
+    //
+    // `get_mut` is the bounds check — a `seat` of 200 lands here, not in an indexing
+    // panic. Requiring the slot to be unclaimed is what stops a second identity being
+    // written over a live player: without it the Worker's occupancy read (a base-layer
+    // round trip behind the ER) racing two joins onto one index would silently evict
+    // whoever got there first.
     let slot = players
         .slots
         .get_mut(seat)
+        .filter(|slot| slot.session_pubkey == UNCLAIMED)
         .ok_or(ProgramError::InvalidArgument)?;
     let (x, y) = lobby_spawn(seat as u8);
     slot.zone = ZONE_LOBBY;
@@ -367,7 +391,7 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
 // move
 // ---------------------------------------------------------------------------
 
-/// `move(direction, seq)` — accounts `[arena (r), players (w), session key (signer)]`.
+/// `move(seat, seq, dx, dy)` — accounts `[arena (r), players (w), session key (signer)]`.
 ///
 /// `move` is a Rust keyword, hence the name.
 pub fn move_player(
@@ -379,11 +403,17 @@ pub fn move_player(
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
-    if data.len() != MOVE_DATA_LEN {
+    // The slice pattern is the exact-length gate: five argument bytes, no more and no
+    // fewer. A short block is somebody probing for an index panic and a long one is
+    // client/program skew, and neither is accepted quietly.
+    let &[seat, seq_lo, seq_hi, dx_req, dy_req] = data else {
         return Err(ProgramError::InvalidInstructionData);
-    }
-    let dir = data[0];
-    let seq = u16::from_le_bytes([data[1], data[2]]);
+    };
+    let seq = u16::from_le_bytes([seq_lo, seq_hi]);
+    // The client asks for a direction; the chain decides how far that is.
+    let dir = octant(dx_req as i8, dy_req as i8)?;
+    // `octant` only ever answers 0..7, but indexing with `[]` would still compile in a
+    // panic branch — and a BPF panic is an abort with no error to read.
     let (dx, dy) = *MOVE_STEP
         .get(dir as usize)
         .ok_or(ProgramError::InvalidInstructionData)?;
@@ -391,7 +421,6 @@ pub fn move_player(
     // `arena` stays read-only here: a move must not rewrite the 1,160-byte account
     // the whole lobby is subscribed to.
     validate_pair(program_id, arena_ai, players_ai, authority_ai, false)?;
-    let authority_key = *authority_ai.address();
 
     let now = {
         let arena_data = arena_ai.try_borrow()?;
@@ -402,13 +431,15 @@ pub fn move_player(
 
     let mut players_data = players_ai.try_borrow_mut()?;
     let players = state::load_mut::<Players>(&mut players_data)?;
-    let seat = seat_of(players, &authority_key)?;
+    // `get_mut` bounds-checks the client's seat index, and `assert_session_authority` is
+    // the *entire* security perimeter behind it: this signer must be the session key
+    // stored on the seat being moved. The index is untrusted; the signature is not.
+    // (`assert_session_authority` also rejects the unclaimed sentinel, so an empty seat
+    // can never be driven — see guards.rs.)
     let slot = players
         .slots
-        .get_mut(seat)
+        .get_mut(seat as usize)
         .ok_or(ProgramError::InvalidArgument)?;
-    // `seat_of` already matched this key, but the perimeter is one line and the guard
-    // is the thing that is audited. Both stay.
     assert_session_authority(slot, authority_ai)?;
 
     // A dead player is `boss_tick`'s to move: it owns `respawn_at_tick` and the
@@ -444,22 +475,25 @@ pub fn move_player(
 // enter_gate
 // ---------------------------------------------------------------------------
 
-/// `enter_gate()` — accounts `[arena (w), players (w), session key (signer)]`.
+/// `enter_gate(seat)` — accounts `[arena (w), players (w), session key (signer)]`.
 ///
-/// Flips the seat from lobby to arena and teleports it to the arena entrance. Takes
-/// no instruction data; the parameter exists so every handler dispatches the same
-/// way.
+/// Flips the seat from lobby to arena and teleports it to the arena entrance.
 pub fn enter_gate(
     program_id: &Address,
     accounts: &mut [AccountView],
-    _data: &[u8],
+    data: &[u8],
 ) -> ProgramResult {
     let [arena_ai, players_ai, authority_ai, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
+    // Tag 5 is not in `lib.rs::ZERO_ARG_TAGS`, so a trailing payload reaches this
+    // handler and this is the only place that can refuse it. One argument byte, exactly.
+    let &[seat] = data else {
+        return Err(ProgramError::InvalidInstructionData);
+    };
+
     validate_pair(program_id, arena_ai, players_ai, authority_ai, true)?;
-    let authority_key = *authority_ai.address();
 
     let mut arena_data = arena_ai.try_borrow_mut()?;
     let arena = state::load_mut::<Arena>(&mut arena_data)?;
@@ -467,7 +501,9 @@ pub fn enter_gate(
 
     let mut players_data = players_ai.try_borrow_mut()?;
     let players = state::load_mut::<Players>(&mut players_data)?;
-    let seat = seat_of(players, &authority_key)?;
+    let seat = seat as usize;
+    // Same perimeter as `move_player`: the index is bounds-checked, the signature is
+    // what proves the caller owns the seat.
     let slot = players
         .slots
         .get_mut(seat)
@@ -558,6 +594,24 @@ mod tests {
             let straight = (STEP as i32) * (STEP as i32);
             assert!((d2 - straight).abs() <= 2 * STEP as i32);
         }
+
+        // `octant` must agree with `MOVE_STEP` on all eight directions, or the chain
+        // walks a player somewhere other than where the client predicted and every
+        // move rubber-bands. Feeding each step vector back through the quantizer is
+        // the round trip: sign-only, so magnitude cannot matter.
+        for (dir, (dx, dy)) in MOVE_STEP.iter().enumerate() {
+            assert_eq!(octant(dx.signum() as i8, dy.signum() as i8), Ok(dir as u8));
+            // Any vector in the same sign quadrant resolves to the same step.
+            let scaled = octant((*dx as i32 * 7).signum() as i8, (*dy as i32 * 7).signum() as i8);
+            assert_eq!(scaled, Ok(dir as u8), "magnitude changed the direction");
+        }
+        // The `atan2` mapping in app/src/input/controls.ts, spot-checked: north is 0
+        // (y grows *down*, so north is negative dy) and the octants run clockwise.
+        assert_eq!(octant(0, -1), Ok(0));
+        assert_eq!(octant(127, -127), Ok(1));
+        assert_eq!(octant(i8::MIN, 0), Ok(6));
+        // Standing still is not a direction.
+        assert!(octant(0, 0).is_err());
 
         // The gate is reachable: it is inside the map and not a wall.
         assert!(on_gate(GATE_MIN_X, GATE_MIN_Y) && on_gate(GATE_MAX_X, GATE_MAX_Y));

@@ -156,19 +156,46 @@ export const BOSS_SPRITE_H = bossBox.h;
  * (0, 8). Centring the 230x270 canvas there is what puts the drawn boss where the shots
  * land.
  *
- * ponytail: the program's table is a hand-written idealisation — symmetric, with the mace
- * on the right — while the art has the mace on the left and an off-centre crown. Vertically
- * they agree to within two units; horizontally individual parts are up to ~40 units apart,
- * so a shot at the drawn crown can miss and a shot at empty air can hit. The upgrade path is
- * already built: `hitboxes.json` (imported above) carries exact integer boxes from the same
- * slice that produced these groups, so `PART_HITBOXES` becomes generated from it and the
- * drift closes. Not fixable from the renderer — that table is the contract until it moves.
+ * ponytail: KNOWN CEILING — the drawn boss and the raycast boss are not the same boss, and
+ * no choice of anchor makes them one. `PART_HITBOXES` is a hand-written idealisation:
+ * symmetric about x=0, four thorns on a ±88/±56 lattice, mace on the RIGHT. The art is an
+ * asymmetric drawing: mace on the LEFT, crown pushed right, thorns scattered. Measured
+ * against this anchor (art box vs. program box, boss-local units):
+ *
+ *     part      art x        art y        rust x       rust y       IoU
+ *     crown     [   7,  74]  [-120, -61]  [ -40,  40]  [-112, -72]  22.6%
+ *     wolf_l    [ -47,   3]  [ -78, -25]  [ -96, -40]  [ -80, -24]   6.9%
+ *     beast_r   [  57, 103]  [ -75, -23]  [  40,  96]  [ -80, -24]  56.2%
+ *     thorn0    [ -16,   5]  [ -99, -63]  [ -88, -56]  [ -16,  16]   0%
+ *     thorn1    [  65, 113]  [ -90, -25]  [  56,  88]  [ -16,  16]   0%
+ *     thorn2    [ -30, -10]  [ -29,  -6]  [ -88, -56]  [  48,  80]   0%
+ *     thorn3    [  88, 112]  [   0,  17]  [  56,  88]  [  48,  80]   0%
+ *     mace      [-114,  -3]  [ -25, 112]  [  56,  96]  [  80, 128]   0%   mirrored
+ *     claws     [  55, 107]  [ -30,  80]  [ -96, -56]  [  80, 128]   0%   mirrored
+ *     core      [   5,  45]  [ -32,  13]  circle centre (0,16) r=24
+ *
+ * Six of nine parts do not overlap at all, and mace/claws are on opposite sides, which a
+ * translation cannot fix. So a shot aimed at drawn art misses, and a shot at empty air hits.
+ * Which side is right is NOT decided here: `hitboxes.json` (imported above) carries exact
+ * integer boxes from the same slice that produced these groups, so either `PART_HITBOXES`
+ * becomes generated from it, or the art is redrawn to the program's lattice. Both are
+ * outside the renderer — that table is the contract until it moves, and this file draws to
+ * the art because the art is what the player sees.
  */
 export const BOSS_ANCHOR_X = 0 - Math.round(BOSS_SPRITE_W / 2);
 export const BOSS_ANCHOR_Y = 8 - Math.round(BOSS_SPRITE_H / 2);
 
-/** The vent, for the glow that reads "the core is damageable now". */
-export const BOSS_CORE_BOX: Hitbox = HITBOXES['core'] ?? { index: null, x: 0, y: 0, w: 0, h: 0 };
+/**
+ * The vent, for the glow that reads "the core is damageable now".
+ *
+ * No fallback: a zero rect here is an invisible vent, which is indistinguishable from a
+ * sealed one and would quietly delete the only cue that the core is open.
+ */
+export const BOSS_CORE_BOX: Hitbox = (() => {
+  const box = HITBOXES['core'];
+  if (!box) throw new Error('hitboxes.json: no "core" entry — the vent has nowhere to draw');
+  return box;
+})();
 
 /**
  * Every `<g>` in the sliced file, in document order — which is the slicer's paint order,

@@ -357,6 +357,10 @@ fn check_commit_accounts(
     if magic_program.address() != &MAGIC_PROGRAM_ID {
         return Err(ProgramError::IncorrectProgramId);
     }
+    // The Magic program appends the committee to this account; a read-only meta makes
+    // the whole commit a no-op that still returns `Ok`. `settle` checks it for the same
+    // reason and this path had been missing it.
+    assert_writable(magic_context)?;
 
     // Inside the ER a delegated account still reports its original program as owner;
     // on the base layer it reports the delegation program. So this check is also what
@@ -380,6 +384,17 @@ fn check_commit_accounts(
         let data = players.try_borrow()?;
         load::<Players>(&data)?;
     }
+
+    // Same binding `settle::check_match_accounts` performs, and for the same reason:
+    // owner plus discriminator only proves these are *a* boss and *a* roster, not
+    // *this* arena's. `init_arena` takes `crank_authority` from its argument block, so
+    // the treasury can legitimately mint an arena naming a stranger as authority — and
+    // that stranger would otherwise pass the authority check below with their own arena
+    // and then commit-and-undelegate a live match's `Boss` and `Players` out of the ER.
+    // The seeds are the arena *address*, so a forged arena reaches only its own children.
+    let arena_key = *arena.address();
+    assert_pda(boss, &[SEED_BOSS, arena_key.as_ref()], program_id)?;
+    assert_pda(players, &[SEED_PLAYERS, arena_key.as_ref()], program_id)?;
 
     {
         let mut data = arena.try_borrow_mut()?;

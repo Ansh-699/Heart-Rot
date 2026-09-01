@@ -408,8 +408,20 @@ export async function sessionInit(env: Env, body: unknown): Promise<Response> {
       continue;
     }
 
+    // The seat is ours on the wire, but `join` keeps a *returning* identity's existing
+    // slot whatever we asked for. Our roster read is one ER round trip old, so a second
+    // tab joining under the same Privy identity in that window makes our pick and the
+    // chain's disagree — and the browser would then sign every move with a seat whose
+    // `session_pubkey` is someone else's, failing on chain forever. Read it back.
+    const settledBytes = await accountData(er, pdas.players);
+    if (!settledBytes) throw new Error('roster vanished after claim');
+    const claimed = decodePlayers(settledBytes).slots.find(
+      (slot) => slot.occupied && slot.identity.every((byte, i) => byte === identity[i]),
+    );
+    if (!claimed) throw new Error('seat not on the roster after a confirmed claim');
+
     return json({
-      seat,
+      seat: claimed.seat,
       arenaId: arenaId.toString(),
       incarnation: arena.incarnation,
       arenaPda: pdas.arena,
@@ -591,14 +603,16 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
     });
   }
 
+  // No argument block: the handler takes no `data` and reads `(arena_id, incarnation)`
+  // off the `Arena` account it is handed. Tag 10 is absent from `ZERO_ARG_TAGS`, so a
+  // trailing block would be ignored in silence rather than rejected — which is exactly
+  // why it must not be sent. `incarnation` below is read state, not an argument.
   const ix = writeLeaderboard({
     programId: c.programId,
     payer: c.treasury.address,
     leaderboard,
     arena: pdas.arena,
     players: pdas.players,
-    arenaId,
-    incarnation,
   });
   const baseSignature = await sendInstructions(c.base, c.treasury, [ix]);
   await confirmSignature(c.base, baseSignature, { timeoutMs: BASE_CONFIRM_MS });

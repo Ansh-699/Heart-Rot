@@ -10,6 +10,30 @@
 //! `InvalidSeeds`, a wrong discriminator is `InvalidAccountData`, malformed instruction
 //! data is `InvalidInstructionData`. This enum only covers game rules, which is why it
 //! is short.
+//!
+//! ## Who is supposed to return these
+//!
+//! A game rule fails here, never as `ProgramError::InvalidArgument`. `InvalidArgument`
+//! is one code for every rule at once, and the only diagnostic a failed ER transaction
+//! hands back is that code — see the "distinct errors" property in `guards.rs`.
+//! The mapping, handler by handler:
+//!
+//! | Condition | Variant |
+//! |---|---|
+//! | seat byte `>= MAX_SEATS`, or a slot lookup that misses | [`HeartrotError::SeatOutOfRange`] |
+//! | `claim_seat` on a seat held by a different `identity`, and no free seat left | [`HeartrotError::SeatOccupied`] |
+//! | a named seat whose `session_pubkey` is still the all-zero sentinel | [`HeartrotError::SeatUnclaimed`] |
+//! | `arena.phase` is not one this instruction accepts | [`HeartrotError::WrongPhase`] |
+//! | `last_move_tick` / `last_shot_tick` already equals the current tick | [`HeartrotError::RateLimited`] |
+//! | `slot.hp == 0` | [`HeartrotError::PlayerDead`] |
+//! | `slot.zone` wrong for the instruction, or not standing on the gate | [`HeartrotError::WrongZone`] |
+//! | `boss_tick` signer is not the crank-executor PDA | [`HeartrotError::NotCrankSigner`] |
+//! | `settle` while the match is still running | [`HeartrotError::MatchNotOver`] |
+//!
+//! Variants 1, 4 and 5 are only reachable once tags 4 and 6 carry the explicit `seat`
+//! byte the ABI in `instruction.rs` specifies — a handler that scans for the
+//! signer's own slot instead can never see "that seat is someone else's". They are kept
+//! for that reason; do not delete them because the current handler shape misses them.
 
 use pinocchio::error::ProgramError;
 
@@ -63,5 +87,42 @@ impl From<HeartrotError> for ProgramError {
     #[inline(always)]
     fn from(e: HeartrotError) -> Self {
         ProgramError::Custom(e as u32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The discriminants are wire ABI. The client renders a failure as `Custom(n)` and
+    /// has no IDL to look the name up in, so inserting a variant in the middle silently
+    /// relabels every error a deployed client already knows. This table is the only
+    /// thing enforcing the "never renumber; append instead" rule in the module header —
+    /// adding a variant means adding a row, which is the point.
+    #[test]
+    fn codes_are_frozen() {
+        const CODES: [(HeartrotError, u32); 10] = [
+            (HeartrotError::WrongSessionKey, 1),
+            (HeartrotError::NotCrankSigner, 2),
+            (HeartrotError::SeatOutOfRange, 3),
+            (HeartrotError::SeatOccupied, 4),
+            (HeartrotError::SeatUnclaimed, 5),
+            (HeartrotError::WrongPhase, 6),
+            (HeartrotError::RateLimited, 7),
+            (HeartrotError::PlayerDead, 8),
+            (HeartrotError::WrongZone, 9),
+            (HeartrotError::MatchNotOver, 10),
+        ];
+
+        for (i, (err, code)) in CODES.iter().enumerate() {
+            // `Custom(0)` is indistinguishable from "unspecified custom failure" in most
+            // tooling, so it must never be one of ours.
+            assert_ne!(*code, 0);
+            // Dense and ascending: a gap here means a variant was deleted rather than
+            // retired in place, and a deleted variant's number must never be reused.
+            assert_eq!(*code as usize, i + 1);
+            assert_eq!(*err as u32, *code);
+            assert_eq!(ProgramError::from(*err), ProgramError::Custom(*code));
+        }
     }
 }

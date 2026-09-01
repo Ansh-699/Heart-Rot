@@ -46,24 +46,120 @@ use crate::state::{
     SEED_ARENA, SEED_BOSS, SEED_LEADERBOARD, SEED_PLAYERS,
 };
 
+/// Base58 treasury address, supplied at build time.
+///
+/// **Deployment step.** Export the public half of the Worker's `TREASURY_SECRET_KEY`
+/// before building for deploy:
+///
+/// ```sh
+/// HEARTROT_TREASURY=$(solana address -k treasury.json) cargo build-sbf
+/// ```
+///
+/// It is an environment variable rather than a literal edited into this file because the
+/// same value has to reach `worker/wrangler.jsonc`'s `PROGRAM_ID` sibling secret and a
+/// value that lives in two hand-edited places drifts. Nothing secret is exposed: this is
+/// a public key.
+///
+/// When the variable is unset the fallback below is the all-zero address, which is the
+/// System Program and which no keypair can sign for. That value is deliberately kept
+/// buildable on the host so `cargo check` and `cargo test` still run without a deploy
+/// key, and is rejected at compile time for the BPF target by the `const` assertion below
+/// — an unfilled `cargo build-sbf` fails loudly instead of emitting a `.so` in which
+/// [`init_arena`] is uncallable and no arena can ever be opened.
+const TREASURY_BASE58: &str = match option_env!("HEARTROT_TREASURY") {
+    Some(address) => address,
+    None => "11111111111111111111111111111111",
+};
+
+/// Decoded form of [`TREASURY_BASE58`]. Kept as raw bytes so the compile-time emptiness
+/// check below can look at them; `Address` exposes no const accessor.
+const TREASURY_BYTES: [u8; 32] = decode_base58_address(TREASURY_BASE58);
+
 /// The only key allowed to open a match.
 ///
-/// **Fill this in with the treasury's address before the first deploy**, the same way
-/// `PROGRAM_ID` is filled into `worker/wrangler.jsonc` after it. The placeholder below is
-/// the all-zero address, which no keypair can sign for, so an unfilled build refuses every
-/// `init_arena` rather than shipping the squatting hole described in rule 2 — a program
-/// that opens no arenas is recoverable in one redeploy, one that opens them for an
-/// attacker is not.
-///
-/// Unlike the program id (which the runtime hands every handler, and which this crate
-/// therefore never hardcodes), the treasury is not knowable from inside a transaction and
-/// is chosen before deploy, so a constant is the only place it can live.
+/// It has to be a build-time constant rather than an account field: unlike the program id
+/// (which the runtime hands every handler, and which this crate therefore never
+/// hardcodes), the treasury is not knowable from inside a transaction and is chosen before
+/// deploy. `settle.rs` gates `write_leaderboard` on the same authority and must `use` this
+/// symbol rather than declare its own: two separately-editable copies of one key are a
+/// half-applied rotation that compiles clean and fails silently at settle time.
 ///
 /// ponytail: one baked-in key rather than an admin field, because the frozen layout
-/// contract has no spare bytes on `Leaderboard` and adding some is a `LAYOUT_VERSION` bump
-/// across three files. Upgrade path if the treasury ever has to rotate without a redeploy:
-/// an `admin: [u8; 32]` on `Leaderboard`, stamped by `init_leaderboard`.
-pub const TREASURY: Address = Address::new_from_array([0u8; 32]);
+/// contract has no spare bytes on `Leaderboard`, `init_arena`'s frozen 5-account list has
+/// no room to pass one, and adding either is a `LAYOUT_VERSION` bump across three files.
+/// Upgrade path if the treasury ever has to rotate without a redeploy: an `admin: [u8; 32]`
+/// on `Leaderboard`, stamped by `init_leaderboard`.
+pub const TREASURY: Address = Address::new_from_array(TREASURY_BYTES);
+
+/// Refuses a deploy build that never had `HEARTROT_TREASURY` set.
+///
+/// Only on the BPF target, which is the only build that produces something deployable. A
+/// host build keeps the placeholder so `cargo check`, `cargo clippy` and the unit tests
+/// below run on a machine that holds no deploy key.
+#[cfg(target_os = "solana")]
+const _: () = {
+    // `[u8; 32] == [0u8; 32]` is not available: `PartialEq` is not const and `[0; 32]` is
+    // not a pattern, so the comparison is spelled out.
+    const fn is_zero(bytes: &[u8; 32]) -> bool {
+        let mut index = 0;
+        while index < 32 {
+            if bytes[index] != 0 {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+    assert!(
+        !is_zero(&TREASURY_BYTES),
+        "HEARTROT_TREASURY is unset: rebuild with \
+         HEARTROT_TREASURY=$(solana address -k treasury.json) cargo build-sbf"
+    );
+};
+
+/// Base58 (Bitcoin alphabet) decode of a 32-byte address, at compile time.
+///
+/// Hand-rolled because `pinocchio-pubkey`'s `pubkey!` macro cannot be added to this
+/// workspace: its latest release pins `pinocchio ^0.9` and would drag a second,
+/// semver-incompatible pinocchio into the tree (same reason `settle.rs` writes
+/// `CRANK_PROGRAM_ID` as raw bytes). A malformed character or a value wider than 32 bytes
+/// is a `panic!` in const context, which is a compile error, not a runtime one.
+const fn decode_base58_address(text: &str) -> [u8; 32] {
+    let input = text.as_bytes();
+    let mut out = [0u8; 32];
+    let mut index = 0;
+    while index < input.len() {
+        // The alphabet omits 0, O, I and l precisely because they are misread by humans;
+        // accepting them silently would decode a typo into a valid-looking address.
+        let digit = match input[index] {
+            character @ b'1'..=b'9' => character - b'1',
+            character @ b'A'..=b'H' => character - b'A' + 9,
+            character @ b'J'..=b'N' => character - b'J' + 17,
+            character @ b'P'..=b'Z' => character - b'P' + 22,
+            character @ b'a'..=b'k' => character - b'a' + 33,
+            character @ b'm'..=b'z' => character - b'm' + 44,
+            _ => panic!("HEARTROT_TREASURY is not a base58 address"),
+        } as u32;
+
+        // out = out × 58 + digit, big-endian, propagating the carry down from the least
+        // significant byte. Leading '1's contribute digit 0 and so become leading zero
+        // bytes, which is what base58 means by them.
+        let mut carry = digit;
+        let mut byte = 32;
+        while byte > 0 {
+            byte -= 1;
+            let wide = out[byte] as u32 * 58 + carry;
+            out[byte] = wide as u8;
+            carry = wide >> 8;
+        }
+        if carry != 0 {
+            panic!("HEARTROT_TREASURY is longer than 32 bytes");
+        }
+        index += 1;
+    }
+    out
+}
+
 
 /// Six minutes at the 400 ms crank interval — the enrage timeout from the game design.
 ///
@@ -498,6 +594,34 @@ mod tests {
         // A zero base cannot occur — the `const` block above rejects it at compile time —
         // but scaling must not invent HP either.
         assert_eq!(scale_for_incarnation(0, 9), 0);
+    }
+
+    /// The base58 decoder is what turns a deploy-time environment variable into the one
+    /// key allowed to open a match, so a wrong digit table is an admin gate pointed at an
+    /// address nobody holds. The crank id is the vector to check it against: the expected
+    /// bytes below are `settle.rs`'s hand-written `CRANK_PROGRAM_ID` literal, so agreement
+    /// checks this decoder and that literal against each other.
+    #[test]
+    fn base58_decodes_known_addresses() {
+        assert_eq!(
+            decode_base58_address("Crank11111111111111111111111111111111111111"),
+            [
+                3, 9, 115, 187, 171, 86, 176, 95, 66, 206, 3, 79, 119, 118, 67, 48, 79, 137, 61,
+                97, 116, 104, 235, 217, 161, 243, 44, 64, 0, 0, 0, 0
+            ],
+        );
+        // The all-'1' address is the System Program, and it is also the unset-treasury
+        // placeholder the BPF-target assertion refuses.
+        assert_eq!(decode_base58_address("11111111111111111111111111111111"), [0u8; 32]);
+        // A 32-byte value with a high leading byte — the case that overflows if the carry
+        // is dropped, and the one a naive base-256 shift gets wrong.
+        assert_eq!(
+            decode_base58_address("JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5"),
+            [
+                255, 147, 154, 38, 126, 86, 144, 148, 141, 236, 85, 27, 45, 185, 36, 140, 170, 77,
+                128, 218, 98, 36, 25, 126, 142, 180, 99, 172, 145, 121, 206, 14
+            ],
+        );
     }
 
     /// The vent is the fight's only path to the core and it opens on a comparison
