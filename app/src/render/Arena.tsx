@@ -258,7 +258,28 @@ const LOBBY_X = Math.max(
 );
 const LOBBY_Y = ARENA_UNITS - LOBBY_SPAN;
 
-const CAM_LOBBY = `scale(${LOBBY_ZOOM}) translate(${-LOBBY_X}px, ${-LOBBY_Y}px)`;
+/**
+ * How close to the window edge the local knight gets before the lobby camera re-centres.
+ * A dead zone, so ordinary walking pans nothing and only approaching the edge moves it.
+ */
+const LOBBY_MARGIN = 96;
+
+/** The lobby window's top-left that centres `(x, y)`, clamped inside the map. */
+function lobbyOriginFor(x: number, y: number): { x: number; y: number } {
+  const lim = ARENA_UNITS - LOBBY_SPAN;
+  const fit = (v: number): number => Math.max(0, Math.min(lim, Math.round(v - LOBBY_SPAN / 2)));
+  return { x: fit(x), y: fit(y) };
+}
+
+/** Is `(x, y)` within `LOBBY_MARGIN` of the edge of the window at `o` — or outside it? */
+function nearLobbyEdge(o: { x: number; y: number }, x: number, y: number): boolean {
+  return (
+    x < o.x + LOBBY_MARGIN ||
+    x > o.x + LOBBY_SPAN - LOBBY_MARGIN ||
+    y < o.y + LOBBY_MARGIN ||
+    y > o.y + LOBBY_SPAN - LOBBY_MARGIN
+  );
+}
 const CAM_ARENA = 'scale(1) translate(0px, 0px)';
 
 /**
@@ -482,10 +503,28 @@ export function Arena({
   const cameraAnim = useRef<Animation | null>(null);
   const cameraFrom = useRef<string | null>(null);
   const wide = arena.phase === PHASE_LOBBY || arena.phase === PHASE_MUSTERING;
+  // The lobby camera FOLLOWS the local knight rather than framing a fixed window.
+  //
+  // A fixed window cannot show a player who is outside it, and there is always a way to be
+  // outside it: seats written by an older program, and — before the pit clamp — simply
+  // walking north out of the lobby, which is how the first report of this arrived. The
+  // chain held the knight at (66, 20), the renderer drew it there faithfully, and the
+  // window showed x 181..693 / y 512..1024. Nothing was broken except where we were looking.
+  const camOrigin = useRef<{ x: number; y: number }>({ x: LOBBY_X, y: LOBBY_Y });
+  const localSlot = localSeat === undefined ? undefined : players.slots[localSeat];
+  const followX = localSlot?.occupied === true ? localSlot.x : undefined;
+  const followY = localSlot?.occupied === true ? localSlot.y : undefined;
   useLayoutEffect(() => {
     const el = cameraRef.current;
     if (el === null) return;
-    const to = wide ? CAM_LOBBY : CAM_ARENA;
+    if (wide && followX !== undefined && followY !== undefined) {
+      // Re-centre only near the edge, so ordinary walking pans nothing.
+      if (nearLobbyEdge(camOrigin.current, followX, followY)) {
+        camOrigin.current = lobbyOriginFor(followX, followY);
+      }
+    }
+    const o = camOrigin.current;
+    const to = wide ? `scale(${LOBBY_ZOOM}) translate(${-o.x}px, ${-o.y}px)` : CAM_ARENA;
     const from = cameraFrom.current;
     if (from === to) return;
     cameraAnim.current?.cancel();
@@ -497,7 +536,7 @@ export function Arena({
       { duration, easing: CAMERA_EASE, fill: 'both' },
     );
     cameraFrom.current = to;
-  }, [wide, reduced]);
+  }, [wide, reduced, followX, followY]);
 
   // ---- the two telegraphs -----------------------------------------------
   //
@@ -987,6 +1026,27 @@ if (import.meta.env.DEV) {
     LOBBY_Y <= LOBBY_SPAWN_Y && LOBBY_SPAWN_Y < LOBBY_Y + LOBBY_SPAN,
     'the lobby camera frames the spawn row in y',
   );
+
+  // The follow camera's real contract, and the one the fixed window could not meet: for
+  // ANY position on the map there is a window containing it. A player the camera cannot
+  // reach is a player who cannot find their own knight, whatever put them there.
+  for (const [px, py] of [
+    [0, 0],
+    [66, 20],
+    [ARENA_UNITS - 1, ARENA_UNITS - 1],
+    [LOBBY_SPAWN_MIN_X, LOBBY_SPAWN_Y],
+    [LOBBY_SPAWN_MAX_X, LOBBY_SPAWN_Y],
+  ] as const) {
+    const o = lobbyOriginFor(px, py);
+    ok(
+      o.x >= 0 && o.y >= 0 && o.x <= ARENA_UNITS - LOBBY_SPAN && o.y <= ARENA_UNITS - LOBBY_SPAN,
+      `the lobby window stays on the map for (${px}, ${py})`,
+    );
+    ok(
+      px >= o.x && px < o.x + LOBBY_SPAN && py >= o.y && py < o.y + LOBBY_SPAN,
+      `the lobby camera can show (${px}, ${py})`,
+    );
+  }
   ok(LOBBY_Y <= GATE_MIN_Y && GATE_MAX_Y < LOBBY_Y + LOBBY_SPAN, 'the lobby camera frames the gate in y');
   ok(Number.isInteger(LOBBY_ZOOM), 'both camera scales are integers, so both ends are pixel-exact');
 
