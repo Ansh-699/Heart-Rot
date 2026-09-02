@@ -51,13 +51,13 @@ export const BOSS_ANCHOR_Y = -302;
 export const PART_HITBOXES: readonly [Rect, Rect, Rect, Rect, Rect, Rect, Rect, Rect, Rect] = [
   { x: -79, y: -254, w: 27, h: 59 }, // 0 thorn0
   { x: 59, y: -245, w: 36, h: 52 }, // 1 thorn1
-  { x: -158, y: -76, w: 50, h: 27 }, // 2 thorn2
+  { x: -158, y: -73, w: 50, h: 24 }, // 2 thorn2
   { x: 85, y: -132, w: 33, h: 83 }, // 3 thorn3
   { x: -49, y: -301, w: 125, h: 118 }, // 4 crown
   { x: -147, y: -223, w: 100, h: 116 }, // 5 wolf_l
   { x: 25, y: -222, w: 131, h: 107 }, // 6 beast_r
-  { x: -129, y: -114, w: 67, h: 106 }, // 7 mace
-  { x: 33, y: -120, w: 87, h: 113 }, // 8 claws
+  { x: -128, y: -112, w: 59, h: 102 }, // 7 mace
+  { x: 33, y: -116, w: 76, h: 109 }, // 8 claws
 ];
 
 /**
@@ -90,5 +90,5 @@ export const MUZZLES: readonly [Muzzle, Muzzle, Muzzle, Muzzle] = [
   { part: 0, x: -67, y: -222 }, // thorn0
   { part: 1, x: 77, y: -217 }, // thorn1
   { part: 2, x: -130, y: -62 }, // thorn2
-  { part: 3, x: 102, y: -93 }, // thorn3
+  { part: 3, x: 103, y: -96 }, // thorn3
 ];
