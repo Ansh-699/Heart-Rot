@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
+import { QUIET_ARGS } from '../launch.mjs';
 const { chromium } = createRequire(process.env.PW_HOME + '/x.cjs')('playwright');
-const b=await chromium.launch({channel:'chrome',headless:false});
+const b=await chromium.launch({channel:'chrome',headless:false, args: [...QUIET_ARGS] });
 const pg=await b.newPage();
 await pg.setContent(`<style>.p{filter:drop-shadow(-3px -3px 0 red)}
 .p.dead{opacity:.34;filter:grayscale(1) brightness(.45)}</style>

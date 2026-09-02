@@ -3,6 +3,7 @@
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(process.env.PW_HOME + '/x.cjs')('playwright');
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
+import { QUIET_ARGS } from '../launch.mjs';
 const DIR=path.resolve('dist'); const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css'};
 const srv=http.createServer((q,s)=>{const f=path.join(DIR,q.url==='/'?'index.html':q.url.split('?')[0]);
  if(!f.startsWith(DIR)||!fs.existsSync(f)){s.writeHead(404);return s.end();}
@@ -26,7 +27,7 @@ const V={
  f5_orb_only:{css:ORB,spill:1},
 };
 const OUT=process.env.OUTDIR||'fix'; fs.mkdirSync(OUT,{recursive:true});
-const b=await chromium.launch({channel:'chrome',headless:false});
+const b=await chromium.launch({channel:'chrome',headless:false, args: [...QUIET_ARGS] });
 for(const [name,v] of Object.entries(V)){
   const pg=await b.newPage({viewport:{width:1024,height:1024}});
   await pg.goto('http://127.0.0.1:8765/',{waitUntil:'load'});

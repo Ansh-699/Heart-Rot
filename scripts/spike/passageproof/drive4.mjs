@@ -1,0 +1,34 @@
+import { createRequire } from 'node:module';
+const { chromium } = createRequire(process.env.PW_HOME + '/package.json')('playwright');
+import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const HERE = path.dirname(fileURLToPath(import.meta.url)); const DIR = path.join(HERE, 'dist');
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+const srv = http.createServer((q, s) => { const f = path.join(DIR, q.url === '/' ? 'index.html' : q.url.split('?')[0]);
+  if (!f.startsWith(DIR) || !fs.existsSync(f)) { s.writeHead(404); return s.end(); }
+  s.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'text/plain' }); fs.createReadStream(f).pipe(s); });
+await new Promise((r) => srv.listen(8764, r));
+const ARENA = 1, LOBBY = 0, MUSTERING = 6;
+const b = await chromium.launch({ channel: 'chrome', headless: false, args: ['--window-position=-32000,-32000'] });
+const pg = await b.newPage({ viewport: { width: 1440, height: 900 } });
+pg.on('pageerror', (e) => console.log('PAGEERROR', String(e)));
+await pg.goto('http://127.0.0.1:8764/', { waitUntil: 'load' });
+await pg.bringToFront();
+await pg.waitForFunction('window.__ready === true');
+await pg.evaluate(`(() => { const w = () => { window.__last = window.__hr.push(Math.floor(Math.random()*4)); requestAnimationFrame(w); }; requestAnimationFrame(w); })()`);
+await pg.evaluate(([z]) => window.__hr.set({ zone: z }), [ARENA]);
+await pg.waitForTimeout(1800);
+await pg.evaluate(([z, ph]) => window.__hr.set({ zone: z, phase: ph }), [LOBBY, MUSTERING]);
+await pg.waitForTimeout(1200);
+const r = await pg.evaluate(([z]) => {
+  window.__hr.set({ zone: z });
+  setTimeout(() => { window.__paused = window.__hr.pauseAnims(); }, 200);
+  return window.__hr.run(2200).then((s) => ({ s, paused: window.__paused, lastPush: window.__last }));
+}, [ARENA]);
+const s = r.s;
+console.log('paused', r.paused, 'lastPush', r.lastPush, 'frames', s.length);
+const changes = s.filter((x, i) => i > 0 && x.tf !== s[i - 1].tf);
+console.log('tf changes:', changes.length, JSON.stringify(changes.slice(0, 6).map((x) => ({ t: x.t, tf: x.tf, flat: x.flat, room: x.room }))));
+console.log('window 950-1200:', JSON.stringify(s.filter((x) => x.t > 950 && x.t < 1200).map((x) => ({ t: x.t, tf: x.tf }))));
+console.log('last 3:', JSON.stringify(s.slice(-3)));
+await b.close(); srv.close();

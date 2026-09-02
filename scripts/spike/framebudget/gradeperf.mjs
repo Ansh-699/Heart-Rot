@@ -5,6 +5,7 @@
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(process.env.PW_HOME + '/x.cjs')('playwright');
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
+import { QUIET_ARGS } from '../launch.mjs';
 const DIR = path.resolve('dist');
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css' };
 const srv = http.createServer((q,s)=>{const f=path.join(DIR,q.url==='/'?'index.html':q.url.split('?')[0]);
@@ -24,7 +25,7 @@ const LAYERS=JSON.parse(process.env.LAYERS||'[{"layer":"boss","knights":0,"bulle
 const CPUS=JSON.parse(process.env.CPUS||'[1,6]');
 const REPS=+(process.env.REPS||3);
 const out=[];
-const b=await chromium.launch({channel:'chrome',headless:false});
+const b=await chromium.launch({channel:'chrome',headless:false, args: [...QUIET_ARGS] });
 for(let rep=0;rep<REPS;rep++){
  const names=Object.keys(CSS); if(rep%2) names.reverse();
  for(const L of LAYERS) for(const cpu of CPUS) for(const name of names){

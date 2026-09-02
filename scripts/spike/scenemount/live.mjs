@@ -1,8 +1,9 @@
 // Throwaway: does the DEPLOYED bundle boot? bundle.md notes #root stays empty until Privy's
 // remote config resolves, so "the page paints" is the thing worth confirming after a deploy.
 import { createRequire } from 'node:module';
+import { QUIET_ARGS } from '../launch.mjs';
 const { chromium } = createRequire(process.env.PW_HOME + '/x.cjs')('playwright');
-const b = await chromium.launch({ channel: 'chrome', headless: true });
+const b = await chromium.launch({ channel: 'chrome', headless: true, args: [...QUIET_ARGS] });
 const pg = await b.newPage({ viewport: { width: 1200, height: 900 } });
 const errs = [];
 pg.on('pageerror', (e) => errs.push(e.message));

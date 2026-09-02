@@ -8,6 +8,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QUIET_ARGS } from '../launch.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(HERE, 'dist3');
@@ -21,7 +22,7 @@ const srv = http.createServer((q, s) => {
 const PORT = +(process.env.PORT || 8744);
 await new Promise((r) => srv.listen(PORT, r));
 
-const b = await chromium.launch({ channel: 'chrome', headless: false });
+const b = await chromium.launch({ channel: 'chrome', headless: false, args: [...QUIET_ARGS] });
 const pg = await b.newPage({ viewport: { width: 1920, height: 1080 } });
 const errs = [];
 const urls = [];

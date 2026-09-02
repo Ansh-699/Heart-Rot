@@ -21,6 +21,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QUIET_ARGS } from '../launch.mjs';
 
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
@@ -33,7 +34,7 @@ const srv = http.createServer((q, s) => {
 const PORT = +(process.env.PORT || 8749);
 await new Promise((r) => srv.listen(PORT, r));
 
-const b = await chromium.launch({ channel: 'chrome', headless: process.env.HEADED ? false : true });
+const b = await chromium.launch({ channel: 'chrome', headless: process.env.HEADED ? false : true, args: [...QUIET_ARGS] });
 const pg = await b.newPage({ viewport: { width: 1200, height: 900 } });
 const logs = [];
 pg.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));

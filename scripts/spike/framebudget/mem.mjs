@@ -9,6 +9,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QUIET_ARGS } from '../launch.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(HERE, 'dist');
@@ -69,7 +70,7 @@ const PORT = +(process.env.PORT || 8762);
 await new Promise((r) => srv.listen(PORT, r));
 for (const [name, o] of VARIANTS) {
   const pre = chromePids();
-  const b = await chromium.launch({ channel: 'chrome', headless: false });
+  const b = await chromium.launch({ channel: 'chrome', headless: false, args: [...QUIET_ARGS] });
   const pg = await b.newPage({ viewport: { width: 1024, height: 1024 } });
   await pg.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'load' });
   await pg.waitForFunction('window.__ready === true');

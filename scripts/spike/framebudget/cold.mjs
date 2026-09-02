@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 const { chromium } = createRequire(process.env.PW_HOME + '/x.cjs')('playwright');
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QUIET_ARGS } from '../launch.mjs';
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist');
 const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css'};
 const srv=http.createServer((q,s)=>{const f=path.join(DIR,q.url==='/'?'index.html':q.url.split('?')[0]);
@@ -12,7 +13,7 @@ const srv=http.createServer((q,s)=>{const f=path.join(DIR,q.url==='/'?'index.htm
  s.writeHead(200,{'content-type':MIME[path.extname(f)]||'text/plain'});fs.createReadStream(f).pipe(s);});
 await new Promise(r=>srv.listen(8801,r));
 for (const cpu of [1,6]) for (let i=0;i<3;i++) {
-  const b=await chromium.launch({channel:'chrome',headless:false});
+  const b=await chromium.launch({channel:'chrome',headless:false, args: [...QUIET_ARGS] });
   const pg=await b.newPage({viewport:{width:1024,height:1024}});
   const cdp=await pg.context().newCDPSession(pg);
   if(cpu>1) await cdp.send('Emulation.setCPUThrottlingRate',{rate:cpu});

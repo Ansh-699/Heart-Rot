@@ -2,8 +2,9 @@
 // Production builds strip them, so this is the only pass that executes the watchdogs in
 // Knight.tsx, predict.ts, Arena.tsx, Scene.tsx and Boss.tsx.
 import { createRequire } from 'node:module';
+import { QUIET_ARGS } from '../launch.mjs';
 const { chromium } = createRequire(process.env.PW_HOME + '/x.cjs')('playwright');
-const b = await chromium.launch({ channel: 'chrome', headless: true });
+const b = await chromium.launch({ channel: 'chrome', headless: true, args: [...QUIET_ARGS] });
 const pg = await b.newPage({ viewport: { width: 1200, height: 900 } });
 const errs = [], warns = [];
 pg.on('pageerror', (e) => errs.push(String(e.message)));
