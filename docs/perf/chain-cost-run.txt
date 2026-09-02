@@ -1,0 +1,181 @@
+=== ARENA_SEED=1 (boss bump 255, players bump 255) ===
+# raw harness output
+arena 4uQeVoH3NPX9vLdodsUJjXTNFnQptkqWRitPSaBspzr boss_bump 255 players_bump 255
+
+### REDESIGN (working tree)  (/tmp/claude-1000/-home-anshtyagi/0170737a-3afb-4aa1-86f7-94a879050eb1/scratchpad/tree/target/deploy/heartrot.so, 114016 bytes)
+
+| case | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| move accepted, 1 seats | 200 | 2047 | 2052 | 2053 | 2053 | 0.5% |
+| shoot point blank, 1 seats | 64 | 7872 | 7872 | 7872 | 7872 | 2.0% |
+| _shoot point blank: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 120u hit, 1 seats | 64 | 10192 | 10192 | 10192 | 10192 | 2.5% |
+| _shoot 120u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 200u hit, 1 seats | 64 | 12527 | 12527 | 12527 | 12527 | 3.1% |
+| _shoot 200u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot full miss, 1 seats | 64 | 16699 | 16699 | 16699 | 16699 | 4.2% |
+| _shoot full miss: 0 of 64 damaged the shell_ | | | | | | |
+| _PROBE shoot with Arena READ-ONLY: Err(Immutable), 160 CU_ | | | | | | |
+| shoot REJECTED (rate limit), 1 seats | 1 | 3452 | 3452 | 3452 | 3452 | 0.9% |
+| _rejection: Err(Custom(7))_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=-17 dy=33 (|dx|+|dy|=50) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick natural, 1 seats | 1200 | 6086 | 6812 | 8328 | 8508 | 2.1% |
+| _boss_tick natural 1 seats: peak live bullets 4_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=-17 dy=33 (|dx|+|dy|=50) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick PINNED 20 alive, 1 seats | 1200 | 6122 | 7218 | 8411 | 8511 | 2.1% |
+| _boss_tick PINNED 20 alive 1 seats: peak live bullets 4_ | | | | | | |
+| move accepted, 20 seats | 156 | 2047 | 2049 | 2053 | 2053 | 0.5% |
+| move REJECTED, 20 seats | 44 | 2052 | 2052 | 2059 | 2059 | 0.5% |
+| shoot point blank, 20 seats | 64 | 7872 | 7872 | 7872 | 7872 | 2.0% |
+| _shoot point blank: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 120u hit, 20 seats | 64 | 10192 | 10192 | 10192 | 10192 | 2.5% |
+| _shoot 120u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 200u hit, 20 seats | 64 | 12527 | 12527 | 12527 | 12527 | 3.1% |
+| _shoot 200u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot full miss, 20 seats | 64 | 16699 | 16699 | 16699 | 16699 | 4.2% |
+| _shoot full miss: 0 of 64 damaged the shell_ | | | | | | |
+| shoot REJECTED (rate limit), 20 seats | 1 | 3452 | 3452 | 3452 | 3452 | 0.9% |
+| _rejection: Err(Custom(7))_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=16 dy=33 (|dx|+|dy|=49) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick natural, 20 seats | 1200 | 7056 | 11868 | 23276 | 24732 | 6.2% |
+| _boss_tick natural 20 seats: peak live bullets 23_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=16 dy=33 (|dx|+|dy|=49) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick PINNED 20 alive, 20 seats | 1200 | 7232 | 10200 | 23776 | 24884 | 6.2% |
+| _boss_tick PINNED 20 alive 20 seats: peak live bullets 23_ | | | | | | |
+
+### DEPLOYED (devnet, pre-redesign)  (/tmp/claude-1000/-home-anshtyagi/0170737a-3afb-4aa1-86f7-94a879050eb1/scratchpad/heartrot_deployed.so, 112480 bytes)
+
+| case | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| move accepted, 1 seats | 196 | 2047 | 2049 | 2051 | 2051 | 0.5% |
+| move REJECTED, 1 seats | 4 | 2055 | 2056 | 2058 | 2058 | 0.5% |
+| shoot point blank, 1 seats | 64 | 4232 | 4232 | 4232 | 4232 | 1.1% |
+| _shoot point blank: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 120u hit, 1 seats | 64 | 4977 | 4977 | 4977 | 4977 | 1.2% |
+| _shoot 120u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 200u hit, 1 seats | 64 | 5722 | 5722 | 5722 | 5722 | 1.4% |
+| _shoot 200u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot full miss, 1 seats | 64 | 5041 | 5041 | 5041 | 5041 | 1.3% |
+| _shoot full miss: 0 of 64 damaged the shell_ | | | | | | |
+| _PROBE shoot with Arena READ-ONLY: Err(Immutable), 167 CU_ | | | | | | |
+| shoot REJECTED (rate limit), 1 seats | 1 | 3433 | 3433 | 3433 | 3433 | 0.9% |
+| _rejection: Err(Custom(7))_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=-8 dy=7 (|dx|+|dy|=15) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick natural, 1 seats | 1200 | 6058 | 7707 | 8267 | 8314 | 2.1% |
+| _boss_tick natural 1 seats: peak live bullets 4_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=-8 dy=7 (|dx|+|dy|=15) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick PINNED 20 alive, 1 seats | 1200 | 6058 | 7707 | 8267 | 8314 | 2.1% |
+| _boss_tick PINNED 20 alive 1 seats: peak live bullets 4_ | | | | | | |
+| move accepted, 20 seats | 45 | 2047 | 2049 | 2051 | 2051 | 0.5% |
+| move REJECTED, 20 seats | 155 | 2054 | 2055 | 2058 | 2058 | 0.5% |
+| shoot point blank, 20 seats | 64 | 4232 | 4232 | 4232 | 4232 | 1.1% |
+| _shoot point blank: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 120u hit, 20 seats | 64 | 4977 | 4977 | 4977 | 4977 | 1.2% |
+| _shoot 120u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 200u hit, 20 seats | 64 | 5722 | 5722 | 5722 | 5722 | 1.4% |
+| _shoot 200u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot full miss, 20 seats | 64 | 5041 | 5041 | 5041 | 5041 | 1.3% |
+| _shoot full miss: 0 of 64 damaged the shell_ | | | | | | |
+| shoot REJECTED (rate limit), 20 seats | 1 | 3433 | 3433 | 3433 | 3433 | 0.9% |
+| _rejection: Err(Custom(7))_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=4 dy=9 (|dx|+|dy|=13) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick natural, 20 seats | 1200 | 7212 | 21471 | 25399 | 25642 | 6.4% |
+| _boss_tick natural 20 seats: peak live bullets 24_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=4 dy=9 (|dx|+|dy|=13) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick PINNED 20 alive, 20 seats | 1200 | 7242 | 19459 | 24810 | 26033 | 6.5% |
+| _boss_tick PINNED 20 alive 20 seats: peak live bullets 25_ | | | | | | |
+RENT Arena: 1200 bytes, exempt minimum 9242880 lamports
+RENT Boss: 50 bytes, exempt minimum 1238880 lamports
+RENT Players: 1924 bytes, exempt minimum 14281920 lamports
+RENT PlayerSlot (in Players): 96 bytes, exempt minimum 1559040 lamports
+
+=== ARENA_SEED=0 (boss bump 251, players bump 254) ===
+# raw harness output
+arena 11115C9XtokEDfJ8c2QonE7FDe7wevvZQztFGCA2LW boss_bump 251 players_bump 254
+
+### REDESIGN (working tree)  (/tmp/claude-1000/-home-anshtyagi/0170737a-3afb-4aa1-86f7-94a879050eb1/scratchpad/tree/target/deploy/heartrot.so, 114016 bytes)
+
+| case | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| move accepted, 1 seats | 200 | 3547 | 3552 | 3553 | 3553 | 0.9% |
+| shoot point blank, 1 seats | 64 | 15372 | 15372 | 15372 | 15372 | 3.8% |
+| _shoot point blank: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 120u hit, 1 seats | 64 | 17692 | 17692 | 17692 | 17692 | 4.4% |
+| _shoot 120u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 200u hit, 1 seats | 64 | 20027 | 20027 | 20027 | 20027 | 5.0% |
+| _shoot 200u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot full miss, 1 seats | 64 | 24199 | 24199 | 24199 | 24199 | 6.1% |
+| _shoot full miss: 0 of 64 damaged the shell_ | | | | | | |
+| _PROBE shoot with Arena READ-ONLY: Err(Immutable), 160 CU_ | | | | | | |
+| shoot REJECTED (rate limit), 1 seats | 1 | 10952 | 10952 | 10952 | 10952 | 2.7% |
+| _rejection: Err(Custom(7))_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=-17 dy=33 (|dx|+|dy|=50) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick natural, 1 seats | 1200 | 13586 | 14312 | 15828 | 16008 | 4.0% |
+| _boss_tick natural 1 seats: peak live bullets 4_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=-17 dy=33 (|dx|+|dy|=50) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick PINNED 20 alive, 1 seats | 1200 | 13622 | 14718 | 15911 | 16011 | 4.0% |
+| _boss_tick PINNED 20 alive 1 seats: peak live bullets 4_ | | | | | | |
+| move accepted, 20 seats | 156 | 3547 | 3549 | 3553 | 3553 | 0.9% |
+| move REJECTED, 20 seats | 44 | 3552 | 3552 | 3559 | 3559 | 0.9% |
+| shoot point blank, 20 seats | 64 | 15372 | 15372 | 15372 | 15372 | 3.8% |
+| _shoot point blank: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 120u hit, 20 seats | 64 | 17692 | 17692 | 17692 | 17692 | 4.4% |
+| _shoot 120u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 200u hit, 20 seats | 64 | 20027 | 20027 | 20027 | 20027 | 5.0% |
+| _shoot 200u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot full miss, 20 seats | 64 | 24199 | 24199 | 24199 | 24199 | 6.1% |
+| _shoot full miss: 0 of 64 damaged the shell_ | | | | | | |
+| shoot REJECTED (rate limit), 20 seats | 1 | 10952 | 10952 | 10952 | 10952 | 2.7% |
+| _rejection: Err(Custom(7))_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=16 dy=33 (|dx|+|dy|=49) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick natural, 20 seats | 1200 | 14556 | 19368 | 30776 | 32232 | 8.1% |
+| _boss_tick natural 20 seats: peak live bullets 23_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=16 dy=33 (|dx|+|dy|=49) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick PINNED 20 alive, 20 seats | 1200 | 14732 | 17700 | 31276 | 32384 | 8.1% |
+| _boss_tick PINNED 20 alive 20 seats: peak live bullets 23_ | | | | | | |
+
+### DEPLOYED (devnet, pre-redesign)  (/tmp/claude-1000/-home-anshtyagi/0170737a-3afb-4aa1-86f7-94a879050eb1/scratchpad/heartrot_deployed.so, 112480 bytes)
+
+| case | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| move accepted, 1 seats | 196 | 3547 | 3549 | 3551 | 3551 | 0.9% |
+| move REJECTED, 1 seats | 4 | 3555 | 3556 | 3558 | 3558 | 0.9% |
+| shoot point blank, 1 seats | 64 | 11732 | 11732 | 11732 | 11732 | 2.9% |
+| _shoot point blank: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 120u hit, 1 seats | 64 | 12477 | 12477 | 12477 | 12477 | 3.1% |
+| _shoot 120u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 200u hit, 1 seats | 64 | 13222 | 13222 | 13222 | 13222 | 3.3% |
+| _shoot 200u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot full miss, 1 seats | 64 | 12541 | 12541 | 12541 | 12541 | 3.1% |
+| _shoot full miss: 0 of 64 damaged the shell_ | | | | | | |
+| _PROBE shoot with Arena READ-ONLY: Err(Immutable), 167 CU_ | | | | | | |
+| shoot REJECTED (rate limit), 1 seats | 1 | 10933 | 10933 | 10933 | 10933 | 2.7% |
+| _rejection: Err(Custom(7))_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=-8 dy=7 (|dx|+|dy|=15) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick natural, 1 seats | 1200 | 13558 | 15207 | 15767 | 15814 | 4.0% |
+| _boss_tick natural 1 seats: peak live bullets 4_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=-8 dy=7 (|dx|+|dy|=15) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick PINNED 20 alive, 1 seats | 1200 | 13558 | 15207 | 15767 | 15814 | 4.0% |
+| _boss_tick PINNED 20 alive 1 seats: peak live bullets 4_ | | | | | | |
+| move accepted, 20 seats | 45 | 3547 | 3549 | 3551 | 3551 | 0.9% |
+| move REJECTED, 20 seats | 155 | 3554 | 3555 | 3558 | 3558 | 0.9% |
+| shoot point blank, 20 seats | 64 | 11732 | 11732 | 11732 | 11732 | 2.9% |
+| _shoot point blank: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 120u hit, 20 seats | 64 | 12477 | 12477 | 12477 | 12477 | 3.1% |
+| _shoot 120u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot 200u hit, 20 seats | 64 | 13222 | 13222 | 13222 | 13222 | 3.3% |
+| _shoot 200u hit: 64 of 64 damaged the shell_ | | | | | | |
+| shoot full miss, 20 seats | 64 | 12541 | 12541 | 12541 | 12541 | 3.1% |
+| _shoot full miss: 0 of 64 damaged the shell_ | | | | | | |
+| shoot REJECTED (rate limit), 20 seats | 1 | 10933 | 10933 | 10933 | 10933 | 2.7% |
+| _rejection: Err(Custom(7))_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=4 dy=9 (|dx|+|dy|=13) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick natural, 20 seats | 1200 | 14712 | 28971 | 32899 | 33142 | 8.3% |
+| _boss_tick natural 20 seats: peak live bullets 24_ | | | | | | |
+| _PROBE first volley bullet velocity: dx=4 dy=9 (|dx|+|dy|=13) at arena.tick=2, phase=1_ | | | | | | |
+| boss_tick PINNED 20 alive, 20 seats | 1200 | 14742 | 26959 | 32310 | 33533 | 8.4% |
+| _boss_tick PINNED 20 alive 20 seats: peak live bullets 25_ | | | | | | |
+RENT Arena: 1200 bytes, exempt minimum 9242880 lamports
+RENT Boss: 50 bytes, exempt minimum 1238880 lamports
+RENT Players: 1924 bytes, exempt minimum 14281920 lamports
+RENT PlayerSlot (in Players): 96 bytes, exempt minimum 1559040 lamports

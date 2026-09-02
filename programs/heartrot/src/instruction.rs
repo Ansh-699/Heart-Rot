@@ -39,7 +39,7 @@
 //! be `Ok(())` (see the tag 14 section), which a pre-dispatch `Err` would defeat.
 //!
 //! Tags are **append-only**: never renumber, never reuse a retired one. `8` is frozen
-//! hardest — `settle::start_match` writes it into the validator's crank row at schedule
+//! hardest — `settle::begin_muster` writes it into the validator's crank row at schedule
 //! time and the row is replayed for the life of the match, so it can never move. Its
 //! canonical definition is `handlers::settle::IX_BOSS_TICK`, not this table.
 //!
@@ -64,11 +64,11 @@
 //! | 0 | `InitLeaderboard` | `init::init_leaderboard` | base | 0 B | 3 | payer (anyone) |
 //! | 1 | `InitArena` | `init::init_arena` | base | 74 B | 5 | `init::TREASURY` |
 //! | 2 | `Delegate` | `delegation::process_delegate` | base | 0 B | 16 exact | `Arena.crank_authority` |
-//! | 3 | `StartMatch` | `settle::start_match` | ER | 0 B | 5 | `Arena.crank_authority` |
+//! | 3 | `BeginMuster` | `settle::begin_muster` | ER | 0 B | 5 | `Arena.crank_authority` |
 //! | 4 | `ClaimSeat` | `player::join` | ER | 66 B | 3 | `Arena.crank_authority` |
 //! | 5 | `EnterGate` | `player::enter_gate` | ER | 1 B | 3 | `slots[seat].session_pubkey` |
 //! | 6 | `Move` | `player::move_player` | ER | 5 B | 3 | `slots[seat].session_pubkey` |
-//! | 7 | `Shoot` | `shoot::process` | ER | 2 B | 4 | `slots[seat].session_pubkey` |
+//! | 7 | `Shoot` | `shoot::process` | ER | 3 B | 4 | `slots[seat].session_pubkey` |
 //! | 8 | `BossTick` | `tick::process` | ER | 0 B | 4 | crank signer PDA (read-only) |
 //! | 9 | `Settle` | `settle::settle` | ER | 0 B | 6 | `Arena.crank_authority` |
 //! | 10 | `WriteLeaderboard` | `settle::write_leaderboard` | base | 0 B | 4 | `init::TREASURY` |
@@ -147,21 +147,36 @@
 //! The client must also raise the compute budget: three delegations are ~12 CPIs and up
 //! to 1,924 bytes copied per account, which does not fit the default 200,000 CU.
 //!
-//! # Tag 3 — `StartMatch`, ER
+//! # Tag 3 — `BeginMuster`, ER
 //!
 //! Args: none (`ZERO_ARG_TAGS`). Sent to the **ER**, after tag 2 has confirmed:
 //! `Magic11111…` is a runtime builtin, so a base-layer CPI to it cannot resolve.
+//!
+//! The tag, the ABI and all five accounts are **unchanged** — only the semantics moved.
+//! It used to flip straight to `Fighting`; it now opens the muster window.
 //!
 //! | # | Account | Flags | |
 //! |---|---|---|---|
 //! | 0 | payer | `w s` | must equal `Arena.crank_authority`; becomes the crank task authority, so it is the only key that can ever cancel the task |
 //! | 1 | arena | `w` | frozen into the crank row |
 //! | 2 | boss | `w` | frozen into the crank row |
-//! | 3 | players | `w` | frozen into the crank row |
+//! | 3 | players | `w` | frozen into the crank row; **also read**, for the raider check below |
 //! | 4 | magic program | `r` | `Magic11111111111111111111111111111111111111` |
 //!
-//! This flips `phase` to `Fighting` and schedules the tag 8 crank in the same
-//! instruction, because neither half is useful without the other.
+//! This flips `phase` to `Mustering`, stamps `fight_at_tick = tick + MUSTER_TICKS`, and
+//! schedules the tag 8 crank in the same instruction, because neither half is useful
+//! without the other. The crank itself performs the `Mustering → Fighting` flip at the
+//! deadline, so no player, host or Worker has to act and a raid can never fail to start.
+//! `LOBBY → FIGHTING` no longer exists as an edge.
+//!
+//! It refuses with [`crate::error::HeartrotError::NoRaiders`] when no seat is in
+//! `ZONE_ARENA` — [`crate::guards::assert_any_raider`] over the `Players` account already
+//! at index 3, so the refusal costs no new account and no new signer. Without it a raid
+//! can be armed over an empty pit: `spawn_volley` finds no target, nothing ever fires, and
+//! the whole enrage window elapses into `OUTCOME_ENRAGE`. The client auto-sends this the
+//! first time it sees its own zone flip, so 19 of 20 senders get the existing 409 and the
+//! twentieth may legitimately get `NoRaiders` if the gate transaction has not landed yet:
+//! it is a retry, not an error to surface.
 //!
 //! # Tag 4 — `ClaimSeat`, ER
 //!
@@ -219,12 +234,21 @@
 //!
 //! # Tag 7 — `Shoot`, ER
 //!
-//! Args, 2 bytes exactly:
+//! Args, 3 bytes exactly. **This block grew from 2 bytes and is not backward
+//! compatible**: an old client sending the 2-byte block gets a clean length refusal
+//! (`InvalidInstructionData`), so the program and the app must ship together.
 //!
 //! | Offset | Width | Field | |
 //! |---|---|---|---|
 //! | `[0]` | 1 | `seat` | u8 |
-//! | `[1]` | 1 | `dir` | u8, **must be `< 8`** — the eight-way facing octant |
+//! | `[1]` | 1 | `dx` | **i8**, signed — free aim, raw and unnormalised |
+//! | `[2]` | 1 | `dy` | **i8**, signed |
+//!
+//! `dir` is gone. Eight-way aim made a top-centre boss unhittable: replaying `raycast`
+//! over 110 pit stands, 8-way reaches a target from 68.2% of them and **never** reaches
+//! the core, against 110/110 and 9 of 10 targets for the `i8` pair. The pair is normalised
+//! **on chain** by `tick::unit_velocity`, so no table, no extra byte and no client-supplied
+//! magnitude is trusted: `(127, 127)` and `(1, 1)` are the same shot.
 //!
 //! | # | Account | Flags | |
 //! |---|---|---|---|
@@ -246,11 +270,13 @@
 //! | 2 | players | `w` | health, respawns |
 //! | 3 | crank signer | `r s` | **read-only signer**, PDA `["crank-executor", Arena.crank_authority]` under `Crank11111111111111111111111111111111111111` |
 //!
-//! No client ever builds this. `start_match` freezes the four metas and the single data
-//! byte into the validator's crank row and the row is replayed every 400 ms; a crank may
+//! No client ever builds this. `begin_muster` freezes the four metas and the single data
+//! byte into the validator's crank row and the row is replayed every `state::TICK_MS`
+//! (100 ms — the row was written when that was 400); a crank may
 //! carry no writable signer and cannot re-arm itself, so the shape is immutable for the
 //! life of the match. Every rejection inside the handler is `Ok(())`, never `Err`: ten
-//! consecutive failures delete the task permanently, ~26 s in.
+//! consecutive failures delete the task permanently, seconds into the match at a 100 ms
+//! period rather than the ~26 s that number was measured at when the tick was 400 ms.
 //!
 //! # Tag 9 — `Settle`, ER
 //!
@@ -436,8 +462,12 @@
 //!
 //! - `seat` is checked `< state::MAX_SEATS` before it indexes `Players.slots`. A fallible
 //!   `slots.get_mut(seat)` satisfies this; a bare `slots[seat]` does not.
-//! - `dir` (tag 7) is checked against the length of the facing table before it indexes
-//!   one — eight-way, matching `PlayerSlot.facing`.
+//! - `dx`/`dy` (tag 7) are attacker-chosen and carry **no** bound worth checking: the pair
+//!   is normalised on chain to a fixed step length, so magnitude cannot be inflated, and
+//!   every direction is legal. `(0, 0)` is the one rejection — it is not a direction — and
+//!   the ray is bounded by `MAX_RAY_STEPS`, not by the caller. `facing` is stamped by
+//!   quantizing the pair with `player::octant`, which itself rejects `(0, 0)`, so nothing
+//!   indexes the eight-way table with a value off the wire.
 //! - `dx`/`dy` (tag 6) are attacker-chosen and only their **signs** are read:
 //!   `player::octant` quantizes them to one of eight octants and the displacement itself
 //!   comes off `MOVE_STEP`, so `(127, 127)` moves exactly as far as `(1, 1)`. `(0, 0)` is
@@ -447,10 +477,13 @@
 //!   so the per-seat tick counters written by the handlers (`last_move_tick`,
 //!   `last_shot_tick`) are the only rate limit that exists anywhere.
 //!
-//! # `Move` carries no facing
+//! # Neither `Move` nor `Shoot` carries a facing
 //!
-//! Tag 6 sends a displacement, not a direction, so `PlayerSlot.facing` is derived from
-//! the sign of `(dx, dy)` — it is not on the wire. Tag 7 sends `dir` directly and
-//! overwrites `facing` with it. Keep the two derivations agreeing on the octant numbering
-//! (0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W, 7 NW, y down) or a player's sprite faces one way
-//! and their shots leave in another.
+//! Both send a displacement, never a direction: `PlayerSlot.facing` is derived from
+//! `(dx, dy)` by `player::octant` on both paths and is on the wire on neither. That is one
+//! derivation used twice, so the two cannot disagree — which is the whole reason tag 7
+//! stopped sending `dir`. Keep the octant numbering (0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W,
+//! 7 NW, y down) as `PlayerSlot.facing` documents it, and note that `facing` is a
+//! horizontal flip in the renderer: the knight art has one pose, so a flip cannot express
+//! NE against SE. Hitscan can, and does — `facing` is cosmetic, the `(dx, dy)` pair is what
+//! decides the hit.

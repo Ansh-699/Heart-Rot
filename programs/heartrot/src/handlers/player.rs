@@ -53,10 +53,10 @@ use crate::error::HeartrotError;
 use crate::guards::{
     assert_owned_by, assert_pda, assert_session_authority, assert_signer, assert_writable,
 };
-use crate::map::WALLS;
+use crate::map::{GATE_MAX_X, GATE_MAX_Y, GATE_MIN_X, GATE_MIN_Y, PIT_BOT, PIT_TOP, WALLS};
 use crate::state::{
-    self, Arena, PlayerSlot, Players, MAX_SEATS, PHASE_FIGHTING, PHASE_LOBBY, SEED_PLAYERS,
-    ZONE_ARENA, ZONE_LOBBY,
+    self, Arena, PlayerSlot, Players, MAX_SEATS, PHASE_FIGHTING, PHASE_LOBBY, PHASE_MUSTERING,
+    SEED_PLAYERS, ZONE_ARENA, ZONE_LOBBY,
 };
 
 // ---------------------------------------------------------------------------
@@ -79,14 +79,19 @@ pub use crate::map::{MAP_TILES, TILE};
 /// `0..=MAP_MAX_XY`, which is also what makes the tile index below in-range.
 pub const MAP_MAX_XY: i16 = (MAP_TILES as i16) * TILE - 1;
 
-/// The gate tile block, in lobby space: tiles 30..=33 on both axes, which the generated
-/// map keeps as open floor inside the heart chamber. Standing inside it is what
-/// `enter_gate` requires — the lobby *is* the matchmaker, so the gate has to be a place
-/// you walk to and not an API call you make from across the map.
-const GATE_MIN_X: i16 = 30 * TILE;
-const GATE_MAX_X: i16 = 34 * TILE - 1;
-const GATE_MIN_Y: i16 = 30 * TILE;
-const GATE_MAX_Y: i16 = 34 * TILE - 1;
+// The gate block (`GATE_MIN_X`..=`GATE_MAX_Y`) and the pit box (`PIT_TOP`/`PIT_BOT`) are
+// imported from `crate::map`, not declared here.
+//
+// They used to be six literals in this file, and `tools/gen_map.py` parsed them back out
+// of this source to check the grid it had just emitted — one fact stored twice, in the
+// two places least able to notice they had drifted. They are `G` and `P` marks in
+// `assets/map/arena.json` now, so the tiles `enter_gate` accepts are the tiles the map
+// was compiled from, and `map.rs`'s const-assert block can prove `BOSS_SPAWN` is outside
+// the gate on every `cargo check`.
+//
+// Standing inside the gate block is what `enter_gate` requires — the lobby *is* the
+// matchmaker, so the gate has to be a place you walk to and not an API call you make from
+// across the map.
 
 /// The lobby entrance and the sideways pitch seats fan out along, so twenty players
 /// never stack on one pixel and the client can render a join without waiting for the
@@ -204,6 +209,110 @@ fn on_gate(x: i16, y: i16) -> bool {
     (GATE_MIN_X..=GATE_MAX_X).contains(&x) && (GATE_MIN_Y..=GATE_MAX_Y).contains(&y)
 }
 
+/// The y range a seat in `zone` may stand in. The *second* kind of barrier in this
+/// program, and the one that is not made of tiles.
+///
+/// A raider is held inside `PIT_TOP..=PIT_BOT` by two comparisons rather than by wall
+/// tiles, because the rows above the pit cannot be wall: `shoot::raycast` tests `is_wall`
+/// before the part rectangles, so one solid tile between a player and the boss kills every
+/// shot in that column. The pit ceiling is a movement rule laid over open floor.
+///
+/// - `PIT_TOP` stops a raider walking up into the boss's head.
+/// - `PIT_BOT` stops a raider retreating down the gate corridor. Not tidiness:
+///   `tick::spawn_volley` aims at the nearest live player, so one camper at the corridor
+///   mouth makes the boss spend every volley on a target the rim shields.
+///
+/// **The two boxes tile the map at the gate seam and neither zone is unbounded.** The
+/// lobby used to be — `zone != ZONE_ARENA` short-circuited the whole test — on the
+/// argument that the lobby half is bounded by real walls. It is not: rows 1..23 are
+/// deliberately open floor so `raycast` survives, so a `ZONE_LOBBY` seat could walk out of
+/// the temple, up the pit and stand inside the boss's crown (measured: 445,696 reachable
+/// positions, minimum y = 16, tile row 1). Such a seat is invisible to every mechanic —
+/// not in `live`, never targeted, unslammable, cannot shoot — and every client draws it
+/// standing in the creature. The lobby box is therefore `PIT_BOT + 1 ..= MAP_MAX_XY`:
+/// everything below the rim, which is the whole lobby half and the gate.
+///
+/// The seam is exactly one unit wide and `map.rs` const-asserts it (`GATE_MIN_Y ==
+/// PIT_BOT + 1`), which is what makes the flip safe in both directions: the doorway rows
+/// are inside the *lobby* box, the entrance rows are inside the *arena* box, and
+/// `enter_gate` teleports across the seam rather than stepping over it. If the two boxes
+/// left a gap, a player who flipped zone standing on the gate tiles would be outside the
+/// only legal y range with no legal move in any direction — a hard freeze with no error
+/// anywhere.
+fn zone_box(zone: u8) -> (i16, i16) {
+    if zone == ZONE_ARENA {
+        (PIT_TOP, PIT_BOT)
+    } else {
+        (PIT_BOT + 1, MAP_MAX_XY)
+    }
+}
+
+/// How far outside its box a seat in `zone` standing at `y` is; 0 when it is inside.
+///
+/// `saturating_sub` because a corrupt or stale `y` is a caller's byte, not a panic: every
+/// write clamps into `0..=MAP_MAX_XY`, but this program runs with `overflow-checks = true`
+/// and an abort has no error code to read.
+fn box_overshoot(zone: u8, y: i16) -> i16 {
+    let (top, bot) = zone_box(zone);
+    top.saturating_sub(y).max(y.saturating_sub(bot)).max(0)
+}
+
+/// May a seat in `zone` step from `y` to `ny`? The destination must be inside the zone's
+/// box — **or** strictly closer to it than where the seat already stands.
+///
+/// That second clause is the un-stranding rule, and it is why this is not a bare range
+/// test. Narrowing a box under a live account (which this fix does: yesterday's program
+/// let a lobby seat stand at y = 16) leaves seats outside the box that were legal when
+/// they were written, and a bare destination test freezes every one of them — no direction
+/// helps, including the one pointing home, because a sideways step keeps the same illegal
+/// y. Trading the freeze for a bounded walk back is strictly better: the overshoot is a
+/// non-negative integer that must *decrease* every step, so the escape terminates inside
+/// the box and cannot be ridden in the other direction.
+fn may_move_to(zone: u8, y: i16, ny: i16) -> bool {
+    // A stranded seat is governed by walls ALONE until it re-enters its box.
+    //
+    // The strictly-decreasing-overshoot rule this replaces could not be satisfied at every
+    // stranded position: `move_player` demands `!is_wall(nx, ny) && may_move_to(..)`, and a
+    // replay of both predicates over the generated `WALLS` found 4,620 stale lobby positions
+    // where no step is both non-wall and overshoot-decreasing. Those seats froze on their
+    // first move attempt, with no error to distinguish it from a wall.
+    //
+    // Letting a stranded seat move freely cannot freeze anyone that walls alone do not,
+    // because it is exactly the rule the previous program applied to these seats — the one
+    // that let them stand here. It is one-way in the direction that matters: `box_overshoot`
+    // is 0 everywhere inside the box, so once a seat is home `over(ny) == 0` is the only
+    // clause that can hold and it can never step back out.
+    box_overshoot(zone, y) > 0 || box_overshoot(zone, ny) == 0
+}
+
+/// The three refusals `enter_gate` owes a caller, as a pure function of the seat.
+///
+/// Split out of the handler so the gate's rules are testable without an `AccountView`:
+/// this *is* the "one-way, on the tiles, and only a real seat" contract, and every one of
+/// the three is load-bearing (see [`enter_gate`]).
+fn gate_refusal(slot: &PlayerSlot) -> Result<(), ProgramError> {
+    // One direction only. Coming back out is `phase == Settled`, not an instruction —
+    // and rejecting the repeat is what keeps `alive_count` from being incremented
+    // twice by one player, which would inflate `bullets_per_volley` for everyone. It is
+    // also the rate limit: `enter_gate` has no tick counter and needs none, because a
+    // flood of repeats is a flood of rejections that write nothing.
+    if slot.zone != ZONE_LOBBY {
+        return Err(HeartrotError::WrongZone.into());
+    }
+    // The client retries this instruction while the player walks onto the tile, so
+    // "not there yet" must be tellable apart from every other gate failure.
+    if !on_gate(slot.x, slot.y) {
+        return Err(HeartrotError::NotOnGate.into());
+    }
+    // Aliveness is derived as `hp != 0 && zone == ZONE_ARENA`, so a seat with a zero
+    // `hp_max` would count toward `alive_count` while never being alive. `join`
+    // always sets it; this is the assertion that says so.
+    if slot.hp_max == 0 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Shared validation
 // ---------------------------------------------------------------------------
@@ -300,30 +409,67 @@ fn validate_pair(
 /// than rejected so the caller may send either a unit vector or a full step vector.
 ///
 /// The mapping is the one `app/src/input/controls.ts::dirFromVector` computes with
-/// `atan2`, evaluated on the sign quadrant: 0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W,
-/// 7 NW, y down. `(0, 0)` is not a direction and is rejected at the boundary.
-fn octant(dx: i8, dy: i8) -> Result<u8, ProgramError> {
-    Ok(match (dx.signum(), dy.signum()) {
-        (0, -1) => 0,
-        (1, -1) => 1,
-        (1, 0) => 2,
-        (1, 1) => 3,
-        (0, 1) => 4,
-        (-1, 1) => 5,
-        (-1, 0) => 6,
-        (-1, -1) => 7,
-        _ => return Err(ProgramError::InvalidInstructionData),
+/// `atan2`: 0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W, 7 NW, y down. `(0, 0)` is not a
+/// direction and is rejected at the boundary.
+///
+/// **Nearest of eight, not sign-only.** The sign quadrant answers "which of the four
+/// diagonals" for every vector that is not exactly axis-aligned, so `(120, -7)` — a
+/// thumbstick 3° off due east — used to resolve to north-east, 45° away. Free aim gives
+/// `shoot` a raw `(dx, dy)` pair off a pointer, and `shoot` stamps `facing` from it
+/// through this function, so sign-only would have every shot in the pit flip the sprite
+/// to a diagonal. The octant boundary is 22.5°, and `tan 22.5° = 0.41421`, approximated
+/// as `5/12 = 0.41667` — 0.15° of error at the boundary, in integers, with no table and
+/// no float. Both products fit `i32` at the `i8` input range with three orders of
+/// magnitude to spare.
+///
+/// Answers identically to the old body on all eight unit vectors, which is what its test
+/// asserts and why that test is not edited.
+pub(crate) fn octant(dx: i8, dy: i8) -> Result<u8, ProgramError> {
+    let (x, y) = (dx as i32, dy as i32);
+    if x == 0 && y == 0 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    Ok(if 12 * ay < 5 * ax {
+        // Inside 22.5° of the x axis.
+        if x > 0 {
+            2
+        } else {
+            6
+        }
+    } else if 12 * ax < 5 * ay {
+        // Inside 22.5° of the y axis.
+        if y < 0 {
+            0
+        } else {
+            4
+        }
+    } else {
+        // The diagonal band. Neither component can be zero here: a zero component
+        // makes one of the two tests above true for any non-zero vector.
+        match (x > 0, y > 0) {
+            (true, false) => 1,
+            (true, true) => 3,
+            (false, true) => 5,
+            (false, false) => 7,
+        }
     })
 }
 
-/// The two phases in which a seat may act. Everything else is a fight that is over.
+/// The three phases in which a seat may act. Everything else is a fight that is over.
 ///
-/// `LOBBY` and `FIGHTING` are the only phases in which player input means anything, and
-/// this is the allow-list rather than a deny-list of the other four for a reason: the phase
-/// byte grew from four values to six this run (`PHASE_ROLLING`, `PHASE_ROLLED`), and a
-/// handler written as `phase != PHASE_SETTLING && phase != PHASE_SETTLED` would have
-/// silently started accepting moves during a VRF roll. An allow-list gains nothing when a
-/// phase is appended; a deny-list loses a rule.
+/// `LOBBY`, `MUSTERING` and `FIGHTING` are the only phases in which player input means
+/// anything, and this is the allow-list rather than a deny-list of the other four for a
+/// reason: the phase byte has grown twice now — four values to six (`PHASE_ROLLING`,
+/// `PHASE_ROLLED`), then six to seven (`PHASE_MUSTERING`) — and a handler written as
+/// `phase != PHASE_SETTLING && phase != PHASE_SETTLED` would have silently started
+/// accepting moves during a VRF roll. An allow-list gains nothing when a phase is
+/// appended; a deny-list loses a rule.
+///
+/// `MUSTERING` is the muster window: the gate is open, the countdown to `fight_at_tick` is
+/// running, and everyone walks and joins exactly as they did in the lobby. Only weapons
+/// stay down, and that costs nothing here — `shoot` tests `== PHASE_FIGHTING` directly, so
+/// it refuses through the muster without a line of its own.
 ///
 /// What each refusal prevents:
 ///
@@ -340,7 +486,7 @@ fn octant(dx: i8, dy: i8) -> Result<u8, ProgramError> {
 /// armed so a late seat costs the frozen account list nothing (R15), and a raid that
 /// refused reinforcements would punish exactly the player who watched the fight start.
 fn assert_playable(phase: u8) -> Result<(), ProgramError> {
-    if phase == PHASE_LOBBY || phase == PHASE_FIGHTING {
+    if phase == PHASE_LOBBY || phase == PHASE_MUSTERING || phase == PHASE_FIGHTING {
         Ok(())
     } else {
         Err(HeartrotError::WrongPhase.into())
@@ -524,7 +670,14 @@ pub fn move_player(
     // generated grid predicted it would.
     let nx = slot.x.saturating_add(dx).clamp(0, MAP_MAX_XY);
     let ny = slot.y.saturating_add(dy).clamp(0, MAP_MAX_XY);
-    if is_wall(nx, ny) {
+    // Two barriers, one refusal. Walls are the real dungeon; the zone box is the pit
+    // ceiling and floor, which cannot be walls without killing every ray in the column
+    // (see `zone_box`). They share `BlockedByWall` deliberately: the client mirrors
+    // `PIT_TOP`/`PIT_BOT` out of the same generated `map` module and predicts both
+    // refusals identically, so a second error code would distinguish nothing a client
+    // could not already see, and a legal-looking move the chain rejects is this project's
+    // signature misdiagnosis.
+    if is_wall(nx, ny) || !may_move_to(slot.zone, slot.y, ny) {
         return Err(HeartrotError::BlockedByWall.into());
     }
 
@@ -584,26 +737,12 @@ pub fn enter_gate(
         .ok_or(HeartrotError::SeatOutOfRange)?;
     assert_session_authority(slot, authority_ai)?;
 
-    // One direction only. Coming back out is `phase == Settled`, not an instruction —
-    // and rejecting the repeat is what keeps `alive_count` from being incremented
-    // twice by one player, which would inflate `bullets_per_volley` for everyone.
-    if slot.zone != ZONE_LOBBY {
-        return Err(HeartrotError::WrongZone.into());
-    }
-    // The client retries this instruction while the player walks onto the tile, so
-    // "not there yet" must be tellable apart from every other gate failure.
-    if !on_gate(slot.x, slot.y) {
-        return Err(HeartrotError::NotOnGate.into());
-    }
-    // Aliveness is derived as `hp != 0 && zone == ZONE_ARENA`, so a seat with a zero
-    // `hp_max` would count toward `alive_count` while never being alive. `join`
-    // always sets it; this is the assertion that says so.
-    if slot.hp_max == 0 {
-        return Err(ProgramError::InvalidAccountData);
-    }
+    gate_refusal(slot)?;
 
     // `boss_tick` owns the arena entrance; a second definition here would read as a
-    // teleport bug the first time anyone died.
+    // teleport bug the first time anyone died. It is also inside the arena box by
+    // construction — every `E` mark is a `P` tile — so the flip below cannot strand the
+    // seat outside the only y range `move_player` will accept.
     let (x, y) = crate::handlers::tick::entrance_for(seat);
     slot.zone = ZONE_ARENA;
     slot.x = x;
@@ -674,13 +813,17 @@ mod tests {
     fn only_a_live_match_accepts_player_input() {
         assert!(assert_playable(PHASE_LOBBY).is_ok());
         assert!(assert_playable(PHASE_FIGHTING).is_ok(), "late entry is the matchmaker");
+        // The muster is a walking phase: joining, moving and entering the gate all stay
+        // legal while the countdown runs, or the twenty seconds the window exists for
+        // would be twenty seconds nobody could use.
+        assert!(assert_playable(PHASE_MUSTERING).is_ok(), "the muster is walkable");
 
         for phase in [
             PHASE_SETTLING,
             PHASE_SETTLED,
             PHASE_ROLLING,
             PHASE_ROLLED,
-            PHASE_ROLLED + 1,
+            PHASE_MUSTERING + 1,
             u8::MAX,
         ] {
             assert_eq!(
@@ -766,18 +909,24 @@ mod tests {
         // Off-map fails closed rather than indexing out of range.
         assert!(is_wall(-1, 0) && is_wall(0, -1) && is_wall(MAP_MAX_XY + 1, 0));
 
-        // The interior is a dungeon, not an empty rectangle. Tile (24, 16) is inside the
-        // rock that flanks the north corridor, and tile (32, 32) is the heart the boss
-        // spawns on. If `crate::map::WALLS` ever regresses to a bare border ring the
-        // first of these flips and the difficulty system is silently gone again.
-        assert!(is_wall(24 * TILE, 16 * TILE), "interior has no walls");
-        assert!(!is_wall(32 * TILE, 32 * TILE), "boss spawns in a wall");
-        // The 2-tile corridor into the heart is open along its whole length — a corridor
-        // sealed by a pillar would leave the gate unreachable and no match could start.
-        for ty in 15..=23 {
-            assert!(!is_wall(31 * TILE, ty * TILE), "north corridor blocked at {ty}");
-            assert!(!is_wall(32 * TILE, ty * TILE), "north corridor blocked at {ty}");
-        }
+        // The interior is a dungeon, not an empty rectangle. Stated as "somewhere below
+        // the pit there is rock" rather than as a named tile: the named-tile version of
+        // this assertion had to be rewritten the moment the grid was redrawn, which is
+        // exactly the property a drift guard must not have. If `crate::map::WALLS` ever
+        // regresses to a bare border ring, this fires.
+        assert!(
+            (1..MAP_TILES as i16 - 1).any(|ty| (1..MAP_TILES as i16 - 1)
+                .any(|tx| is_wall(tx * TILE, ty * TILE))),
+            "interior has no walls",
+        );
+        // The boss stands on floor. `map.rs` const-asserts the same thing at compile time
+        // against `BOSS_SPAWN`; this reads it through `is_wall`, which is the function the
+        // *player* is refused by, so the two indexing conventions are checked against each
+        // other rather than each being checked against itself.
+        assert!(
+            !is_wall(crate::map::BOSS_SPAWN.0, crate::map::BOSS_SPAWN.1),
+            "boss spawns in a wall",
+        );
 
         // Walking into the ring is clamped in bounds and then rejected as wall, and
         // the clamp itself never overflows at the i16 extremes.
@@ -816,9 +965,347 @@ mod tests {
         // Standing still is not a direction.
         assert!(octant(0, 0).is_err());
 
-        // The gate is reachable: it is inside the map and not a wall.
+        // The gate is reachable: every unit of it is inside the map and on floor, and the
+        // block is closed on all four sides. One walled tile inside the block is a gate a
+        // player can stand next to and never on, which is a raid that cannot be started
+        // and which nothing at runtime reports.
         assert!(on_gate(GATE_MIN_X, GATE_MIN_Y) && on_gate(GATE_MAX_X, GATE_MAX_Y));
         assert!(!on_gate(GATE_MIN_X - 1, GATE_MIN_Y) && !on_gate(GATE_MAX_X + 1, GATE_MAX_Y));
-        assert!(!is_wall(GATE_MIN_X, GATE_MIN_Y) && !is_wall(GATE_MAX_X, GATE_MAX_Y));
+        assert!(!on_gate(GATE_MIN_X, GATE_MIN_Y - 1) && !on_gate(GATE_MAX_X, GATE_MAX_Y + 1));
+        let mut gx = GATE_MIN_X;
+        while gx <= GATE_MAX_X {
+            let mut gy = GATE_MIN_Y;
+            while gy <= GATE_MAX_Y {
+                assert!(on_gate(gx, gy) && !is_wall(gx, gy), "gate unit ({gx}, {gy}) is wall");
+                gy += TILE;
+            }
+            gx += TILE;
+        }
+
+        // The gate is not the boss. `map.rs` const-asserts this too; it is repeated here
+        // because the failure is silent and total — a gate block overlapping `BOSS_SPAWN`
+        // would flip a player into the arena standing inside the shell.
+        assert!(
+            !on_gate(crate::map::BOSS_SPAWN.0, crate::map::BOSS_SPAWN.1),
+            "the gate block contains BOSS_SPAWN",
+        );
+    }
+
+    /// Check 11.6, and the reason `PIT_TOP` is a comparison rather than a row of wall
+    /// tiles: for every pit column, a raider standing at the top of the pit is held there
+    /// by the arena box **while the tile north of them is open floor**.
+    ///
+    /// If that tile were wall, `shoot::raycast` — which tests `is_wall` before it tests any
+    /// part rectangle — would kill every shot fired up that column, and the whole
+    /// top-centre composition would be a boss nobody in that lane can hit. The two
+    /// barriers must disagree here, and this is the assertion that says so out loud.
+    #[test]
+    fn the_pit_ceiling_holds_raiders_without_being_a_wall() {
+        assert!(PIT_TOP >= TILE && PIT_BOT > PIT_TOP && PIT_BOT <= MAP_MAX_XY);
+
+        let mut columns = 0;
+        let mut x = 0;
+        while x <= MAP_MAX_XY {
+            if !is_wall(x, PIT_TOP) {
+                columns += 1;
+                // Both northward steps — cardinal and diagonal — are refused...
+                assert!(!may_move_to(ZONE_ARENA, PIT_TOP, PIT_TOP - STEP), "north out of the pit");
+                assert!(
+                    !may_move_to(ZONE_ARENA, PIT_TOP, PIT_TOP - STEP_DIAG),
+                    "NE/NW out of the pit",
+                );
+                // ...and the tile it would have stepped onto is floor, not rock.
+                assert!(!is_wall(x, PIT_TOP - TILE), "boss air is walled at x={x}");
+            }
+            // The lobby is bounded by the same rim from below. It used to be unbounded on
+            // the argument that real walls held it, and they do not: the boss's air is
+            // open floor by construction (the assertion two lines up), so this comparison
+            // is the only thing between a lobby seat and the inside of the crown.
+            assert!(!may_move_to(ZONE_LOBBY, PIT_BOT + 1, PIT_TOP - STEP));
+            assert!(may_move_to(ZONE_LOBBY, PIT_BOT + 1, PIT_BOT + 1 + STEP));
+            x += TILE;
+        }
+        assert!(columns > 0, "the pit has no open columns");
+
+        // The two boxes meet at the rim with no gap and no overlap — the seam is what
+        // makes `enter_gate`'s flip safe, since it crosses zones and y in one write.
+        assert!(!may_move_to(ZONE_ARENA, PIT_BOT, PIT_BOT + 1), "the pit floor leaks");
+        assert!(!may_move_to(ZONE_LOBBY, PIT_BOT + 1, PIT_BOT), "the lobby ceiling leaks");
+        assert!(may_move_to(ZONE_ARENA, PIT_TOP, PIT_BOT) && may_move_to(ZONE_ARENA, PIT_BOT, PIT_TOP));
+        assert_eq!(zone_box(ZONE_ARENA).1 + 1, zone_box(ZONE_LOBBY).0, "the boxes do not tile");
+        // ...and the gate the flip is triggered from is inside the lobby box, all of it.
+        assert!(
+            may_move_to(ZONE_LOBBY, GATE_MIN_Y, GATE_MIN_Y)
+                && may_move_to(ZONE_LOBBY, GATE_MAX_Y, GATE_MAX_Y),
+            "the gate rows are outside the lobby box — standing on the gate is a freeze",
+        );
+        for seat in 0..MAX_SEATS {
+            let (_, y) = crate::handlers::tick::entrance_for(seat);
+            assert!(
+                may_move_to(ZONE_ARENA, y, y),
+                "seat {seat} enters the arena outside the arena box and can never move",
+            );
+        }
+    }
+
+    /// Finding 2 of `docs/review/chain.md`, stated as the search the review ran: exhaustive
+    /// BFS over every unit position a `ZONE_LOBBY` seat can reach through the shipped
+    /// `map::WALLS` with the shipped eight-way `MOVE_STEP`, under the real move rule.
+    ///
+    /// Before the lobby box existed this search reached 445,696 positions with minimum
+    /// y = **16** — tile row 1, inside the boss's crown — because the rows above the pit
+    /// are deliberately open floor (see [`the_pit_ceiling_holds_raiders_without_being_a_wall`])
+    /// and the clamp only applied to `ZONE_ARENA`. Two properties are asserted together
+    /// because either alone is satisfiable by a broken rule: nothing above the rim is
+    /// reachable, **and** the gate is still reachable from all twenty lobby spawns. A box
+    /// that boxed the lobby in would pass the first and fail the second, and that failure
+    /// is a raid nobody can ever start.
+    ///
+    /// Searched from one seat's spawn, once instead of twenty times, and the other
+    /// nineteen spawns are asserted to be *in* the result: inside the legal set the step
+    /// relation is symmetric (`MOVE_STEP` contains every negation, and the clamp is
+    /// unreachable because the border ring is wall), so "seat 0 reaches seat k's spawn and
+    /// the gate" is "seat k reaches the gate".
+    ///
+    /// Seeding this from a gate unit instead is what a first draft did, and it failed:
+    /// `(x + y)` is even for every step in `MOVE_STEP` (±16 cardinal, ±11 diagonal), so
+    /// its parity is invariant and the map's unit positions are two lattices that never
+    /// touch. `(480, 639)` is on the odd one and no spawn is. Starting from a real spawn
+    /// is the only seed that asks the question a player asks.
+    #[test]
+    fn a_lobby_seat_cannot_reach_the_pit_or_the_bosss_air() {
+        let span = (MAP_MAX_XY as usize) + 1;
+        let idx = |x: i16, y: i16| (y as usize) * span + (x as usize);
+        let mut seen = vec![false; span * span];
+        let start = lobby_spawn(0);
+        seen[idx(start.0, start.1)] = true;
+        let mut queue = std::collections::VecDeque::from([start]);
+        let (mut count, mut min_y, mut gate_units) = (0usize, MAP_MAX_XY, 0usize);
+
+        while let Some((x, y)) = queue.pop_front() {
+            count += 1;
+            min_y = min_y.min(y);
+            gate_units += usize::from(on_gate(x, y));
+            for (dx, dy) in MOVE_STEP {
+                let nx = x.saturating_add(dx).clamp(0, MAP_MAX_XY);
+                let ny = y.saturating_add(dy).clamp(0, MAP_MAX_XY);
+                // Verbatim the pair of refusals in `move_player`.
+                if is_wall(nx, ny) || !may_move_to(ZONE_LOBBY, y, ny) {
+                    continue;
+                }
+                if !seen[idx(nx, ny)] {
+                    seen[idx(nx, ny)] = true;
+                    queue.push_back((nx, ny));
+                }
+            }
+        }
+
+        assert!(
+            min_y > PIT_BOT,
+            "a lobby seat reaches y={min_y}, above the rim at {PIT_BOT} — row \
+             {} is inside the boss",
+            min_y / TILE,
+        );
+        assert!(!seen[idx(crate::map::BOSS_SPAWN.0, crate::map::BOSS_SPAWN.1)]);
+        // The escape clause cannot be ridden upward: every reachable position is inside
+        // the box, so the walk that produced them never left it.
+        // 170,240 positions today, against 445,696 before the lobby box existed. The bound
+        // is loose on purpose — the exact number is a property of the generated map and
+        // would have to be re-measured every time `arena.json` is redrawn — but a lobby
+        // that has collapsed to a corridor is a different bug wearing this one's clothes.
+        assert!(count > 10_000, "only {count} positions reachable — the lobby is a closet");
+
+        // The other half of the property, and the one a too-tight box breaks: the gate is
+        // still there to be walked onto, from every seat's spawn.
+        assert!(gate_units > 0, "no unit of the gate block is reachable from a lobby spawn");
+        for seat in 0..MAX_SEATS as u8 {
+            let (x, y) = lobby_spawn(seat);
+            assert!(
+                seen[idx(x, y)],
+                "seat {seat} spawns at ({x}, {y}), which seat 0 cannot reach — so seat \
+                 {seat} cannot reach the gate seat 0 can",
+            );
+        }
+    }
+
+    /// The freeze this fix is most likely to cause, asserted rather than argued: a seat
+    /// that has just crossed the gate seam — in either direction — has somewhere to go.
+    ///
+    /// Phase is in the loop because it is the other half of "can this seat act": movement
+    /// geometry does not read the phase, and asserting that here is what would catch a
+    /// future phase gate that made the muster or the fight unwalkable. A raider who
+    /// entered during `MUSTERING` and could not move until `FIGHTING` would be a twenty-
+    /// second freeze with no error, which is the same bug wearing a clock.
+    #[test]
+    fn a_seat_that_just_crossed_the_gate_can_always_move() {
+        let step_exists = |zone: u8, x: i16, y: i16| {
+            MOVE_STEP.iter().any(|(dx, dy)| {
+                let nx = x.saturating_add(*dx).clamp(0, MAP_MAX_XY);
+                let ny = y.saturating_add(*dy).clamp(0, MAP_MAX_XY);
+                !is_wall(nx, ny) && may_move_to(zone, y, ny)
+            })
+        };
+
+        for phase in [PHASE_LOBBY, PHASE_MUSTERING, PHASE_FIGHTING] {
+            assert!(assert_playable(phase).is_ok());
+
+            // Through the gate: `enter_gate` writes `ZONE_ARENA` and `entrance_for` in one
+            // instruction, so this is the seat's state on the very next `move`.
+            for seat in 0..MAX_SEATS {
+                let (x, y) = crate::handlers::tick::entrance_for(seat);
+                assert!(
+                    step_exists(ZONE_ARENA, x, y),
+                    "seat {seat} enters at ({x}, {y}) in phase {phase} with no legal move",
+                );
+            }
+
+            // Standing on the gate and not yet through it: still `ZONE_LOBBY`, on rows the
+            // *arena* box excludes. The client retries `enter_gate` from here, so a seat
+            // can sit on these tiles for many slots.
+            let mut gx = GATE_MIN_X;
+            while gx <= GATE_MAX_X {
+                let mut gy = GATE_MIN_Y;
+                while gy <= GATE_MAX_Y {
+                    assert!(
+                        step_exists(ZONE_LOBBY, gx, gy),
+                        "a lobby seat on gate unit ({gx}, {gy}) is frozen in phase {phase}",
+                    );
+                    gy += TILE;
+                }
+                gx += TILE;
+            }
+        }
+    }
+
+    /// The un-stranding rule, which exists for accounts the *old* program wrote: a lobby
+    /// seat parked above the rim (legal yesterday, reachable only through finding 2) is
+    /// governed by walls alone until it gets home, and is sealed in once it does.
+    ///
+    /// The earlier form of this rule permitted only strictly-overshoot-decreasing steps.
+    /// That reads as "walk home and nowhere else", but `move_player` requires
+    /// `!is_wall(nx, ny) && may_move_to(..)`, so at any position where every
+    /// overshoot-decreasing step is a wall the seat had no legal move at all — a hard
+    /// freeze, indistinguishable from a wall, for 4,620 stale lobby positions.
+    #[test]
+    fn a_stranded_seat_is_never_frozen_by_the_box() {
+        // Deep in the boss's air, where the BFS above says the old program allowed.
+        let stranded = 16i16;
+        assert!(box_overshoot(ZONE_LOBBY, stranded) > 0, "the worst case really is stranded");
+
+        // The box refuses NOTHING while stranded, in any direction. This is the property
+        // that makes a freeze unrepresentable: whatever `is_wall` permits, the box permits
+        // too, so the box can never be the reason a seat has no move.
+        for ny in [stranded, stranded + STEP, stranded + STEP_DIAG, stranded - STEP, stranded - STEP_DIAG] {
+            assert!(may_move_to(ZONE_LOBBY, stranded, ny), "the box must refuse nothing at {ny}");
+        }
+
+        // Walking home still terminates, and terminates inside the box rather than one
+        // step short of it.
+        let mut y = stranded;
+        let mut steps = 0;
+        while box_overshoot(ZONE_LOBBY, y) > 0 {
+            assert!(may_move_to(ZONE_LOBBY, y, y + STEP));
+            y += STEP;
+            steps += 1;
+            assert!(steps < MAP_TILES * 2, "the escape does not terminate");
+        }
+        assert!(y > PIT_BOT && y <= MAP_MAX_XY);
+
+        // And it is not a hole in the ceiling. Once inside, the box is closed again in
+        // both directions, from both zones — the seat cannot ride the escape back out.
+        assert!(!may_move_to(ZONE_LOBBY, y, PIT_BOT));
+        assert!(!may_move_to(ZONE_ARENA, PIT_TOP, PIT_TOP - 1));
+        // From INSIDE, both ways. (`PIT_TOP - STEP` is itself outside the arena box, so a
+        // seat standing there is stranded and moves freely by design — asserting a refusal
+        // there would be asserting the rule this test exists to replace.)
+        assert!(!may_move_to(ZONE_ARENA, PIT_TOP + STEP, PIT_TOP - 1));
+        assert!(!may_move_to(ZONE_ARENA, PIT_BOT, PIT_BOT + 1));
+    }
+
+    /// The box may never be the reason a seat has no move: over every position on the map,
+    /// in both zones, `may_move_to` permits at least as many steps as `is_wall` does.
+    ///
+    /// Exhaustive rather than sampled, because the defect this replaces was found by replay
+    /// and missed by a test that checked the y arithmetic without consulting the map.
+    #[test]
+    fn the_box_never_removes_a_seats_last_legal_move() {
+        for zone in [ZONE_LOBBY, ZONE_ARENA] {
+            let mut y = 0i16;
+            while y <= MAP_MAX_XY {
+                let mut x = 0i16;
+                while x <= MAP_MAX_XY {
+                    if !is_wall(x, y) {
+                        let walls_allow = MOVE_STEP
+                            .iter()
+                            .any(|(dx, dy)| !is_wall(x + dx, y + dy));
+                        let both_allow = MOVE_STEP.iter().any(|(dx, dy)| {
+                            !is_wall(x + dx, y + dy) && may_move_to(zone, y, y + dy)
+                        });
+                        assert_eq!(
+                            walls_allow, both_allow,
+                            "zone {zone} at ({x},{y}): the box removed the last legal move"
+                        );
+                    }
+                    x += TILE;
+                }
+                y += TILE;
+            }
+        }
+    }
+
+    /// The gate's three refusals, which are the whole of the waiting-room contract that
+    /// lives on this side: you must be standing on it, you may pass once, and an unclaimed
+    /// seat may not pass at all.
+    ///
+    /// `enter_gate` itself needs three `AccountView`s the host cannot build, so the rules
+    /// are asserted through [`gate_refusal`], which is the same code path the handler runs.
+    #[test]
+    fn the_gate_is_one_way_and_only_from_the_gate() {
+        let mut slot = PlayerSlot::zeroed();
+        claim_seat(&mut slot, 0, 0, [1u8; 32], [2u8; 32]);
+
+        // Walking up to it is not standing on it. The client retries this instruction the
+        // whole way in, so the refusal has to be its own code or "not there yet" is
+        // indistinguishable from "already through".
+        assert_eq!(gate_refusal(&slot).unwrap_err(), HeartrotError::NotOnGate.into());
+        slot.x = GATE_MIN_X;
+        slot.y = GATE_MAX_Y;
+        assert!(gate_refusal(&slot).is_ok(), "a lobby seat on the gate may pass");
+
+        // Every unit just outside the block is refused, on all four sides.
+        for (x, y) in [
+            (GATE_MIN_X - 1, GATE_MIN_Y),
+            (GATE_MAX_X + 1, GATE_MIN_Y),
+            (GATE_MIN_X, GATE_MIN_Y - 1),
+            (GATE_MIN_X, GATE_MAX_Y + 1),
+        ] {
+            let mut off = slot;
+            off.x = x;
+            off.y = y;
+            assert_eq!(gate_refusal(&off).unwrap_err(), HeartrotError::NotOnGate.into());
+        }
+
+        // One way. This refusal is simultaneously the `alive_count` bound and the whole
+        // rate limit on a handler that has no tick counter, so a second entry has to fail
+        // even standing on the tile it succeeded from.
+        let mut through = slot;
+        through.zone = ZONE_ARENA;
+        assert_eq!(gate_refusal(&through).unwrap_err(), HeartrotError::WrongZone.into());
+        through.x = GATE_MIN_X;
+        through.y = GATE_MIN_Y;
+        assert_eq!(
+            gate_refusal(&through).unwrap_err(),
+            HeartrotError::WrongZone.into(),
+            "the zone check must be read before the position check",
+        );
+
+        // A seat that `join` never wrote cannot be walked through: `hp_max == 0` would
+        // count toward `alive_count` while never being alive.
+        let mut unclaimed = slot;
+        unclaimed.hp_max = 0;
+        assert_eq!(
+            gate_refusal(&unclaimed).unwrap_err(),
+            ProgramError::InvalidAccountData,
+        );
     }
 }

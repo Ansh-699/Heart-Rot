@@ -43,7 +43,9 @@ WALL = "#"
 FLOOR = "."
 ENTRANCE = "E"
 HEART = "B"
-FLOOR_CHARS = {FLOOR, ENTRANCE, HEART}
+PIT = "P"
+GATE = "G"
+FLOOR_CHARS = {FLOOR, ENTRANCE, HEART, PIT, GATE}
 
 
 class MapError(Exception):
@@ -58,11 +60,19 @@ def die(msg: str) -> None:
 # Rust constants
 # ---------------------------------------------------------------------------
 #
-# The spawn and gate constants are read out of the Rust rather than restated here,
-# so a spawn point that moves on the chain side moves this validation with it. The
-# two spawn *formulas* below are still a transcription of `player::lobby_spawn` and
+# The two *spawn* constants are read out of the Rust rather than restated here, so a
+# spawn point that moves on the chain side moves this validation with it. The spawn
+# formulas below are still a transcription of `player::lobby_spawn` and
 # `tick::entrance_for` -- a rewrite of either function's shape (not its constants)
 # is the one drift this tool cannot see.
+#
+# The four `GATE_*` corners are NOT read back any more. They used to be hand literals
+# in `player.rs` that this tool parsed out of Rust source and then validated against
+# the drawn grid -- one fact stored twice, with the tool agreeing with whichever copy
+# it happened to read. They are now *drawn*, as the `G` block in `arena.json`, and
+# emitted into `map.rs`/`map.ts` beside `BOSS_SPAWN` and `PIT_TOP`/`PIT_BOT`. That is
+# what lets `map.rs` carry a compile-time assertion that `BOSS_SPAWN` is outside the
+# gate box: both come out of the same grid.
 #
 # `TILE`, `MAP_TILES` and `ARENA_SIZE` are deliberately NOT read from the Rust and
 # are not cross-checked against it either: the Rust no longer owns them. This tool
@@ -103,8 +113,6 @@ def read_rust_geometry(tile: int, map_tiles: int) -> dict[str, object]:
         "LOBBY_SPACING": rust_const(PLAYER_RS, "LOBBY_SPACING", env),
         "ENTRANCE_SPACING": rust_const(TICK_RS, "ENTRANCE_SPACING", env),
     }
-    for corner in ("GATE_MIN_X", "GATE_MAX_X", "GATE_MIN_Y", "GATE_MAX_Y"):
-        g[corner] = rust_const(PLAYER_RS, corner, env)
     return g
 
 
@@ -173,9 +181,14 @@ def load_grid() -> tuple[list[str], int, int]:
     return grid, tile, len(grid)
 
 
+def marks(grid: list[str], ch: str) -> list[tuple[int, int]]:
+    """Every tile carrying `ch`, in row-major scan order."""
+    return [(x, y) for y, row in enumerate(grid) for x, c in enumerate(row) if c == ch]
+
+
 def entrance_points(grid: list[str]) -> list[tuple[int, int]]:
     """The `E` tiles in row-major scan order -- the order `ENTRANCES` is emitted in."""
-    return [(x, y) for y in range(len(grid)) for x, c in enumerate(grid[y]) if c == ENTRANCE]
+    return marks(grid, ENTRANCE)
 
 
 def entrance_world(grid: list[str], tile: int) -> list[tuple[int, int]]:
@@ -192,12 +205,12 @@ def entrance_world(grid: list[str], tile: int) -> list[tuple[int, int]]:
 def heart_point(grid: list[str]) -> tuple[int, int]:
     """The single `B` tile: where the boss stands.
 
-    Fatal if there is not exactly one. The whole boss -- 230x270 units of hitbox --
-    is centred on this point, so "which tile" is a load-bearing fact and not a
-    decoration: drawn in the wrong place, most of the shell sits inside solid rock
-    and no ray can reach it.
+    Fatal if there is not exactly one. Every part rectangle in
+    `programs/heartrot/src/hitboxes.rs` is measured as an offset from this point, so
+    "which tile" is a load-bearing fact and not a decoration: drawn in the wrong place,
+    the shell sits inside solid rock and no ray can reach it.
     """
-    hearts = [(x, y) for y, row in enumerate(grid) for x, c in enumerate(row) if c == HEART]
+    hearts = marks(grid, HEART)
     if len(hearts) != 1:
         die(f"expected exactly one `{HEART}` heart tile, found {len(hearts)}")
     return hearts[0]
@@ -208,6 +221,56 @@ def heart_world(grid: list[str], tile: int) -> tuple[int, int]:
     convention `entrance_world` and every position in the program is written in."""
     x, y = heart_point(grid)
     return (x * tile, y * tile)
+
+
+def pit_box(grid: list[str], tile: int) -> dict[str, int]:
+    """`PIT_TOP` / `PIT_BOT`: the y band a `ZONE_ARENA` player is confined to.
+
+    Drawn as the `P` block. Only the *rows* matter -- the pit is corner-shaped and the
+    doorway is four tiles wide, so there is no rectangle to speak of -- and the band is
+    inclusive of the last row's last unit, which is the form `move_player` compares a
+    destination against.
+
+    This is a movement rule and deliberately not a wall. The rows above the pit are open
+    floor because `shoot`'s raycast tests `is_wall` before the part rectangles: one wall
+    tile between a player and the boss would kill every shot in that column, silently.
+    """
+    pts = marks(grid, PIT)
+    if not pts:
+        die(f"no `{PIT}` pit tiles drawn -- the raider box has nowhere to be")
+    rows = sorted({y for _, y in pts})
+    if rows != list(range(rows[0], rows[-1] + 1)):
+        gaps = [y for y in range(rows[0], rows[-1] + 1) if y not in rows]
+        die(f"`{PIT}` spans rows {rows[0]}..{rows[-1]} but rows {gaps} carry none -- "
+            "PIT_TOP/PIT_BOT are a bounding band, so a stray pit tile silently "
+            "stretches the box over floor that is not the pit")
+    return {"PIT_TOP": rows[0] * tile, "PIT_BOT": (rows[-1] + 1) * tile - 1,
+            "PIT_ROWS": (rows[0], rows[-1])}
+
+
+def gate_box(grid: list[str], tile: int) -> dict[str, int]:
+    """The four `GATE_*` corners: the block `enter_gate` demands you stand in.
+
+    Drawn as the `G` block, which must be a solid rectangle -- `on_gate` is two range
+    tests, so a stepped or hollow gate would claim tiles nobody drew.
+
+    These used to be hand literals in `player.rs` that this tool parsed back out of
+    Rust source. Drawing them instead is what lets `map.rs` prove `BOSS_SPAWN` is not
+    inside the gate at compile time.
+    """
+    pts = marks(grid, GATE)
+    if not pts:
+        die(f"no `{GATE}` gate tiles drawn -- no player could ever enter_gate")
+    xs = [x for x, _ in pts]
+    ys = [y for _, y in pts]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    if len(pts) != (x1 - x0 + 1) * (y1 - y0 + 1):
+        die(f"the `{GATE}` block is not a solid rectangle -- its bounding box is "
+            f"tiles ({x0},{y0})..({x1},{y1}) but only {len(pts)} tiles are drawn, and "
+            "`on_gate` is a pair of range tests that would claim the rest")
+    return {"GATE_MIN_X": x0 * tile, "GATE_MAX_X": (x1 + 1) * tile - 1,
+            "GATE_MIN_Y": y0 * tile, "GATE_MAX_Y": (y1 + 1) * tile - 1,
+            "GATE_TILES": (x0, y0, x1, y1)}
 
 
 def validate(grid: list[str], g: dict[str, object]) -> None:
@@ -284,10 +347,72 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
 
     # The gate block is where `enter_gate` demands the player be standing. Walling
     # any of it off is a lobby no one can leave.
-    for ty in range(g["GATE_MIN_Y"] // tile, g["GATE_MAX_Y"] // tile + 1):
-        for tx in range(g["GATE_MIN_X"] // tile, g["GATE_MAX_X"] // tile + 1):
+    gate = gate_box(grid, tile)
+    gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
+    for ty in range(gy0, gy1 + 1):
+        for tx in range(gx0, gx1 + 1):
             if solid(tx, ty):
                 die(f"gate tile ({tx}, {ty}) is wall -- no player could ever enter_gate")
+            if (tx, ty) not in seen:
+                die(f"gate tile ({tx}, {ty}) cannot reach the heart chamber {heart}")
+
+    # `PIT_TOP`/`PIT_BOT` is a *second* kind of barrier, alongside the wall bitboard,
+    # and the two can disagree without either one erroring: a player clamped into open
+    # floor sees no wall and no message, just a direction that does nothing. Everything
+    # below is the guard for that, checked where both facts are still in one place.
+    pit = pit_box(grid, tile)
+    ptop, pbot = pit["PIT_ROWS"]
+
+    # The pit has to be one room on its own, not merely reachable *through the lobby*.
+    # The corner shaping on the bottom rows is the thing most likely to pinch it in two,
+    # and a raider confined by PIT_TOP/PIT_BOT cannot walk around the outside to fix it.
+    inside = {(x, y) for y in range(ptop, pbot + 1)
+              for x in range(n) if not solid(x, y)}
+    start = next(iter(sorted(inside)))
+    pit_seen = {start}
+    q = deque([start])
+    while q:
+        x, y = q.popleft()
+        for nb in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if nb in inside and nb not in pit_seen:
+                pit_seen.add(nb)
+                q.append(nb)
+    if pit_seen != inside:
+        die(f"{len(inside) - len(pit_seen)} tiles inside the PIT_TOP..PIT_BOT band "
+            f"(rows {ptop}..{pbot}) cannot be walked to from the rest of the pit -- "
+            "a raider is clamped into that band, so they cannot go around")
+
+    # The gate sits below the pit and its columns walk straight into it. If they did
+    # not, a player who flipped zone on the gate would be outside PIT_TOP..=PIT_BOT
+    # with no legal destination inside it: a hard freeze with nothing logged.
+    if gy0 != pbot + 1:
+        die(f"the gate starts at row {gy0} but the pit ends at row {pbot} -- the gate "
+            "must sit immediately below the pit or stepping through it is a teleport")
+    for tx in range(gx0, gx1 + 1):
+        if grid[pbot][tx] not in FLOOR_CHARS:
+            die(f"gate column {tx} runs into wall at the pit's last row {pbot} -- "
+                "a player who enters the gate here can never step into the pit")
+
+    # The boss stands in the pit band (it is the anchor every hitbox is measured from,
+    # and the raid has to be able to reach it) and never on the gate, which would let a
+    # player flip zone by standing inside the creature.
+    hx, hy = heart
+    if not (ptop <= hy <= pbot):
+        die(f"the `{HEART}` heart is on row {hy}, outside the pit rows {ptop}..{pbot}")
+    if gx0 <= hx <= gx1 and gy0 <= hy <= gy1:
+        die(f"the `{HEART}` heart tile {heart} is inside the gate block")
+
+    # Every respawn point lands in the pit, because a respawn is a raider and a raider
+    # is clamped to the pit. The `E` marks themselves are not the interesting case --
+    # `tick::entrance_for` fans five ranks off each one, and it is a *rank* that drifts
+    # out of the band as the doors move. One outside it is a seat that respawns onto
+    # open floor and can never move again, with nothing logged anywhere.
+    doors = entrance_world(grid, tile)
+    for seat in range(g["MAX_SEATS"]):
+        rx, ry = entrance_for(seat, doors, g)
+        if not (ptop <= ry // tile <= pbot):
+            die(f"entrance_for({seat}) lands at ({rx}, {ry}), outside the pit rows "
+                f"{ptop}..{pbot} -- that seat is clamped out of every legal move")
 
     floor = sum(row.count(c) for row in grid for c in FLOOR_CHARS)
     if len(seen) != floor:
@@ -318,6 +443,11 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
     )
     (htx, hty) = heart_point(grid)
     (hx, hy) = heart_world(grid, g["TILE"])
+    pit = pit_box(grid, g["TILE"])
+    gate = gate_box(grid, g["TILE"])
+    ptop, pbot = pit["PIT_ROWS"]
+    gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
+    pit_floor = sum(sum(1 for c in row if c != WALL) for row in grid[ptop:pbot + 1])
     return f'''//! Arena wall bitboard.
 //!
 //! {BANNER.replace(chr(10), chr(10) + "//! ")}
@@ -352,11 +482,14 @@ pub const TILE: i16 = {g["TILE"]};
 
 /// Wall bitboard: bit *x* of row *y* set means tile (x, y) is solid.
 ///
-/// Layout: a central open heart chamber around the boss spawn, four 2-tile-wide
-/// corridors radiating N/S/E/W as the only approaches to it, four large outer
-/// halls broken up by 2x2 pillars, and four edge entrances. The 2-wide fronts are
-/// the difficulty system -- a corridor has almost no perimeter to defend, a hall
-/// has perimeter everywhere.
+/// Layout, top to bottom -- the 33 Immortals composition. Open floor for the boss's
+/// air, then the shaped pit the raid fights from, then a rim wall pierced by one
+/// four-tile doorway, then the gate block, then a pillared temple approach for the
+/// lobby. The whole vertical order is the fight: you walk up the temple, through the
+/// gate, out of the doorway into the pit, and the creature is above you.
+///
+/// The rows above the pit are floor, not wall, and that is load-bearing rather than
+/// lazy drawing -- see [`PIT_TOP`].
 pub const WALLS: [u64; MAP_TILES] = [
 {body}
 ];
@@ -365,9 +498,8 @@ pub const WALLS: [u64; MAP_TILES] = [
 /// the same convention `handlers::player::LOBBY_ENTRANCE` and `GATE_MIN_X` are written
 /// in, and the one `is_wall` inverts with `pos / TILE`.
 ///
-/// Row-major scan order (top to bottom, then left to right), *not* compass order: for
-/// the map as drawn that happens to be north, west, east, south, but redrawing the grid
-/// re-orders this array and nothing may assume otherwise.
+/// Row-major scan order (top to bottom, then left to right), *not* compass order.
+/// Redrawing the grid re-orders this array and nothing may assume otherwise.
 ///
 /// This exists so respawn points are *read out of the map* instead of restated beside it.
 /// `handlers::tick::entrance_for` picks `ENTRANCES[seat % 4]` and fans that door's ranks
@@ -383,16 +515,51 @@ pub const ENTRANCES: [(i16, i16); 4] = [
 ///
 /// `handlers::init` reads this and writes it to `Boss.x`/`Boss.y` on every spawn and
 /// respawn. It is here rather than there because the boss's position is a fact about
-/// the *map*: the sprite is 230x270 units of hitbox centred on this point, and the
-/// drawn heart chamber is the only open space on the grid wide enough to hold it.
+/// the *map*: every rectangle in `hitboxes.rs` is an offset from this point, and the
+/// open rows above the pit are the only space on the grid tall enough to hold them.
+///
+/// It sits at the *top* of the pit band rather than in the middle of the map: the boss
+/// is drawn upward from here, so the creature fills the top of the frame and the raid
+/// shoots up at it from the pit below. The assertion block at the bottom of this file
+/// proves it is on floor, inside `PIT_TOP..=PIT_BOT`, and outside the gate.
 ///
 /// It used to be a pair of literals in `init.rs` reading (512, 320) -- tile (32, 20),
-/// which is the two-tile north *corridor*, not the chamber. The shell was mostly
-/// inside solid rock, `shoot`'s ray died on the corridor wall before reaching it, and
+/// which was a two-tile corridor on the map of the time. The shell was mostly inside
+/// solid rock and `shoot`'s ray died on the corridor wall before reaching it, while
 /// this generator "checked" the spawn against a hardcoded map centre attributed to a
 /// `start_match` write that never existed. Three copies, two of them wrong, and the
 /// fight had never been run on chain so nothing had noticed.
 pub const BOSS_SPAWN: (i16, i16) = ({hx}, {hy}); // tile ({htx}, {hty})
+
+/// The raider box: a `ZONE_ARENA` player's y is confined to `PIT_TOP..=PIT_BOT`.
+///
+/// Compiled from the `P` block's bounding rows ({ptop}..{pbot}) -- inclusive of the last
+/// row's last unit, which is the form `move_player` compares a *destination* against.
+/// Comparing the destination and not the current position is load-bearing: a player who
+/// flips zone while standing on the gate is below `PIT_BOT`, and a current-position test
+/// would refuse every direction and freeze them there for the match.
+///
+/// This is a movement rule and deliberately **not** a wall. The rows above the pit are
+/// open floor because `shoot`'s raycast tests `is_wall` before the part rectangles, so a
+/// single wall tile between a player and the boss would kill every shot in that column
+/// with nothing logged anywhere. The clamp holds raiders out of the boss's air; the
+/// bitboard holds bullets and rays to the map. Two barriers, and they can disagree --
+/// `tools/gen_map.py` proves the pit is one connected room and that the gate walks into
+/// it, which is the only guard against a clamp that boxes someone in open floor.
+pub const PIT_TOP: i16 = {pit["PIT_TOP"]}; // tile row {ptop}
+pub const PIT_BOT: i16 = {pit["PIT_BOT"]}; // tile row {pbot}, last unit
+
+/// The gate block `enter_gate` demands the player be standing in, compiled from the `G`
+/// rectangle -- tiles ({gx0}, {gy0})..({gx1}, {gy1}).
+///
+/// These were four hand literals in `handlers::player` that `gen_map.py` parsed back out
+/// of Rust source to validate against the drawn grid: one fact stored twice, with the
+/// tool agreeing with whichever copy it read. Drawing them is what lets the assertion
+/// below prove `BOSS_SPAWN` is outside the gate on every `cargo check`.
+pub const GATE_MIN_X: i16 = {gate["GATE_MIN_X"]};
+pub const GATE_MAX_X: i16 = {gate["GATE_MAX_X"]};
+pub const GATE_MIN_Y: i16 = {gate["GATE_MIN_Y"]};
+pub const GATE_MAX_Y: i16 = {gate["GATE_MAX_Y"]};
 
 /// Every entrance stands on floor in the table above.
 ///
@@ -426,7 +593,176 @@ const _: () = {{
         "map::BOSS_SPAWN lands in a wall -- move the `B` in assets/map/arena.json \\
          and re-run tools/gen_map.py",
     );
+
+    // The pit band is non-empty and sits inside the map.
+    assert!(PIT_TOP >= 0 && PIT_TOP < PIT_BOT && PIT_BOT < (MAP_TILES as i16) * TILE);
+    assert!(GATE_MIN_X <= GATE_MAX_X && GATE_MIN_Y <= GATE_MAX_Y);
+
+    // The boss is reachable by a raider: its anchor is inside the band they are clamped
+    // to. A boss above `PIT_TOP` would be a target no one can ever stand level with.
+    assert!(
+        by >= PIT_TOP && by <= PIT_BOT,
+        "map::BOSS_SPAWN is outside PIT_TOP..=PIT_BOT -- the raid is clamped away from \\
+         its own boss; redraw assets/map/arena.json and re-run tools/gen_map.py",
+    );
+
+    // And it is not standing on the gate, which would let a player flip zone by walking
+    // into the creature. This is the assertion the four `GATE_*` literals in
+    // `handlers::player` could never carry: it needs both facts to come out of one grid.
+    assert!(
+        !(bx >= GATE_MIN_X && bx <= GATE_MAX_X && by >= GATE_MIN_Y && by <= GATE_MAX_Y),
+        "map::BOSS_SPAWN is inside the gate block",
+    );
+
+    // The gate is immediately below the pit, so stepping out of it lands in the band.
+    assert!(
+        GATE_MIN_Y == PIT_BOT + 1,
+        "the gate does not adjoin the pit -- a player who flips zone on it would have \\
+         no legal destination inside PIT_TOP..=PIT_BOT and would freeze",
+    );
 }};
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    const fn solid(tx: usize, ty: usize) -> bool {{
+        tx >= MAP_TILES || ty >= MAP_TILES || WALLS[ty] & (1u64 << tx) != 0
+    }}
+
+    /// 4-connected flood fill from the boss tile, confined to tile rows `top..=bot`.
+    ///
+    /// 4- and not 8-connected on purpose: movement is 8-way but only tests the
+    /// destination tile, so a diagonal can squeeze past a corner. Accepting that here
+    /// would sign off on passages that exist by accident.
+    ///
+    /// Relaxed to a fixpoint rather than queued, so it allocates nothing: 64x64 is four
+    /// thousand tiles and this is a test.
+    fn reachable(top: usize, bot: usize) -> [[bool; MAP_TILES]; MAP_TILES] {{
+        let mut seen = [[false; MAP_TILES]; MAP_TILES];
+        seen[(BOSS_SPAWN.1 / TILE) as usize][(BOSS_SPAWN.0 / TILE) as usize] = true;
+        let mut changed = true;
+        while changed {{
+            changed = false;
+            for ty in top..=bot {{
+                for tx in 0..MAP_TILES {{
+                    if seen[ty][tx] || solid(tx, ty) {{
+                        continue;
+                    }}
+                    let touching = (ty > top && seen[ty - 1][tx])
+                        || (ty < bot && seen[ty + 1][tx])
+                        || (tx > 0 && seen[ty][tx - 1])
+                        || (tx + 1 < MAP_TILES && seen[ty][tx + 1]);
+                    if touching {{
+                        seen[ty][tx] = true;
+                        changed = true;
+                    }}
+                }}
+            }}
+        }}
+        seen
+    }}
+
+    /// One room, not several. `tools/gen_map.py` proves this against `arena.json`, but
+    /// only when someone runs it; this proves it against the table that actually
+    /// shipped, and it is what stands behind "the gate is reachable from every lobby
+    /// spawn" -- both are floor, and every floor tile is in the same component.
+    #[test]
+    fn every_floor_tile_is_one_room() {{
+        let seen = reachable(0, MAP_TILES - 1);
+        for ty in 0..MAP_TILES {{
+            for tx in 0..MAP_TILES {{
+                assert_eq!(
+                    !solid(tx, ty),
+                    seen[ty][tx],
+                    "tile ({{tx}}, {{ty}}) is floor but sealed off from the boss",
+                );
+            }}
+        }}
+    }}
+
+    /// The border ring is closed, so the coordinate clamp is never the only thing
+    /// holding a player on the map.
+    #[test]
+    fn the_border_is_closed() {{
+        for i in 0..MAP_TILES {{
+            for (x, y) in [(i, 0), (i, MAP_TILES - 1), (0, i), (MAP_TILES - 1, i)] {{
+                assert!(solid(x, y), "border tile ({{x}}, {{y}}) is not wall");
+            }}
+        }}
+    }}
+
+    /// The pit is one room *on its own terms*. A raider is clamped to
+    /// `PIT_TOP..=PIT_BOT`, so a pinch in the corner shaping cannot be walked around the
+    /// way [`every_floor_tile_is_one_room`] would let you. The two are not the same
+    /// test, and this is the one that catches a shaped pit cut in half.
+    #[test]
+    fn the_pit_is_one_room_a_raider_can_cross() {{
+        let (top, bot) = ((PIT_TOP / TILE) as usize, (PIT_BOT / TILE) as usize);
+        let seen = reachable(top, bot);
+        let mut floor = 0usize;
+        for ty in top..=bot {{
+            for tx in 0..MAP_TILES {{
+                if !solid(tx, ty) {{
+                    floor += 1;
+                    assert!(seen[ty][tx], "pit tile ({{tx}}, {{ty}}) is cut off from the boss");
+                }}
+            }}
+        }}
+        assert_eq!(floor, {pit_floor}, "the drawn pit changed size");
+    }}
+
+    /// Every respawn door is inside the pit band. A raider respawned above `PIT_TOP` or
+    /// below `PIT_BOT` is a seat clamped out of every legal move, with nothing logged.
+    #[test]
+    fn every_door_is_inside_the_raider_box() {{
+        for (x, y) in ENTRANCES {{
+            assert!(
+                y >= PIT_TOP && y <= PIT_BOT,
+                "entrance ({{x}}, {{y}}) is outside PIT_TOP..=PIT_BOT",
+            );
+            assert!(!solid((x / TILE) as usize, (y / TILE) as usize));
+        }}
+    }}
+
+    /// The gate block is walkable end to end, and its columns step straight into the
+    /// pit. Walling any of it is a lobby nobody can leave; a gate that does not adjoin
+    /// the pit is a player who flips zone and then cannot move.
+    #[test]
+    fn the_gate_is_floor_and_walks_into_the_pit() {{
+        for ty in (GATE_MIN_Y / TILE)..=(GATE_MAX_Y / TILE) {{
+            for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {{
+                assert!(!solid(tx as usize, ty as usize), "gate tile ({{tx}}, {{ty}}) is wall");
+            }}
+        }}
+        let last_pit_row = (PIT_BOT / TILE) as usize;
+        for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {{
+            assert!(
+                !solid(tx as usize, last_pit_row),
+                "gate column {{tx}} runs into wall at the pit's last row",
+            );
+        }}
+    }}
+
+    /// The boss's air is open floor. `handlers::shoot`'s raycast tests `is_wall` before
+    /// the part rectangles, so one wall tile above the pit kills every shot in that
+    /// column -- a raid that cannot be won, reporting nothing. The pit ceiling is
+    /// `PIT_TOP`, a movement rule, and this is the test that keeps it from becoming a
+    /// wall the next time someone redraws the grid.
+    #[test]
+    fn the_boss_air_above_the_pit_is_open() {{
+        let top = (PIT_TOP / TILE) as usize;
+        for ty in 1..top {{
+            for tx in 1..MAP_TILES - 1 {{
+                assert!(
+                    !solid(tx, ty),
+                    "tile ({{tx}}, {{ty}}) is wall above PIT_TOP -- every shot in that \\
+                     column dies on it before reaching the boss",
+                );
+            }}
+        }}
+    }}
+}}
 '''
 
 
@@ -439,6 +775,10 @@ def emit_ts(grid: list[str], g: dict[str, object]) -> str:
     )
     (htx, hty) = heart_point(grid)
     (hx, hy) = heart_world(grid, g["TILE"])
+    pit = pit_box(grid, g["TILE"])
+    gate = gate_box(grid, g["TILE"])
+    ptop, pbot = pit["PIT_ROWS"]
+    gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
     return f'''/**
  * Arena wall map -- the browser's copy of the table the chain raycasts against.
  *
@@ -460,8 +800,11 @@ export const MAP_TILE = {g["TILE"]};
 export const MAP_MAX_XY = MAP_TILES * MAP_TILE - 1;
 
 /**
- * One string per row, one character per tile: `#` wall, `.` floor, `E` entrance,
- * `B` the heart tile the boss spawns on. Row *y*, character *x*.
+ * One string per row, one character per tile: `#` wall, `.` floor, `P` pit floor,
+ * `G` gate, `E` entrance, `B` the heart tile the boss spawns on. Row *y*, character *x*.
+ *
+ * Everything but `#` is walkable. A renderer that keys off `.` alone will draw the pit
+ * and the gate as holes.
  */
 export const MAP_GRID: readonly string[] = [
 {rows}
@@ -486,6 +829,39 @@ export const MAP_ENTRANCES: readonly (readonly [number, number])[] = [
  * position the map already carries.
  */
 export const BOSS_SPAWN: readonly [number, number] = [{hx}, {hy}]; // tile ({htx}, {hty})
+
+/**
+ * The raider box: a `ZONE_ARENA` player's y is confined to `PIT_TOP..=PIT_BOT`, the
+ * bounding rows of the drawn `P` block (tile rows {ptop}..{pbot}).
+ *
+ * The exact pair `map::PIT_TOP`/`map::PIT_BOT` hold on the chain, and `move_player`
+ * compares a move's *destination* y against them. Client-side prediction must apply the
+ * same clamp, on the same side of the move: a step the browser allows and the chain
+ * refuses is a permanent snap-back on that tile, which reads as lag rather than as a
+ * rule. And it is a rule, not a wall -- the rows above the pit are open floor, because
+ * the chain's raycast dies on any wall tile between a player and the boss.
+ */
+export const PIT_TOP = {pit["PIT_TOP"]};
+export const PIT_BOT = {pit["PIT_BOT"]};
+
+/**
+ * The gate block `enter_gate` demands the player be standing in -- the drawn `G`
+ * rectangle, tiles ({gx0}, {gy0})..({gx1}, {gy1}), in arena-space units.
+ *
+ * The lobby's gate glow keys off the *predicted* local position against this box, so it
+ * lights the instant you step on rather than a round trip later; the `enter_gate`
+ * transaction still goes through the authoritative poll. Same four numbers as
+ * `map::GATE_MIN_X`..`GATE_MAX_Y`, out of the same grid.
+ */
+export const GATE_MIN_X = {gate["GATE_MIN_X"]};
+export const GATE_MAX_X = {gate["GATE_MAX_X"]};
+export const GATE_MIN_Y = {gate["GATE_MIN_Y"]};
+export const GATE_MAX_Y = {gate["GATE_MAX_Y"]};
+
+/** Is this arena-space point inside the gate block? `handlers::player::on_gate`. */
+export function onGate(x: number, y: number): boolean {{
+  return x >= GATE_MIN_X && x <= GATE_MAX_X && y >= GATE_MIN_Y && y <= GATE_MAX_Y;
+}}
 
 /** Is this tile solid? Off-map is solid, so a caller that skips the clamp fails closed. */
 export function isWallTile(tx: number, ty: number): boolean {{
@@ -524,15 +900,21 @@ def self_test(grid: list[str], g: dict[str, object]) -> None:
     # Seat 0's respawn: a rank *beside* its door, not the `E` tile itself, so walling it
     # is caught by the spawn sweep rather than by the entrance check above it.
     rx, ry = entrance_for(0, entrance_world(grid, g["TILE"]), g)
+    (ex0, ey0) = entrance_points(grid)[0]
+    (gx0, gy0, gx1, gy1) = gate_box(grid, g["TILE"])["GATE_TILES"]
+    (ptop, pbot) = pit_box(grid, g["TILE"])["PIT_ROWS"]
     cases = {
-        "entrance walled in": poke(poke(grid, 31, 1, WALL), 33, 1, WALL),
-        "entrance erased": poke(grid, 32, 1, FLOOR),
-        "fifth entrance": poke(grid, 1, 2, ENTRANCE),
-        "floor sealed off": poke(poke(grid, 2, 1, WALL), 1, 2, WALL),
+        "entrance erased": poke(grid, ex0, ey0, PIT),
+        "fifth entrance": poke(grid, ex0, ey0 - 1, ENTRANCE),
         "spawn in a wall": poke(grid, rx // g["TILE"], ry // g["TILE"], WALL),
-        "gate walled off": poke(grid, g["GATE_MIN_X"] // g["TILE"], g["GATE_MIN_Y"] // g["TILE"], WALL),
+        "gate corner erased": poke(grid, gx1, gy1, FLOOR),
+        "doorway sealed": [
+            r if y != pbot else WALL * n for y, r in enumerate(grid)
+        ],
+        "stray pit tile in the lobby": poke(grid, gx0, n - 2, PIT),
+        "boss out of the pit": poke(poke(grid, *heart_point(grid), PIT), 32, ptop - 1, HEART),
         "border breached": poke(grid, n // 2, 0, FLOOR),
-        "heart deleted": poke(grid, n // 2, n // 2, FLOOR),
+        "heart deleted": poke(grid, *heart_point(grid), PIT),
         "row too short": [grid[0][:-1]] + grid[1:],
     }
     for name, broken in cases.items():

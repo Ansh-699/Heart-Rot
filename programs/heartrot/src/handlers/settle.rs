@@ -55,15 +55,18 @@ use pinocchio::{
 };
 
 use crate::error::HeartrotError;
-use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
+use crate::guards::{
+    assert_any_raider, assert_owned_by, assert_pda, assert_signer, assert_writable,
+};
 // The single deploy-time treasury key, declared once in `handlers::init`. It is imported
 // rather than re-declared here on purpose: a second copy is a second thing to fill in at
 // deploy time, and forgetting one half bricks either arena creation or result recording
 // with nothing failing to compile.
 use crate::handlers::init::TREASURY;
 use crate::state::{
-    load, load_mut, Arena, Leaderboard, LeaderboardEntry, Players, LEADERBOARD_CAP, PHASE_FIGHTING,
-    PHASE_SETTLED, SEED_BOSS, SEED_LEADERBOARD, SEED_PLAYERS,
+    load, load_mut, Arena, Leaderboard, LeaderboardEntry, Players, ENRAGE_TICKS, LEADERBOARD_CAP,
+    MUSTER_TICKS, OUTCOME_UNDECIDED, PHASE_MUSTERING, PHASE_SETTLED, ROLL_TIMEOUT_TICKS, SEED_BOSS,
+    SEED_LEADERBOARD, SEED_PLAYERS,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,11 +98,25 @@ pub const IX_BOSS_TICK: u8 = 8;
 /// Nothing in the game may read wall-clock time; `Arena.tick` is the only clock.
 const TICK_INTERVAL_MS: i64 = crate::state::TICK_MS as i64;
 
-/// Ticks the crank is armed for. A match is bounded by `enrage_at_tick` (900 ticks =
-/// 6 minutes), so this is 5× headroom. Sized generously rather than exactly because a
-/// crank cannot re-arm itself, while an over-sized task is harmless: `settle` retires it,
-/// and a task that somehow outlives its accounts dies on its own in ~26 s.
-const TICK_ITERATIONS: i64 = 4_500;
+/// Ticks the crank is armed for: the whole muster plus the whole fight, at 1.25×.
+///
+/// **Derived, never a literal.** A match now spans [`MUSTER_TICKS`] before anyone can
+/// shoot and [`ENRAGE_TICKS`] after, and the crank **cannot be topped up** — `ScheduleTask`
+/// needs a writable signer and a scheduled instruction carries none. The old literal
+/// `4_500` came with a comment claiming "900 ticks = 6 minutes, so 5× headroom"; both
+/// halves predate `TICK_MS` 400 → 100, the real budget is 3,800 ticks, and 4,500 was 1.18×.
+/// Getting this wrong is a raid that goes inert mid-fight with nothing failing anywhere.
+const TICK_ITERATIONS: i64 = (MUSTER_TICKS as i64 + ENRAGE_TICKS as i64) * 5 / 4;
+
+/// The budget, stated as a relation rather than as the number it currently comes to.
+/// A match runs [`MUSTER_TICKS`] + [`ENRAGE_TICKS`] at the outside, and the settle that
+/// follows may sit through a whole [`ROLL_TIMEOUT_TICKS`] before the task is cancelled;
+/// the crank has to outlive all three. An `== 4_750` here would be the same fact stored
+/// twice and would pass unchanged the day one of the durations moves.
+const _: () = assert!(
+    TICK_ITERATIONS >= (MUSTER_TICKS + ENRAGE_TICKS + ROLL_TIMEOUT_TICKS) as i64,
+    "TICK_ITERATIONS must outlive muster + enrage + the roll timeout; a crank cannot be topped up"
+);
 
 /// `ScheduleTask` payload: 4 discriminant + 32 args header + one `CrankInstruction`
 /// (32 program id + 8 count + 4×34 metas + 8 len + 1 data) = 221 bytes. Rounded up.
@@ -117,28 +134,36 @@ const DOMAIN_TASK: &[u8] = b"crank-task";
 const SCHEDULE_CPI_ACCOUNTS: usize = 4;
 
 // ---------------------------------------------------------------------------
-// start_match — leave the lobby and arm the boss loop
+// begin_muster — open the muster window and arm the boss loop
 // ---------------------------------------------------------------------------
 
-/// Flip the arena to `Fighting` and arm `boss_tick` for the whole match. Sent to the
+/// Open a fixed-length muster and arm `boss_tick` for the whole match. Sent to the
 /// **ER**, after every account is delegated — `Magic11111…` is a runtime builtin, not a
 /// deployed program, so a base-layer CPI to it cannot resolve.
 ///
-/// The phase transition and the scheduling are one instruction on purpose. `boss_tick`
-/// returns early on any phase but `Fighting`, so an arena left in `Lobby` with a live
-/// crank is a match that ticks 4,500 times and never starts; and a `Fighting` arena with
-/// no crank is a match that can never end except through the settle route's dead-crank
-/// path. Neither half is useful without the other.
+/// The phase transition and the scheduling are one instruction on purpose, and now the
+/// crank is what *ends* the muster: [`Arena::begin_fight`] flips `MUSTERING → FIGHTING`
+/// at [`Arena::fight_at_tick`], so no player, host or Worker has to act and a raid can
+/// never fail to start. An arena left in `Lobby` with a live crank would tick to no
+/// effect; a `Mustering` arena with no crank would never reach the fight. Neither half is
+/// useful without the other.
 ///
-/// Accounts:
+/// It refuses over an empty pit ([`assert_any_raider`], `NoRaiders`): the first knight
+/// through the gate is what opens the window, and a muster armed with nobody in
+/// `ZONE_ARENA` spawns no volley and burns the whole enrage budget on an empty room.
+/// Nineteen of twenty clients race this and get the phase refusal instead; the twentieth
+/// may legitimately get `NoRaiders` if its own `enter_gate` has not landed yet. Both are
+/// the design, and the Worker treats them alike.
+///
+/// Accounts (unchanged — tag 3 keeps its ABI):
 /// 0. `payer` — treasury, writable signer. Becomes the task authority, and therefore
 ///    the only key that can ever cancel this task, so it must be the same key
 ///    `Arena.crank_authority` names.
 /// 1. `arena` — writable, frozen into the crank row
 /// 2. `boss` — writable, frozen into the crank row
-/// 3. `players` — writable, frozen into the crank row
+/// 3. `players` — writable, frozen into the crank row, and now *read* for the raider check
 /// 4. `magic_program`
-pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> ProgramResult {
+pub fn begin_muster(program_id: &Address, accounts: &mut [AccountView]) -> ProgramResult {
     let [payer, arena, boss, players, magic_program, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
@@ -152,6 +177,13 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
     assert_writable(arena)?;
     assert_writable(boss)?;
     assert_writable(players)?;
+
+    // The pit must not be empty. Borrowed and dropped before the arena borrow below, so
+    // the two never overlap, and before `schedule_entropy` so a refusal costs no syscall.
+    {
+        let roster_data = players.try_borrow()?;
+        assert_any_raider(load::<Players>(&roster_data)?)?;
+    }
 
     // Read outside the borrow purely for readability; a failure here reverts the whole
     // instruction, so ordering against the state write carries no risk either way.
@@ -179,13 +211,20 @@ pub fn start_match(program_id: &Address, accounts: &mut [AccountView]) -> Progra
         // own and a zero there is harmless rather than a thing to reject.
         let task_id = mint_task_id(program_id, &arena_key, state.crank_task_id, &entropy);
 
-        // Only a lobby arena starts, and `LOBBY → FIGHTING` is the single edge that says
-        // so — `FIGHTING → FIGHTING` is absent from `PHASE_EDGES` precisely because a
-        // second `start_match` would schedule a *second* crank against the same accounts,
+        // Only a lobby arena musters, and `LOBBY → MUSTERING` is the single edge that says
+        // so — `MUSTERING → MUSTERING` is absent from `PHASE_EDGES` precisely because a
+        // second `begin_muster` would schedule a *second* crank against the same accounts,
         // doubling the tick rate with no way to tell the two apart, and would leave the
         // id minted above over the first, stranding the original task where `settle` can
-        // no longer cancel it. Last, so a rejected transition writes no id.
-        state.try_set_phase(PHASE_FIGHTING)?;
+        // no longer cancel it. That refusal is also what makes the client's fire-and-forget
+        // auto-start safe: nineteen of twenty raiders get it and nothing is armed twice.
+        // Last, so a rejected transition writes no id.
+        state.try_set_phase(PHASE_MUSTERING)?;
+        // The deadline twenty browsers agree on without talking to each other. `begin_fight`
+        // (from the crank, in `tick::heartbeat`) is what consumes it and stamps
+        // `enrage_at_tick`; nothing here writes the enrage clock, or the muster would come
+        // out of the fight's own budget.
+        state.fight_at_tick = state.tick.saturating_add(MUSTER_TICKS);
         state.crank_task_id = task_id;
         (task_id, state.crank_authority)
     };
@@ -367,15 +406,23 @@ pub fn settle(program_id: &Address, accounts: &mut [AccountView]) -> ProgramResu
         }
         // Which phases may settle is `PHASE_EDGES`'s to say, not this handler's, and
         // routing through `try_set_phase` is what buys the second refusal this
-        // instruction needs. Two absences do the work:
+        // instruction needs. One absence does the work:
         //
         // - `LOBBY → SETTLED`: an arena never fought was never delegated with players in
         //   it and has nothing to record.
-        // - `ROLLING → SETTLED`: the commit-during-fulfilment hazard. Committing here
-        //   undelegates an account the VRF callback is about to write, so the fulfilment
-        //   fails and the oracle retries it for the full 240-slot TTL. An operator with a
-        //   stuck roll waits `ROLL_TIMEOUT_TICKS` for `boss_tick` to abandon it back to
-        //   `SETTLING`, which is a settleable phase again.
+        //
+        // `ROLLING → SETTLED` used to be a second absence, on the commit-during-fulfilment
+        // hazard, and the advice was to wait `ROLL_TIMEOUT_TICKS` for `boss_tick` to
+        // abandon the roll back to `SETTLING`. That advice was wrong in the case it
+        // mattered: `abandon_roll`'s timeout is measured against `arena.tick`, and `tick`
+        // is advanced only by `boss_tick`, so a crank that died inside the roll window
+        // froze the clock its own timeout is read off and the wait never ended. The edge
+        // is legal now (see `PHASE_EDGES`), which makes this handler accept it too — the
+        // same `crank_authority` gate above, and a bounded hazard on the other side: the
+        // oracle retries for the request's 240-slot TTL and `consume_roll` returns `Ok` on
+        // every rejection path, so a callback landing on a `SETTLED` arena is dropped
+        // rather than looped. Tag 12 is still the better of the two recovery routes,
+        // because it also cancels the crank.
         //
         // `FIGHTING → SETTLED` stays legal on purpose: it is the dead-crank recovery
         // path, the only way a match whose task died can ever end. That is also why
@@ -477,6 +524,13 @@ pub fn write_leaderboard(program_id: &Address, accounts: &mut [AccountView]) -> 
     // one place the condition is decidable: `PHASE_SETTLED` is written by `settle` itself,
     // so anything else here means the settlement has not happened yet.
     if arena_state.phase != PHASE_SETTLED {
+        return Err(HeartrotError::MatchNotOver.into());
+    }
+    // `MUSTERING → SETTLED` (the dead-crank recovery edge) settles an arena that never
+    // fought, so `PHASE_SETTLED` no longer implies a result. A row whose outcome is
+    // `OUTCOME_UNDECIDED` says nothing and is indistinguishable from an unwritten row's
+    // zero, so it must not reach the ring at all.
+    if arena_state.outcome == OUTCOME_UNDECIDED {
         return Err(HeartrotError::MatchNotOver.into());
     }
 
@@ -608,6 +662,33 @@ mod tests {
         b.discriminator = DISC_LEADERBOARD;
         b.version = LAYOUT_VERSION;
         b
+    }
+
+    /// The crank is armed once and can never be topped up, so the one way this number is
+    /// wrong is a raid that goes inert mid-fight with nothing failing anywhere: the task
+    /// simply stops being replayed, `arena.tick` stops advancing, and every timeout that
+    /// would have recovered the match is measured in ticks that no longer happen.
+    ///
+    /// The const-assert above is the real gate — this test is what says *why* out loud,
+    /// and what fails audibly if either duration is retuned. Both are relations over
+    /// `ticks_for` constants; neither mentions 4,750.
+    #[test]
+    fn the_crank_outlives_the_longest_possible_match() {
+        let match_ticks = (MUSTER_TICKS + ENRAGE_TICKS) as i64;
+        assert!(
+            TICK_ITERATIONS >= match_ticks,
+            "{TICK_ITERATIONS} iterations cannot cover a {match_ticks}-tick match"
+        );
+
+        // What the surplus is *for*: a match that runs to enrage still has to be settled,
+        // and a settle that went through a VRF request can sit in `ROLLING` for a whole
+        // `ROLL_TIMEOUT_TICKS` before `abandon_roll` frees it — all of it on ticks this
+        // task has to still be delivering.
+        let surplus = TICK_ITERATIONS - match_ticks;
+        assert!(
+            surplus >= ROLL_TIMEOUT_TICKS as i64,
+            "{surplus} spare ticks does not cover the {ROLL_TIMEOUT_TICKS}-tick roll window"
+        );
     }
 
     /// The property H4 rests on: the minted id moves when the entropy moves, and stays

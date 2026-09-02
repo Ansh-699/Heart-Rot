@@ -31,7 +31,7 @@
 //!
 //! Two of them are frozen harder than the rest, both because a *validator* replays them
 //! from a row we can no longer edit. `8` is written into the crank row at schedule time and
-//! replayed every 400 ms for the life of the match; its canonical definition is
+//! replayed every `state::TICK_MS` for the life of the match; its canonical definition is
 //! `handlers::settle::IX_BOSS_TICK`, not this table. `14` is written into the VRF request
 //! as the callback discriminator and replayed by the oracle on fulfilment. Renumbering
 //! either one strands every match already in flight.
@@ -41,7 +41,7 @@
 //! | 0 | `init::init_leaderboard` | base | anyone (permissionless singleton) |
 //! | 1 | `init::init_arena` | base | treasury |
 //! | 2 | `delegation::process_delegate` | base | treasury (**and fee payer**) |
-//! | 3 | `settle::start_match` | ER | treasury |
+//! | 3 | `settle::begin_muster` | ER | treasury |
 //! | 4 | `player::join` | ER | treasury |
 //! | 5 | `player::enter_gate` | ER | session key |
 //! | 6 | `player::move_player` | ER | session key |
@@ -166,17 +166,19 @@ pub fn process_instruction(
         0 => handlers::init::init_leaderboard(program_id, accounts, data),
         1 => handlers::init::init_arena(program_id, accounts, data),
         2 => handlers::delegation::process_delegate(program_id, accounts),
-        3 => handlers::settle::start_match(program_id, accounts),
+        3 => handlers::settle::begin_muster(program_id, accounts),
         4 => handlers::player::join(program_id, accounts, data),
         5 => handlers::player::enter_gate(program_id, accounts, data),
         6 => handlers::player::move_player(program_id, accounts, data),
         7 => handlers::shoot::process(program_id, accounts, data),
 
         // `boss_tick` is the one handler that must never return `Err`. A crank that
-        // fails ten times in a row has its task deleted permanently by the validator,
-        // ~26 s into the match, and there is no way to re-arm it from inside a crank
-        // (ScheduleTask needs a writable signer; a crank may carry none). The handler
-        // absorbs its own failures and returns `Ok`; this arm just forwards.
+        // fails ten times in a row has its task deleted permanently by the validator —
+        // seconds into the match at `state::TICK_MS` — and there is no way to re-arm it
+        // from inside a crank (ScheduleTask needs a writable signer; a crank may carry
+        // none). That is also why the muster is spent out of the same iteration budget
+        // rather than topped up later. The handler absorbs its own failures and returns
+        // `Ok`; this arm just forwards.
         8 => handlers::tick::process(program_id, accounts),
 
         9 => handlers::settle::settle(program_id, accounts),
@@ -280,7 +282,7 @@ mod tests {
     /// `IX_BOSS_TICK` is frozen into every live crank row, so the dispatch arm above has to
     /// be the same number. They are written in two files because the crank row is built in
     /// `settle.rs` and the route lives here; this is the assertion that keeps the two from
-    /// drifting, which is otherwise only discoverable by a match dying 26 s in on devnet.
+    /// drifting, which is otherwise only discoverable by a match dying seconds in on devnet.
     #[test]
     fn boss_tick_tag_matches_the_crank_row() {
         assert_eq!(handlers::settle::IX_BOSS_TICK, 8);

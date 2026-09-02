@@ -29,6 +29,7 @@ import type { CSSProperties } from 'react';
 
 import {
   BULLET_ACTIVE,
+  MUZZLES,
   NO_TARGET,
   N_PARTS,
   OUTCOME_ENRAGE,
@@ -37,25 +38,33 @@ import {
   OUTCOME_WIPE,
   PHASE_FIGHTING,
   PHASE_LOBBY,
+  PHASE_MUSTERING,
+  TICK_MS,
   type BossAccount,
 } from '@heartrot/client';
 
-import { mySeatSlot, useSelect, useStore } from '../state/store';
+import { Muster } from '../screens/Gate';
+import { mySeatSlot, useSelect } from '../state/store';
 
 /**
- * Index-aligned with `Boss.parts`, which is index-aligned with the hitbox table the program
- * raycasts against. The renderer draws the same nine in the same order, so the leading index
- * is what ties a row here to a shape on the stage — with primitive art the names alone
- * cannot. May be renamed, never reordered.
+ * Index-aligned with `Boss.parts`, which is index-aligned with `PART_HITBOXES` — the table
+ * the program raycasts against and the boss rig draws from. The comment on
+ * `hitboxes.ts::PART_HITBOXES` is the authority for this order and this list mirrors it:
+ * thorn0, thorn1, thorn2, thorn3, crown, wolf_l, beast_r, mace, claws.
+ *
+ * **May be renamed, never reordered.** These were the old pre-renumber order (crown first,
+ * thorns 3..6) and every row on the panel was therefore labelled with a different limb than
+ * the bar beside it was measuring — a defect nothing fails on, because the names are the
+ * only thing that carries the meaning.
  */
 const PART_NAMES = [
-  'Ram crown',
-  'Wolf head',
-  'Beast head',
   'Thorns I',
   'Thorns II',
   'Thorns III',
   'Thorns IV',
+  'Ram crown',
+  'Wolf head',
+  'Beast head',
   'Mace arm',
   'Claw arms',
 ] as const;
@@ -66,9 +75,13 @@ if (PART_NAMES.length !== N_PARTS) {
   throw new Error(`Hud: ${PART_NAMES.length} part names for ${N_PARTS} parts`);
 }
 
-/** Thorn clusters are the only parts whose destruction changes incoming fire. */
-const FIRST_THORN = 3;
-const LAST_THORN = 6;
+/**
+ * Thorn clusters are the only parts whose destruction changes incoming fire, and after the
+ * renumbering they are the first four — the same four `MUZZLES` names, which is the check:
+ * `MUZZLES[i].part === i` for `i` in `FIRST_THORN..=LAST_THORN` (asserted below).
+ */
+const FIRST_THORN = 0;
+const LAST_THORN = 3;
 
 /** `Boss.vent_open` flips when `sum(parts) * 100 < sum(parts_max) * 35`. Integer, no float. */
 const VENT_PERCENT = 35;
@@ -99,10 +112,16 @@ function shellPercent(shell: number, shellMax: number): number {
  */
 export function Hud() {
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  // `PHASE_MUSTERING` has to be tested explicitly. Without it the muster falls into
+  // `BossPanel`, which renders an enrage clock off `enrageAtTick` — and that field is now
+  // stamped at the MUSTERING → FIGHTING flip, so it reads 0 for the whole window: a 0:00
+  // countdown for a fight that has not begun. `Muster` is `screens/Gate`'s, rendered by
+  // both sides of the gate so the countdown does not vanish when your seat crosses it.
+  const mustering = phase === PHASE_LOBBY || phase === PHASE_MUSTERING;
   return (
     <>
       <Verdict />
-      {phase === PHASE_LOBBY ? <Muster /> : <BossPanel />}
+      {mustering ? <Muster /> : <BossPanel />}
       <SelfPanel />
     </>
   );
@@ -187,46 +206,11 @@ function Meter({
   );
 }
 
-/**
- * Through the gate, boss not yet armed. Someone has to ask the Worker to schedule it.
- *
- * `startMatch` is self-debouncing in the store, so twenty knights hammering this is fine
- * — nineteen of them get `already_started`, which is the intended outcome, not a failure.
- */
-function Muster() {
-  const store = useStore();
-  const throughGate = useSelect((s) => s.arena?.aliveCount ?? 0);
-  const busy = useSelect((s) => s.status === 'joining');
-
-  return (
-    <>
-      <h3>Muster</h3>
-      <p className="fine">
-        {throughGate} through the gate. More knights mean more incoming fire, not a longer
-        fight: every volley carries three bullets plus one per living raider. Break the
-        thorn clusters and the volleys stop coming.
-      </p>
-      <button
-        className="btn btn-primary"
-        onClick={() => void store.startMatch()}
-        disabled={busy || throughGate === 0}
-      >
-        {busy ? 'Waking it…' : 'Wake it up'}
-      </button>
-      <p className="fine">
-        Arming the raid schedules every boss tick up front — a crank cannot re-arm itself,
-        so there is no topping it up later. Five to fifteen seconds, and it cannot be
-        undone.
-      </p>
-    </>
-  );
-}
-
 function BossPanel() {
   const boss = useSelect((s) => s.boss);
   const tick = useSelect((s) => s.arena?.tick ?? 0);
   const enrageAtTick = useSelect((s) => s.arena?.enrageAtTick ?? 0);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? 400);
+  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
   const alive = useSelect((s) => s.arena?.aliveCount ?? 0);
   const seat = useSelect((s) => s.match?.seat ?? -1);
   const incoming = useSelect(
@@ -235,7 +219,11 @@ function BossPanel() {
 
   if (!boss) return <p className="fine">Waiting for the boss to load…</p>;
 
-  const enraged = tick >= enrageAtTick;
+  // `enrage_at_tick` is stamped by `Arena::begin_fight` at the MUSTERING → FIGHTING flip
+  // and zeroed by `begin_next_incarnation`, so zero means "no fight is running" and not
+  // "the deadline has passed". Without the `!== 0` test a fresh arena reads `tick >= 0`
+  // and the panel says "Enraged / now" before the boss has taken a single shot.
+  const enraged = enrageAtTick !== 0 && tick >= enrageAtTick;
 
   return (
     <>
@@ -268,7 +256,11 @@ function BossPanel() {
         <div>
           <dt>{enraged ? 'Enraged' : 'Enrage in'}</dt>
           <dd className="tabular">
-            {enraged ? 'now' : clock(Math.max(0, enrageAtTick - tick), tickMs)}
+            {enrageAtTick === 0
+              ? '—'
+              : enraged
+                ? 'now'
+                : clock(Math.max(0, enrageAtTick - tick), tickMs)}
           </dd>
         </div>
         <div>
@@ -345,7 +337,7 @@ function SelfPanel() {
   const slot = useSelect(mySeatSlot);
   const tick = useSelect((s) => s.arena?.tick ?? 0);
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? 400);
+  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
   if (!slot) return null;
 
   const dead = slot.hp === 0;
@@ -428,6 +420,18 @@ if (import.meta.env.DEV) {
     if (open && shown >= VENT_PERCENT) {
       throw new Error(`Hud self-check: vent open but shell reads ${shown}%`);
     }
+  }
+
+  // The part order is a wire fact, not a label choice: `MUZZLES[i].part` is emitted by
+  // `tools/gen_hitboxes.py` from the same table the program raycasts, so this is what
+  // catches the panel drifting back to the pre-renumber order and mislabelling every row.
+  for (let i = FIRST_THORN; i <= LAST_THORN; i += 1) {
+    if (MUZZLES[i - FIRST_THORN]?.part !== i) {
+      throw new Error(`Hud self-check: part ${i} is not a thorn — PART_NAMES is out of order`);
+    }
+  }
+  if (MUZZLES.length !== LAST_THORN - FIRST_THORN + 1) {
+    throw new Error('Hud self-check: the thorn range does not cover every muzzle');
   }
 
   for (const outcome of [OUTCOME_WIN, OUTCOME_WIPE, OUTCOME_ENRAGE]) {

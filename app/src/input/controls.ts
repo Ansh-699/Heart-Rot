@@ -1,10 +1,19 @@
 /**
  * Keyboard and pointer input, rate-limited to the gates the program actually enforces.
  *
- * This module emits *intents* — an eight-way `dir` — and nothing else. It builds no
- * transaction and signs nothing: the caller turns an intent into a `seq` through
- * `createPredictor().push`, and only then into an instruction. Keeping the split means
- * input can be tested without a chain and the prediction buffer has exactly one writer.
+ * This module emits *intents* — an eight-way `dir` to walk, a free `(dx, dy)` pair to shoot
+ * — and nothing else. It builds no transaction and signs nothing: the caller turns an
+ * intent into a `seq` through `createPredictor().push`, and only then into an instruction.
+ * Keeping the split means input can be tested without a chain and the prediction buffer has
+ * exactly one writer.
+ *
+ * **Aim is free, movement is not.** The boss stands at the top of the map and the raid
+ * fights from a pit below it, so a 45 degree aim step selects nothing: measured against the
+ * real hitboxes, eight-way aim reaches 5 of 10 targets and **never the core**, from any
+ * stand in the pit (`docs/architecture/09-shooting.md` §1.1 — the raid is unwinnable with no
+ * error anywhere). `shoot` therefore carries the raw pointer vector scaled to `i8` and the
+ * chain normalises it; `move` still quantises to the eight-way `MOVE_STEP` table, because a
+ * step is a tile and a tile has eight neighbours.
  *
  * **Why the rate limits live here as well as on chain.** ER transaction fees are zero and
  * the forked SVM runs no fee-payer validation at all, so nothing debits a spammer and the
@@ -20,7 +29,7 @@
  * | Action | Chain rule | Mirrored as |
  * |---|---|---|
  * | `move`, any phase | `last_move_tick != clock.slot` (50 ms slots) | one send per 50 ms |
- * | `shoot` | `arena.tick > last_shot_tick + 1` | one send per two observed ticks |
+ * | `shoot` | `arena.tick > last_shot_tick + 7` | one send per eight observed ticks |
  * | either, dead | `hp == 0` -> `PlayerDead` (Custom 8) | `clock().alive === false` sends nothing |
  *
  * The dead gate is prevention, not reaction, and it has to be: gameplay is sent with
@@ -56,7 +65,7 @@
  *    exactly one period instead, which measures 19.95/s with zero lost slots.
  */
 
-import { PHASE_FIGHTING } from '@heartrot/client';
+import { PHASE_FIGHTING, TICK_MS } from '@heartrot/client';
 
 /** Pump period. One ER slot — the finest granularity any gate above is expressed in. */
 const PUMP_MS = 50;
@@ -65,17 +74,66 @@ const PUMP_MS = 50;
 const MOVE_MS = 50;
 
 /**
- * Floor on the wall time between two moves that actually left. Recovering a slot the
- * browser stole (below) means one deliberately early send, and without this floor an
- * immediate pump from a keypress can land microseconds after a scheduled one — two moves
- * inside one ER slot, the second refused with `RateLimited` and invisible. 40 ms keeps
- * the recovery while leaving the pair a slot apart 80% of the time. Measured under
- * immediate dispatch at 3 and 8 keypresses/s: minimum observed gap 40.1 ms, none below.
+ * Floor on the wall time between two moves that actually left, and the amount of a stolen
+ * slot `nextMoveDeadline` may claw back in one send. Without a floor, an immediate pump
+ * from a keypress can land microseconds after a scheduled one — two moves inside one ER
+ * slot, the second refused with `RateLimited`, invisible on the wire and, now that the
+ * local knight renders from prediction, a visible one-tile pull-back.
+ *
+ * **40 -> 45, measured.** Harness: real Node timers, a 6 ms busy block per 16.7 ms frame to
+ * make the pump late the way the renderer does, a 50 ms ER slot grid at a random phase, and
+ * a send counted refused when it shares a slot with the last accepted one — `move_player`'s
+ * own `last_move_tick != clock.slot`. 15-20 s per cell, `keys/s` = direction changes, each
+ * dispatching a pump immediately as `onKeyDown` does:
+ *
+ * | floor | 0 keys/s | 3 | 8 | 16 | refusals/s (8 / 16 keys) |
+ * |---|---|---|---|---|---|
+ * | 40 ms | 19.65 | 19.45 | 19.39 | 19.20 accepted moves/s | 0.27 / 0.40 |
+ * | 45 ms | 19.65 | — | 19.60 | 19.60 | 0.07 / 0.00 |
+ * | 48 ms | — | — | 19.47 | 19.67 | 0.13 / 0.00 |
+ * | 50 ms | 15.80 | 14.20 | 15.67 | 16.20 | 0 / 0 |
+ *
+ * Three findings, in the order they decide the number:
+ *
+ * 1. **50 is not free — it costs a fifth of the movement rate.** At 50 the floor is `now`,
+ *    which is never below `lastMoveAt + MOVE_MS`, so the deadline re-anchors and every late
+ *    pump loses its lateness permanently: 15.7-16.2 accepted moves/s against 19.6. The
+ *    floor is not just a burst guard, it *is* the slot recovery.
+ * 2. **Raising it inside that range is free.** 40, 45 and 48 all measure 19.6 sends/s: the
+ *    scheduled pump never invokes the floor (minimum gap with no keypresses is 49.2 ms),
+ *    only the immediate keypress pump does. So the floor's whole behavioural footprint is
+ *    one early send per direction change, refused with probability `(50 - floor) / 50`.
+ * 3. So take the halving. 45 cuts that probability 20% -> 10% for no measured throughput,
+ *    and keeps 5 ms of recovery headroom; 48 keeps 2 ms, and every browser number in this
+ *    project came from one box, so the jitter tail is exactly what is not measured here.
+ *
+ * Honest limit: this harness reproduces 0.2-0.4 refusals/s at 40, not the ~1.8/s `DevPanel`
+ * reports. It reproduces the *mechanism*, on Node timers; a browser's jitter tail and the
+ * shot path are outside it. If 45 does not move the reported rate, the mechanism is not
+ * this floor and the next place to look is `connection.ts`'s duplicate-signature drop.
+ *
+ * Not taken: suppressing the prediction for the early send. At 45 it is refused 10% of the
+ * time, so that trades one pull-back for nine round trips of visible input lag.
  */
-const MIN_GAP_MS = 40;
+const MIN_GAP_MS = 45;
 
-/** `SHOT_COOLDOWN_TICKS` from `handlers/shoot.rs`, where the test is strictly greater. */
-const SHOT_COOLDOWN_TICKS = 1;
+/**
+ * `SHOT_COOLDOWN_TICKS` from `handlers/shoot.rs` — `ticks_for(800) - 1`, compared strictly
+ * greater, so the next accepted shot is 800 ms after the last. Written as the duration, not
+ * as the tick count, because the tick count moved once already when `TICK_MS` went 400 ->
+ * 100 and this mirror did not follow: it read `1`, letting a held trigger send one shot
+ * every 200 ms of which the chain accepted one in four and dropped three under
+ * `skipPreflight`, invisibly. `TICK_MS` itself is now imported rather than restated —
+ * a hand copy of a chain constant is what caused that.
+ */
+const SHOT_COOLDOWN_TICKS = 800 / TICK_MS - 1;
+
+/**
+ * Aim vectors leave here scaled so the larger component is this — the `i8` ceiling, and the
+ * finest direction the wire can carry. The chain normalises with alpha-max-plus-beta-min, so
+ * only the ratio matters; filling the byte is what buys the 0.235 degree resolution.
+ */
+const AIM_MAX = 127;
 
 /**
  * Physical keys, by `KeyboardEvent.code` rather than `key`. `code` is layout-independent,
@@ -102,6 +160,31 @@ const FIRE_KEY = 'Space';
  */
 export function dirFromVector(dx: number, dy: number): number {
   return Math.round(Math.atan2(dx, -dy) / (Math.PI / 4)) & 7;
+}
+
+/**
+ * Screen vector → the `(dx, dy)` `i8` pair the wire carries, larger component ±`AIM_MAX`.
+ * `null` for the zero vector, which the chain rejects (`octant` returns
+ * `InvalidInstructionData`) and which a pointer resting exactly on the player produces.
+ *
+ * This is the whole free-aim change on the client: the same `atan2` input, scaled instead of
+ * quantised. Precision surviving to the chain is 0.235°, against 45° through `dirFromVector`.
+ */
+export function aimFromVector(dx: number, dy: number): readonly [number, number] | null {
+  const longest = Math.max(Math.abs(dx), Math.abs(dy));
+  if (longest === 0) return null;
+  return [Math.round((dx / longest) * AIM_MAX), Math.round((dy / longest) * AIM_MAX)];
+}
+
+/**
+ * Inverse of `dirFromVector`: the aim vector of an eight-way facing. Keyboard fire has no
+ * pointer, so it aims along the body's own facing — exactly as accurate as the shipped
+ * eight-way client, and no worse. Trig rather than a table because `dirFromVector` is
+ * `atan2` and this has to be its exact inverse; the self-check round-trips all eight.
+ */
+export function octantAim(dir: number): readonly [number, number] {
+  const angle = (dir & 7) * (Math.PI / 4);
+  return [Math.round(Math.sin(angle) * AIM_MAX), Math.round(-Math.cos(angle) * AIM_MAX)];
 }
 
 /**
@@ -152,7 +235,12 @@ export interface ControlsConfig {
    */
   aimOrigin(): { readonly x: number; readonly y: number } | null;
   onMove(dir: number): void;
-  onShoot(dir: number): void;
+  /**
+   * Free aim, as the wire carries it: an `i8` pair, never `(0, 0)`. The caller passes it
+   * straight to `shoot({ dx, dy })`; the chain normalises it and stamps `facing` from the
+   * same pair, so nothing out here decides an octant on the shot path.
+   */
+  onShoot(dx: number, dy: number): void;
 }
 
 /** Attaches every listener and the pump. The returned function removes all of them. */
@@ -184,13 +272,16 @@ export function attachControls(cfg: ControlsConfig): () => void {
     return dx === 0 && dy === 0 ? null : dirFromVector(dx, dy);
   }
 
-  function aimDirection(): number {
-    if (!pointerDown) return facing;
-    const origin = cfg.aimOrigin();
-    if (origin === null) return facing;
-    const dx = pointerX - origin.x;
-    const dy = pointerY - origin.y;
-    return dx === 0 && dy === 0 ? facing : dirFromVector(dx, dy);
+  /** Never `(0, 0)`: every fallback path ends on `octantAim`, which is a unit direction. */
+  function aimVector(): readonly [number, number] {
+    if (pointerDown) {
+      const origin = cfg.aimOrigin();
+      // No origin yet, or the pointer resting on the player: fall through to the body's
+      // facing rather than inventing an angle.
+      const aim = origin === null ? null : aimFromVector(pointerX - origin.x, pointerY - origin.y);
+      if (aim !== null) return aim;
+    }
+    return octantAim(facing);
   }
 
   function pump(): void {
@@ -219,8 +310,11 @@ export function attachControls(cfg: ControlsConfig): () => void {
     if ((pointerDown || fireKeyDown) && phase === PHASE_FIGHTING) {
       if (shotAllowed(tick, lastShotTick)) {
         lastShotTick = tick;
-        facing = aimDirection();
-        cfg.onShoot(facing);
+        const [dx, dy] = aimVector();
+        // The chain stamps `facing = octant(dx, dy)` from the same pair, so tracking it
+        // here keeps the keyboard's next shot aimed where the last one went.
+        facing = dirFromVector(dx, dy);
+        cfg.onShoot(dx, dy);
       }
     }
   }
@@ -337,10 +431,26 @@ if (import.meta.env.DEV) {
   assert(moveAllowed(9999 + MIN_GAP_MS, nextMoveDeadline(9999, 0)), 'and no further apart than that');
   assert(nextMoveDeadline(0, Number.NEGATIVE_INFINITY) === -MOVE_MS + MIN_GAP_MS, 'the first move is finite');
 
-  // Shots: strictly greater, i.e. one per two ticks — 800 ms at a 400 ms tick.
-  assert(!shotAllowed(8, 7), 'a shot one tick after the last must be gated');
-  assert(shotAllowed(9, 7), 'a shot two ticks after the last must pass');
+  // Shots: strictly greater, so the next accepted shot is SHOT_COOLDOWN_TICKS + 1 ticks
+  // later — 800 ms, whatever TICK_MS is. Expressed against the constant, never a literal:
+  // this block read `shotAllowed(9, 7)` from the 400 ms era and was passing only because
+  // the mirror had gone stale in the same direction.
+  assert(!shotAllowed(7 + SHOT_COOLDOWN_TICKS, 7), 'a shot inside the cooldown must be gated');
+  assert(shotAllowed(8 + SHOT_COOLDOWN_TICKS, 7), 'a shot one tick past it must pass');
+  assert((SHOT_COOLDOWN_TICKS + 1) * TICK_MS === 800, 'the cooldown must stay 800 ms');
   assert(shotAllowed(0, -(SHOT_COOLDOWN_TICKS + 1)), 'the first shot of a match must pass');
+
+  // Free aim. The larger component fills the byte — anything smaller throws away chain-side
+  // resolution for nothing — and the pair must never be (0, 0), which the chain rejects.
+  const aim = aimFromVector(10, -40);
+  assert(aim !== null && aim[0] === 32 && aim[1] === -127, 'aim fills i8 on its longer axis');
+  assert(aimFromVector(0, 0) === null, 'the zero vector has no aim, and the chain refuses it');
+  for (let dir = 0; dir < 8; dir += 1) {
+    const [sx, sy] = octantAim(dir);
+    if (dirFromVector(sx, sy) !== dir) {
+      throw new Error(`controls self-check: octantAim(${dir}) does not round-trip`);
+    }
+  }
 
   const expected: readonly (readonly [number, number, number])[] = [
     [0, -1, 0],

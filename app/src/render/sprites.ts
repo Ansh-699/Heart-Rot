@@ -34,24 +34,34 @@ export const ARENA_UNITS = MAP_TILES * MAP_TILE;
 // Shapes
 // ---------------------------------------------------------------------------
 
-/** Player dot radius. Inside `PLAYER_HIT_RADIUS` (12, `tick.rs`), so a touch is a hit. */
-export const PLAYER_R = 10;
 /** Bullet dot radius. */
 export const BULLET_R = 4;
-/** Boss body circle. The nine part rects stick out past it; that is the point. */
-export const BOSS_R = 46;
+
+/**
+ * Past this a position change was a teleport, not a walk — a reconcile onto a respawn at
+ * an entrance. Chasing it draws a corpse gliding across the dungeon for two seconds, so
+ * the render snaps instead, and the gait accumulator resets rather than spinning the legs.
+ *
+ * Three readers: `Arena.tsx`'s `chase`, `Knight.tsx`'s `advance`, and — restated there,
+ * because `net/` may not import `render/` — `predict.ts::teleported`. It lives in this
+ * leaf module rather than in `Arena.tsx` because `Arena` imports `Knight`: an export read
+ * back the other way at module scope is a temporal-dead-zone crash, not a cycle warning.
+ */
+export const SELF_SNAP = 4 * MAP_TILE;
 /** The little hp bar floating over a player. */
 export const HP_BAR_W = 26;
 
-/**
- * The gate block, in arena units: tiles 30..=33 on both axes.
- *
- * Wire ABI with `handlers::player::GATE_MIN_X` — the renderer draws it and `App` decides
- * when to fire `enter_gate` off it, and a client that disagrees with the chain here puts
- * the marker where the gate is not. One fact, one place.
- */
-export const GATE_MIN = 30 * MAP_TILE;
-export const GATE_MAX = 34 * MAP_TILE - 1;
+// `PLAYER_R` and `BOSS_R` are gone with the primitives they sized: `Knight.tsx` and
+// `Boss.tsx` own their own geometry now, off the generated sprite boxes and
+// `PART_HITBOXES`.
+//
+// So are `GATE_MIN` / `GATE_MAX`, and they were the dangerous pair. They read
+// `30 * MAP_TILE` .. `34 * MAP_TILE - 1` on BOTH axes — a square block — and the gate is
+// no longer square: x 480..543 by y 608..639. A caller reusing them drew the marker 128
+// units north of the real gate, inside the pit, and "walk to the middle" stranded every
+// player. `GATE_MIN_X` / `GATE_MAX_X` / `GATE_MIN_Y` / `GATE_MAX_Y` come out of
+// `tools/gen_map.py` into `@heartrot/client`, alongside `onGate` itself, which is the
+// same predicate `handlers::player::on_gate` runs. Import those; never restate them.
 
 /**
  * `PlayerSlot.facing` is eight-way clockwise from north (`FACING_STEP` in `shoot.rs`),
@@ -78,36 +88,23 @@ export const FACING_UNIT: readonly (readonly [number, number])[] = [
  * the other raiders, a live boss part from a destroyed one, and a bullet from the floor.
  */
 export const PAL = {
-  floor: '#17151b',
   wall: '#2b2733',
   /** Lit top face of a wall, so a pillar and a corridor are not one flat block. */
   rim: '#413a4f',
   entrance: '#b5b56a',
 
-  /** You. The only mint thing on screen. */
-  self: '#5ef2b5',
   selfRing: '#eafff4',
-  /** Everyone else. */
-  ally: '#5aa2ff',
-  /** Dead: hollow and grey, never filled. */
-  dead: '#6b6478',
   outline: '#0f0d12',
 
   hpBack: '#000000',
   hpFill: '#8bd450',
 
-  bossBody: '#7c2338',
   bossEdge: '#ff5c7a',
   partLive: '#c94f6d',
-  partDead: '#3a3540',
 
-  ventSealed: '#4a4030',
-  ventSealedEdge: '#7a6d4f',
   ventOpen: '#ffe873',
-  ventOpenEdge: '#fffbe0',
 
   bullet: '#ffb020',
-  bulletEdge: '#fff1c9',
 } as const;
 
 // ---------------------------------------------------------------------------

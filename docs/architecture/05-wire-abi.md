@@ -44,7 +44,7 @@ trailing payload on their behalf before dispatch. Tags **8** and **10** also tak
 arguments but are deliberately *not* in that list — see their sections.
 
 Tags are **append-only**: never renumber, never reuse a retired one. `8` is frozen hardest
-— `settle::start_match` writes it into the validator's crank row at schedule time and the
+— `settle::begin_muster` writes it into the validator's crank row at schedule time and the
 row is replayed for the life of the match. Its canonical definition is
 `handlers::settle::IX_BOSS_TICK`.
 
@@ -81,11 +81,11 @@ exact-length and reject any extra.
 | 0 | `InitLeaderboard` | `init::init_leaderboard` | base | 0 B | 3 | payer (anyone) |
 | 1 | `InitArena` | `init::init_arena` | base | 74 B | 5 | `init::TREASURY` |
 | 2 | `Delegate` | `delegation::process_delegate` | base | 0 B | 16 exact | `Arena.crank_authority` |
-| 3 | `StartMatch` | `settle::start_match` | ER | 0 B | 5 | `Arena.crank_authority` |
+| 3 | `BeginMuster` | `settle::begin_muster` | ER | 0 B | 5 | `Arena.crank_authority` |
 | 4 | `ClaimSeat` | `player::join` | ER | 66 B | 3 | `Arena.crank_authority` |
 | 5 | `EnterGate` | `player::enter_gate` | ER | 1 B | 3 | `slots[seat].session_pubkey` |
 | 6 | `Move` | `player::move_player` | ER | 5 B | 3 | `slots[seat].session_pubkey` |
-| 7 | `Shoot` | `shoot::process` | ER | 2 B | 4 | `slots[seat].session_pubkey` |
+| 7 | `Shoot` | `shoot::process` | ER | 3 B | 4 | `slots[seat].session_pubkey` |
 | 8 | `BossTick` | `tick::process` | ER | 0 B | 4 | crank signer PDA (read-only) |
 | 9 | `Settle` | `settle::settle` | ER | 0 B | 6 | `Arena.crank_authority` |
 | 10 | `WriteLeaderboard` | `settle::write_leaderboard` | base | 0 B | 4 | `init::TREASURY` |
@@ -171,22 +171,35 @@ to 1,924 bytes copied per account, which does not fit the default 200,000 CU.
 
 ---
 
-### Tag 3 — `StartMatch` · ER
+### Tag 3 — `BeginMuster` · ER
 
 Args: **none** (`ZERO_ARG_TAGS`). Sent to the **ER**, after tag 2 has confirmed —
 `Magic11111…` is a runtime builtin, so a base-layer CPI to it cannot resolve.
+
+**Renamed from `StartMatch`; the bytes are unchanged.** Same tag, same zero args, same five
+accounts in the same order, so this is not a wire change — but the *semantics* moved, and
+an old client that sends it now lands in `Mustering` rather than `Fighting`.
 
 | # | Account | Flags | |
 |---|---|---|---|
 | 0 | payer | `w s` | must equal `Arena.crank_authority`; becomes the crank task authority, so it is the only key that can ever cancel the task |
 | 1 | arena | `w` | frozen into the crank row |
 | 2 | boss | `w` | frozen into the crank row |
-| 3 | players | `w` | frozen into the crank row |
+| 3 | players | `w` | frozen into the crank row, **and read**: `guards::assert_any_raider` |
 | 4 | magic program | `r` | `Magic11111111111111111111111111111111111111` |
 
-Flips `phase` to `Fighting` **and** schedules the tag 8 crank in one instruction: a
-`Lobby` arena with a live crank ticks 4,500 times and never starts, and a `Fighting` arena
-with no crank can never end.
+Flips `phase` to `Mustering`, stamps `Arena.fight_at_tick = tick + MUSTER_TICKS`, **and**
+schedules the tag 8 crank in one instruction. The crank is also what *ends* the muster —
+`Arena::begin_fight` performs `MUSTERING → FIGHTING` at the deadline — so no second request
+is owed by any player, host or Worker, and a raid can never fail to start. A `Lobby` arena
+with a live crank ticks to no effect; a `Mustering` arena with no crank never reaches the
+fight.
+
+**Refuses with `HeartrotError::NoRaiders` (Custom 19) when no seat is in `ZONE_ARENA`.**
+Every client through the gate fires this and all but one lose the race: nineteen get the
+phase refusal, and a twentieth may legitimately get `NoRaiders` if its own `enter_gate` has
+not landed yet. Both are the design. The Worker maps it to `no_raiders` / 409 and the
+browser store swallows it alongside `already_started`.
 
 `task_id` is **validator-global** — a collision fails silently.
 
@@ -254,12 +267,23 @@ scanning twenty slots. Do not move seat resolution into the program.
 
 ### Tag 7 — `Shoot` · ER
 
-Args, **2 bytes exactly**:
+Args, **3 bytes exactly** (was 2, `[seat, dir]`, before free aim):
 
 | Offset | Width | Field | |
 |---|---|---|---|
 | `[0]` | 1 | `seat` | u8 |
-| `[1]` | 1 | `dir` | u8, **must be `< 8`** — the eight-way facing octant |
+| `[1]` | 1 | `dx` | **i8**, signed |
+| `[2]` | 1 | `dy` | **i8**, signed |
+
+**Free aim, and it is not a nicety.** Replayed over 110 pit stands with the boss at top
+centre: eight-way aim leaves 33.6% of stands able to hit anything at all and **can never
+reach the core** — the raid is unwinnable with no error anywhere. The `(dx, dy)` pair
+measures 0.2354° of worst-case direction error over 200,000 angles. The pair is normalised
+**on chain** by `tick.rs::unit_velocity`; `(0, 0)` is rejected, and `facing` is stamped from
+`player::octant(dx, dy)` so remote sprites still turn.
+
+An old client sending 2 bytes gets a clean length refusal, so **program and app ship
+together**.
 
 | # | Account | Flags | |
 |---|---|---|---|
@@ -283,8 +307,10 @@ never return `Err`, so a trailing payload is ignored rather than rejected.
 | 2 | players | `w` | health, respawns |
 | 3 | crank signer | `r s` | **read-only signer**, PDA `["crank-executor", Arena.crank_authority]` under `Crank11111111111111111111111111111111111111` |
 
-**No client ever builds this.** `start_match` freezes the four metas and the single data
-byte `[8]` into the validator's crank row and the row is replayed every 400 ms. A crank
+**No client ever builds this.** `begin_muster` freezes the four metas and the single data
+byte `[8]` into the validator's crank row and the row is replayed every `TICK_MS` (100 ms).
+It is armed for `TICK_ITERATIONS = (MUSTER_TICKS + ENRAGE_TICKS) * 5 / 4` iterations, which
+must cover the muster **and** the fight: the crank cannot be topped up. A crank
 may carry no writable signer and cannot re-arm itself, so the shape is immutable for the
 life of the match — four metas plus two program ids, six keys against the ~38 ceiling.
 
@@ -394,8 +420,11 @@ responsibility and none may be skipped:
 
 - **`seat`** is checked `< state::MAX_SEATS` (20) before it indexes `Players.slots`. A
   fallible `slots.get_mut(seat)` satisfies this; a bare `slots[seat]` does not.
-- **`dir`** (tag 7) is checked against the length of the facing table before it indexes
-  one — eight-way, matching `PlayerSlot.facing`.
+- **`dx`/`dy`** (tag 7) are attacker-chosen and free. They are normalised on chain, so
+  magnitude carries no advantage; `(0, 0)` is rejected as not a direction. The ray is
+  bounded by `MAX_RAY_STEPS = map::MAP_TILES`, so a miss costs a bounded walk and still
+  spends the cooldown — refunding a miss would hand an attacker an unlimited-rate
+  instruction.
 - **`dx`/`dy`** (tag 6) are attacker-chosen and only their **signs** are read.
   `player::octant` quantizes them to one of eight octants and the displacement itself comes
   off `MOVE_STEP`, so `(127, 127)` moves exactly as far as `(1, 1)`. `(0, 0)` is not a
@@ -409,7 +438,8 @@ responsibility and none may be skipped:
 ## 6. `Move` carries no facing
 
 Tag 6 sends a displacement, not a direction, so `PlayerSlot.facing` is derived from the
-sign of `(dx, dy)` — it is not on the wire. Tag 7 sends `dir` directly and overwrites
-`facing` with it. Keep the two derivations agreeing on the octant numbering
+sign of `(dx, dy)` — it is not on the wire. Tag 7 now sends a displacement too and stamps
+`facing` through the **same** `player::octant`, which is why there is one quantiser and not
+two. Keep both derivations agreeing on the octant numbering
 (0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W, 7 NW, **y down**) or a player's sprite faces one way
 and their shots leave in another.

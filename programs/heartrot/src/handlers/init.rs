@@ -47,8 +47,8 @@ use crate::error::HeartrotError;
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
 use crate::map;
 use crate::state::{
-    init, load, load_mut, AccountLayout, Arena, Boss, Leaderboard, Players, N_PARTS, PHASE_LOBBY,
-    SEED_ARENA, SEED_BOSS, SEED_LEADERBOARD, SEED_PLAYERS,
+    init, load, load_mut, AccountLayout, Arena, Boss, Leaderboard, Players, BOSS_CORE_HP, N_PARTS,
+    PHASE_LOBBY, SEED_ARENA, SEED_BOSS, SEED_LEADERBOARD, SEED_PLAYERS,
 };
 
 /// Base58 treasury address, supplied at build time.
@@ -182,12 +182,11 @@ const fn decode_base58_address(text: &str) -> [u8; 32] {
 }
 
 
-/// Six minutes at the 400 ms crank interval — the enrage timeout from the game design.
-///
-/// Hardcoded rather than passed in: it is a rule of the fight, and the one place it could
-/// legitimately vary (a validator ticking slower than 400 ms) is not something the caller
-/// knows either. `tick` is the only clock; wall-clock never enters this program.
-pub const ENRAGE_AT_TICK: u32 = crate::state::ticks_for(360_000);
+// The enrage timeout lives in `state.rs` as `ENRAGE_TICKS` and is stamped by
+// `Arena::begin_fight()` at the MUSTERING → FIGHTING flip, not here. It moved because it
+// stopped being creation state: an arena spends its whole muster window with
+// `enrage_at_tick == 0`, and `tick.rs`'s `!= 0` guard is what makes that safe. Writing it
+// at `init` again would silently shorten every fight by the length of its own muster.
 
 /// `arena_id` u64 `[0..8]` ‖ `incarnation` u16 `[8..10]` ‖ `validator_identity`
 /// `[10..42]` ‖ `crank_authority` `[42..74]`. Frozen; `packages/client/src/instructions.ts`
@@ -214,19 +213,29 @@ const MAX_SIGNER_SEEDS: usize = 3;
 // boss stood with its shell inside solid rock, `shoot`'s ray died on the corridor wall
 // before most of the parts, and the whole fight had never been run on chain, so nothing
 // had noticed. Move the `B`, re-run the tool, and the boss moves with it.
+//
+// It has since moved again — the `B` is now tile (32, 25), the top-centre anchor the pit
+// looks up at — and this file needed no edit for that, which is the whole point. The two
+// coordinates above are the history, not the current value; ask `map::BOSS_SPAWN`.
 
-/// Kill condition, only damageable once the vent opens. "Low tier" in the design spec: 50
-/// landed shots at `shoot.rs`'s `SHOT_DAMAGE` of 40.
-const BOSS_CORE_HP: u16 = 2_000;
+// The core's floor HP is `state::BOSS_CORE_HP`, imported above. It moved out of this file
+// because `tick.rs` now tops `core_hp_max` up by `CORE_HP_PER_RAIDER` per extra raider, so
+// the two numbers are only meaningful against each other and a copy here would be the
+// balance table stored twice. This file still owns the *shell*; `state.rs` owns the core.
 
 /// Base HP per part before incarnation scaling, index-aligned with `Boss.parts` and with
-/// `shoot.rs`'s `PART_HITBOXES`. Tiers are the design spec's: crown high, heads and arms
+/// `hitboxes::PART_HITBOXES`. Tiers are the design spec's: crown high, heads and arms
 /// medium, thorns low.
 ///
+/// **Ordered by name, not by position.** The indices are the ones
+/// `tools/svg_slice.py` emits — small-and-specific first, so `shoot.rs::raycast`'s
+/// first-live-match walk claims a thorn before the larger box it sits inside. Reordering
+/// the hitboxes without reordering this array would silently hand every thorn 2,500 HP and
+/// the mace 1,000: index-aligned means aligned to the *names*, and nothing in the type
+/// system can catch a permutation of nine `u16`s.
+///
 /// 18,000 shell HP in total, so the vent opens (`sum(parts) < 35%` of max) after 11,700
-/// damage — 293 landed shots, about two and a half minutes for a raid of eight at
-/// `shoot.rs`'s one-accepted-shot-per-two-ticks cooldown, inside the 900-tick enrage
-/// window.
+/// damage — 293 landed shots at `shoot.rs`'s `SHOT_DAMAGE`, inside the enrage window.
 ///
 /// ponytail: hardcoded because the frozen 74-byte tag-1 argument block has nowhere to
 /// carry them, so retuning the fight is a redeploy rather than a Worker change. That is
@@ -234,16 +243,21 @@ const BOSS_CORE_HP: u16 = 2_000;
 /// meaningful against each other and move together or not at all. Upgrade path: widen tag
 /// 1 in `instruction.rs`, `instructions.ts` and the ABI table in one commit, and pass them.
 const BOSS_PARTS_BASE: [u16; N_PARTS] = [
-    4_000, // 0 crown   — high
-    2_500, // 1 wolf_l  — medium
-    2_500, // 2 beast_r — medium
-    1_000, // 3 thorn0  — low
-    1_000, // 4 thorn1  — low
-    1_000, // 5 thorn2  — low
-    1_000, // 6 thorn3  — low
-    2_500, // 7 mace    — medium
-    2_500, // 8 claws   — medium
+    THORN_HP, // 0 thorn0  — low, emitter
+    THORN_HP, // 1 thorn1  — low, emitter
+    THORN_HP, // 2 thorn2  — low, emitter
+    THORN_HP, // 3 thorn3  — low, emitter
+    4_000,    // 4 crown   — high
+    2_500,    // 5 wolf_l  — medium
+    2_500,    // 6 beast_r — medium
+    2_500,    // 7 mace    — medium
+    2_500,    // 8 claws   — medium
 ];
+
+/// The emitter tier. Named rather than written out four times so
+/// `part_hp_is_index_aligned_with_the_hitboxes` can state "every muzzle stands in a thorn"
+/// as a comparison against `hitboxes::MUZZLES` instead of as a comment.
+const THORN_HP: u16 = 1_000;
 
 // A zero-HP part or core is not a weak boss, it is a broken one: the vent test is
 // `sum(parts) × 100 < sum(parts_max) × 35`, so an all-zero shell never opens, and a zero
@@ -439,6 +453,8 @@ fn scaled_parts(incarnation: u16) -> [u16; N_PARTS] {
 /// Data: `arena_id` u64 ‖ `incarnation` u16 ‖ `validator_identity` `[u8; 32]` ‖
 /// `crank_authority` `[u8; 32]`. Exact length: one byte short is an attacker probing for
 /// an index panic, one byte long is version skew, and neither is worth accepting quietly.
+/// `crank_authority` must be [`TREASURY`] — [`HeartrotError::NotTreasury`] otherwise — and
+/// `arena_id` must be non-zero.
 pub fn init_arena(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
     let [payer, arena, boss, players, system_program, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
@@ -471,11 +487,20 @@ pub fn init_arena(program_id: &Address, accounts: &mut [AccountView], data: &[u8
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // An all-zero `crank_authority` is the same wedge as a squatted arena, self-inflicted:
-    // `delegate`, `join` and `settle` all compare a signer against this field, and no
-    // keypair signs for the zero address. The match would exist and never be able to start.
-    if crank_authority == [0u8; 32] {
-        return Err(ProgramError::InvalidInstructionData);
+    // `crank_authority` must be the treasury, and rejecting anything else here is the only
+    // place the program can say so. `write_leaderboard` requires its payer to be *both*
+    // [`TREASURY`] (settle.rs) and `Arena.crank_authority`, while `delegate`, `join` and
+    // `settle` require only the latter — so an arena opened with any other authority
+    // delegates, musters, fights and settles perfectly normally and then fails
+    // `write_leaderboard` with `NotTreasury` forever. Nothing is left to retry: tag 15
+    // gates on the leaderboard naming this match, so the arena can never advance an
+    // incarnation and a fresh `arena_id` is the only recovery. A one-shot arena is not a
+    // state worth being able to reach, and this is one comparison.
+    //
+    // It subsumes the all-zero check this replaces: the zero address is the System
+    // Program, no keypair signs for it, and it is not the treasury either.
+    if !address_eq(&Address::new_from_array(crank_authority), &TREASURY) {
+        return Err(HeartrotError::NotTreasury.into());
     }
 
     let arena_bump = create_pda_account(
@@ -514,18 +539,23 @@ pub fn init_arena(program_id: &Address, accounts: &mut [AccountView], data: &[u8
         let state = init::<Arena>(&mut account_data, arena_bump)?;
 
         // A freshly created account is zeroed, so every field absent from this block is
-        // deliberately 0: `alive_count`, `bullet_cursor`, `tick`, `seat_occupied`, both
-        // `_pad` fields, and all 128 bullet slots (`active == BULLET_FREE`).
+        // deliberately 0: `alive_count`, `bullet_cursor`, `tick`, `seat_occupied`, the
+        // remaining `_pad` fields, and all 128 bullet slots (`active == BULLET_FREE`).
+        //
+        // `enrage_at_tick` and `fight_at_tick` are both in that set, and both deliberately.
+        // A match is created into `PHASE_LOBBY`, where neither clock has started: the
+        // muster deadline is stamped by `begin_muster` and the enrage deadline by
+        // `Arena::begin_fight()` at the flip into FIGHTING. Zero means "not scheduled" for
+        // both, which is what `tick.rs` already tests for.
         state.phase = PHASE_LOBBY;
         state.arena_id = arena_id;
-        state.enrage_at_tick = ENRAGE_AT_TICK;
         state.incarnation = incarnation;
         // The crank signer PDA derives from this key, so it is what `boss_tick` authorizes
-        // against. It is taken from the argument block rather than from the payer because
-        // the ABI carries it and because the treasury that *pays* for a match and the key
-        // that *schedules* its crank do not have to stay the same key; the Worker passes
-        // its own address for both today. Only `TREASURY` reached this line, so a caller
-        // cannot point a match at an authority nobody agreed to.
+        // against. It is still copied out of the argument block rather than from `payer`
+        // even though the check above proves the two are equal, because the 74-byte tag-1
+        // ABI is frozen and carries the field: reading it from the payer instead would
+        // leave a wire argument the program silently ignores, which is worse than a
+        // redundant copy. The check is the guarantee; this is the transcription.
         state.crank_authority = crank_authority;
         state.validator_identity = validator_identity;
 
@@ -669,12 +699,18 @@ pub fn init_leaderboard(
 /// delegation program owns them, so `assert_owned_by` rejects this outright — an arena
 /// still on the ER cannot be rolled forward from the base layer.
 ///
-/// Refusals: [`HeartrotError::NotTreasury`] for the wrong key, and
-/// [`HeartrotError::WrongPhase`] for every state condition — a phase that is not
-/// `PHASE_SETTLED`, an all-zero `next_affix_seed` (the oracle never answered), and a
-/// leaderboard that has not recorded this match. One code, because all three are
-/// "this instruction is not legal from this state" and the caller is holding both
-/// accounts that say which one it was.
+/// Refusals: [`HeartrotError::NotTreasury`] for the wrong key,
+/// [`HeartrotError::MatchNotRecorded`] for a leaderboard that has not recorded this match,
+/// and [`HeartrotError::WrongPhase`] for the arena's own state conditions — a phase that is
+/// not `PHASE_SETTLED`, or an all-zero `next_affix_seed` (the oracle never answered).
+///
+/// The leaderboard gets its own code because it is the only one of the three the caller
+/// can *act* on: the arena's phase is exactly right and it is a different account that is
+/// stale, so the fix is "send tag 10, then tag 15 again" rather than "wait". On the ER the
+/// error code is the entire diagnostic a failed transaction returns, and folding a
+/// retryable condition into `WrongPhase` — which every unrecoverable state condition in
+/// this program also returns — is what makes an operator wait on something that will never
+/// change on its own.
 pub fn next_incarnation(program_id: &Address, accounts: &mut [AccountView]) -> ProgramResult {
     let [authority, arena, boss, players, leaderboard, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
@@ -713,7 +749,7 @@ pub fn next_incarnation(program_id: &Address, accounts: &mut [AccountView]) -> P
         let lb_data = leaderboard.try_borrow()?;
         let board = load::<Leaderboard>(&lb_data)?;
         if board.last_arena_id != arena_id || board.last_incarnation != incarnation_now {
-            return Err(HeartrotError::WrongPhase.into());
+            return Err(HeartrotError::MatchNotRecorded.into());
         }
     }
 
@@ -767,6 +803,30 @@ mod tests {
         // A zero base cannot occur — the `const` block above rejects it at compile time —
         // but scaling must not invent HP either.
         assert_eq!(scale_for_incarnation(0, 9), 0);
+    }
+
+    /// The permutation guard for [`BOSS_PARTS_BASE`].
+    ///
+    /// `hitboxes::PART_HITBOXES` is generated and this array is hand-written, so
+    /// "index-aligned" is a claim the `[Rect; N_PARTS]` declaration only half-checks: it
+    /// catches a length change and nothing at all catches a *reorder*. Renumbering the
+    /// boxes without mirroring it here hands every thorn 2,500 HP and the mace 1,000, and
+    /// the whole fight is rebalanced with no error anywhere.
+    ///
+    /// `MUZZLES` is the one place the generator states which indices are thorns, so
+    /// comparing against it makes the two orders check each other. A test rather than a
+    /// `const` assertion deliberately: the two files are reordered by separate generator
+    /// runs, and a half-applied reorder should be a red test, not a tree that will not
+    /// compile.
+    #[test]
+    fn part_hp_is_index_aligned_with_the_hitboxes() {
+        for muzzle in crate::hitboxes::MUZZLES {
+            assert_eq!(
+                BOSS_PARTS_BASE[muzzle.part], THORN_HP,
+                "muzzle on part {} — BOSS_PARTS_BASE is no longer aligned with PART_HITBOXES",
+                muzzle.part,
+            );
+        }
     }
 
     /// The base58 decoder is what turns a deploy-time environment variable into the one

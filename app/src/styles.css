@@ -5,40 +5,70 @@
  * bytes of unused classes than there are bytes of layout here, and none of it would help
  * with the only hard part, which is keeping the pixel art crisp.
  *
- * Two rules do the actual work and both are load-bearing rather than aesthetic:
- * `image-rendering: pixelated` stops the browser bilinear-smoothing anything scaled to an
- * integer multiple, and `shape-rendering: crispEdges` stops it antialiasing the primitive
- * shapes the stage is drawn from. Without them the world reads as a blurry upscale.
+ * The load-bearing parts are not the layout: they are the palette (one cold cavern, so
+ * depth comes from light and layering rather than from flat fills), `image-rendering:
+ * pixelated` so nothing scaled to an integer multiple gets bilinear-smoothed, and the
+ * scene section's animation contract — which classes may move, which node owns which
+ * transform, and which of them a reduced-motion reader still needs.
  */
 
 @import url('https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 :root {
-  /* Arena: cold purple-grey stone, from the design spec's art direction table. */
-  --ground: #16131a;
-  --panel: #1f1a26;
-  --panel-2: #282132;
-  --line: #3a3145;
-  --ink: #ece3ec;
-  --muted: #9186a0;
-  --dim: #6b6076;
+  /*
+   * The ice cavern. Every neutral is a cool blue-grey now; the scene reference is lit
+   * from one cold source above and behind the creature, so warmth only ever appears as
+   * an accent (torchlight in the lobby, the boss's ember eyes) and never as a ground.
+   *
+   * Token NAMES are unchanged on purpose — thirty-odd rules and four components already
+   * reference them, and a rename would be a diff in files this agent does not own.
+   * `--flesh`, `--mauve` and `--olive` now name cool equivalents, not their old hues.
+   *
+   * Contrast was computed, not eyeballed: --dim on --panel is 4.76:1 and --muted 6.25:1
+   * (WCAG relative luminance), which is what keeps the 9.5px telemetry labels readable
+   * once the stage behind them goes darker. --dim was #6b6076 at 3.77:1 before, i.e.
+   * already short; darkening the scene is what made it worth fixing.
+   */
+  --ground: #080d14;
+  --panel: #121b27;
+  --panel-2: #1a2634;
+  --line: #2c3d52;
+  --ink: #dde7f2;
+  --muted: #8c9db4;
+  --dim: #74889f;
 
-  /* The boss. Pale flesh through maroon, olive for the thorns and the open vent. */
-  --flesh: #d9a8b8;
-  --flesh-lit: #e8c4ce;
-  --mauve: #a06a80;
-  --maroon: #5a2f45;
-  --olive: #b5b56a;
-  --olive-dim: #8a8a4a;
+  /* Cavern depth: back wall, the lit rim, the cold key light. */
+  --deep: #0d1622;
+  --rim: #9fc7e8;
+  --cyan: #6fe3ff;
+  --cyan-dim: #2a7f96;
 
-  /* Lobby: warm, outdoor, safe. Used by the renderer's lobby room, and by the gate row. */
-  --lobby-green: #6f7a3f;
-  --lobby-tan: #b9a37a;
+  /* The boss. Cold rose through a bruised maroon; the vent reads cyan, not olive. */
+  --flesh: #d99aa8;
+  --flesh-lit: #ecc0c9;
+  --mauve: #8f6a86;
+  --maroon: #5a2a3c;
+  --ember: #ff5a4a;
+  --olive: #7fd6c0;
+  --olive-dim: #3f7f74;
 
-  --torch: #d4a84a;
-  --ok: #7fb069;
-  --gone: #7a3a4a;
-  --steel: #8b95a8;
+  /* Lobby: the one warm pocket, so walking out of it reads as leaving safety. */
+  --lobby-green: #5f7a52;
+  --lobby-tan: #b8a483;
+
+  --torch: #e0a94a;
+  --ok: #62c39a;
+  --gone: #6d2f3f;
+  --steel: #8b9cb2;
+
+  /*
+   * The temple grade used to live here as `--temple-grade`, applied by `.scene-bg`.
+   * Both are gone: the live grade is `TEMPLE_GRADE` in `app/src/render/Scene.tsx`, fitted
+   * by least squares against the art doc's 16-entry target ramp, and nothing in
+   * `app/src/render/` has ever carried the `scene-bg` class. Two grades for one layer is
+   * this project's one-fact-stored-twice defect with a stylesheet around it
+   * (`docs/review/art.md` fix 5c). Scene.tsx is the one place it is stored.
+   */
 
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --pixel: Silkscreen, var(--mono);
@@ -66,20 +96,25 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/*
- * Every sprite in this game is pixel art scaled to an integer multiple. These two
- * declarations are the reason it stays sharp; the `svg` rule matters more than the `img`
- * one because the rig is inline SVG, not images.
- */
+/* Every sprite in this game is pixel art scaled to an integer multiple. This is what
+   stops the browser smoothing a raster one on the way up. */
 img,
 svg,
 canvas {
   image-rendering: pixelated;
 }
 
-svg {
-  shape-rendering: crispEdges;
-}
+/*
+ * `shape-rendering` deliberately does NOT live here any more.
+ *
+ * It used to be `svg { shape-rendering: crispEdges }`, and a CSS rule outranks the
+ * presentation attribute of the same name — so the moment `Arena.tsx` starts switching
+ * that attribute between `crispEdges` and `geometricPrecision` on the fit scale (spec
+ * §1.5: below 1:1 the art is 19% dark keyline and crisp snapping becomes outline
+ * flicker as a sprite translates), a rule here would have silently won and the switch
+ * would have done nothing. The root `<svg>`'s attribute inherits to every child, which
+ * is all the blanket rule ever bought.
+ */
 
 h1,
 h2,
@@ -184,7 +219,7 @@ h3 {
 .errorbar {
   padding: 8px 16px;
   border-top: 1px solid var(--maroon);
-  background: #241820;
+  background: #1d1420;
   color: var(--flesh-lit);
   font-size: 12px;
 }
@@ -197,8 +232,41 @@ h3 {
   position: relative;
   min-height: 0;
   overflow: hidden;
-  /* Torchlight from above, the arena's one piece of atmosphere. */
-  background: radial-gradient(120% 90% at 50% 18%, #2a2231 0%, #16131a 72%);
+  /* The cavern behind the letterbox: one cold source high and centre, where the
+     creature stands, falling off to the unlit back wall. */
+  background:
+    radial-gradient(90% 60% at 50% 6%, #23384f 0%, rgb(35 56 79 / 0) 70%),
+    radial-gradient(120% 100% at 50% 30%, var(--deep) 0%, var(--ground) 78%);
+}
+
+/*
+ * The depth ramp (§8.1's "five-stop gradient overlay") and the vignette, as ONE
+ * pseudo-element on a node the frame loop never touches. It is not an SVG layer on
+ * purpose: as a child of the scene it would need a rect sized in arena units and a
+ * z-order argument with every other layer, and as `<g>` content it would be inside the
+ * camera transform, so it would pan with the world instead of staying on the lens.
+ *
+ * Alpha compositing only — no `mix-blend-mode`. A blended full-viewport layer forces
+ * the compositor to read the backdrop back on every frame the scene changes, and the
+ * scene changes every frame.
+ */
+.stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    /* far -> near: cold sky glow, clear air, haze over the pit, the shadowed rim the
+       camera is looking over, and black at the very bottom edge. */
+    linear-gradient(
+      to bottom,
+      rgb(159 199 232 / 0.1) 0%,
+      rgb(159 199 232 / 0) 26%,
+      rgb(13 22 34 / 0.14) 56%,
+      rgb(8 13 20 / 0.42) 88%,
+      rgb(8 13 20 / 0.7) 100%
+    ),
+    radial-gradient(115% 85% at 50% 34%, rgb(8 13 20 / 0) 52%, rgb(8 13 20 / 0.62) 100%);
 }
 
 /* The renderer may draw with either tag; App.tsx's `aimOrigin` accepts both too. */
@@ -207,6 +275,280 @@ h3 {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   The scene — the CSS half of the animation contract (spec §7)
+
+   Three classes of motion, and only two of them are CSS:
+
+   SEEKED  — a chain field counting to a deadline. ONE animation built at its true
+             duration, permanently `paused`, and the renderer writes
+             `el.getAnimations()[0].currentTime` from the chain value on each
+             notification. It composites at 60fps between notifications and
+             self-corrects on every one, with no rAF callback.
+             The duration comes in as `--dur`, set from the MIRRORED CHAIN CONSTANT.
+             No keyframe here may contain a game duration: a hand-typed 3200 stops
+             matching the volley the first time anyone tunes balance. `--dur` defaults
+             to 0s, so a forgotten variable freezes at the start state rather than
+             animating something wrong.
+   COSMETIC — breathing, gait, idle, gate glow. Free-running, matched to no chain fact,
+             so a literal duration here is honest.
+   ONE-SHOT — recoil, hit flash, death fall, part destruction. NOT here. Those go
+             through `Element.animate()` so they auto-promote, self-clean and stack
+             instead of fighting over one `style.transform` (§7.4).
+
+   Two mechanical rules, both measured, both easy to violate silently:
+   - Every node an animation or the frame loop WRITES must be composited (§9.2.4): the
+     spread between promoted and unpromoted is 30-85x, which dwarfs the <2x spread
+     between animation techniques. Hence `will-change` below — and nowhere else. It is
+     a layer allocation, not a speed switch.
+   - SVG `transform-box` defaults to `view-box` with origin 0 0. A part group rotated
+     without `fill-box` + `center` lands 195 units away, off canvas. Any node that
+     rotates or scales about itself sets both.
+
+   Not used, on purpose: CSS containment. Measured at 0.00 ms on this scene (§9.3).
+   -------------------------------------------------------------------------- */
+
+/* The camera is one `<g>` carrying `scale(k) translate(-cx,-cy)`, and the lobby->pit
+   pan is a WAAPI animation on that transform and nothing else. Never the viewBox
+   attribute: 9.6 ms/frame against ~1.7, a 5.3x regression (§1.4). */
+#camera {
+  will-change: transform;
+}
+
+/* Cold light spilling down the near face of the pit rim, which is the foreground
+   plane the whole composition reads depth from. */
+.pit-rim {
+  filter: drop-shadow(0 -2px 0 rgb(159 199 232 / 0.22));
+}
+
+/* --- The boss ------------------------------------------------------------ */
+
+/* One writer per node: `#boss-pos` is a React attribute, `#boss-breathe` is this
+   keyframe, `#boss-shell` is a React attribute per snapshot, the 13 part groups are
+   WAAPI one-shots. A node carrying an inline transform AND a WAAPI animation silently
+   discards the inline write. */
+#boss-breathe {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: boss-breathe 4200ms ease-in-out infinite;
+}
+
+@keyframes boss-breathe {
+  from {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.012, 0.988);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+/* Every destructible limb. Promoted because it covers ~95% of frame area at SCALE=3
+   and takes WAAPI flinch and destruction one-shots. */
+.boss-part {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+
+/* The chest orb lived here as `.core-glow` / `.core-glow.is-open` and does not any more.
+   `art.md` fix 4 asked for that two-state design — `--cyan-dim` at 0.35 sealed, `--cyan`
+   plus a pulse when open — to be ported into the boss, and `Boss.tsx` now carries it
+   verbatim as `.hr-boss-vent` / `.hr-vent-open .hr-boss-vent` against the node that
+   actually renders. Keeping a second copy here would be the defect this project keeps
+   hitting: one fact stored twice, with only one of the two reachable, so the dead copy is
+   the one people read and edit. */
+
+/* Two near-white 2px blocks in the source art, drawn here as ember light. */
+.boss-eye {
+  fill: var(--ember);
+  filter: drop-shadow(0 0 6px var(--ember));
+  animation: eye-flicker 2600ms steps(1, end) infinite;
+}
+
+@keyframes eye-flicker {
+  0%,
+  86%,
+  100% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 0.55;
+  }
+}
+
+/* --- Seats --------------------------------------------------------------- */
+
+/*
+ * The local seat renders from PREDICTION, every remote seat from INTERPOLATION, and
+ * both write this node's transform from the rAF loop. That split is what took the
+ * fight-time stutter from 200 static frames to 52; nothing here may merge them.
+ *
+ * `will-change` on the seat group measured as a no-op on a real GPU (7.10 vs 7.20 ms)
+ * and 36-85x on software raster. Recorded so nobody chases it again: it is one free
+ * line for the weak devices neither harness tested.
+ */
+.seat {
+  will-change: transform;
+}
+
+/* The child `<use>`, which owns flip / bob / recoil. It must be a SEPARATE node from
+   `.seat`, because two writers on one transform means one of them is discarded. */
+.seat-body {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+/* Idle only. The WALK frame is a pose swap driven off distance stepped (one frame per
+   tile), not a keyframe — that way it retimes itself if movement speed is tuned and a
+   standing knight freezes by construction. */
+.seat-body.is-idle {
+  animation: knight-idle 2400ms ease-in-out infinite;
+}
+
+@keyframes knight-idle {
+  from {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-0.6px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Find yourself when twenty knights stack in one column: must read while fully
+   occluded, so it is a chevron above the crowd, not a tint on the sprite. */
+.self-mark {
+  fill: var(--rim);
+  animation: self-mark 1800ms ease-in-out infinite;
+}
+
+@keyframes self-mark {
+  from,
+  to {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* --- Telegraphs (SEEKED) -------------------------------------------------- */
+
+/*
+ * The wind-up on the hand slam. Derived on every client from
+ * mix64(affix_seed ^ mix64(tick / SLAM_PERIOD_TICKS)) with ZERO stored bytes, so this
+ * fills over `--dur` = SLAM_TELEGRAPH_TICKS * TICK_MS, imported, never typed.
+ * Fills DOWNWARD from the boss so the lane reads as something arriving from above.
+ */
+.slam-lane {
+  fill: var(--ember);
+  transform-box: fill-box;
+  transform-origin: center top;
+  animation: lane-fill var(--dur, 0s) linear paused both;
+}
+
+@keyframes lane-fill {
+  from {
+    transform: scaleY(0);
+    opacity: 0.1;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 0.34;
+  }
+}
+
+/* The incoming volley. `spawn_volley` is a pure function of published state, so these
+   are the exact bullet lines, not a hint. `--dur` = the reload window. */
+.volley-line {
+  stroke: var(--ember);
+  stroke-width: 1;
+  fill: none;
+  animation: volley-line var(--dur, 0s) linear paused both;
+}
+
+@keyframes volley-line {
+  from {
+    opacity: 0;
+  }
+  70% {
+    opacity: 0.5;
+  }
+  to {
+    opacity: 0.85;
+  }
+}
+
+/*
+ * One class for every countdown that is a chain field walking to a deadline: the
+ * muster window (`fight_at_tick - tick`), a respawn (`respawn_at_tick - tick`), the
+ * enrage clock (`enrage_at_tick - tick`). Drains left to right. scaleX, not width —
+ * a transform composites, a width relayouts.
+ */
+.countdown-fill {
+  transform-origin: left center;
+  animation: countdown var(--dur, 0s) linear paused both;
+}
+
+@keyframes countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* The clock running out, as light rather than as a number: a wash over the whole
+   arena, seeked on `tick` vs `enrage_at_tick`. Opacity only, so it survives
+   reduced motion unchanged. */
+.enrage-wash {
+  fill: var(--ember);
+  animation: enrage-wash var(--dur, 0s) linear paused both;
+}
+
+@keyframes enrage-wash {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.16;
+  }
+}
+
+/* --- The gate ------------------------------------------------------------- */
+
+/*
+ * The lobby's entire interaction. This keys off `predictor.self`, never off the
+ * chain — 127 ms of write-to-visible would read as input lag on the one thing the
+ * lobby is built around — while the `enter_gate` transaction stays on the
+ * authoritative poll. The two must not be merged.
+ */
+.gate-glow {
+  fill: var(--lobby-tan);
+  opacity: 0.18;
+}
+
+.gate-glow.is-armed {
+  fill: var(--cyan);
+  animation: gate-glow 900ms ease-in-out infinite;
+}
+
+@keyframes gate-glow {
+  from,
+  to {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.7;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -483,7 +825,7 @@ h3 {
 .pill-down {
   color: var(--flesh);
   border-color: var(--maroon);
-  background: #241820;
+  background: #1d1420;
 }
 
 /* --------------------------------------------------------------------------
@@ -542,16 +884,65 @@ h3 {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(11 10 12 / 88%);
+  background: rgb(5 9 14 / 90%);
 }
 
-/*
- * The two things in this app that move on their own. Everything else animates through the
- * renderer's transforms, which is where GPU compositing matters; a reduced-motion reader
- * still needs both meters to be truthful, so only the easing goes.
- */
+/* --------------------------------------------------------------------------
+   Reduced motion
+
+   Governing rule: NO INFORMATION MAY EXIST ONLY IN MOTION. So this block is not
+   "turn the animations off" — it is a list of which ones carry meaning.
+
+   CANCELLED, because they are atmosphere: breathing, gait, idle, ambient pulses,
+   flicker. Cancelled by NOT STARTING (`animation-name: none`), never by
+   `animation-duration: 0.01ms`, which still runs a frame and still allocates.
+
+   KEPT, because they are the only warning a player gets: the slam lane and the volley
+   lines. They already satisfy the constraint that a telegraph be a FILLING SHAPE
+   rather than an approaching object — a lane that grows in place, not a hand that
+   flies at you — so they survive verbatim.
+
+   KEPT because they are values: the countdown drain, the enrage wash, the meter
+   easing, the vent's colour. A reduced-motion reader still needs a truthful clock.
+
+   The camera pan becoming a cut, and the rAF loop's own easing, are JS decisions —
+   `Arena.tsx` resolves the same query with `usePrefersReducedMotion`.
+   -------------------------------------------------------------------------- */
+
 @media (prefers-reduced-motion: reduce) {
-  .meter-fill {
+  /* The rebuild's own classes. Every CSS animation the 33-Immortals rig introduced is
+     `hr-`-prefixed and defined in `Boss.tsx`'s injected `<style>`; the rest of the
+     rebuild's motion is WAAPI and is gated in JS (`Arena.tsx` `usePrefersReducedMotion`,
+     `Knight.tsx` `reduced`, `Spawn.tsx` renders nothing at all). Boss.tsx carries its own
+     copy of these three, and this is deliberately a second net rather than a moved fact:
+     that block only exists while the boss is mounted, and `animation-name: none` is a
+     cancellation, not a value — two cancellations cannot disagree into a wrong picture,
+     which is the only reason storing something twice is banned here. If a NEW `hr-`
+     animation is added, it belongs in both. */
+  .hr-boss-breathe,
+  .hr-boss-eye,
+  .hr-vent-open .hr-boss-vent,
+  /* The pre-rebuild names below. They currently match no rendered node — `art.md` fix 5
+     is the audit — but the gate and the core are both named there as things a sibling
+     layer is expected to wire back on. Cancelling an animation that is not running costs
+     nothing; forgetting one when it is wired back on costs a reduced-motion reader a
+     pulsing screen. */
+  #boss-breathe,
+  .boss-eye,
+  .seat-body.is-idle,
+  .self-mark,
+  .gate-glow.is-armed {
+    animation-name: none;
+  }
+
+  /* Cancelling the pulse must not cancel the fact it was announcing. */
+  .gate-glow.is-armed {
+    opacity: 0.55;
+  }
+
+  .meter-fill,
+  .dev-cue,
+  .dev-close {
     transition: none;
   }
 }
@@ -617,7 +1008,7 @@ h3 {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--dim);
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
   border: 1px solid var(--line);
   border-radius: 2px;
   cursor: pointer;
@@ -649,10 +1040,15 @@ h3 {
   flex-direction: column;
   gap: 14px;
   padding: 12px 13px 11px;
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  /* The scene under this panel is darker and more contrasty than it was — the boss's
+     rim light and the enrage wash both bleed to the edges — so the backdrop goes a few
+     points more opaque and the shadow does the separating. Deliberately NOT
+     `backdrop-filter: blur()`: the pixels behind it change every frame, which turns a
+     268px panel into a per-frame backdrop readback. Structure is untouched. */
+  background: color-mix(in srgb, var(--panel) 97%, transparent);
   border: 1px solid var(--line);
   border-radius: 3px;
-  box-shadow: 0 8px 28px -8px rgb(0 0 0 / 0.6);
+  box-shadow: 0 10px 34px -8px rgb(0 0 0 / 0.75);
 }
 
 .dev-head {
@@ -761,9 +1157,3 @@ h3 {
   color: var(--muted);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .dev-cue,
-  .dev-close {
-    transition: none;
-  }
-}

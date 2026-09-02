@@ -1,0 +1,4 @@
+[
+ { "name": "scene-only-cpu1", "cpu": 1, "opts": { "layer": "temple", "knights": 0, "bullets": 0, "feedHz": 20, "frames": 400 } },
+ { "name": "scene-only-cpu6", "cpu": 6, "opts": { "layer": "temple", "knights": 0, "bullets": 0, "feedHz": 20, "frames": 400 } }
+]

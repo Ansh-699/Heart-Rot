@@ -210,11 +210,15 @@ export default function DevPanel() {
           tone={grade(m.dropRate, 0.05, 0.25)}
           note="rate limited or lost"
         />
+        {/* Retuned with `MIN_GAP_MS`. At a 45 ms floor against the 50 ms ER slot the
+            expected steady state is one early send per direction change — well under 1%
+            of sends — so the old (0.1, 0.3) thresholds called a 10x regression "good" and
+            the panel could never show the thing it exists to show. */}
         <Row
           label="refused"
           value={(m.refusedRate * 100).toFixed(0)}
           unit="%"
-          tone={grade(m.refusedRate, 0.1, 0.3)}
+          tone={grade(m.refusedRate, 0.01, 0.05)}
           note="two sends, one ER slot"
         />
         <Row label="session" value={String(m.txTotal)} unit="tx" />

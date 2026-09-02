@@ -27,12 +27,18 @@
  * contract went out of its way to remove.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 import {
   MAP_MAX_XY,
   MAP_TILE,
+  PIT_BOT,
+  PIT_TOP,
+  TICK_MS,
+  ZONE_ARENA,
+  ZONE_LOBBY,
   isWall,
+  mayMoveTo,
   type Bullet,
   type PlayerSlot,
   type PlayersAccount,
@@ -55,9 +61,6 @@ import {
  * `MAP_TILE` / `MAP_TILES` / `isWall` from `@heartrot/client` directly.
  */
 const TILE = MAP_TILE;
-
-/** Crank period. A *target*, not a contract — never derive game state from wall clock. */
-const TICK_MS = 100;
 
 const STEP = TILE;
 
@@ -92,16 +95,24 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /**
- * Apply one move exactly as `move_player` would: clamp into the map, then reject a wall.
- * `null` means the chain would have returned `Err` — the caller must not move *or* turn,
- * because a rejected move leaves `facing` untouched on chain too.
+ * Apply one move exactly as `move_player` would: clamp into the map, reject a wall, then
+ * reject a destination outside the seat's zone box. `null` means the chain would have
+ * returned `Err` — the caller must not move *or* turn, because a rejected move leaves
+ * `facing` untouched on chain too.
+ *
+ * The zone test is `mayMoveTo`, imported rather than restated: `player.rs` refuses on
+ * `is_wall(nx, ny) || !may_move_to(zone, y, ny)`, one condition with one error, and a
+ * prediction that mirrors only the wall half mispredicts every step at a box edge. That
+ * was live: a raider walking north at the pit rim moved locally, got `BlockedByWall` back
+ * and rubber-banded — this file's own signature failure mode, misread as lag.
  */
-function stepFrom(x: number, y: number, dir: number): Point | null {
+function stepFrom(x: number, y: number, dir: number, zone: number): Point | null {
   const step = MOVE_STEP[dir];
   if (step === undefined) throw new RangeError(`predict: dir ${dir} is not 0..7`);
   const nx = clamp(x + step[0], 0, MAP_MAX_XY);
   const ny = clamp(y + step[1], 0, MAP_MAX_XY);
-  return isWall(nx, ny) ? null : { x: nx, y: ny };
+  if (isWall(nx, ny) || !mayMoveTo(zone, y, ny)) return null;
+  return { x: nx, y: ny };
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +222,7 @@ export function createPredictor(): Predictor {
       // the return to the entrance — and `move_player` rejects them outright.
       if (authoritative === null || authoritative.hp === 0) return null;
 
-      const next = stepFrom(self.x, self.y, dir);
+      const next = stepFrom(self.x, self.y, dir, authoritative.zone);
       if (next === null) return null;
 
       seq = (seq + 1) & SEQ_MASK;
@@ -243,7 +254,7 @@ export function createPredictor(): Predictor {
       self.y = slot.y;
       self.facing = slot.facing;
       for (const input of pending) {
-        const next = stepFrom(self.x, self.y, input.dir);
+        const next = stepFrom(self.x, self.y, input.dir, slot.zone);
         if (next === null) continue;
         self.x = next.x;
         self.y = next.y;
@@ -386,8 +397,66 @@ function teleported(from: PlayerSlot, to: PlayerSlot): boolean {
   );
 }
 
+/**
+ * Fold a whole `Players` snapshot into the per-seat tracks.
+ *
+ * Module level, not a closure, so the self-check can drive it: this is the half of the
+ * mount ordering that decides whether a freshly attached seat has a transform, and that
+ * ordering is not otherwise observable outside a browser.
+ */
+function foldTracks(
+  tracks: Map<number, SeatTrack>,
+  slots: readonly PlayerSlot[],
+  now: number,
+  ceiling: number,
+): void {
+  for (const to of slots) {
+    const track = tracks.get(to.seat);
+    // First sight of a seat: there is nothing to lerp from, and drawing the halfway
+    // point of a guess is worse than being one update stale.
+    if (track === undefined) {
+      tracks.set(to.seat, { slot: to, fromX: to.x, fromY: to.y, at: now, span: ceiling });
+    } else {
+      retarget(track, to, now, ceiling);
+    }
+  }
+}
+
 /** Anything with a `style.transform`. `<g>`, `<circle>`, a `<div>` — the hook does not care. */
 type Placeable = SVGElement | HTMLElement;
+
+function seatXY(
+  tracks: Map<number, SeatTrack>,
+  seat: number,
+  now: number,
+  reduced: boolean,
+  out: { x: number; y: number },
+): boolean {
+  const track = tracks.get(seat);
+  if (track === undefined) return false;
+  trackAt(track, reduced ? 1 : tickAlpha(track.at, now, track.span), out);
+  return true;
+}
+
+/**
+ * Write one seat's transform, or nothing at all when that seat has no track yet.
+ *
+ * The silent return is the whole of finding 2 in `docs/review/render.md`: a node attached
+ * before its track exists keeps whatever transform it had, which on a fresh `<g>` is none —
+ * the SVG origin, the top-left corner. It stays silent, because the caller that can fix it
+ * is the fold, and the fold now runs in the same commit (see `useLayoutEffect` below).
+ */
+function placeSeat(
+  tracks: Map<number, SeatTrack>,
+  seat: number,
+  el: Placeable,
+  now: number,
+  reduced: boolean,
+  out: { x: number; y: number },
+): void {
+  if (!seatXY(tracks, seat, now, reduced, out)) return;
+  el.style.transform = `translate(${out.x}px, ${out.y}px)`;
+}
 
 export interface SeatInterpolation {
   /**
@@ -444,50 +513,42 @@ export function useSeatInterpolation(
   // thing it does with the result is format a transform string.
   const scratch = useRef({ x: 0, y: 0 });
 
-  const seatXY = useCallback(
-    (seat: number, now: number, out: { x: number; y: number }): boolean => {
-      const track = tracks.current.get(seat);
-      if (track === undefined) return false;
-      trackAt(track, reducedRef.current ? 1 : tickAlpha(track.at, now, track.span), out);
-      return true;
-    },
-    [],
-  );
-
-  const place = useCallback(
-    (seat: number, el: Placeable, now: number): void => {
-      const out = scratch.current;
-      if (!seatXY(seat, now, out)) return;
-      el.style.transform = `translate(${out.x}px, ${out.y}px)`;
-    },
-    [seatXY],
-  );
+  const place = useCallback((seat: number, el: Placeable, now: number): void => {
+    placeSeat(tracks.current, seat, el, now, reducedRef.current, scratch.current);
+  }, []);
 
   const paint = useCallback((): void => {
     const now = performance.now();
     for (const [seat, el] of nodes.current) place(seat, el, now);
   }, [place]);
 
-  useEffect(() => {
-    const now = performance.now();
-    for (const to of players.slots) {
-      const track = tracks.current.get(to.seat);
-      // First sight of a seat: there is nothing to lerp from, and drawing the halfway
-      // point of a guess is worse than being one update stale.
-      if (track === undefined) {
-        tracks.current.set(to.seat, {
-          slot: to,
-          fromX: to.x,
-          fromY: to.y,
-          at: now,
-          span: paceRef.current,
-        });
-      } else {
-        retarget(track, to, now, paceRef.current);
-      }
-    }
-    // Paint immediately: waiting for the next frame leaves a seat that was just mounted
-    // sitting at the SVG origin, which reads as a knight teleporting to the corner.
+  /**
+   * **`useLayoutEffect`, not `useEffect`** — `docs/review/render.md` finding 2.
+   *
+   * React attaches host refs bottom-up in the layout phase, so a seat `<g>`'s ref lands
+   * *before* this hook's owner (`Arena`, its ancestor) gets to run anything. `ref` calls
+   * `place`, `place` has no track for a seat it has never seen, and it returns without
+   * writing — so the node is committed to the DOM with no transform at all. As a passive
+   * effect this fold ran after the browser had already painted that node at the SVG
+   * origin: every knight flashed in the top-left corner for one frame on the way in, and
+   * at the gate all twenty did it at once.
+   *
+   * As a layout effect it runs in the same commit as the ref that attached the node, and
+   * the `paint()` below is what actually writes the transform — the `ref` callback's own
+   * `place` is still a no-op on a first mount and is not the thing being fixed. Both are
+   * synchronous before paint, so the frame the browser draws is the first one.
+   *
+   * Every seat mount rides a `players` change (`Arena`'s `drawOrder` is memoised on it),
+   * and a whole-`Arena` remount re-runs this on mount regardless of deps, so there is no
+   * mount path that this misses.
+   *
+   * Cost, at the 20 seats the game caps at: 20 folds and at most 20 `style.transform`
+   * writes, moved earlier in the same commit rather than added. It reads no layout
+   * property — no `getBoundingClientRect`, no `offset*`, nothing that flushes — so it
+   * cannot thrash; a transform write only invalidates. Blocking paint is the point.
+   */
+  useLayoutEffect(() => {
+    foldTracks(tracks.current, players.slots, performance.now(), paceRef.current);
     paint();
   }, [players, paint]);
 
@@ -523,13 +584,10 @@ export function useSeatInterpolation(
     [place],
   );
 
-  const at = useCallback(
-    (seat: number, now = performance.now()): Point | null => {
-      const out = { x: 0, y: 0 };
-      return seatXY(seat, now, out) ? out : null;
-    },
-    [seatXY],
-  );
+  const at = useCallback((seat: number, now = performance.now()): Point | null => {
+    const out = { x: 0, y: 0 };
+    return seatXY(tracks.current, seat, now, reducedRef.current, out) ? out : null;
+  }, []);
 
   return { ref, at };
 }
@@ -546,11 +604,25 @@ if (import.meta.env.DEV) {
     if (!cond) throw new Error(`predict self-check: ${what}`);
   };
 
-  // Tile row 4 is open floor for its whole width in the generated dungeon, so these steps
-  // exercise reconciliation rather than the map. Tile column 0 is the outer wall.
-  const FREE_Y = 4 * TILE;
+  // The pit's top row: open floor for its whole width, and — the part that matters — inside
+  // the `ZONE_ARENA` box. It used to be tile row 4, which is open floor too but is *boss
+  // air*: legal for a ray to cross, illegal for anybody to stand on. That went unnoticed
+  // while `stepFrom` mirrored only the wall test, and every case below silently exercised
+  // half the rule. A fixture must stand somewhere the chain would actually accept.
+  //
+  // `zone` is spelled out for the same reason: it is an input to the move rule now, and a
+  // slot without one is not a seat the chain would ever hold.
+  const FREE_Y = PIT_TOP;
   const slot = (over: Partial<PlayerSlot>): PlayerSlot =>
-    ({ x: 320, y: FREE_Y, facing: 0, hp: 100, lastMoveSeq: 0, ...over }) as unknown as PlayerSlot;
+    ({
+      x: 320,
+      y: FREE_Y,
+      zone: ZONE_ARENA,
+      facing: 0,
+      hp: 100,
+      lastMoveSeq: 0,
+      ...over,
+    }) as unknown as PlayerSlot;
 
   // The generated wall table is really the one being consulted — a stale or missing build
   // of `packages/client/src/map.ts` would otherwise show up only as in-game rubber-banding.
@@ -581,6 +653,21 @@ if (import.meta.env.DEV) {
   const edge = createPredictor();
   edge.reconcile(slot({ x: TILE, facing: 4 }), 0);
   ok(edge.push(6, 0) === null && edge.self.facing === 4, 'wall move is not predicted');
+
+  // The zone box — `handlers::player::may_move_to`, the OTHER half of the chain's one
+  // refusal. Neither of these is a wall: rows 1..23 are open floor so `raycast` survives,
+  // and the gate rows are floor the lobby walks over. A prediction that mirrors only
+  // `is_wall` moves the knight, the chain answers `BlockedByWall`, and the seat
+  // rubber-bands — which this project reads as lag every single time.
+  const rim = createPredictor();
+  rim.reconcile(slot({ y: PIT_TOP, facing: 2 }), 0);
+  ok(rim.push(0, 0) === null && rim.self.y === PIT_TOP, 'a raider cannot walk north out of the pit');
+  ok(rim.push(4, 0) !== null, 'and can still walk south');
+
+  const lobby = createPredictor();
+  lobby.reconcile(slot({ x: 512, y: PIT_BOT + 1, zone: ZONE_LOBBY, facing: 2 }), 0);
+  ok(lobby.push(0, 0) === null, 'a lobby seat cannot walk north over the rim');
+  ok(lobby.push(4, 0) !== null, 'and can still walk away from it');
 
   // Dead players do not move, and bullets land on integers at whole ticks.
   const dead = createPredictor();
@@ -622,6 +709,24 @@ if (import.meta.env.DEV) {
   ok(early.fromX === 100 + TILE / 2, 're-anchor starts where the seat is drawn');
   // The crank period is a target, not a contract; `MatchInfo.tickMs` overrides it.
   ok(tickAlpha(0, 100, 200) === 0.5, 'tick alpha honours a caller-supplied tickMs');
+
+  // Mount ordering — `docs/review/render.md` finding 2. React attaches the seat `<g>`'s
+  // ref before the owning component's effects run, so `place` fires with no track and
+  // writes nothing; the layout-phase fold is what must leave a transform on the node
+  // before the browser paints it. Assert both halves, so a revert to `useEffect` is at
+  // least a documented behaviour change rather than a silent one-frame corner flash.
+  const fresh = new Map<number, SeatTrack>();
+  const node = { style: { transform: '' } } as unknown as Placeable;
+  const seated = slot({ seat: 3, x: 100, y: 100, occupied: true, zone: 1 });
+  placeSeat(fresh, 3, node, 0, false, out);
+  ok(node.style.transform === '', 'a ref attaching before the fold writes nothing');
+  foldTracks(fresh, [seated], 0, TICK_MS);
+  placeSeat(fresh, 3, node, 0, false, out);
+  ok(node.style.transform === 'translate(100px, 100px)', 'a freshly attached seat has a transform before paint');
+  // And the fold is the same one the running lerp relies on: a second snapshot retargets
+  // rather than re-seeding, or every update would restart every seat from where it is.
+  foldTracks(fresh, [slot({ seat: 3, x: 100 + TILE, y: 100, occupied: true, zone: 1 })], 50, TICK_MS);
+  ok(fresh.get(3)?.span === 50, 'a second fold retargets the existing track');
 
   // A respawn crosses the map in one update. Lerping it walks a corpse through walls.
   ok(!teleported(here, step), 'one step is a walk');

@@ -39,7 +39,15 @@ export default defineConfig({
   plugins: [requireIdentityEnv(), react()],
   build: {
     target: 'es2022',
-    sourcemap: true,
+    // `false`, and it has to be. `worker/wrangler.jsonc` publishes the WHOLE of `dist/` as
+    // static assets, so `true` put 286 `.map` files and 15.9 MiB of original TypeScript on
+    // the public origin — `…/index-*.js.map` answered 200 with 1.3 MB of source. `hidden`
+    // is not the fix here: it only drops the `//# sourceMappingURL` comment, while the
+    // files are still emitted into `dist/` and still served to anyone who guesses the URL.
+    // Nothing in this project consumes a map (no error reporter is wired up), so the
+    // smallest correct answer is to not produce them. Turn this back on only alongside a
+    // deploy-time prune of `dist/**/*.map`, or an upload consumer that takes them first.
+    sourcemap: false,
   },
   server: {
     // In production `run_worker_first: ["/api/*"]` is the only path that reaches the

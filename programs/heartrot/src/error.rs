@@ -30,20 +30,21 @@
 //! | seat byte `>= MAX_SEATS`, or a slot lookup that misses | [`HeartrotError::SeatOutOfRange`] | `player::{join, enter_gate, move_player}`, `shoot::process` |
 //! | `join` names a free seat that is already claimed by another `identity` | [`HeartrotError::SeatOccupied`] | `player::join` |
 //! | a named seat whose `session_pubkey` is still the all-zero sentinel | [`HeartrotError::SeatUnclaimed`] | `guards::assert_session_authority` |
-//! | `arena.phase` is not one this instruction accepts | [`HeartrotError::WrongPhase`] | `state::Arena::{try_set_phase, begin_roll, begin_next_incarnation}`, `player::assert_playable`, `shoot::process`, `settle::{start_match, settle}`, `delegation::{process_delegate, check_commit_accounts}` |
+//! | `arena.phase` is not one this instruction accepts | [`HeartrotError::WrongPhase`] | `state::Arena::{try_set_phase, begin_roll, begin_next_incarnation}`, `player::assert_playable`, `shoot::process`, `settle::{begin_muster, settle}`, `delegation::{process_delegate, check_commit_accounts}` |
 //! | `last_move_tick` / `last_shot_tick` cooldown has not elapsed | [`HeartrotError::RateLimited`] | `player::move_player`, `shoot::process` |
 //! | `slot.hp == 0` | [`HeartrotError::PlayerDead`] | `player::move_player`, `shoot::process` |
 //! | `slot.zone` is wrong for the instruction | [`HeartrotError::WrongZone`] | `player::enter_gate`, `shoot::process` |
 //! | `boss_tick` signer is not the crank-executor PDA | [`HeartrotError::NotCrankSigner`] | `tick::process` |
 //! | the arena is not yet `PHASE_SETTLED` | [`HeartrotError::MatchNotOver`] | `settle::write_leaderboard` |
 //! | signer is not the compiled-in treasury | [`HeartrotError::NotTreasury`] | `init::init_arena`, `settle::write_leaderboard` |
-//! | signer is not `arena.crank_authority` | [`HeartrotError::NotArenaAuthority`] | `player::join`, `settle::{start_match, settle, write_leaderboard}`, `delegation::{process_delegate, check_commit_accounts}` |
+//! | signer is not `arena.crank_authority` | [`HeartrotError::NotArenaAuthority`] | `player::join`, `settle::{begin_muster, settle, write_leaderboard}`, `delegation::{process_delegate, check_commit_accounts}` |
 //! | `join` with a `session_pubkey` already recorded on a different seat | [`HeartrotError::SessionKeyInUse`] | `player::join` |
 //! | `move_player` into a tile `map::WALLS` marks solid | [`HeartrotError::BlockedByWall`] | `player::move_player` |
 //! | `enter_gate` from a seat that is not standing on a gate tile | [`HeartrotError::NotOnGate`] | `player::enter_gate` |
 //! | `authority` signed but is not the seat's `session_pubkey` | [`HeartrotError::WrongSessionKey`] | `guards::assert_session_authority` |
 //! | `next_incarnation` before the settled match reached the leaderboard | [`HeartrotError::MatchNotRecorded`] | `init::next_incarnation` |
 //! | a VRF callback not signed by the scoped VRF identity | [`HeartrotError::NotVrfIdentity`] | `roll::consume_roll` |
+//! | `begin_muster` with no seat in `ZONE_ARENA` | [`HeartrotError::NoRaiders`] | `guards::assert_any_raider`, from `settle::begin_muster` |
 //!
 //! ## Why the game loop added only two codes
 //!
@@ -64,15 +65,18 @@
 //! information the caller does not already hold, while costing a permanently frozen
 //! discriminant.
 //!
-//! The two codes below are the conditions that genuinely have no owner, because neither is
-//! a fact about `arena.phase`: one is about the *`Leaderboard`* being stale relative to a
-//! correctly-settled arena, and one is about *who signed* a callback.
+//! Three codes escape that argument, because none of them is a fact about `arena.phase`:
+//! one is about the *`Leaderboard`* being stale relative to a correctly-settled arena, one
+//! is about *who signed* a callback, and [`HeartrotError::NoRaiders`] is about *`Players`*
+//! — `begin_muster` is legal from `PHASE_LOBBY` and refuses anyway, because the pit is
+//! empty. A caller cannot read that off the `Arena` it passed, which is exactly the test
+//! the paragraph above applies.
 //!
-//! There is deliberately no row for "`start_match` on an arena whose `crank_task_id` is
+//! There is deliberately no row for "`begin_muster` on an arena whose `crank_task_id` is
 //! `<= 0`". Code 16 was `CrankTaskIdUnset` and is retired: nothing can produce a
 //! non-positive `crank_task_id`, because both writers floor it — `init::init_arena`'s
 //! `(… & i64::MAX).max(1)` and `settle::mint_task_id`'s identical clamp — and no other
-//! instruction touches the field. `start_match` mints a fresh id over the creation-time
+//! instruction touches the field. `begin_muster` mints a fresh id over the creation-time
 //! value before it schedules anything, so it never even reads a value it could reject.
 //! A variant guarding a condition its own writers make unreachable is a false failure
 //! mode, and a caller who saw `Custom(16)` would go looking for a bug that cannot exist.
@@ -224,6 +228,20 @@ heartrot_errors! {
     /// consumer of the queue, so "signed by the VRF program" is not the check; "signed by
     /// the identity scoped to *this* program" is.
     NotVrfIdentity = 18,
+
+    /// `begin_muster` (tag 3) was sent while no seat is in `ZONE_ARENA` — nobody has
+    /// walked through the gate, so there is nothing to muster for. Refusing is what makes
+    /// "a raid armed with an empty pit" unrepresentable: `spawn_volley` would find
+    /// `best_seat == NO_TARGET`, never fire, and burn the whole enrage window on an empty
+    /// room before recording `OUTCOME_ENRAGE`.
+    ///
+    /// **What a client does about it:** nothing, and that is the point — it is the
+    /// expected answer for the 19 of 20 clients that auto-POST the start route behind the
+    /// first raider through. Treat it exactly like the existing 409: the muster is either
+    /// not startable yet or already started, and the arena account says which. Distinct
+    /// from [`Self::WrongPhase`] because the arena's phase is legal and the stale account
+    /// is `Players`; distinct from [`Self::WrongZone`] because no seat was named at all.
+    NoRaiders = 19,
 }
 
 /// Highest code ever issued, live or **retired**. Every variant is numbered at or below
@@ -231,7 +249,7 @@ heartrot_errors! {
 /// (16) being handed to a new rule, since the discriminants are wire ABI and a client in a
 /// browser tab cannot be asked to forget one.
 #[cfg(test)]
-const HIGHEST_ISSUED: u32 = 18;
+const HIGHEST_ISSUED: u32 = 19;
 
 impl From<HeartrotError> for ProgramError {
     #[inline(always)]

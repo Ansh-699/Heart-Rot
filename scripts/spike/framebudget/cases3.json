@@ -1,0 +1,82 @@
+[
+ {
+  "name": "feed20-shipped-cpu1",
+  "cpu": 1,
+  "opts": {
+   "knights": 20,
+   "knightArt": true,
+   "feedHz": 20,
+   "fixedRefs": false
+  }
+ },
+ {
+  "name": "feed20-fixedrefs-cpu1",
+  "cpu": 1,
+  "opts": {
+   "knights": 20,
+   "knightArt": true,
+   "feedHz": 20,
+   "fixedRefs": true
+  }
+ },
+ {
+  "name": "feed714-shipped-cpu1",
+  "cpu": 1,
+  "opts": {
+   "knights": 20,
+   "knightArt": true,
+   "feedHz": 714,
+   "fixedRefs": false
+  }
+ },
+ {
+  "name": "feed714-fixedrefs-cpu1",
+  "cpu": 1,
+  "opts": {
+   "knights": 20,
+   "knightArt": true,
+   "feedHz": 714,
+   "fixedRefs": true
+  }
+ },
+ {
+  "name": "feed20-shipped-cpu6",
+  "cpu": 6,
+  "opts": {
+   "knights": 20,
+   "knightArt": true,
+   "feedHz": 20,
+   "fixedRefs": false
+  }
+ },
+ {
+  "name": "feed20-fixedrefs-cpu6",
+  "cpu": 6,
+  "opts": {
+   "knights": 20,
+   "knightArt": true,
+   "feedHz": 20,
+   "fixedRefs": true
+  }
+ },
+ {
+  "name": "feed714-shipped-cpu6",
+  "cpu": 6,
+  "opts": {
+   "knights": 20,
+   "knightArt": true,
+   "feedHz": 714,
+   "fixedRefs": false
+  }
+ },
+ {
+  "name": "feed714-fixedrefs-cpu6",
+  "cpu": 6,
+  "opts": {
+   "knights": 20,
+   "knightArt": true,
+   "feedHz": 714,
+   "fixedRefs": true
+  }
+ }
+]

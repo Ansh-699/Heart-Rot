@@ -1,0 +1,34 @@
+<!doctype html><meta charset="utf-8">
+<svg viewBox="0 0 200 200" width="200" height="200">
+  <g id="outer"><g id="inner"><rect id="r" x="0" y="0" width="10" height="10" fill="red"/></g></g>
+  <g id="solo"><rect id="r2" x="0" y="0" width="10" height="10" fill="blue"/></g>
+</svg>
+<script>
+const out = [];
+const solo = document.getElementById('solo');
+const outer = document.getElementById('outer');
+const inner = document.getElementById('inner');
+
+// Case A: ONE node, rAF-style inline write + a WAAPI transform animation. Who wins?
+solo.style.transform = 'translate(100px, 0px)';
+const a = solo.animate([{transform:'translateY(0px)'},{transform:'translateY(50px)'}],
+                       {duration: 100000, fill:'forwards'});
+// Case B: two nested nodes, one writer each.
+outer.style.transform = 'translate(100px, 0px)';
+const b = inner.animate([{transform:'translateY(0px)'},{transform:'translateY(50px)'}],
+                        {duration: 100000, fill:'forwards'});
+
+requestAnimationFrame(() => requestAnimationFrame(() => {
+  a.currentTime = 50000; b.currentTime = 50000;
+  requestAnimationFrame(() => {
+    const rb = document.getElementById('r2').getBoundingClientRect();
+    const ra = document.getElementById('r').getBoundingClientRect();
+    out.push('ONE-NODE   x=' + rb.x.toFixed(1) + ' y=' + rb.y.toFixed(1));
+    out.push('TWO-NODES  x=' + ra.x.toFixed(1) + ' y=' + ra.y.toFixed(1));
+    out.push('solo inline style still: ' + solo.style.transform);
+    out.push('getAnimations on solo: ' + solo.getAnimations().length);
+    window.__result = out;
+    document.title = 'DONE';
+  });
+}));
+</script>

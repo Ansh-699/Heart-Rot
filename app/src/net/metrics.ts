@@ -47,7 +47,7 @@ export interface Snapshot {
   readonly p50: number | null;
   readonly p95: number | null;
   readonly last: number | null;
-  /** Observed arena ticks per second. The chain targets 2.5 (400 ms). */
+  /** Observed arena ticks per second. The chain targets 10 (`TICK_MS` 100). */
   readonly tickHz: number | null;
   /** Sends still waiting on an acknowledgement. */
   readonly pending: number;
@@ -111,7 +111,7 @@ export function recordSend(seq?: number): void {
 /**
  * An account update arrived. `lastSeq` acknowledges every move up to and including it,
  * so one update can resolve several sends — which is exactly what happens when the
- * client is ahead of the 400 ms tick.
+ * client is ahead of the 100 ms tick.
  */
 export function recordWorld(tick?: number, lastSeq?: number): void {
   const now = Date.now();

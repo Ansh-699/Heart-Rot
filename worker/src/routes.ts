@@ -17,12 +17,15 @@
 import {
   address,
   createKeyPairSignerFromPrivateKeyBytes,
+  getAddressEncoder,
   getBase58Encoder,
+  getProgramDerivedAddress,
   isAddress,
   type Address,
   type KeyPairSigner,
 } from '@solana/kit';
 import {
+  beginMuster,
   claimSeat,
   confirmSignature,
   connectMatch,
@@ -38,6 +41,7 @@ import {
   leaderboardPda,
   matchPdas,
   nextIncarnation,
+  OUTCOME_UNDECIDED,
   OUTCOME_WIN,
   PHASE_FIGHTING,
   PHASE_LOBBY,
@@ -45,11 +49,14 @@ import {
   PHASE_SETTLED,
   rollDeadlineTick,
   rollSeed,
+  SEED_BOSS,
+  SEED_PLAYERS,
   sendInstructions,
   settle,
-  startMatch,
+  TICK_MS,
   writeLeaderboard,
   type ArenaAccount,
+  type DecodedTransactionError,
   type HeartrotRpc,
 } from '@heartrot/client';
 
@@ -58,8 +65,6 @@ import type { Env } from './index';
 
 const COMPUTE_BUDGET_PROGRAM = address('ComputeBudget111111111111111111111111111111');
 
-/** Crank interval the program schedules. Returned so the client can size its watchdog. */
-const TICK_MS = 100;
 
 /**
  * Selectable knight skins, from the reference sheet (game design spec §6). The program
@@ -101,7 +106,7 @@ const ER_CONFIRM_MS = 15_000;
  */
 const STALL_PROOF_MS = 45_000;
 
-/** A healthy crank moves `tick` every 400 ms, so one sample is enough to spare the rest. */
+/** A healthy crank moves `tick` every `TICK_MS` (100 ms), so one sample spares the rest. */
 const STALL_SAMPLE_MS = 5_000;
 
 const sleep = (ms: number): Promise<void> =>
@@ -290,8 +295,54 @@ async function rollForward(
  * The loop already creates an arena when it finds an absent id, so the width is the only
  * thing standing between a wall of dead matches and a working game. The common case still
  * returns on step 0 or 1; the wide bound is only paid when the head is genuinely blocked.
+ *
+ * This counts *occupied* ids only. Ids the loop declines to create at for their PDA bumps
+ * are absent, not dead, and are bounded separately by `GRIND_STEPS` — otherwise the grind
+ * would spend the dead-match budget and reintroduce the wall this width exists to clear.
  */
 const ARENA_SCAN = 12;
+
+/**
+ * Extra steps the scan may take *past* `ARENA_SCAN` while walking over ids it declined to
+ * create at. These cost a read each but cannot exhaust the scan, because the ids beyond
+ * the last match are all absent and one in four is eligible.
+ *
+ * Measured over 4,000 consecutive ids under the deployed program id: 1,033 eligible
+ * (25.8%), mean gap 3.87, p50 3, p95 10, worst 21. 64 is ~3x the worst gap observed, so
+ * the walk is bounded by arithmetic rather than by hope — and it still terminates on the
+ * declined id if the bound is somehow reached.
+ */
+const GRIND_STEPS = 64;
+
+/**
+ * Both child PDAs of this arena land on bump 255?
+ *
+ * `assert_pda` searches 255 downwards and costs ~1,500 CU per bump it rejects, so an
+ * arena whose `Boss`/`Players` sit at 251/254 pays ~7,500 CU more than one at 255/255 —
+ * in every instruction that still searches. `shoot` no longer does (it reads the stored
+ * bump and hashes once), but `boss_tick` does, ten times a second for the whole match,
+ * and so do `claim_seat`, `delegate`, `settle` and `roll`. Measured spread, identical
+ * scenario: `boss_tick` 20-seat max 24,884 CU at 255/255 against 32,384 at 251/254
+ * (docs/review/chain-cost.md).
+ *
+ * Which of the two a match gets is decided entirely by `arena_id`, and this is the only
+ * code that has ever chosen one. Only the two *children* are ground: the arena's own bump
+ * is searched once in `init_arena` and once in `delegate` and never again, and demanding
+ * all three would cut the eligible fraction from 25.8% to 12.8% (measured) to save CU on
+ * an instruction that already reserves 600,000.
+ *
+ * The seeds come from `@heartrot/client` rather than being retyped here, so the grind
+ * cannot drift away from the derivation the program actually performs — a prediction of
+ * the wrong seeds would be worse than no grind at all.
+ */
+async function childBumpsCanonical(programId: Address, arena: Address): Promise<boolean> {
+  const key = getAddressEncoder().encode(arena);
+  const [[, boss], [, players]] = await Promise.all([
+    getProgramDerivedAddress({ programAddress: programId, seeds: [SEED_BOSS, key] }),
+    getProgramDerivedAddress({ programAddress: programId, seeds: [SEED_PLAYERS, key] }),
+  ]);
+  return boss === 255 && players === 255;
+}
 
 /**
  * The open arena, derived from chain state alone.
@@ -314,14 +365,33 @@ async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number
   const last = board ? decodeLeaderboard(board).lastArenaId : 0n;
   const head = last > 0n ? last : 1n;
 
-  for (let step = 0; step < ARENA_SCAN; step++) {
+  // Two bounds, because they guard different things. `occupied` is the original
+  // ARENA_SCAN budget: how many unusable *matches* to walk past before giving up. `step`
+  // additionally bounds the ids declined for their bumps, which are not matches at all
+  // and must not be able to starve the scan of its match budget.
+  for (let step = 0, occupied = 0; occupied < ARENA_SCAN && step < ARENA_SCAN + GRIND_STEPS; step++) {
     const arenaId = head + BigInt(step);
     const pdas = await matchPdas(c.programId, arenaId);
     const { state } = await readArena(c, pdas.arena);
 
     // Never played. `init_arena` will create it at incarnation 1 — the counter is
     // per-arena, so a fresh chain always starts at the base fight.
-    if (!state) return { arenaId, incarnation: 1 };
+    //
+    // Creation is the one and only moment an `arena_id` gets chosen, so it is the one
+    // moment the child PDA bumps every later instruction pays for can be chosen. Declining
+    // an id here leaves a permanent hole — nothing records the skip — and that is exactly
+    // why the decision has to live inside this loop rather than in a grind helper that
+    // returns an id to create at. A helper would create at `head + 3`, leave `head`
+    // absent, and then answer the *next* player's request by walking off `head` again,
+    // finding `head + 3` taken, and starting a second lobby at `head + 7`. The scan's
+    // rendezvous property — every caller stops at the same arena — only survives if the
+    // holes stay on the scan's path and get walked over identically every time.
+    if (!state) {
+      if (await childBumpsCanonical(c.programId, pdas.arena)) return { arenaId, incarnation: 1 };
+      continue;
+    }
+
+    occupied++;
     if (state.phase === PHASE_LOBBY) return { arenaId, incarnation: state.incarnation };
 
     if (state.phase === PHASE_SETTLED) {
@@ -334,7 +404,7 @@ async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number
   // operational state, not a transient one, so name the range that was tried — a bare
   // null here previously turned into an unexplainable 503 on the player's screen.
   console.warn(
-    `openArena: ids ${head}..${head + BigInt(ARENA_SCAN - 1)} are all unusable; ` +
+    `openArena: ids ${head}..${head + BigInt(ARENA_SCAN + GRIND_STEPS - 1)} are all unusable; ` +
       'every one is mid-fight, mid-settlement, or a settled loss that cannot roll forward.',
   );
   return null;
@@ -595,18 +665,31 @@ export async function matchStart(env: Env, body: unknown): Promise<Response> {
     return json({ error: 'already_started' }, 409);
   }
 
-  // `start_match` flips the phase to Fighting and schedules every iteration of the
-  // crank up front. It cannot be topped up later: `ScheduleTask` needs a writable
-  // signer and a scheduled instruction may carry none, so a crank can never re-arm
-  // itself or be re-armed from inside the ER.
-  const ix = startMatch({
+  // `begin_muster` flips the phase to Mustering, stamps `fight_at_tick`, and schedules
+  // every iteration of the crank up front. It cannot be topped up later: `ScheduleTask`
+  // needs a writable signer and a scheduled instruction may carry none, so a crank can
+  // never re-arm itself or be re-armed from inside the ER. The crank is also what ends
+  // the muster — `Arena::begin_fight` flips MUSTERING → FIGHTING at the deadline — so
+  // no second request is owed from anybody.
+  const ix = beginMuster({
     programId: c.programId,
     payer: c.treasury.address,
     ...pdas,
   });
-  await confirmSignature(er, await sendInstructions(er, c.treasury, [ix]), {
-    timeoutMs: ER_CONFIRM_MS,
-  });
+  try {
+    await confirmSignature(er, await sendInstructions(er, c.treasury, [ix]), {
+      timeoutMs: ER_CONFIRM_MS,
+    });
+  } catch (error) {
+    // `NoRaiders` means the caller raced its own `enter_gate`: the browser saw its zone
+    // flip on a notification and posted here before the chain's copy of `Players` showed
+    // anyone in the pit. Same class as the `already_started` above — a lost race, not a
+    // fault — so it answers 409 and the store's `BENIGN_START` swallows it.
+    if (refusalCode(error) === HEARTROT_NO_RAIDERS) {
+      return json({ error: 'no_raiders' }, 409);
+    }
+    throw error;
+  }
 
   const after = await accountData(er, pdas.arena);
   if (!after) throw new Error('arena unreadable after start');
@@ -615,12 +698,33 @@ export async function matchStart(env: Env, body: unknown): Promise<Response> {
   return json({
     arenaId: arenaId.toString(),
     crankTaskId: arena.crankTaskId.toString(),
-    phase: 'fighting',
+    phase: 'mustering',
+    // Both, and both honestly. `enrage_at_tick` is now stamped at the MUSTERING → FIGHTING
+    // flip rather than at creation, so it is 0 here for every caller; `fight_at_tick` is
+    // the deadline the countdown is drawn from, and without it the client would have to
+    // wait for the next notification to know the window had opened at all.
     enrageAtTick: arena.enrageAtTick,
+    fightAtTick: arena.fightAtTick,
     incarnation: arena.incarnation,
     erEndpoint: erFqdn,
     tickMs: TICK_MS,
   });
+}
+
+/** `HeartrotError::NoRaiders`. Branch on the code, never on the message. */
+const HEARTROT_NO_RAIDERS = 19;
+
+/**
+ * The program's `Custom(n)` off a failed send.
+ *
+ * There is exactly one shape to read: `sendInstructions` is unconditionally
+ * `skipPreflight`, so a rule refusal cannot surface at submit time — it comes back from
+ * `confirmSignature`, which puts the whole `DecodedTransactionError` on `cause` for
+ * precisely this. Anything else (a timeout, an RPC fault) has no `code` and falls through
+ * to the 500, which is the right answer for it.
+ */
+function refusalCode(error: unknown): number | undefined {
+  return (error as { cause?: DecodedTransactionError } | null)?.cause?.code;
 }
 
 // ---------------------------------------------------------------------------
@@ -759,6 +863,24 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
   // `settle` on an already-settled arena commits again and `write_leaderboard` no-ops
   // on a repeated `(arena_id, incarnation)`.
   if (!settled) return json({ committed: false, retryAfterMs: 2_000 }, 202);
+
+  // A match that never produced a result has no row to write, and as of the muster that
+  // state is REACHABLE: `MUSTERING → SETTLED` is the dead-crank recovery edge, and a
+  // `Fighting` arena settled through the stall path above keeps `OUTCOME_UNDECIDED` too —
+  // "the fight was cut short" is the honest record. `write_leaderboard` now refuses such
+  // an arena outright (a row whose outcome byte is 0 is indistinguishable from an unwritten
+  // row), so sending tag 10 here would turn a correct settle into a `MatchNotOver` throw,
+  // a 500, and eight client retries against accounts that already came home. The accounts
+  // ARE settled; there is simply nothing to record.
+  if (settled.outcome === OUTCOME_UNDECIDED) {
+    return json({
+      committed: true,
+      leaderboardWritten: false,
+      outcome: settled.outcome,
+      arenaId: settled.arenaId.toString(),
+      incarnation: settled.incarnation,
+    });
+  }
 
   const leaderboard = await leaderboardPda(c.programId);
   if ((await accountData(c.base, leaderboard)) === null) {

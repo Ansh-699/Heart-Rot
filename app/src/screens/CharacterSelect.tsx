@@ -7,9 +7,11 @@
  * loader could only ever have sent `skinId: 0`. That is also why this screen owns the
  * `join()` call and renders onboarding's second card while it runs.
  *
- * There are no sprites in this build. A player is a coloured circle, so "character select"
- * is a colour picker and nothing more: the swatch below is the marker you will look for in
- * a crowd of twenty, which is the entire job the art was doing.
+ * The three knights are the reference sheet's, left to right, and `skin_id` indexes both
+ * this table and the generated `KNIGHT_SKINS` the renderer draws from. `SKIN_COLORS` is
+ * separate on purpose: it is the crowd marker — the dot on the roster and the ring under
+ * your own knight — and it stays a flat colour precisely because armour at 33x42 does not
+ * read at a glance in a crowd of twenty.
  */
 
 import { useSelect, useStore } from '../state/store';
@@ -28,9 +30,9 @@ import { SeatLoader } from './Onboarding';
 export const SKIN_COLORS = ['#5aa9e6', '#e6a25a', '#7fd48b'] as const;
 
 const SKINS = [
-  { name: 'Cobalt', note: 'Blue dot.' },
-  { name: 'Ember', note: 'Orange dot.' },
-  { name: 'Moss', note: 'Green dot.' },
+  { name: 'Cobalt', note: 'Blue crest, horned helm, kite shield.' },
+  { name: 'Nocturne', note: 'Black mantle, gold trim, raised sword.' },
+  { name: 'Argent', note: 'Silver plate, cross-emblem round shield.' },
 ] as const;
 
 export function CharacterSelect() {
@@ -71,9 +73,10 @@ export function CharacterSelect() {
       </div>
 
       <p className="fine">
-        Colour is cosmetic. Every knight has the same reach, the same speed and the same
+        The armour is cosmetic. Every knight has the same reach, the same speed and the same
         health — what changes the fight is which part of the boss the raid agrees to break
-        first. Your own dot is drawn with a ring around it so you can find yourself.
+        first. Your own knight carries a marker above it so you can find yourself in a
+        crowd, and the colour above is what the roster shows.
       </p>
 
       <button className="btn btn-primary" onClick={() => void store.join()}>

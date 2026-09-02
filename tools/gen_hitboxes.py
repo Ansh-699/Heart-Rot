@@ -14,6 +14,7 @@ delete the copy. This emits both consumers from the JSON, so the only way to mov
 a hitbox is to move the art.
 
     python3 tools/gen_hitboxes.py        # rewrites both generated files
+    python3 tools/gen_hitboxes.py --scale 2   # the documented fallback lever
 
 Outputs (checked in, never hand-edited):
     programs/heartrot/src/hitboxes.rs
@@ -24,13 +25,13 @@ THE ANCHOR
 ----------
 `hitboxes.json` is in **sprite pixels**, origin top-left of a W x H canvas. The
 program raycasts in **boss-local** arena units, origin at `Boss.x` / `Boss.y`.
-One sprite pixel is one arena unit (`render/sprites.ts` draws it 1:1), so the two
-spaces differ by a pure translation and nothing else -- no scale, no flip.
+One sprite pixel is SCALE arena units, so the two spaces differ by a uniform scale
+about the canvas centre and nothing else -- no flip, no shear.
 
-The translation is the sprite's own centre:
+The translation is the scaled sprite's own centre:
 
-    ANCHOR_X = -round(W / 2)      local_x = sprite_x + ANCHOR_X
-    ANCHOR_Y = -round(H / 2)      local_y = sprite_y + ANCHOR_Y
+    ANCHOR_X = -round(W * S / 2)  local_x = sprite_x * S + ANCHOR_X
+    ANCHOR_Y = -round(H * S / 2)  local_y = sprite_y * S + ANCHOR_Y
 
 i.e. `Boss.x`/`Boss.y` is the middle of the sprite canvas. That is derived from
 the sprite and from nothing else, which is the point: any other offset would be a
@@ -41,8 +42,24 @@ Boss.y + ANCHOR_Y)` -- it is exported from the TS output so it, too, is stated o
 The canvas centre deliberately includes the baked-in `ground` strip: it is part of
 the drawn canvas, the renderer translates the whole canvas, and excluding it would
 put the art and the raycast 27 units apart again for no gain.
+
+
+THE SCALE
+---------
+`--scale` (default 3) is how big the creature is drawn in arena units per sprite
+pixel. It is a PARAMETER OF THIS TOOL and never a constant in Rust or TypeScript,
+because it moves every hitbox, every muzzle, the anchor and the core radius at
+once -- which is exactly why the spec keeps it here: `--scale 2` is the one
+reversible decision in the top-centre composition, and it must be one command.
+
+    local = sprite * SCALE + ANCHOR        ANCHOR = -round(canvas * SCALE / 2)
+
+The core centre and radius are computed in SPRITE space and scaled afterwards, so
+`--scale 3` lands on the spec's (75, -54) r=60 rather than a rounding neighbour of
+it. Scaling a centre is not the same as centring a scaled box; this file does the
+former.
 """
-import argparse, json, os
+import argparse, json, math, os
 
 # Arena units per tile, mirroring `TILE` in programs/heartrot/src/handlers/shoot.rs.
 # The ray samples ONE point per tile, so a box thinner than this in either axis can
@@ -73,59 +90,166 @@ def load(path):
         raise SystemExit(f"{path}: chain indices are {indexed}, expected 0..{len(order)-1}")
     if "core" not in boxes:
         raise SystemExit(f"{path}: no 'core' box -- the vent has no geometry")
+    for name in order:
+        if not name.startswith("thorn"):
+            continue
+        m = boxes[name].get("muzzle")
+        # The muzzle is a DRAWN pixel, which only the slicer knows. Refusing here is
+        # the whole point: falling back to the box centre is how three of four volleys
+        # came to spawn in mid-air beside the creature.
+        if not (isinstance(m, list) and len(m) == 2 and all(isinstance(v, int) for v in m)):
+            raise SystemExit(
+                f"{path}: {name} is a volley emitter with no `muzzle: [x, y]`. "
+                f"`tools/svg_slice.py` writes it -- the drawn pixel nearest the part's "
+                f"mask centroid. A box centre is not a substitute; it is usually air.")
     return order, boxes, sprite["w"], sprite["h"]
 
 
-def to_local(boxes, order, w, h):
-    """-> ([(name, x, y, w, h) in chain order], (core_x, core_y, core_r_sq)).
+def to_local(boxes, order, w, h, scale):
+    """-> ([(name, x, y, w, h) in chain order], (ax, ay), (core_x, core_y, core_r_sq)).
 
     The core is a circle on chain (a squared radius against a squared distance --
     this program has no sqrt), so its box becomes the INSCRIBED circle: half the
-    shorter side, so the circle never claims a pixel the vent does not draw.
+    shorter side, so the circle never claims a pixel the vent does not draw. Its
+    centre and radius are taken in SPRITE space and scaled afterwards; centring the
+    already-scaled box would land a unit off for odd widths.
+
+    The TILE floor is checked on the SCALED box, because the scaled box is what the
+    ray steps over.
     """
-    ax, ay = -round(w / 2), -round(h / 2)
+    ax, ay = -round(w * scale / 2), -round(h * scale / 2)
     parts = []
     for name in order:
         b = boxes[name]
-        if b["w"] < TILE or b["h"] < TILE:
+        bw, bh = b["w"] * scale, b["h"] * scale
+        if bw < TILE or bh < TILE:
             raise SystemExit(
-                f"{name} is {b['w']}x{b['h']}, thinner than TILE={TILE}: the ray samples "
-                f"one point per tile and would step over it. Widen the part in svg_slice.py.")
-        parts.append((name, b["x"] + ax, b["y"] + ay, b["w"], b["h"]))
+                f"{name} is {bw}x{bh} at scale {scale}, thinner than TILE={TILE}: the ray "
+                f"samples one point per tile and would step over it. Widen the part in "
+                f"svg_slice.py, or raise --scale.")
+        parts.append((name, b["x"] * scale + ax, b["y"] * scale + ay, bw, bh))
     c = boxes["core"]
     # Floor division, not round(), so the centre is reproducible in any language.
-    core = ((2 * c["x"] + c["w"]) // 2 + ax,
-            (2 * c["y"] + c["h"]) // 2 + ay,
-            (min(c["w"], c["h"]) // 2) ** 2)
+    core = (((2 * c["x"] + c["w"]) // 2) * scale + ax,
+            ((2 * c["y"] + c["h"]) // 2) * scale + ay,
+            ((min(c["w"], c["h"]) // 2) * scale) ** 2)
+    if core[2] < TILE * TILE:
+        raise SystemExit(
+            f"the vent radius is {int(core[2] ** 0.5)} units at scale {scale}, under one "
+            f"TILE: the ray steps one tile at a time and would miss the core entirely.")
     return parts, (ax, ay), core
 
 
-def to_muzzles(parts):
+def to_muzzles(boxes, parts, anchor, scale):
     """-> [(part index, name, muzzle x, muzzle y)] for every thorn, in chain order.
 
     A thorn is a part the slicer named `thorn*`; the emitters are not a separate list
     living somewhere else, or that list is the next thing to drift.
 
-    THE POINT IS THE BOX CENTRE, not the outward edge. Two reasons, both structural:
-    `Rect::contains` is half-open, so the outward edge (`x + w`) is the first pixel
-    *outside* the thorn -- a muzzle there is provably not on the part it claims to fire
-    from; and "outward" needs a facing direction, which is a fact the art does not carry
-    and which would therefore have to be hand-written here. The centre needs nothing but
-    the box. Floor division on `w`/`h`, which the loader has already proven >= TILE > 0,
-    so Rust's truncating `/` and Python's `//` cannot disagree about the sign.
+    THE POINT IS A DRAWN PIXEL, not the box centre. A thorn is a diagonal spray inside
+    an axis-aligned box that is 8-13% full, so its centre is usually transparent: three
+    of the four muzzles used to sit in mid-air beside the creature, and thorn1's sat
+    inside `beast_r`'s box where the raycast could not even reach it. `svg_slice.py`
+    writes the drawn pixel nearest each thorn's mask centroid into `hitboxes.json`; this
+    reads it and scales it exactly as it scales the boxes. `load()` refuses a thorn with
+    no muzzle, so there is no box-centre fallback left to silently regress to.
     """
+    ax, ay = anchor
     out = []
     for i, (name, x, y, w, h) in enumerate(parts):
         if not name.startswith("thorn"):
             continue
-        mx, my = x + w // 2, y + h // 2
-        # Half-open containment, the same test the Rust emits. Unreachable while the
-        # loader enforces w,h >= TILE -- which is exactly why it is cheap to keep.
-        assert x <= mx < x + w and y <= my < y + h, f"{name} muzzle escaped its own box"
+        sx, sy = boxes[name]["muzzle"]
+        mx, my = sx * scale + ax, sy * scale + ay
+        # Half-open containment, the same test the Rust emits. This one CAN fire: a
+        # muzzle is authored pixel data, not derived from the box.
+        if not (x <= mx < x + w and y <= my < y + h):
+            raise SystemExit(
+                f"{name}: muzzle sprite ({sx},{sy}) -> local ({mx},{my}) is outside its own "
+                f"box ({x},{y},{w},{h}). A volley would spawn on a limb it is not gated on.")
         out.append((i, name, mx, my))
     if not out:
         raise SystemExit("no part is named thorn*: the boss has no volley emitters")
     return out
+
+
+def check_pit_reach(map_path, parts, core):
+    """Refuse a boss the back of the pit cannot shoot.
+
+    `MAX_RAY_STEPS` is `map::MAP_TILES`, so the ray reaches `MAP_TILES * TILE` units and
+    dies on the first wall tile. Deepen the pit, move `B`, or drop `--scale` and the back
+    rows go dead WITH NO ERROR ANYWHERE -- a player stands in the pit, fires at a boss
+    filling the screen, and nothing happens. This is that error.
+
+    The ray is walked as an exact float line rather than through the chain's integer
+    normaliser: over 200,000 angles that normaliser measures 0.2354 degrees of direction
+    error, which is 3.55 units of lateral miss at the worst-case 865-unit range -- under a
+    quarter tile, and every box here is at least a tile. Approximating it costs nothing a
+    reachability guard can see, and mirroring it here would be `unit_velocity` stated twice.
+
+    Skipped, loudly, when the map carries no `P`: the pit markers are `gen_map.py`'s and
+    this tool must not fail because that file has not been redrawn yet.
+    """
+    try:
+        grid = json.load(open(map_path))["grid"]
+    except (OSError, KeyError, ValueError) as e:
+        print(f"pit reach: SKIPPED, cannot read {map_path} ({e})")
+        return
+    pit = [(tx, ty) for ty, row in enumerate(grid) for tx, c in enumerate(row) if c == 'P']
+    if not pit:
+        print(f"pit reach: SKIPPED, no `P` tiles in {os.path.basename(map_path)} yet")
+        return
+    spawn = [(tx, ty) for ty, row in enumerate(grid) for tx, c in enumerate(row) if c == 'B']
+    if len(spawn) != 1:
+        raise SystemExit(f"{map_path}: {len(spawn)} `B` markers, expected exactly 1")
+    bx, by = spawn[0][0] * TILE, spawn[0][1] * TILE
+    steps = len(grid)                      # MAX_RAY_STEPS == map::MAP_TILES
+    cx, cy, crsq = core
+
+    # Targets in WORLD units: the nine part boxes plus the vent circle.
+    aims = [(bx + x + w // 2, by + y + h // 2) for _, x, y, w, h in parts]
+    aims.append((bx + cx, by + cy))
+
+    def blocked(x, y):
+        tx, ty = x // TILE, y // TILE
+        return not (0 <= ty < len(grid) and 0 <= tx < len(grid[ty])) or grid[ty][tx] == '#'
+
+    def hits(x, y):
+        for _, px, py, pw, ph in parts:
+            if bx + px <= x < bx + px + pw and by + py <= y < by + py + ph:
+                return True
+        dx, dy = x - (bx + cx), y - (by + cy)
+        return dx * dx + dy * dy <= crsq
+
+    dead = []
+    for tx, ty in pit:
+        ox, oy = tx * TILE, ty * TILE
+        if not any(_walk(ox, oy, ax, ay, steps, blocked, hits) for ax, ay in aims):
+            dead.append((tx, ty))
+    if dead:
+        raise SystemExit(
+            f"{len(dead)} of {len(pit)} pit tiles cannot reach ANY boss part within "
+            f"{steps} ray steps -- e.g. {dead[:6]}. Move `B` down, widen the pit, or lower "
+            f"--scale. A player standing there fires at the boss and nothing happens.")
+    print(f"pit reach: {len(pit)} pit tiles, all reach a part within {steps} steps")
+
+
+def _walk(ox, oy, ax, ay, steps, blocked, hits):
+    """One ray, TILE per step, aborting on the first wall -- `shoot.rs::raycast`."""
+    vx, vy = ax - ox, ay - oy
+    d = math.hypot(vx, vy)
+    if d == 0:
+        return True
+    vx, vy = vx / d * TILE, vy / d * TILE
+    x, y = float(ox), float(oy)
+    for _ in range(steps):
+        x += vx
+        y += vy
+        if blocked(int(x), int(y)):
+            return False
+        if hits(int(x), int(y)):
+            return True
+    return False
 
 
 def header(src, p):
@@ -137,7 +261,7 @@ def header(src, p):
             f"{p} `python3 tools/svg_slice.py`, then re-run the command above.\n")
 
 
-def emit_rust(parts, anchor, core, muzzles, src, w, h):
+def emit_rust(parts, anchor, core, muzzles, src, w, h, scale):
     ax, ay = anchor
     cx, cy, crsq = core
     rows = "\n".join(
@@ -150,9 +274,10 @@ def emit_rust(parts, anchor, core, muzzles, src, w, h):
 //! Boss-local hitboxes, in arena units relative to `Boss.x` / `Boss.y`.
 //!
 //! `{src}` is in sprite pixels on a {w}x{h} canvas, origin top-left; one sprite
-//! pixel is one arena unit. `Boss.x`/`Boss.y` is the centre of that canvas, so the
-//! two spaces differ by the translation ({ax}, {ay}) and nothing else -- no scale,
-//! no flip. See the tool's docstring for the derivation.
+//! pixel is {scale} arena units (`--scale {scale}`, a generator argument and never a
+//! constant here). `Boss.x`/`Boss.y` is the centre of that scaled canvas, so the two
+//! spaces differ by `local = sprite * {scale} + ({ax}, {ay})` and nothing else -- no
+//! flip, no shear. See the tool's docstring for the derivation.
 
 /// A boss-local axis-aligned box, in arena units relative to `Boss.x` / `Boss.y`.
 #[derive(Clone, Copy)]
@@ -210,16 +335,20 @@ pub const N_MUZZLES: usize = {len(muzzles)};
 /// are the same defect: geometry stated twice. Move a thorn in the art, re-run the
 /// command at the top of this file, and the muzzles move with it.
 ///
-/// Each point is its thorn box's centre — inside the box by construction, and needing no
-/// notion of "outward", which is a direction the art does not carry.
+/// Each point is a DRAWN pixel — the one nearest that thorn's mask centroid, written into
+/// `hitboxes.json` by `tools/svg_slice.py`. A thorn is a diagonal spray inside an
+/// axis-aligned box that is 8–13% full, so the box centre is usually transparent: three of
+/// the four volleys used to spawn in mid-air beside the creature, and thorn1's spawned
+/// inside `beast_r`'s box. That is invisible while the boss is a circle and glaring the
+/// moment the art is on screen.
 pub const MUZZLES: [Muzzle; N_MUZZLES] = [
 {muzzle_rows}
 ];
 
 const _: () = {{
-    // Every muzzle stands in the thorn it names. Holds by construction (the generator
-    // refuses a box thinner than one tile, so a centre cannot escape it); it fires only
-    // if someone hand-edits this file, which is the failure it is here to catch.
+    // Every muzzle stands in the thorn it names. A muzzle is authored pixel data, not
+    // derived from its box, so this is a real constraint rather than an identity — the
+    // generator checks it too, and this catches a hand-edit of the generated file.
     let mut i = 0;
     while i < N_MUZZLES {{
         let m = MUZZLES[i];
@@ -231,10 +360,154 @@ const _: () = {{
         i += 1;
     }}
 }};
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+    use crate::map::TILE;
+    use crate::state::N_PARTS;
+
+    /// `handlers::shoot::raycast` in miniature: the FIRST part in index order whose box
+    /// contains the sample wins. Every test below is about that one rule, because it is
+    /// the rule that decides which limb a shot damages.
+    fn first_match(x: i32, y: i32) -> Option<usize> {{
+        PART_HITBOXES.iter().position(|r| r.contains(x, y))
+    }}
+
+    /// The union of the nine part boxes. Deliberately NOT exported: `shoot.rs` folds its
+    /// own gate, which also has to cover the core circle, and two constants of the same
+    /// name with different extents is the trap this file exists to prevent.
+    fn parts_union() -> Rect {{
+        let mut u = PART_HITBOXES[0];
+        for r in PART_HITBOXES.iter() {{
+            let (x0, y0) = (u.x.min(r.x), u.y.min(r.y));
+            let (x1, y1) = ((u.x + u.w).max(r.x + r.w), (u.y + u.h).max(r.y + r.h));
+            u = Rect {{ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }};
+        }}
+        u
+    }}
+
+    /// Every index `shoot.rs` and `tick.rs` reach for is in range and points at geometry.
+    /// `shoot.rs` indexes `boss.parts[index]` straight out of the `PART_HITBOXES` walk;
+    /// `tick.rs` gates each emitter on `boss.parts[muzzle.part]`.
+    #[test]
+    fn every_index_the_program_uses_exists() {{
+        assert_eq!(PART_HITBOXES.len(), N_PARTS);
+        assert_eq!(MUZZLES.len(), N_MUZZLES);
+        for m in MUZZLES.iter() {{
+            assert!(m.part < N_PARTS, "muzzle names part {{}} of {{}}", m.part, N_PARTS);
+            assert!(
+                PART_HITBOXES[m.part].contains(m.x, m.y),
+                "muzzle for part {{}} is outside its own box",
+                m.part,
+            );
+        }}
+    }}
+
+    /// A thorn is a volley emitter AND a target. If a lower-indexed box claims the point
+    /// a thorn fires from, a player shooting at the horn shooting at them damages some
+    /// other limb -- the defect the index renumbering exists to close. Assert the claim
+    /// order and the paint order agree at the one point where it is provable.
+    #[test]
+    fn every_muzzle_resolves_to_its_own_part() {{
+        for m in MUZZLES.iter() {{
+            assert_eq!(
+                first_match(m.x, m.y),
+                Some(m.part),
+                "part {{}} fires from a point another part claims",
+                m.part,
+            );
+        }}
+    }}
+
+    /// Boxes overlap on purpose -- a diagonal spray inside an axis-aligned box is mostly
+    /// air, and first-match resolves the overlap. What must never happen is a part being
+    /// shadowed so completely that no ray can ever damage it. The floor is one tile of
+    /// area, because the ray samples one point per tile: a region smaller than that can
+    /// be stepped clean over.
+    #[test]
+    fn no_part_is_shadowed_out_of_the_fight() {{
+        let tile = TILE as i32;
+        for (i, r) in PART_HITBOXES.iter().enumerate() {{
+            let mut reachable = 0i64;
+            for y in r.y..r.y + r.h {{
+                for x in r.x..r.x + r.w {{
+                    if first_match(x, y) == Some(i) {{
+                        reachable += 1;
+                    }}
+                }}
+            }}
+            assert!(
+                reachable >= (tile * tile) as i64,
+                "part {{}} keeps only {{}} of {{}} units of box: under one tile of area, so the raycast steps over it and the limb is unkillable",
+                i,
+                reachable,
+                r.w as i64 * r.h as i64,
+            );
+        }}
+    }}
+
+    /// The vent is not a part: `raycast` tests it only after every box has missed, and
+    /// `fire()` refuses `Hit::Core` while the shell is sealed. A part box overlapping the
+    /// circle would make some of the vent permanently unhittable, since the box wins.
+    #[test]
+    fn the_vent_is_disjoint_from_every_part() {{
+        for (i, r) in PART_HITBOXES.iter().enumerate() {{
+            // Closest point on the box to the centre, then compare squared distances.
+            let nx = CORE_X.max(r.x).min(r.x + r.w - 1);
+            let ny = CORE_Y.max(r.y).min(r.y + r.h - 1);
+            let (dx, dy) = (nx - CORE_X, ny - CORE_Y);
+            assert!(
+                dx * dx + dy * dy > CORE_RADIUS_SQ,
+                "part {{}} overlaps the vent circle: that slice of the vent is unhittable",
+                i,
+            );
+        }}
+    }}
+
+    /// The vent has to be findable by a ray that moves one tile at a time, and it has to
+    /// sit on the creature -- inside the shell, not floating beside it.
+    #[test]
+    fn the_vent_is_where_the_spec_puts_it() {{
+        let tile = TILE as i32;
+        assert!(
+            CORE_RADIUS_SQ >= tile * tile,
+            "vent radius^2 {{}} is under one tile: a ray stepping by tiles would miss it",
+            CORE_RADIUS_SQ,
+        );
+        // The WHOLE circle is on the creature, not just its centre: a vent hanging off
+        // an edge is drawn glowing in mid-air beside the boss.
+        let mut r = 0i32;
+        while (r + 1) * (r + 1) <= CORE_RADIUS_SQ {{
+            r += 1;
+        }}
+        let u = parts_union();
+        assert!(CORE_X - r >= u.x && CORE_X + r <= u.x + u.w, "the vent hangs off the boss");
+        assert!(CORE_Y - r >= u.y && CORE_Y + r <= u.y + u.h, "the vent hangs off the boss");
+        // High on the body, as the reference composition needs.
+        assert!(CORE_Y < u.y + u.h / 2, "the vent is in the lower body");
+        // NOT centred on the union, and deliberately not asserted to be: the mace arm
+        // sweeps to the far left of the canvas, so the union's midpoint sits ~77 units
+        // left of the chest while the creature's mass centroid sits on it. Measured in
+        // docs/art/boss-rig.md 4.5; recorded here so nobody "fixes" the offset.
+    }}
+
+    /// A sample outside every part box hits nothing -- the property `shoot.rs`'s early-out
+    /// gate relies on. It folds its own, wider gate (it must also cover the core circle),
+    /// so what is checked here is the half this file owns: the part boxes.
+    #[test]
+    fn nothing_is_hittable_outside_the_part_boxes() {{
+        let u = parts_union();
+        assert_eq!(first_match(u.x - 1, CORE_Y), None);
+        assert_eq!(first_match(u.x + u.w, CORE_Y), None);
+        assert_eq!(first_match(CORE_X, u.y - 1), None);
+        assert_eq!(first_match(CORE_X, u.y + u.h), None);
+    }}
+}}
 """
 
 
-def emit_ts(parts, anchor, core, muzzles, src, w, h):
+def emit_ts(parts, anchor, core, muzzles, src, w, h, scale):
     ax, ay = anchor
     cx, cy, crsq = core
     rows = "\n".join(
@@ -252,7 +525,9 @@ def emit_ts(parts, anchor, core, muzzles, src, w, h):
  * the bug this file exists to make impossible.
  *
  * `{src}` is in sprite pixels on a {w}x{h} canvas, origin top-left; one sprite pixel
- * is one arena unit. The two spaces differ by `BOSS_ANCHOR_*` and nothing else.
+ * is {scale} arena units. The two spaces differ by `local = sprite * BOSS_SCALE +
+ * BOSS_ANCHOR_*` and nothing else -- the renderer must use exactly that, or the drawn
+ * boss and the raycast boss stop being the same boss.
  */
 
 /** A boss-local axis-aligned box, in arena units relative to `Boss.x` / `Boss.y`. */
@@ -263,15 +538,26 @@ export interface Rect {{
   readonly h: number;
 }}
 
-/** The sprite canvas, in arena units (1 sprite pixel = 1 arena unit). */
+/** The source canvas, in SPRITE pixels. Multiply by {{@link BOSS_SCALE}} for arena units. */
 export const BOSS_SPRITE_W = {w};
 export const BOSS_SPRITE_H = {h};
 
 /**
- * Where the sprite's top-left corner goes, relative to `Boss.x` / `Boss.y`:
- * `translate(boss.x + BOSS_ANCHOR_X, boss.y + BOSS_ANCHOR_Y)`. It is the canvas
- * centre, derived from the sprite's own dimensions -- import it rather than
- * recomputing it, or the art and the raycast drift apart again.
+ * Arena units per sprite pixel. The renderer draws the sprite at
+ * `scale(BOSS_SCALE)` inside the boss group; every number below is already scaled,
+ * so nothing else in the client may multiply by it a second time.
+ */
+export const BOSS_SCALE = {scale};
+
+/**
+ * Where the SCALED sprite's top-left corner goes, relative to `Boss.x` / `Boss.y`.
+ * The sprite's own viewBox is in unscaled pixels, so the group is exactly:
+ *
+ *     translate(boss.x + BOSS_ANCHOR_X, boss.y + BOSS_ANCHOR_Y) scale(BOSS_SCALE)
+ *
+ * in that order, and nothing else. It is the scaled canvas centre, derived from the
+ * sprite's own dimensions -- import it rather than recomputing it, or the art and the
+ * raycast drift apart again.
  */
 export const BOSS_ANCHOR_X = {ax};
 export const BOSS_ANCHOR_Y = {ay};
@@ -321,16 +607,27 @@ if __name__ == '__main__':
     a.add_argument('src', nargs='?', default=f'{root}/assets/sprites/hitboxes.json')
     a.add_argument('-r', '--out-rust', default=f'{root}/programs/heartrot/src/hitboxes.rs')
     a.add_argument('-t', '--out-ts', default=f'{root}/packages/client/src/hitboxes.ts')
+    a.add_argument('-s', '--scale', type=int, default=3,
+                   help='arena units per sprite pixel (default 3). The documented '
+                        'fallback lever is --scale 2; it moves every hitbox, muzzle, '
+                        'anchor and the core radius in one pass. PULLING THE LEVER MEANS '
+                        'CHANGING THIS DEFAULT: --check re-derives with it, so a tree '
+                        'generated at one scale and checked at another reads as stale.')
+    a.add_argument('-m', '--map', default=f'{root}/assets/map/arena.json',
+                   help='arena.json, for the pit-reachability check')
     a.add_argument('-c', '--check', action='store_true',
                    help='write nothing; exit non-zero if either checked-in file is stale')
     n = a.parse_args()
 
+    if n.scale < 1:
+        raise SystemExit('--scale must be at least 1')
     order, boxes, w, h = load(n.src)
-    parts, anchor, core = to_local(boxes, order, w, h)
-    muzzles = to_muzzles(parts)
+    parts, anchor, core = to_local(boxes, order, w, h, n.scale)
+    muzzles = to_muzzles(boxes, parts, anchor, n.scale)
+    check_pit_reach(n.map, parts, core)
     rel = os.path.relpath(n.src, root)
-    want = {n.out_rust: emit_rust(parts, anchor, core, muzzles, rel, w, h),
-            n.out_ts: emit_ts(parts, anchor, core, muzzles, rel, w, h)}
+    want = {n.out_rust: emit_rust(parts, anchor, core, muzzles, rel, w, h, n.scale),
+            n.out_ts: emit_ts(parts, anchor, core, muzzles, rel, w, h, n.scale)}
 
     # `--check` IS the test for this tool: it re-derives both files and proves the
     # committed ones are what the art currently says. Anything that would silently
@@ -345,7 +642,7 @@ if __name__ == '__main__':
         for p, text in want.items():
             open(p, 'w').write(text)
 
-    print(f"anchor {anchor}  sprite {w}x{h}")
+    print(f"scale {n.scale}  anchor {anchor}  sprite {w}x{h}")
     for i, (name, x, y, rw, rh) in enumerate(parts):
         print(f"{i:>2}  {name:<8} {x:4},{y:4} {rw:3}x{rh:3}")
     print(f" -  core     {core[0]:4},{core[1]:4} r^2={core[2]}")

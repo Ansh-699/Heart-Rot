@@ -543,12 +543,15 @@ export async function sendInstructions(
 
   if (entry.sent.has(signature)) {
     // `move` carries a monotonic u16 seq so it can never land here; `shoot` is
-    // [tag, seat, dir] with no nonce, so a player holding fire in one direction produces
-    // the identical message every time. A fresh-blockhash-per-send used to make each one
-    // unique by accident. One extra round trip on a repeat beats a silently dropped shot
-    // — App.tsx swallows a `-32003` with no custom code, so the loss would be invisible.
+    // [tag, seat, dx, dy] with no nonce, so any shooter who repeats an aim vector
+    // produces the identical message. Free aim narrows this — a pointer shooter sends a
+    // near-unique pair every time — but it does not close it: a keyboard shooter holding
+    // one direction still repeats exactly. A fresh-blockhash-per-send used to make each
+    // one unique by accident. One extra round trip on a repeat beats a silently dropped
+    // shot — App.tsx swallows a `-32003` with no custom code, so the loss is invisible.
     // ponytail: two repeats inside one 50 ms ER slot can still collide, since the refresh
-    // may return the same hash. Fix properly by giving `shoot` a nonce in instructions.ts.
+    // may return the same hash. Fix properly by giving `shoot` a u16 nonce like `move`'s,
+    // which needs a byte on the wire and so is a program change, not a client one.
     entry = await refreshBlockhash(rpc);
     signed = await sign(entry);
     signature = getSignatureFromTransaction(signed);

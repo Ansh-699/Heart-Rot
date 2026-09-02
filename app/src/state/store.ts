@@ -113,7 +113,11 @@ export type Store = {
   setSkin(skinId: number): void;
   /** `POST /api/session/init` — identity in, a seat and a routing bundle out. */
   join(): Promise<void>;
-  /** `POST /api/match/start` — delegate and arm the crank. 5–15 s of devnet round trips. */
+  /**
+   * `POST /api/match/start` — delegate, arm the crank and open the muster window.
+   * 5–15 s of devnet round trips. Fired automatically by the first knight through the
+   * gate (`App.tsx`'s `useMuster`), never by a button: the gate *is* the interaction.
+   */
   startMatch(): Promise<void>;
   /** `POST /api/match/settle` — end the match and write the leaderboard. Retries by design. */
   settle(): Promise<void>;
@@ -191,10 +195,32 @@ const MESSAGES: Record<string, string> = {
   rate_limiter_unconfigured: 'The backend is misconfigured and is refusing to spend SOL.',
 };
 
-function readable(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  return MESSAGES[raw] ?? raw;
+/** The raw route code `postJson` threw, before `MESSAGES` turns it into a sentence. */
+function code(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
+
+function readable(error: unknown): string {
+  return MESSAGES[code(error)] ?? code(error);
+}
+
+/**
+ * Refusals of `/api/match/start` that mean the muster is open, just not by us.
+ *
+ * Every knight through the gate arms it and nineteen of twenty lose the race — that is
+ * the design, not a failure, so none of these may reach the error bar. `no_raiders` is
+ * the Worker's rendering of `HeartrotError::NoRaiders`, which `begin_muster` returns when
+ * the chain has not yet seen anyone through the gate: our own zone flip arrived on a
+ * notification, so a moment later it will have.
+ *
+ * Anything else *is* worth a line. A dry treasury presents as a raid that simply never
+ * starts, and a player with no message assumes it is their wifi.
+ */
+const BENIGN_START: ReadonlySet<string> = new Set([
+  'already_started',
+  'match_in_progress',
+  'no_raiders',
+]);
 
 // ---------------------------------------------------------------------------
 // The store
@@ -225,7 +251,13 @@ export function createStore(): Store {
   // once and nineteen of them pay for a 25-second commit poll to learn nothing.
   let settling = false;
   // Same shape at the other end of the match: `start` spends ~0.0245 SOL of treasury rent
-  // and takes 5–15 s, and a double-click during it earns a 409 rather than a second raid.
+  // and takes 5–15 s, and a second call during it earns a 409 rather than a second raid.
+  //
+  // It no longer moves `status`. `joining` is in `HELD`, so an automatic call nobody
+  // clicked would pin the connection dot on "joining" for fifteen seconds and stop the
+  // world feed reporting itself live; `connecting` afterwards would report an already-live
+  // feed as syncing. The visible answer to "did it take" is `fight_at_tick` counting down,
+  // which is on chain and arrives by itself.
   let starting = false;
 
   const set = (patch: Partial<State>): void => {
@@ -320,12 +352,10 @@ export function createStore(): Store {
     async startMatch() {
       if (starting) return;
       starting = true;
-      set({ status: 'joining', error: null });
       try {
         await postJson<unknown>('/api/match/start', await credentials());
-        set({ status: 'connecting' });
       } catch (error) {
-        fail(error);
+        if (!BENIGN_START.has(code(error))) fail(error);
       } finally {
         starting = false;
       }
@@ -360,6 +390,17 @@ export function createStore(): Store {
       // The one place every account update lands, so the one place telemetry needs to
       // observe. `lastMoveSeq` on the local seat is what turns a fire-and-forget send
       // into a measurable round trip; without a seat there is throughput but no latency.
+      //
+      // Deliberately unclever, and it stays that way. At twenty seats this runs 714×/s
+      // (measured), 68.4% of it carrying no change, every notification delivered twice by
+      // the Magic Router — so the temptation is a diff here. Wrong layer: a decoded
+      // account is a fresh object either way, so a store-side compare would be a deep one
+      // over 20 slots and 128 bullets *and* would still have paid the 6.87 µs decode. The
+      // drop belongs in `net/subscribe.ts`, on the base64 payload string, before the
+      // decoder runs. Below that, `useSyncExternalStore` already keeps the blast radius to
+      // the components whose selected value actually moved: only a selector returning a
+      // whole account re-renders on every frame, and `App`'s `World` is the only one, by
+      // design, because the renderer needs all three.
       const seat = state.match?.seat;
       const slot = seat === undefined || seat === null ? undefined : update.players?.slots?.[seat];
       recordWorld(update.arena?.tick, slot?.lastMoveSeq);

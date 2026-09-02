@@ -5,10 +5,23 @@ Pipeline: coarse-quantize at full res -> MODE downsample (majority real colour
 per block, never an invented average) -> frequency-weighted palette merge
 (collapses JPEG-noise variants onto the real art colour) -> despeckle ->
 run-merge to rects -> emit ONE <path> per colour.
+
+Subpaths are emitted RELATIVE (`m<dx> <dy>h..v..h..z`). The source rasters for the
+checked-in art are gone, so `--reencode` re-emits an existing px2svg SVG through the
+same encoder and proves it pixel-identical. It is idempotent, so `--check` is the
+regression guard: run it on the committed art and a broken encoder reports itself.
+
+    python3 tools/px2svg.py --reencode assets/sprites/temple.svg assets/sprites/parts/boss.svg
+    python3 tools/px2svg.py --reencode --check assets/sprites/temple.svg assets/sprites/parts/boss.svg
+
+`assets/sprites/knights.svg` is deliberately NOT in that list: it is read back by
+`svg_slice.parse`, whose `_RECT` matches `M` only, so converting it breaks
+`tools/gen_knights.py` -- and it is imported by no client code, so converting it
+would buy zero shipped bytes. Add it here once that regex reads either form.
 """
-import argparse, collections
+import argparse, collections, os, re, zlib
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageChops
 
 def intra_block_std(arr, s):
     h, w, _ = arr.shape
@@ -128,6 +141,83 @@ def merge_rects(idx, bg):
         prev = cur
     return out
 
+# The one subpath grammar this tool writes and reads: an axis-aligned rect as a
+# closed h/v/h path. `M` is the old absolute form, still readable so `--reencode`
+# can convert it; `m` is what is emitted.
+_SUB = re.compile(r'([Mm])(-?\d+) (-?\d+)h(\d+)v(\d+)h-\4z')
+_PATH = re.compile(r'(<path fill="(#[0-9a-fA-F]{6})" d=")([^"]*)(")')
+_VIEWBOX = re.compile(r'viewBox="0 0 (\d+) (\d+)"')
+
+
+def path_d(items):
+    """The subpaths of one <path>, each RELATIVE to the previous subpath's start.
+
+    `z` returns the pen to where the subpath began, so every `m` is a delta between
+    two rect origins: 1-3 digits that repeat across the file, instead of 4-7
+    absolute ones that never do. Same rects, same pixels, same element count --
+    measured -34% brotli on the checked-in art (docs/review/bundle.md, option 1).
+    """
+    out, px, py = [], 0, 0
+    for x, y, rw, rh in items:
+        out.append(f'm{x - px} {y - py}h{rw}v{rh}h-{rw}z')
+        px, py = x, y
+    return ''.join(out)
+
+
+def parse_d(d):
+    """Inverse of `path_d`, absolute or relative -> [(x, y, w, h)].
+
+    Raises on anything else rather than reinterpreting it: this reads exactly what
+    `path_d` writes, and a file it cannot read is a bug to hear about loudly.
+    """
+    out, px, py, n = [], 0, 0, 0
+    for m in _SUB.finditer(d):
+        x, y = int(m.group(2)), int(m.group(3))
+        if m.group(1) == 'm': x, y = px + x, py + y
+        out.append((x, y, int(m.group(4)), int(m.group(5))))
+        px, py = x, y
+        n += m.end() - m.start()
+    if n != len(d):
+        raise SystemExit('d= holds commands this tool cannot read')
+    return out
+
+
+def paint(src):
+    """Expand a whole px2svg file back onto an RGBA bitmap, in document order."""
+    w, h = (int(v) for v in _VIEWBOX.search(src).groups())
+    a = np.zeros((h, w, 4), np.uint8)
+    for _, fill, d, _ in _PATH.findall(src):
+        c = [int(fill[i:i + 2], 16) for i in (1, 3, 5)] + [255]
+        for x, y, rw, rh in parse_d(d):
+            a[y:y + rh, x:x + rw] = c
+    return Image.fromarray(a, 'RGBA')
+
+
+def reencode(path, check=False):
+    """Rewrite an existing px2svg SVG through `path_d`, only if it stays identical.
+
+    The rasters these assets were converted from are not in the tree, so this is how
+    they are regenerated from the tool instead of hand-edited. It is idempotent, so
+    `--check` doubles as the guard: run it on the committed art and a broken encoder
+    reports itself.
+    """
+    src = open(path).read()
+    new = _PATH.sub(lambda m: m.group(1) + path_d(parse_d(m.group(3))) + m.group(4), src)
+    for tag in ('<path ', '<g id="part-'):
+        if src.count(tag) != new.count(tag):
+            raise SystemExit(f'{path}: `{tag}` count changed')
+    if ImageChops.difference(paint(src), paint(new)).getbbox() is not None:
+        raise SystemExit(f'{path}: re-encode moved a pixel')
+    if check and new != src:
+        raise SystemExit(f'{path}: not the encoder\'s output; re-run without --check')
+    if new != src:
+        open(path, 'w').write(new)
+    gz = lambda s: len(zlib.compress(s.encode(), 9))
+    print(f'{os.path.basename(path):16s} {len(src):7d} -> {len(new):7d} B   '
+          f'gzip {gz(src):6d} -> {gz(new):6d}   '
+          f'{"unchanged" if new == src else "rewritten"}, pixel-identical')
+
+
 def to_svg(rects, pal, w, h, zoom=4):
     """One <path> per colour. 8.6k <rect> nodes becomes ~15 nodes and a third
     of the bytes, and the browser composites each colour as a single fill."""
@@ -138,8 +228,7 @@ def to_svg(rects, pal, w, h, zoom=4):
          f'image-rendering="pixelated">']
     for c, items in sorted(by.items(), key=lambda kv: -len(kv[1])):
         r, g, b = pal[c]
-        d = ''.join(f'M{x} {y}h{rw}v{rh}h-{rw}z' for x, y, rw, rh in items)
-        p.append(f'<path fill="#{r:02x}{g:02x}{b:02x}" d="{d}"/>')
+        p.append(f'<path fill="#{r:02x}{g:02x}{b:02x}" d="{path_d(items)}"/>')
     p.append('</svg>')
     return ''.join(p)
 
@@ -173,7 +262,11 @@ def convert(src, dst, colours=16, strip_bg=False, scale=None, coarse=64,
 
 if __name__ == '__main__':
     a = argparse.ArgumentParser()
-    a.add_argument('src'); a.add_argument('dst')
+    a.add_argument('files', nargs='*', metavar='src dst | SVG...')
+    a.add_argument('--reencode', action='store_true',
+                   help='re-emit existing px2svg SVGs through the current encoder')
+    a.add_argument('--check', action='store_true',
+                   help='with --reencode: write nothing, exit 1 on drift')
     a.add_argument('-c','--colours',type=int,default=16)
     a.add_argument('-b','--strip-bg',action='store_true')
     a.add_argument('-s','--scale',type=int,default=None)
@@ -181,4 +274,9 @@ if __name__ == '__main__':
     a.add_argument('--coarse',type=int,default=64)
     a.add_argument('-l','--label',default='')
     n = a.parse_args()
-    convert(n.src,n.dst,n.colours,n.strip_bg,n.scale,n.coarse,n.dist,n.label or 'out')
+    if n.reencode:
+        for f in n.files: reencode(f, n.check)
+    elif len(n.files) == 2:
+        convert(*n.files,n.colours,n.strip_bg,n.scale,n.coarse,n.dist,n.label or 'out')
+    else:
+        a.error('need src and dst, or --reencode with one or more SVGs')

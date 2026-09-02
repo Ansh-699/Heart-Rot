@@ -312,13 +312,14 @@ pub fn process_commit(program_id: &Address, accounts: &mut [AccountView]) -> Pro
 ///
 /// Moves `phase` to `Settled` first, so the state that lands on the base layer says the
 /// match is over — through [`Arena::try_set_phase`], so the legal `→ SETTLED` edges are
-/// the one table in `state.rs`. Two cases are not that:
+/// the one table in `state.rs`. One case is not that:
 ///
-/// - `PHASE_ROLLING` is **refused**. A VRF callback is in flight and undelegating under it
-///   strands the oracle retrying for 240 slots.
 /// - `PHASE_LOBBY` **undelegates without a phase write**. This is the recovery path for an
 ///   arena that was delegated and never started — the only way its rent comes back — and
 ///   an arena that never fought must not land on base claiming it finished.
+///
+/// `PHASE_ROLLING` is **accepted**, and is the reason this handler is the operator's last
+/// resort rather than a convenience. Tag 11 still refuses it; see [`apply_commit_phase`].
 ///
 /// Tag 9 `settle` performs the same commit-and-undelegate on the happy path, and also
 /// cancels the crank in the same instruction. This handler is what is left when `settle`
@@ -445,18 +446,28 @@ fn check_commit_accounts(
 /// reachable without a runtime account — `AccountView` cannot be constructed in a unit
 /// test, so a rule left inline in `check_commit_accounts` is a rule nothing can check.
 fn apply_commit_phase(a: &mut Arena, settle: bool) -> Result<(), ProgramError> {
-    // Neither handler may run while a VRF roll is in flight. Committing or
-    // undelegating in `PHASE_ROLLING` leaves the oracle's callback aimed at an account the
-    // ER no longer holds, where it fails and is retried for the whole 240-slot request
-    // TTL. An operator with a stuck roll waits `ROLL_TIMEOUT_TICKS`, after which
-    // `boss_tick` abandons it back to `PHASE_SETTLING` and both handlers are legal again —
-    // which is why `boss_tick` must advance `tick` outside the `Fighting` gate, or the
-    // timeout never fires and this refusal is permanent.
+    // Tag 11 may not run while a VRF roll is in flight. A mid-roll snapshot buys nothing —
+    // it is a crash-recovery point for a match that is already over — and it leaves the
+    // oracle's callback aimed at an account whose committed copy is about to disagree with
+    // the ER's. Tag 11 writes no phase at all, so without this line it has no transition to
+    // be rejected by; this is its only gate.
     //
-    // Tag 12 would be caught by `try_set_phase` below anyway (`ROLLING -> SETTLED` is not
-    // an edge). Tag 11 writes no phase at all, so without this line it has no transition
-    // to be rejected by.
-    if a.phase == PHASE_ROLLING {
+    // Tag 12 is deliberately **not** refused here, and that asymmetry is the whole point.
+    // `ROLLING` has exactly two exits: the VRF callback, and `boss_tick`'s
+    // `ROLL_TIMEOUT_TICKS` abandon. The second is measured against `Arena::tick`, which
+    // only `boss_tick` advances — so a crank that dies inside the ~10 s roll window freezes
+    // the clock its own timeout is read from, and the timeout can never elapse. Refusing
+    // tag 12 here left that arena terminal: three accounts delegated to the ER with no
+    // instruction in this program able to bring them back, and ~0.06 SOL of rent with them.
+    // Undelegating under an in-flight request does cost the oracle retries, but they are
+    // bounded by the request's 240-slot TTL, and `roll::consume_roll` returns `Ok` on every
+    // rejection path, so a callback that lands on the settled arena is dropped rather than
+    // reverting the oracle's transaction into a loop. Bounded beats permanent.
+    //
+    // The edge itself is `state.rs`'s to declare (`ROLLING -> SETTLED`), and `try_set_phase`
+    // below is what performs it. Authority is already established: `check_commit_accounts`
+    // rejects any payer that is not `arena.crank_authority` before this runs.
+    if !settle && a.phase == PHASE_ROLLING {
         return Err(HeartrotError::WrongPhase.into());
     }
 
@@ -593,20 +604,45 @@ mod tests {
         }
     }
 
-    /// Both handlers refuse `PHASE_ROLLING`: undelegating under an in-flight VRF request
-    /// aims the callback at an account the ER no longer holds, and the oracle then retries
-    /// it for the full 240-slot TTL. Tag 11 writes no phase, so it is the one that would
-    /// slip through a check left to `try_set_phase`.
+    /// Tag 11 refuses `PHASE_ROLLING`. A mid-roll snapshot is worth nothing and costs the
+    /// oracle a retry; tag 11 writes no phase, so this line is its only gate.
     #[test]
-    fn neither_handler_runs_while_a_roll_is_in_flight() {
-        for settle in [false, true] {
-            let mut a = arena_in(PHASE_ROLLING);
-            assert_eq!(
-                apply_commit_phase(&mut a, settle).unwrap_err(),
-                HeartrotError::WrongPhase.into()
-            );
-            assert_eq!(a.phase, PHASE_ROLLING, "a refused call writes nothing");
+    fn a_snapshot_does_not_run_while_a_roll_is_in_flight() {
+        let mut a = arena_in(PHASE_ROLLING);
+        assert_eq!(
+            apply_commit_phase(&mut a, false).unwrap_err(),
+            HeartrotError::WrongPhase.into()
+        );
+        assert_eq!(a.phase, PHASE_ROLLING, "a refused call writes nothing");
+    }
+
+    /// The stranding scenario, end to end, and the highest-consequence path in this file.
+    ///
+    /// A won raid rolls; the crank dies inside the roll window. `Arena::tick` is advanced by
+    /// nothing but `boss_tick`, so the clock `abandon_roll` measures its own timeout against
+    /// is frozen — the arena cannot time out however long an operator waits. Tag 12 is then
+    /// the only exit, and it must take it.
+    #[test]
+    fn a_dead_crank_in_rolling_is_still_recoverable() {
+        let mut a = arena_in(PHASE_FIGHTING);
+        assert!(a.end_fight(crate::state::OUTCOME_WIN));
+        a.begin_roll().expect("a won match rolls");
+        assert_eq!(a.phase, PHASE_ROLLING);
+
+        // The crank is gone. Nothing advances `tick`, so the timeout never elapses — wait
+        // as many wall-clock roll windows as you like and `abandon_roll` still writes
+        // nothing. This is what makes tag 12 the last resort rather than a shortcut.
+        for _ in 0..(crate::state::ROLL_TIMEOUT_TICKS * 10) {
+            assert!(!a.abandon_roll(), "a frozen clock never times the roll out");
         }
+        assert_eq!(a.phase, PHASE_ROLLING);
+
+        apply_commit_phase(&mut a, true).expect("tag 12 is the only way these accounts come back");
+        assert_eq!(a.phase, PHASE_SETTLED);
+        assert_eq!(
+            a.next_affix_seed, [0u8; 32],
+            "no seed was invented, so `next_incarnation` still refuses loudly"
+        );
     }
 
     /// Tag 11 is a snapshot, not an ending: it must leave the phase exactly as it found it

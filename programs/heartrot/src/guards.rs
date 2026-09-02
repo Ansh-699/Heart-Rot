@@ -50,7 +50,10 @@
 #![allow(unexpected_cfgs)]
 
 use {
-    crate::{error::HeartrotError, state::PlayerSlot},
+    crate::{
+        error::HeartrotError,
+        state::{PlayerSlot, Players, ZONE_ARENA},
+    },
     pinocchio::{
         account::AccountView,
         address::{Address, address_eq},
@@ -180,6 +183,59 @@ pub fn assert_pda<const N: usize>(
     }
 }
 
+/// Same question as [`assert_pda`] — "is this address the PDA for `seeds`?" — answered in
+/// one hash instead of a search, using the bump the account already stores.
+///
+/// [`assert_pda`] costs ~1,500 CU *per candidate bump it rejects*, so its price is decided
+/// by which `arena_id` happened to be rolled: measured, an arena whose children land on
+/// bump 255 pays 3,452 CU in `shoot`'s guards and one at 251/254 pays 10,952
+/// (`docs/review/chain-cost.md`). This function is flat at one `sol_sha256` regardless,
+/// which is why the caller passes the bump rather than having it searched for.
+///
+/// **A forged bump is not acceptable here, and cannot be supplied.** The bump is read out
+/// of the account's own byte 2 (`state::init` is its only writer) *after* two checks the
+/// caller must already have made, and those two are what make this equivalent to the
+/// search:
+///
+/// - [`assert_owned_by`] — only this program may write these bytes;
+/// - `state::load`/`load_mut` — the discriminator proves the byte is the bump of the type
+///   the caller thinks it is holding, not some other layout's field.
+///
+/// The hole [`assert_pda`]'s search closes is the bump-canonicalization one: a caller
+/// supplying non-canonical bump `B` for which `derive(seeds, B)` is still a valid
+/// off-curve address, and standing a *second, parallel* account there. That address is
+/// unreachable for this program. Only `init::create_pda_account` creates these accounts,
+/// it derives canonically and signs with the canonical bump, so the program never signs
+/// `seeds ‖ B`; without that signature the System Program will not `assign` the address to
+/// us, and an account we do not own fails `assert_owned_by`. An address that is *on* the
+/// curve is worse for the attacker, not better — a keypair can `assign` it to us, but only
+/// this program may then write its data, so it stays zeroed and fails the discriminator.
+/// So a non-canonical-bump account that reaches this function does not exist, and the one
+/// that does reach it proves its own bump by reproducing its own address.
+///
+/// Rejection is [`ProgramError::InvalidSeeds`], the same code [`assert_pda`] returns, so
+/// swapping one for the other does not change what a failed transaction tells a caller.
+///
+/// Takes the address rather than the `AccountView` because `try_borrow_mut` takes
+/// `&mut self`: the bump is only readable while the data borrow is held, and `address()`
+/// is not callable then. Copy the address out before borrowing.
+#[inline(always)]
+pub fn assert_pda_at_bump<const N: usize>(
+    address: &Address,
+    seeds: &[&[u8]; N],
+    program_id: &Address,
+    bump: u8,
+) -> Result<(), ProgramError> {
+    if address_eq(
+        address,
+        &Address::derive_address(seeds, Some(bump), program_id),
+    ) {
+        Ok(())
+    } else {
+        Err(ProgramError::InvalidSeeds)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Session authority
 // ---------------------------------------------------------------------------
@@ -223,6 +279,33 @@ pub fn assert_session_authority(
         Ok(())
     } else {
         Err(HeartrotError::WrongSessionKey.into())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Raid readiness
+// ---------------------------------------------------------------------------
+
+/// Reject a muster armed over an empty pit.
+///
+/// `begin_muster` (tag 3) reads no `Players` account today, so a raid can be armed with
+/// nobody through the gate: `spawn_volley` finds `best_seat == NO_TARGET`, no volley ever
+/// spawns, and the crank burns the whole enrage window on an empty room before recording
+/// `OUTCOME_ENRAGE`. This is the check that makes that state unrepresentable, and it is
+/// the reason tag 3 gains a `Players` account.
+///
+/// `zone` alone is the whole test, and it is sufficient rather than lazy: a zeroed slot is
+/// `ZONE_LOBBY`, and the only writer of `ZONE_ARENA` is `enter_gate`, which already passed
+/// [`assert_session_authority`] and a gate-tile check. So a seat in the arena is by
+/// construction a claimed seat that walked there. Checking `hp` as well would be wrong,
+/// not merely redundant — a raider who died to the previous incarnation's last volley is
+/// still a raider, and a muster is not a fight.
+#[inline(always)]
+pub fn assert_any_raider(players: &Players) -> Result<(), ProgramError> {
+    if players.slots.iter().any(|slot| slot.zone == ZONE_ARENA) {
+        Ok(())
+    } else {
+        Err(HeartrotError::NoRaiders.into())
     }
 }
 
@@ -360,6 +443,68 @@ mod tests {
         );
     }
 
+    /// The cheap guard must refuse everything the searching one refuses, on the same
+    /// code. The bump is the interesting axis: it is the one input the searching guard
+    /// never took, so the wrong bump against the right address is the case that decides
+    /// whether swapping the two is safe.
+    #[test]
+    fn cheap_pda_guard_rejects_wrong_seeds_wrong_program_and_wrong_bump() {
+        let arena_id = 7u64.to_le_bytes();
+        let seeds: [&[u8]; 2] = [SEED_ARENA, &arena_id];
+        // Bump 254, not 255 — a fixture at the top of the search would let an
+        // implementation that ignores `bump` entirely pass this test.
+        let derived = Address::derive_address(&seeds, Some(254), &PROGRAM);
+
+        // Control: the address really is this PDA at this bump.
+        assert!(assert_pda_at_bump(&derived, &seeds, &PROGRAM, 254).is_ok());
+
+        // Every other bump for the same seeds. This is the bump-canonicalization case,
+        // and it must fail on all 255 of them.
+        for bump in 0..=u8::MAX {
+            if bump == 254 {
+                continue;
+            }
+            assert_eq!(
+                assert_pda_at_bump(&derived, &seeds, &PROGRAM, bump).unwrap_err(),
+                ProgramError::InvalidSeeds,
+                "bump {bump} validated an address it does not derive"
+            );
+        }
+
+        // One match's account driven by another match's instruction.
+        let wrong_seeds: [&[u8]; 2] = [SEED_BOSS, &arena_id];
+        assert_eq!(
+            assert_pda_at_bump(&derived, &wrong_seeds, &PROGRAM, 254).unwrap_err(),
+            ProgramError::InvalidSeeds
+        );
+
+        // A program that could have created a look-alike account.
+        assert_eq!(
+            assert_pda_at_bump(&derived, &seeds, &OTHER, 254).unwrap_err(),
+            ProgramError::InvalidSeeds
+        );
+    }
+
+    /// The two PDA guards must agree on the canonical account, or `shoot` and `boss_tick`
+    /// would be enforcing different rules about the same `Boss`.
+    #[test]
+    fn both_pda_guards_agree_on_the_canonical_account() {
+        let arena_id = 7u64.to_le_bytes();
+        let seeds: [&[u8]; 2] = [SEED_ARENA, &arena_id];
+        let derived = Address::derive_address(&seeds, Some(u8::MAX), &PROGRAM);
+
+        let mut r = raw::<8>(
+            Address::new_from_array(*derived.as_array()),
+            PROGRAM,
+            false,
+            false,
+        );
+        let v = view!(r);
+
+        let searched = assert_pda(&v, &seeds, &PROGRAM).unwrap();
+        assert!(assert_pda_at_bump(v.address(), &seeds, &PROGRAM, searched).is_ok());
+    }
+
     #[test]
     fn session_authority_rejects_unsigned_unclaimed_and_stolen_seats() {
         let mut slot = PlayerSlot::zeroed();
@@ -414,6 +559,35 @@ mod tests {
             assert_session_authority(&slot, &v).unwrap_err(),
             HeartrotError::SeatUnclaimed.into()
         );
+    }
+
+    /// The refusal is the product: an empty pit must not arm a raid. The accepting case
+    /// is the control, and it uses the *last* seat so an implementation that only looks at
+    /// `slots[0]` fails here rather than passing by luck.
+    #[test]
+    fn raider_guard_rejects_a_pit_nobody_walked_into() {
+        let mut players = Players::zeroed();
+        assert_eq!(
+            assert_any_raider(&players).unwrap_err(),
+            HeartrotError::NoRaiders.into()
+        );
+
+        // A claimed seat that never reached the gate is still not a raider.
+        players.slots[0].session_pubkey = [3u8; 32];
+        players.slots[0].hp = 100;
+        assert_eq!(
+            assert_any_raider(&players).unwrap_err(),
+            HeartrotError::NoRaiders.into()
+        );
+
+        // Control.
+        players.slots[crate::state::MAX_SEATS - 1].zone = ZONE_ARENA;
+        assert!(assert_any_raider(&players).is_ok());
+
+        // A dead raider is still a raider: the muster is not a fight, and refusing here
+        // would wedge a lobby whose only occupant died to the previous incarnation.
+        players.slots[crate::state::MAX_SEATS - 1].hp = 0;
+        assert!(assert_any_raider(&players).is_ok());
     }
 
     /// The three refusals above are the entire perimeter for player actions, and the only

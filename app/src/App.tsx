@@ -19,6 +19,11 @@
  *   This is the only path from a keypress to the chain; a Worker round trip here would
  *   throw away the entire reason for the rollup.
  *
+ *   **Through** — `useGateEntry` then `useMuster`: standing on the gate sends
+ *   `enter_gate`, and the seat's own `zone` flipping arms the muster. There is no button
+ *   at either end, and both watch the chain's copy of the player rather than an input
+ *   callback, because the version that fired from `onMove` stranded players permanently.
+ *
  * The panels themselves live in `screens/` and `ui/Hud.tsx`, and the world is drawn by
  * `render/Arena.tsx`. They are imported, never re-implemented: a second copy of the part
  * list or the skin table drifts from the chain layout the moment either is touched.
@@ -33,6 +38,7 @@ import {
   PHASE_LOBBY,
   PHASE_SETTLED,
   PHASE_SETTLING,
+  ZONE_ARENA,
   ZONE_LOBBY,
   confirmSignature,
   connectMatch,
@@ -40,6 +46,7 @@ import {
   decodeTransactionError,
   enterGate,
   movePlayer,
+  onGate,
   sendInstructions,
   shoot,
   type HeartrotRpc,
@@ -49,7 +56,6 @@ import {
 import { attachControls } from './input/controls';
 import { recordSend } from './net/metrics';
 import DevPanel from './ui/DevPanel';
-import { GATE_MAX, GATE_MIN } from './render/sprites';
 import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
 import { Arena } from './render/Arena';
@@ -62,7 +68,6 @@ import {
   useSelect,
   useStore,
   type ConnectionStatus,
-  type Screen,
 } from './state/store';
 import { Hud } from './ui/Hud';
 
@@ -93,24 +98,6 @@ const addr = (value: string): Addr => value as Addr;
 const ARENA_UNITS = MAP_TILES * MAP_TILE;
 
 /**
- * The gate tile block, mirrored from `GATE_MIN_X`..`GATE_MAX_Y` in
- * `programs/heartrot/src/handlers/player.rs`. There is no "enter the gate" button by
- * design — the gate is a place you walk to — so the client has to know where it is in
- * order to send `enter_gate` when the player arrives.
- *
- * The numbers live in `render/sprites.ts` because the renderer has to draw the same block
- * it fires on — two copies is how the marker ends up somewhere the gate is not.
- *
- * ponytail: still a second copy of a chain constant, like the wall ring in
- * `net/predict.ts`. Both retire together when the tilemap build step emits the map data
- * for both sides; until then a disagreement costs a player who stands on the gate and
- * never enters.
- */
-function onGate(x: number, y: number): boolean {
-  return x >= GATE_MIN && x <= GATE_MAX && y >= GATE_MIN && y <= GATE_MAX;
-}
-
-/**
  * `enter_gate` is rejected silently while the chain still has you off the tile, and
  * gameplay is sent with `skipPreflight`, so a single attempt that loses the race is
  * invisible. Retry on this period until the seat's `zone` actually flips.
@@ -126,10 +113,30 @@ export default function App() {
   const status = useSelect((s) => s.status);
   const store = useStore();
 
+  /**
+   * The one `#stage` node, owned here rather than by the two screens that show it.
+   *
+   * It used to be declared twice — once in `screens/Lobby.tsx`, once in `ArenaScreen` —
+   * and `World` portalled into whichever one was mounted. React reconciles a portal on
+   * container *identity*, so walking through the gate swapped the container and the whole
+   * arena was deleted and rebuilt: `SCENE` (16 paths, 332 KB of path data, 46.3 ms to
+   * build), the knight pose defs, the boss art, every walk odometer, both rAF loops, the
+   * ResizeObserver and the camera — on the single most important transition in the game.
+   * Declared once, at a fixed position in `<main>`'s children, the node survives the flip
+   * and React only swaps the panel beside it.
+   *
+   * A ref, not `getElementById` in an effect: refs are attached in the commit phase, so
+   * the portal has its host in the same paint the node appears in rather than one frame
+   * later. `hasStage` is a separate child slot, so lobby↔arena never changes its position.
+   */
+  const [stage, setStage] = useState<HTMLElement | null>(null);
+  const hasStage = screen === 'lobby' || screen === 'arena';
+
   const link = useMatchLink();
   // Not inside `World`: the gate is what gets you *out* of the lobby, and it must keep
   // running on a screen whose stage node the renderer has not attached to yet.
   useGateEntry(link);
+  useMuster();
 
   // The chain decides a match is over; somebody has to tell the base layer. `settle()`
   // is self-debouncing, so all twenty clients seeing this notification is fine.
@@ -141,12 +148,15 @@ export default function App() {
     <div className="shell">
       <Header />
       <main className="main">
+        {/* First, so the grid puts it in the wide column and the panel beside it. The
+            renderer's territory — see `World`. React never touches what is inside it. */}
+        {hasStage && <div id="stage" className="stage" role="presentation" ref={setStage} />}
         {screen === 'onboarding' && <Onboarding />}
         {screen === 'select' && <CharacterSelect />}
         {screen === 'lobby' && <Lobby />}
         {screen === 'arena' && <ArenaScreen />}
       </main>
-      <World screen={screen} link={link} />
+      <World host={hasStage ? stage : null} link={link} />
       <ErrorBar />
       <DevPanel />
     </div>
@@ -203,7 +213,8 @@ function ErrorBar() {
 //
 // Named `ArenaScreen`, not `Arena`: `render/Arena` is the renderer and this is the panel
 // beside it. Screens 1–3 are `screens/*`; the arena's panel is `ui/Hud`, so all this
-// screen owns is the stage node and the layout around it.
+// screen owns is the panel and the result card — `#stage` is `App`'s, and deliberately
+// not this screen's, so that the gate transition cannot remount the arena.
 // ---------------------------------------------------------------------------
 
 function ArenaScreen() {
@@ -211,8 +222,6 @@ function ArenaScreen() {
 
   return (
     <>
-      {/* The renderer's territory — see `World`. React never touches what is inside it. */}
-      <div id="stage" className="stage" role="presentation" />
       <aside className="panel">
         <Hud />
       </aside>
@@ -253,15 +262,18 @@ function Result() {
 // ---------------------------------------------------------------------------
 
 /**
- * Draws the scene into whichever screen currently owns `#stage`, and binds input to it.
+ * Draws the scene into `#stage`, and binds input to it.
  *
- * A portal rather than a child, because the two screens that have a stage declare it
- * themselves — `screens/Lobby.tsx` owns the lobby's node — and duplicating the id here to
- * host the renderer would put two `#stage` elements in the document. One portal covers
- * both screens and the id stays declared exactly once.
+ * A portal rather than a child so that this component — and only this component — carries
+ * the three subscriptions that fire 10-20 times a second. Inlining the tree into `App`
+ * would re-render the header, the panels and the error bar at notification rate for a
+ * subtree that is drawn by the frame loop anyway.
+ *
+ * `host` is `App`'s single stage node and never changes identity between the lobby and
+ * the arena, which is what keeps the portal from being torn down and rebuilt at the gate.
+ * A portal whose container changes is deleted and remounted, never moved.
  */
-function World({ screen, link }: { screen: Screen; link: Link }) {
-  const host = useStageHost(screen);
+function World({ host, link }: { host: HTMLElement | null; link: Link }) {
   const arena = useSelect((s) => s.arena);
   const boss = useSelect((s) => s.boss);
   const players = useSelect((s) => s.players);
@@ -300,19 +312,6 @@ function World({ screen, link }: { screen: Screen; link: Link }) {
     </div>,
     host,
   );
-}
-
-/**
- * The `#stage` node of the screen that is currently mounted, or `null` on the two screens
- * that have none. Keyed on the screen because that is exactly when the node is replaced;
- * re-reading the same element is a no-op, so this settles in one pass.
- */
-function useStageHost(screen: Screen): HTMLElement | null {
-  const [host, setHost] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    setHost(document.getElementById('stage'));
-  }, [screen]);
-  return host;
 }
 
 /**
@@ -402,6 +401,14 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // Whichever drawing surface the renderer chose. Its box is the arena square, so
         // its width is the scale; `null` when there is none yet, which `attachControls`
         // reads as "keep the last facing" rather than as an aim at the origin.
+        //
+        // `box.width / ARENA_UNITS` assumes the WHOLE 1024-unit world is on screen, which
+        // is true only while `#camera` is at scale 1 — `FIGHTING` onward. That is also the
+        // only phase in which `shoot` is legal, so this is correct today, but it is an
+        // undocumented coupling between two files: if anything ever calls `aimOrigin`
+        // outside a fight, it has to multiply by the camera's own scale (2 in the lobby)
+        // and offset by its translate, or every shot lands 512 units from where it was
+        // aimed.
         const surface = host.querySelector('svg, canvas');
         if (surface === null) return null;
         const box = surface.getBoundingClientRect();
@@ -425,11 +432,16 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         recordSend(seq);
         send(movePlayer({ ...common, session, seat: match.seat, dir, seq }));
       },
-      onShoot: (dir) => {
+      onShoot: (dx, dy) => {
+        // Free aim: the raw `(i8, i8)` the pointer or the held keys produced, normalised
+        // on chain. Not an octant — a top-centre boss on eight-way aim is measurably
+        // unwinnable (33.6% of pit stands can hit anything at all, and the core never),
+        // and the client is not trusted to resolve the hit either way.
+        //
         // No `seq` on the wire for `shoot`, so it counts toward throughput and never
         // toward latency. Inventing a round trip for it would be a made-up number.
         recordSend();
-        send(shoot({ ...common, boss: match.boss, session, seat: match.seat, dir }));
+        send(shoot({ ...common, boss: match.boss, session, seat: match.seat, dx, dy }));
       },
     });
 
@@ -492,6 +504,33 @@ function useGateEntry(link: Link): void {
       clearInterval(timer);
     };
   }, [link, store]);
+}
+
+/**
+ * Through the gate with the boss still asleep — arm the muster.
+ *
+ * This is where the "Wake it up" button went. The gate *is* the interaction: `enter_gate`
+ * already records commitment permanently, so the first knight through it opens a
+ * fixed-length window (`begin_muster` stamps `fight_at_tick = tick + MUSTER_TICKS`) and
+ * the chain's own crank ends it. Nobody has to press anything, no host can disconnect
+ * holding the raid hostage, and a raid can never fail to start.
+ *
+ * Nineteen of twenty clients lose the race and the route answers `already_started`, which
+ * `startMatch` treats as the success it is.
+ *
+ * Both inputs are chain-authoritative *values*, not notifications, so the body runs once
+ * per transition rather than once per `Players` write — which at twenty seats is ~10/s,
+ * 68.4% of them carrying no change at all. `arena === null` reads as `undefined !== 0`,
+ * so nothing fires before the first `Arena` snapshot lands.
+ */
+function useMuster(): void {
+  const store = useStore();
+  const throughGate = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
+  const asleep = useSelect((s) => s.arena?.phase === PHASE_LOBBY);
+
+  useEffect(() => {
+    if (throughGate && asleep) void store.startMatch();
+  }, [throughGate, asleep, store]);
 }
 
 // ---------------------------------------------------------------------------
@@ -617,29 +656,7 @@ function useMatchLink(): Link {
   return link;
 }
 
-// ---------------------------------------------------------------------------
-// Self-check
-//
-// The gate block is a copy of a chain constant, and a wrong copy fails the way a copy
-// always does: the player stands on the gate, `enter_gate` is never sent or never
-// accepted, and the raid simply never starts. Dev-only.
-// ---------------------------------------------------------------------------
-
-if (import.meta.env.DEV) {
-  const corners: readonly (readonly [number, number, boolean])[] = [
-    [GATE_MIN, GATE_MIN, true],
-    [GATE_MAX, GATE_MAX, true],
-    [GATE_MIN - 1, GATE_MIN, false],
-    [GATE_MAX + 1, GATE_MAX, false],
-    [GATE_MIN, GATE_MAX + 1, false],
-  ];
-  for (const [x, y, expected] of corners) {
-    if (onGate(x, y) !== expected) {
-      throw new Error(`App self-check: onGate(${x}, ${y}) should be ${String(expected)}`);
-    }
-  }
-  // 30..34 tiles inclusive-exclusive, exactly as `player.rs` writes it.
-  if (GATE_MIN !== 480 || GATE_MAX !== 543) {
-    throw new Error(`App self-check: gate block is ${GATE_MIN}..${GATE_MAX}, expected 480..543`);
-  }
-}
+// The gate self-check that used to live here is gone with the copy it guarded: `onGate`
+// and the four `GATE_*` bounds are now emitted into `packages/client/src/map.ts` by
+// `tools/gen_map.py`, out of the same `G` marks in `assets/map/arena.json` that produce
+// `map::GATE_MIN_X`..`GATE_MAX_Y` on the chain. One fact, one place, nothing to diff.

@@ -1,4 +1,5 @@
-//! `boss_tick()` — the game loop, run by the ER's crank scheduler every ~400 ms.
+//! `boss_tick()` — the game loop, run by the ER's crank scheduler every
+//! [`crate::state::TICK_MS`] (100 ms).
 //!
 //! This is the only instruction in the program nobody sends. A row in the validator's
 //! SQLite table replays a *frozen* account list — `[Arena, Boss, Players, crank_signer]`
@@ -42,13 +43,13 @@
 //! pass. Damage *to* the boss is not here — that is `shoot`, a player transaction.
 //!
 //! Everything is integer. The client re-runs this exact arithmetic locally to render
-//! 2.5 Hz of chain state as 60 fps of bullet hell, so a single float — or a single
+//! 10 Hz of chain state as 60 fps of bullet hell, so a single float — or a single
 //! wall-clock read — would put the two simulations on different rails.
 
 use pinocchio::{AccountView, Address, ProgramResult};
 
 use crate::error::HeartrotError;
-use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
+use crate::guards::{assert_owned_by, assert_pda_at_bump, assert_signer, assert_writable};
 // The crank identity, imported rather than re-declared. `settle::start_match` derives the
 // signer it freezes into the crank row from these two values and this handler re-derives
 // the signer it authorizes against from them: they are the write side and the verify side
@@ -64,9 +65,10 @@ use crate::handlers::settle::{CRANK_PROGRAM_ID, CRANK_SIGNER_SEED};
 use crate::hitboxes::{Muzzle, MUZZLES, N_MUZZLES};
 use crate::map;
 use crate::state::{
-    load_mut, Arena, Boss, Players, BULLET_ACTIVE, BULLET_FREE, MAX_BULLETS, MAX_SEATS, NO_TARGET,
-    OUTCOME_ENRAGE, OUTCOME_UNDECIDED, OUTCOME_WIN, OUTCOME_WIPE, PHASE_FIGHTING, PHASE_ROLLING,
-    SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
+    load_mut, Arena, Boss, Players, BOSS_CORE_HP, BULLET_ACTIVE, BULLET_FREE, CORE_HP_PER_RAIDER,
+    MAX_BULLETS, MAX_SEATS, NO_TARGET, OUTCOME_ENRAGE, OUTCOME_UNDECIDED, OUTCOME_WIN,
+    OUTCOME_WIPE, PHASE_FIGHTING, PHASE_MUSTERING, PHASE_ROLLING, SEED_BOSS, SEED_PLAYERS,
+    VOLLEY_INTERVAL_TICKS, ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
@@ -127,15 +129,24 @@ const fn wall_at(x: i32, y: i32) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Bullet speed, derived from a real-world speed so the tick rate can change under it.
-/// 120 units/s is 7.5 tiles a second — 3 tiles per 400 ms, the rate this was balanced at.
-/// Originally: 3 tiles per 400 ms. Boss centre to a player
-/// at mid-range is ~8 ticks of travel, which is the dodge window the whole design rests
-/// on: hitscan for the player, travel time for the boss (spec §3).
+/// 420 units/s is 26 tiles a second, 42 units per 100 ms tick.
 ///
-/// It must fit `Bullet.dx`/`dy`, which are `i8`. Collision is swept (see
-/// [`bullet_hits`]), so raising this does *not* let bullets tunnel through players —
-/// that coupling is the usual reason a number like this is stuck too low.
-const BULLET_UNITS_PER_SEC: i32 = 120;
+/// It must be **faster than a player**, and that is the whole reason for the number.
+/// `MOVE_STEP` is one 16-unit tile per 50 ms ER slot = 320 u/s, so at the 120 u/s this
+/// used to carry a raider running in a straight line could never be caught by a volley
+/// aimed at where they were — movement cost nothing and the bullet hell was decorative.
+/// 420 is a 1.31 ratio to the player, and muzzle-to-pit flight of 0.42–0.68 s, which is
+/// the dodge window the design rests on: hitscan for the player, travel time for the
+/// boss (spec §5.1).
+///
+/// It must fit `Bullet.dx`/`dy`, which are `i8`; 42 is comfortably inside 127. Collision
+/// is swept (see [`bullet_hits`]), so raising this does *not* let bullets tunnel through
+/// players — that coupling is the usual reason a number like this is stuck too low.
+///
+/// Renderer note, recorded here because the number causes it: a 4-unit dot stepping ~7
+/// units per displayed frame strobes. The client must draw a velocity-stretched trail or
+/// 420 looks *worse* than 120 while being correct. The hit is right either way.
+const BULLET_UNITS_PER_SEC: i32 = 420;
 const BULLET_SPEED: i32 = BULLET_UNITS_PER_SEC * crate::state::TICK_MS as i32 / 1_000;
 
 /// Player collision radius, ~¾ of a tile. Compared as a squared distance against a
@@ -146,13 +157,10 @@ const PLAYER_HIT_RADIUS: i32 = 12;
 /// player can eat a glancing volley and live but cannot stand in one.
 const BULLET_DAMAGE: u16 = 8;
 
-/// Death lasts 8 ticks ≈ 3.2 s at the crank's target rate (spec §3: "dead for 3
-/// seconds"). Counted in ticks, never milliseconds — the crank makes no wall-clock
-/// promise and a millisecond timer would run at a different speed on a slower validator.
+/// Death lasts 3.2 s — 32 ticks at [`crate::state::TICK_MS`]. Counted in ticks, never
+/// milliseconds: the crank makes no wall-clock promise and a millisecond timer would run
+/// at a different speed on a slower validator.
 const RESPAWN_TICKS: u32 = crate::state::ticks_for(3_200);
-
-/// One volley every 8 ticks (spec §2, `volley_interval = 8 ticks`).
-const VOLLEY_INTERVAL_TICKS: u8 = crate::state::ticks_for(3_200) as u8;
 
 /// `bullets_per_volley = 3 + alive_players` — difficulty as bullet density, so twenty
 /// players make a visibly harder fight rather than a boss with a hidden HP multiplier.
@@ -168,6 +176,77 @@ const SPREAD_DEN: i32 = 24;
 /// because parts can also be destroyed between ticks by other players' transactions.
 const VENT_THRESHOLD_NUM: u32 = 35;
 const VENT_THRESHOLD_DEN: u32 = 100;
+
+// ---------------------------------------------------------------------------
+// The hand slam
+// ---------------------------------------------------------------------------
+
+// The pit needs pressure that is not a projectile, and `Boss` has **literally no padding
+// left** — offsets 0,1,2,3,4,5,6,8,10,12,14,32 in 50 bytes — so this mechanic stores
+// nothing at all. Chain and client both compute it as a pure function of `(affix_seed,
+// tick, vent_open, parts)`, every one of which is already published, which is the same
+// trick the bullet spread plays and the reason the whole attack adds **zero** bytes and
+// zero notification traffic to a `Players` stream that is already 68.4 % no-op and
+// delivered twice by the Magic Router.
+//
+// The core loop it closes: the column you must stand in to damage a limb is the column
+// that limb slams.
+
+/// The arena is divided into [`SLAM_LANES`] vertical strips; a slam claims exactly one.
+/// Eight strips over a 64-tile map is 8 tiles each, which is wide enough to be a place
+/// rather than a line and narrow enough that stepping out of it is a decision.
+const SLAM_LANES: i32 = 8;
+const SLAM_LANE_W: i32 = ARENA_SIZE / SLAM_LANES;
+
+/// One slam every 6 s. Resolves on the tick where `tick % SLAM_PERIOD_TICKS == 0`, so
+/// the beat needs no counter and no field: `heartbeat` advances `tick` in every phase,
+/// but [`step`] runs only while `FIGHTING`, so this is live during a fight and inert
+/// outside one.
+const SLAM_PERIOD_TICKS: u32 = crate::state::ticks_for(6_000);
+
+/// How long the wind-up is visible before it lands.
+///
+/// **Nothing on chain reads this**, and that is correct: the telegraph is a picture, and
+/// §7.5 forbids an animation clock in the account. It lives here because the *number* is
+/// a game rule the client mirrors — the window is
+/// `tick % SLAM_PERIOD_TICKS >= SLAM_PERIOD_TICKS - SLAM_TELEGRAPH_TICKS` — and a rule
+/// mirrored from a hand-typed literal in a keyframe stops matching the attack the first
+/// time anyone tunes it.
+///
+/// The one trap, because it is invisible: those telegraph ticks fall in cycle
+/// `tick / SLAM_PERIOD_TICKS`, but the slam they announce resolves in the *next* one. A
+/// client winding up must ask [`slam_lane`] about the next beat —
+/// `(tick / SLAM_PERIOD_TICKS + 1) * SLAM_PERIOD_TICKS` — never about `tick`. Mixing its
+/// own cycle index draws the wind-up over one column and lands the hand on another, and
+/// nothing anywhere reports it. `the_telegraph_announces_the_slam_that_lands` is the
+/// executable copy of that recipe.
+///
+/// 1.5 s is not a feel number: the worst latency ever measured on any path in this
+/// project is 1,126 ms, and 1.5 s × 320 u/s of player speed is 480 units — 3.75 lane
+/// widths of escape — so the slam is dodgeable even from the far side of a bad
+/// connection.
+pub const SLAM_TELEGRAPH_TICKS: u32 = crate::state::ticks_for(1_500);
+
+/// 45 × 2 = 90, under the 100 HP a seat spawns with: two slams do not quite kill, a slam
+/// plus a volley does. It is a mechanic check, not a damage check.
+const SLAM_DAMAGE: u16 = 45;
+
+/// `Boss.parts` indices of the two hands (spec §2's table). The mace slams the lanes
+/// under its own x span and the claws slam theirs; destroy a hand and it stops, on the
+/// same `parts[i] != 0` gate [`spawn_volley`] uses for a thorn's muzzle.
+const PART_MACE: usize = 7;
+const PART_CLAWS: usize = 8;
+
+/// Lanes the mace can claim, and the claws.
+const MACE_LANE_FIRST: i32 = 1;
+const MACE_LANE_COUNT: u64 = 3;
+const CLAWS_LANE_FIRST: i32 = 5;
+const CLAWS_LANE_COUNT: u64 = 2;
+
+/// With the vent exposed the torso lunges over it, whichever hands are left. Lane 4 is
+/// the centre column — the same column the stripped shell forces the raid to crowd into,
+/// which is what makes the climax dive-out / dive-back-in rather than a damage race.
+const SLAM_VENT_LANE: i32 = 4;
 
 // ---------------------------------------------------------------------------
 // Emitters
@@ -186,9 +265,33 @@ const _: () = {
     // `dx`/`dy` are i8. A speed that does not fit truncates silently into a bullet
     // travelling backwards.
     assert!(BULLET_SPEED > 0 && BULLET_SPEED <= i8::MAX as i32);
-    // A full volley must be spawnable without the pool being the binding constraint.
-    assert!(BASE_VOLLEY_BULLETS + MAX_SEATS <= MAX_BULLETS);
     assert!(PLAYER_HIT_RADIUS > 0);
+
+    // The pool must hold every volley that can be *in flight at once*, not one volley.
+    // The assert this replaced proved `3 + MAX_SEATS <= MAX_BULLETS` — true, and beside
+    // the point: bullets live for several ticks, so at a short enough interval or a slow
+    // enough bullet two or three volleys overlap and the pool starts silently dropping
+    // the tail of every one of them. That failure has no error and no log; it looks like
+    // the boss firing fewer bullets than the client predicted.
+    //
+    // Longest possible flight is corner to corner. Alpha-max-plus-beta-min bounds that
+    // diagonal by `ARENA_SIZE * 3 / 2` without a sqrt in a const context, and bounding
+    // it *high* is the safe direction here.
+    let travel = ARENA_SIZE * 3 / 2;
+    let lifetime = (travel + BULLET_SPEED - 1) / BULLET_SPEED;
+    let interval = VOLLEY_INTERVAL_TICKS as i32;
+    let volleys_in_flight = (lifetime + interval - 1) / interval;
+    assert!(volleys_in_flight * (BASE_VOLLEY_BULLETS + MAX_SEATS) as i32 <= MAX_BULLETS as i32);
+
+    // The lanes tile the arena exactly: no player x is outside every lane, and no two
+    // lanes claim the same column.
+    assert!(SLAM_LANE_W * SLAM_LANES == ARENA_SIZE);
+    assert!(SLAM_TELEGRAPH_TICKS > 0 && SLAM_TELEGRAPH_TICKS < SLAM_PERIOD_TICKS);
+    // Every lane a slam can name is a real lane.
+    assert!(SLAM_VENT_LANE >= 0 && SLAM_VENT_LANE < SLAM_LANES);
+    assert!(MACE_LANE_FIRST >= 0 && MACE_LANE_FIRST + MACE_LANE_COUNT as i32 <= SLAM_LANES);
+    assert!(CLAWS_LANE_FIRST >= 0 && CLAWS_LANE_FIRST + CLAWS_LANE_COUNT as i32 <= SLAM_LANES);
+    assert!(PART_MACE < crate::state::N_PARTS && PART_CLAWS < crate::state::N_PARTS);
 };
 
 // ---------------------------------------------------------------------------
@@ -322,7 +425,118 @@ fn heartbeat(arena: &mut Arena) -> bool {
         arena.abandon_roll();
         return false;
     }
+    if arena.phase == PHASE_MUSTERING {
+        // The same shape as the `ROLLING` branch above, for the same reason:
+        // `begin_fight` is total and self-gating — it checks the phase and the deadline
+        // itself — so there is no second copy of `MUSTER_TICKS` here, and no second
+        // definition of when the fight starts.
+        //
+        // This is the answer to "what stops a raid never starting": the crank ends the
+        // muster whether or not anybody else came, so no player, no host and no Worker
+        // has to act. `fight_at_tick` is what makes twenty browsers agree on the moment
+        // without talking to each other.
+        //
+        // `return false` on the flip tick too, deliberately. `begin_fight` stamps
+        // `enrage_at_tick = tick + ENRAGE_TICKS` on the tick it flips, so running `step`
+        // in the same execution would spend the fight's first tick before its clock had
+        // meaning. The first FIGHTING tick is the next execution.
+        arena.begin_fight();
+        return false;
+    }
     arena.phase == PHASE_FIGHTING
+}
+
+/// Which lane the hands slam on `tick`, or `None` when nothing lands this cycle.
+///
+/// Pure, and every input is already published: this is the whole telegraph. Twenty
+/// clients read the same `affix_seed`, the same `tick`, the same `vent_open` and the same
+/// `parts`, run these fifteen lines, and agree on where the hand lands — with no field on
+/// `Boss`, which has none to give, and no notification.
+///
+/// **The cycle index is the trap.** A slam resolving at tick `T = k · SLAM_PERIOD_TICKS`
+/// draws its lane from cycle `k`, but the ticks that *telegraph* it are
+/// `T − SLAM_TELEGRAPH_TICKS .. T − 1`, which divide to cycle `k − 1`. A client winding
+/// up must round *up* to the next beat and ask about that tick. See
+/// [`SLAM_TELEGRAPH_TICKS`].
+///
+/// A destroyed hand does not slam — the same `parts[i] != 0` gate [`spawn_volley`] puts
+/// on a thorn's muzzle, so "shoot the arm off and it stops hitting you" is a property of
+/// the data rather than a rule someone maintains. With the vent open the torso lunges
+/// regardless, which is why that branch is checked first and consults no limb.
+fn slam_lane(affix_seed: &[u8; 32], tick: u32, boss: &Boss) -> Option<i32> {
+    if tick % SLAM_PERIOD_TICKS != 0 {
+        return None;
+    }
+    if boss.vent_open != 0 {
+        return Some(SLAM_VENT_LANE);
+    }
+
+    let mut seed_bytes = [0u8; 8];
+    seed_bytes.copy_from_slice(&affix_seed[..8]);
+    let r = mix64(u64::from_le_bytes(seed_bytes) ^ mix64((tick / SLAM_PERIOD_TICKS) as u64));
+
+    // One bit picks the hand, the rest picks its lane — so the two choices cannot
+    // correlate into a hand that only ever slams one column.
+    let (limb, lane) = if r & 1 == 0 {
+        (PART_MACE, MACE_LANE_FIRST + ((r >> 1) % MACE_LANE_COUNT) as i32)
+    } else {
+        (PART_CLAWS, CLAWS_LANE_FIRST + ((r >> 1) % CLAWS_LANE_COUNT) as i32)
+    };
+    if boss.parts[limb] == 0 {
+        return None;
+    }
+    Some(lane)
+}
+
+/// Land `damage` on the live target at `live[i]`, and do the one and only death
+/// bookkeeping this program has.
+///
+/// Four things happen to a seat that dies and all four have to happen together:
+/// `respawn_at_tick` is the only death *state* (aliveness is derived from `hp`, so there
+/// is no flag to fall out of sync), `deaths` is the only death *record* and the only
+/// trace a wipe-heavy raid leaves once `survived` has been sampled, `pending_respawns`
+/// is what stops the wipe check reading a scheduled comeback as a corpse, and the
+/// swap-remove is what stops anything else in this tick hitting a body.
+///
+/// It is a function because there are now two damage sources. A slam that stamped three
+/// of the four would be a death the win/wipe check cannot see: the raid keeps
+/// `alive_count` it does not have, or settles as a wipe with a player still coming back.
+///
+/// Returns `true` when the seat died — which is also when `live[i]` now holds a
+/// *different* seat and the caller must not advance `i`.
+#[inline]
+fn damage_seat(
+    players: &mut Players,
+    live: &mut [Target; MAX_SEATS],
+    live_n: &mut usize,
+    pending_respawns: &mut u32,
+    i: usize,
+    tick: u32,
+    damage: u16,
+) -> bool {
+    // `get_mut`, not `[]`, on the one indexed read left in the handler. `live` is filled
+    // only from `0..MAX_SEATS` so this cannot miss today, but the module's contract is
+    // that a tick never panics, and a panic here does not merely drop one hit: it burns
+    // one of the crank's ten strikes, and ten of them delete the task permanently.
+    // Returning `false` reads as "the seat did not die", which is the safe answer — the
+    // caller advances `i` and the live list is left exactly as it was.
+    let Some(slot) = players.slots.get_mut(live[i].seat as usize) else {
+        return false;
+    };
+    slot.hp = slot.hp.saturating_sub(damage);
+    if slot.hp != 0 {
+        return false;
+    }
+    // Saturating: a raid that has died 65,535 times has stopped caring about the count.
+    slot.respawn_at_tick = tick.saturating_add(RESPAWN_TICKS);
+    slot.deaths = slot.deaths.saturating_add(1);
+    // `tick >= 1` (heartbeat ran), so the deadline just stamped is non-zero and this seat
+    // is coming back. Counted here as well as in the respawn pass because a seat that
+    // dies *this* tick was alive when that pass ran.
+    *pending_respawns += 1;
+    *live_n -= 1;
+    live[i] = live[*live_n];
+    true
 }
 
 /// The whole game loop, as pure state transition — no accounts, no CPI, no clock.
@@ -389,6 +603,39 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         live_n += 1;
     }
 
+    // ---- 1b. size the core to the raid -----------------------------------
+    //
+    // Difficulty scales on `core_hp`, and on nothing else. Measured time-to-kill with a
+    // fixed core ran 307 s solo against 15 s at twenty players — a 20× spread against a
+    // volley that scales 5.75× — which inverts the one requirement the whole design was
+    // built on. Topping the core up per raider compresses that to 3.9× and leaves the
+    // solo fight untouched, which matters because a devnet demo is usually one or two
+    // people and the first thing a visitor would otherwise experience is an unwinnable
+    // boss.
+    //
+    // `core_hp_max` *is* the high-water record, so this needs no snapshot and no new
+    // field on an account that has none to give. It is monotone, so it cannot be gamed by
+    // dying, leaving, or waiting for the twentieth player to walk out; it tolerates late
+    // entry; and it is orthogonal to incarnation scaling, which writes `parts`.
+    //
+    // **Not `parts`.** `u16` saturation already caps the crown at incarnation 41 and a
+    // raid multiplier on the shell would collapse that to incarnation ~2 at twenty
+    // players. `vent_open` is a ratio over `parts` and is untouched by this for the same
+    // reason.
+    let required = BOSS_CORE_HP.saturating_add(
+        CORE_HP_PER_RAIDER.saturating_mul(arena_occupants.max(1).min(MAX_SEATS as u32) as u16 - 1),
+    );
+    // `core_hp != 0` is not decoration. Without it a raid that has just killed the core
+    // and gained a raider in the same 100 ms would have it topped back up *before* the
+    // win check below reads `core_hp == 0` — the boss resurrected by its own difficulty
+    // curve, with no error and no log. The top-up sizes a live core; it never revives a
+    // dead one.
+    if boss.core_hp != 0 && boss.core_hp_max < required {
+        let top_up = required - boss.core_hp_max;
+        boss.core_hp_max = required;
+        boss.core_hp = boss.core_hp.saturating_add(top_up);
+    }
+
     // ---- 2. advance bullets, and collide ---------------------------------
     for index in 0..MAX_BULLETS {
         let bullet = &mut arena.bullets[index];
@@ -407,17 +654,19 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         // down a 2-tile corridor dies on the corridor wall, so holding a corridor is a
         // real position and standing in an open hall is not.
         //
-        // Two point samples, not one: a bullet covers BULLET_SPEED = 48 units per tick
-        // and the map's thinnest solid feature is a 2×2 pillar, 32 units through, so an
-        // endpoint-only test would let a volley pass clean through the pillar a player
-        // is hiding behind. Samples 24 units apart cannot skip a 32-unit obstacle. Same
+        // Two point samples, not one: a bullet covers BULLET_SPEED = 42 units per tick
+        // and the map's thinnest solid feature is 2 tiles, 32 units through, so an
+        // endpoint-only test would let a volley pass clean through the wall a player is
+        // hiding behind. Samples 21 units apart cannot skip a 32-unit obstacle. Same
         // tunnelling argument `bullet_hits` makes for players, same symptom if it is
         // skipped — cover that does not cover.
         //
         // ponytail: two lookups, not a DDA walk of the swept segment. A solid feature
-        // thinner than 24 units would still be jumped; `assets/map/arena.json` contains
-        // none and would have to grow one before it could matter. Upgrade path if it
-        // does: step the segment tile by tile, at ~3 lookups per bullet instead of 2.
+        // thinner than 21 units — one tile — would still be jumped; `assets/map/arena.json`
+        // contains none and would have to grow one before it could matter. Upgrade path
+        // if it does: step the segment tile by tile, at ~3 lookups per bullet instead of
+        // 2. `bullets_stop_at_generated_walls` searches the map for the case rather than
+        // naming a tile, so it keeps testing this after the arena is redrawn.
         //
         // The wall samples *clip* the swept segment, they do not cancel it. Freeing the
         // bullet here and skipping the player test — which is what this used to do — made
@@ -460,32 +709,18 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
 
             bullet.active = BULLET_FREE;
 
-            let slot = &mut players.slots[target.seat as usize];
-            slot.hp = slot.hp.saturating_sub(BULLET_DAMAGE);
-            if slot.hp == 0 {
-                // Dead. `respawn_at_tick` is the only death *state* there is — aliveness
-                // is derived from `hp`, so there is no flag to fall out of sync — and
-                // `deaths` is the only death *record*. Both are written on this one line
-                // for that reason: a death counted anywhere else is a second definition of
-                // "died", and the two would diverge the first time a player is killed by a
-                // path that forgets one of them. Saturating; a raid that dies 65,535 times
-                // has stopped caring about the count.
-                //
-                // It is also the only trace a wipe-heavy raid leaves: `survived` is one bit
-                // sampled at settle time, so without this a player who died nineteen times
-                // and respawned is indistinguishable from one who never took a hit.
-                slot.respawn_at_tick = tick.saturating_add(RESPAWN_TICKS);
-                slot.deaths = slot.deaths.saturating_add(1);
-                // `tick >= 1` (heartbeat ran), so the deadline just stamped is non-zero
-                // and this seat is coming back. Counted here as well as in the respawn
-                // pass because a seat that dies *this* tick was alive when that pass ran.
-                pending_respawns += 1;
-                // Swap-remove from the live list: this seat can absorb no more bullets
-                // this tick, and shrinking the list shortens every remaining bullet's
-                // inner loop.
-                live_n -= 1;
-                live[i] = live[live_n];
-            }
+            // Damage and, if it kills, the whole death record — stamped in one place so
+            // the slam below cannot grow a second, subtly different definition of "died".
+            // The swap-remove inside also shortens every remaining bullet's inner loop.
+            damage_seat(
+                players,
+                &mut live,
+                &mut live_n,
+                &mut pending_respawns,
+                i,
+                tick,
+                BULLET_DAMAGE,
+            );
             // One bullet, one hit — it is spent either way, so stop scanning.
             break;
         }
@@ -504,15 +739,64 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         bullet.y = to.1 as i16;
     }
 
-    // ---- 3. alive count ---------------------------------------------------
+    // ---- 3. the vent ------------------------------------------------------
+    //
+    // Derived state, cached for the client. Recomputed from the parts every tick and
+    // never set independently: the boss is a shell, and `sum(parts)` *is* its health.
+    // 9 × 65,535 × 100 ≈ 59 M, so u32 is ample; saturating anyway.
+    //
+    // Computed here, ahead of the slam, rather than after the volley where it used to
+    // sit: the slam's vent branch reads it, and a slam resolving against last tick's
+    // `vent_open` would lunge over a chest that closed 100 ms ago. Nothing between the
+    // bullet loop and here touches `parts` — only `shoot` does, in its own transaction —
+    // so moving it changes no value, only when it is available.
+    let shell: u32 = boss.parts.iter().map(|&hp| hp as u32).sum();
+    let shell_max: u32 = boss.parts_max.iter().map(|&hp| hp as u32).sum();
+    boss.vent_open = u8::from(
+        shell.saturating_mul(VENT_THRESHOLD_DEN) < shell_max.saturating_mul(VENT_THRESHOLD_NUM),
+    );
+
+    // ---- 4. the hand slam -------------------------------------------------
+    //
+    // Positional pressure that is not a projectile, and it costs the accounts nothing:
+    // see [`slam_lane`]. Resolved after the bullets so a player who was already killed
+    // this tick is not killed twice, and before the alive count so the wipe check below
+    // sees a slam death exactly as it sees a bullet death.
+    if let Some(lane) = slam_lane(&arena.affix_seed, tick, boss) {
+        let lo = lane * SLAM_LANE_W;
+        let hi = lo + SLAM_LANE_W;
+        let mut i = 0usize;
+        while i < live_n {
+            // A death swap-removes into `live[i]`, so `i` only advances on a survivor —
+            // otherwise the seat swapped into this slot never gets tested.
+            if live[i].x >= lo
+                && live[i].x < hi
+                && damage_seat(
+                    players,
+                    &mut live,
+                    &mut live_n,
+                    &mut pending_respawns,
+                    i,
+                    tick,
+                    SLAM_DAMAGE,
+                )
+            {
+                continue;
+            }
+            i += 1;
+        }
+    }
+
+    // ---- 5. alive count ---------------------------------------------------
     //
     // Recomputed from the slots rather than decremented as players die. `shoot` and
     // `enter_gate` also touch this number; deriving it every tick means a bug in either
-    // of them self-heals within 400 ms instead of permanently mis-sizing every volley.
+    // of them self-heals within one 100 ms tick instead of permanently mis-sizing every
+    // volley.
     // `live_n <= MAX_SEATS = 20`, so the cast cannot truncate.
     arena.alive_count = live_n as u8;
 
-    // ---- 4. aggro ---------------------------------------------------------
+    // ---- 6. aggro ---------------------------------------------------------
     //
     // Nearest alive player, which is the whole targeting rule (spec §3) and is what
     // makes stepping forward pull fire off the group. No grouping feature, no threat
@@ -532,7 +816,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     }
     boss.target_seat = best_seat;
 
-    // ---- 5. the volley ----------------------------------------------------
+    // ---- 7. the volley ----------------------------------------------------
     if boss.attack_timer > 0 {
         boss.attack_timer -= 1;
     } else {
@@ -542,18 +826,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         }
     }
 
-    // ---- 6. the vent ------------------------------------------------------
-    //
-    // Derived state, cached for the client. Recomputed from the parts every tick and
-    // never set independently: the boss is a shell, and `sum(parts)` *is* its health.
-    // 9 × 65,535 × 100 ≈ 59 M, so u32 is ample; saturating anyway.
-    let shell: u32 = boss.parts.iter().map(|&hp| hp as u32).sum();
-    let shell_max: u32 = boss.parts_max.iter().map(|&hp| hp as u32).sum();
-    boss.vent_open = u8::from(
-        shell.saturating_mul(VENT_THRESHOLD_DEN) < shell_max.saturating_mul(VENT_THRESHOLD_NUM),
-    );
-
-    // ---- 7. end of match --------------------------------------------------
+    // ---- 8. end of match --------------------------------------------------
     //
     // The three ways a fight ends, as three *distinct* outcomes rather than one shared
     // phase. A raid that killed the core and a raid that was wiped used to land in the
@@ -800,29 +1073,10 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
 
     let arena_key = *arena_account.address();
     let signer_key = *crank_signer.address();
-
-    // `Boss` and `Players` must belong to *this* arena. The frozen crank list makes a
-    // mismatch unlikely rather than impossible — nothing stops someone submitting a
-    // hand-built `boss_tick` with the right crank signer and the wrong boss — and the
-    // consequence would be one match's clock draining another match's boss.
-    //
-    // Re-derived, not compared against the stored `bump`: several bumps yield a valid
-    // off-curve address for the same seeds, so trusting a bump read out of the account
-    // being validated proves nothing about the account. `assert_pda` searches for the
-    // canonical one, at roughly 1,500 CU a candidate against the 400,000 CU ceiling.
-    // It runs here rather than after the casts for the same reason the checks above do:
-    // `try_borrow_mut` holds the `AccountView`, so every immutable interrogation has to
-    // happen first.
-    if assert_pda(boss_account, &[SEED_BOSS, arena_key.as_array()], program_id).is_err()
-        || assert_pda(
-            players_account,
-            &[SEED_PLAYERS, arena_key.as_array()],
-            program_id,
-        )
-        .is_err()
-    {
-        return Ok(());
-    }
+    // Copied out before anything is borrowed: `try_borrow_mut` locks the whole
+    // `AccountView`, and the derivation below needs the address while the data is held.
+    let boss_key = *boss_account.address();
+    let players_key = *players_account.address();
 
     // `load_mut` is the only sanctioned way to reach these structs: it rejects a short
     // account, a misaligned pointer, a wrong discriminator and a stale layout version.
@@ -884,6 +1138,44 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
         return Ok(());
     };
 
+    // `Boss` and `Players` must belong to *this* arena. The frozen crank list makes a
+    // mismatch unlikely rather than impossible — nothing stops someone submitting a
+    // hand-built `boss_tick` with the right crank signer and the wrong boss — and the
+    // consequence would be one match's clock draining another match's boss.
+    //
+    // The bump comes off the loaded struct rather than out of a `find_program_address`
+    // search, which is the same trade `shoot.rs:504` already made and for the same reason:
+    // the search costs ~1,500 CU per rejected candidate and the number of candidates is
+    // `arena_id` luck, so a searching guard prices a hot path on a dice roll. This handler
+    // runs 10x a second for a 3,800-tick match, which is where that spread actually lives
+    // (`docs/review/chain-cost.md`). It is not the weaker check: `assert_owned_by` above
+    // proves this program wrote the bump byte, `load_mut` proves it is the bump field of
+    // the layout being read, and the derivation proves that bump reproduces this exact
+    // address. An account at a non-canonical bump cannot reach here, because nothing in
+    // this program ever creates one.
+    //
+    // It runs after the loads, not before them, because the bump is inside the account.
+    // The only tick that gets this far is a FIGHTING one — `heartbeat` returned false and
+    // took the early exit otherwise — and nothing is mutated between here and `step`, so
+    // a mismatched pair still damages no boss. What it now also does is advance
+    // `arena.tick` first; that is not a new capability, because a caller who can produce
+    // the crank signature can spin the same clock with the *correct* accounts.
+    //
+    // `is_err()` absorbed into `Ok(())` like every other rejection in this file: a crank
+    // that returns `Err` ten times is deleted.
+    if assert_pda_at_bump(&boss_key, &[SEED_BOSS, arena_key.as_ref()], program_id, boss.bump)
+        .is_err()
+        || assert_pda_at_bump(
+            &players_key,
+            &[SEED_PLAYERS, arena_key.as_ref()],
+            program_id,
+            players.bump,
+        )
+        .is_err()
+    {
+        return Ok(());
+    }
+
     step(arena, boss, players);
 
     Ok(())
@@ -895,7 +1187,9 @@ mod tests {
     // `N_PARTS` sizes the fixtures' part arrays and `PHASE_SETTLING` / `ROLL_TIMEOUT_TICKS`
     // are what the assertions read; the handler itself names none of the three — it writes
     // phases only through the `Arena` helpers, which is the point.
-    use crate::state::{Bullet, N_PARTS, PHASE_SETTLING, ROLL_TIMEOUT_TICKS};
+    use crate::state::{
+        Bullet, ENRAGE_TICKS, MUSTER_TICKS, N_PARTS, PHASE_SETTLING, ROLL_TIMEOUT_TICKS, ZONE_LOBBY,
+    };
     use bytemuck::Zeroable;
 
     fn fight() -> (Arena, Boss, Players) {
@@ -937,7 +1231,7 @@ mod tests {
         slot.session_pubkey = [1u8; 32];
     }
 
-    /// A bullet moving 48 units a tick past a 24-unit-wide player is the exact case a
+    /// A bullet moving 42 units a tick past a 24-unit-wide player is the exact case a
     /// naive point-in-circle test misses, and the symptom — "I dodged that" — is
     /// indistinguishable from lag. If the swept test regresses, this is the only thing
     /// that catches it.
@@ -952,54 +1246,73 @@ mod tests {
         assert!(!bullet_hits((100, 100), (148, 100), 40, 100));
     }
 
-    /// Ticks a bullet needs to cover `units`.
+    /// Search the *generated* map for one tick's step that starts on floor and whose
+    /// midpoint and endpoint match `want(mid_solid, end_solid)`.
     ///
-    /// The wall and pillar cases below were written against a 48-unit step and describe
-    /// DISTANCES — "across the corridor", "through a 32-unit pillar". Asserting them
-    /// after a single `tick_once` quietly encoded the step size into the geometry, so
-    /// they broke the moment `TICK_MS` changed under them. Travelling a stated distance
-    /// keeps the intent and survives the next rate change.
-    const fn ticks_to_travel(units: i32) -> usize {
-        ((units + BULLET_SPEED - 1) / BULLET_SPEED) as usize
+    /// These cases used to name tiles — "the north corridor at row 20", "the 2×2 pillar
+    /// at (2..3, 2..3)" — which made them assertions about a drawing rather than about
+    /// the wall test, and every one of them died the first time `assets/map/arena.json`
+    /// was redrawn. Searching for the shape keeps the intent across any arena that still
+    /// has walls in it, and `expect` below fails loudly if one ever does not.
+    fn find_step(want: fn(bool, bool) -> bool) -> Option<(i16, i16, i8, i8)> {
+        for ty in 0..map::MAP_TILES as i32 {
+            for tx in 0..map::MAP_TILES as i32 {
+                let (x, y) = (tx * TILE + TILE / 2, ty * TILE + TILE / 2);
+                if wall_at(x, y) {
+                    continue;
+                }
+                for (ux, uy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                    let (dx, dy) = (ux * BULLET_SPEED, uy * BULLET_SPEED);
+                    let (ex, ey) = (x + dx, y + dy);
+                    if want(wall_at((x + ex) / 2, (y + ey) / 2), wall_at(ex, ey)) {
+                        return Some((x as i16, y as i16, dx as i8, dy as i8));
+                    }
+                }
+            }
+        }
+        None
     }
 
-    /// The distance the bullet-vs-geometry cases are drawn around.
-    const PROBE_UNITS: i32 = 48;
+    /// A one-tick shot that starts and ends on open floor, and the point it ends on.
+    /// Taken out of the generated map so the damage cases below travel with a redrawn
+    /// arena instead of breaking on it.
+    fn open_shot() -> (Bullet, i16, i16) {
+        let (x, y, dx, dy) = find_step(|mid, end| !mid && !end).expect("the map has open floor");
+        (
+            Bullet { x, y, dx, dy, active: BULLET_ACTIVE, _pad0: 0 },
+            x + dx as i16,
+            y + dy as i16,
+        )
+    }
 
-    /// The dungeon is only tactical if it stops bullets, and both halves of that have
-    /// to hold: a volley fired across a corridor dies on the corridor wall, and a volley
-    /// fired *along* the corridor lives. The pillar case is the one an endpoint-only
-    /// test would get wrong — a 2×2 pillar is 32 units through and a bullet steps 48.
+    /// The dungeon is only tactical if it stops bullets, and all three halves of that
+    /// have to hold: a shot into a wall dies, a shot down open floor lives, and a shot
+    /// that is solid only at its *midpoint* dies too. The last is the one an
+    /// endpoint-only test gets wrong — a bullet steps 42 units and the map's thinnest
+    /// solid feature is 2 tiles, 32 units through.
     #[test]
     fn bullets_stop_at_generated_walls() {
-        let fired = |x: i16, y: i16, dx: i8, dy: i8| {
+        let fired = |(x, y, dx, dy): (i16, i16, i8, i8)| {
             let (mut arena, mut boss, mut players) = fight();
             // No thorns, so nothing else can spawn into the pool and confuse the count.
             boss.parts = [0; N_PARTS];
             arena.bullets[0] = Bullet { x, y, dx, dy, active: BULLET_ACTIVE, _pad0: 0 };
-            for _ in 0..ticks_to_travel(PROBE_UNITS) {
-                if arena.bullets[0].active != BULLET_ACTIVE {
-                    break;
-                }
-                tick_once(&mut arena, &mut boss, &mut players);
-            }
+            tick_once(&mut arena, &mut boss, &mut players);
             arena.bullets[0].active == BULLET_ACTIVE
         };
 
-        // Across the north corridor at tile row 20: x tiles 31–32 are floor, 15–30 and
-        // 33–48 are the chamber-wall block. A bullet crossing it must die.
-        assert!(!fired(520, 328, -(BULLET_SPEED as i8), 0), "corridor wall stops a volley");
-        // Straight down the same corridor, tile rows 20 → 23, all floor. Must live.
-        assert!(fired(520, 328, 0, BULLET_SPEED as i8), "a corridor is a firing lane");
-
-        // The 2×2 pillar at tiles (2..3, 2..3) = units 32..63 on both axes. The bullet
-        // starts on floor at tile x=1 and lands on floor at tile x=4: only the midpoint
-        // sample sees the pillar at all.
-        assert!(!fired(16, 40, BULLET_SPEED as i8, 0), "a pillar is not passable");
-
-        // The border ring still frees a bullet, and does it through the same lookup that
-        // used to be a separate arena-bounds test.
-        assert!(!fired(24, 24, -(BULLET_SPEED as i8), 0), "off-map is solid");
+        assert!(
+            !fired(find_step(|_, end| end).expect("the map has a wall")),
+            "a wall stops a volley"
+        );
+        assert!(
+            fired(find_step(|mid, end| !mid && !end).expect("the map has open floor")),
+            "open floor is a firing lane"
+        );
+        assert!(
+            !fired(find_step(|mid, end| mid && !end).expect("the map has cover one step thick")),
+            "cover a bullet steps over is still cover"
+        );
     }
 
     /// Normalisation must never exceed `BULLET_SPEED` (the client extrapolates with the
@@ -1026,6 +1339,14 @@ mod tests {
     #[test]
     fn damage_kills_respawns_and_wipes() {
         let (mut arena, mut boss, mut players) = fight();
+        // No thorns and no hands: the only bullets in this test are the ones it fires by
+        // hand, so nothing the boss does can move the health it is asserting on.
+        boss.parts = [0; N_PARTS];
+        let (shot, px, py) = open_shot();
+        // 300 units clear of the shot, which the swept test only widens by the 12-unit
+        // hit radius. In range 0..1023 either way, whichever half of the map the shot
+        // came out of.
+        let far_y = if py < (ARENA_SIZE / 2) as i16 { py + 300 } else { py - 300 };
 
         // Nobody in the arena: the boss ticks, but an empty arena is not a wipe.
         tick_once(&mut arena, &mut boss, &mut players);
@@ -1034,36 +1355,20 @@ mod tests {
         assert_eq!(arena.alive_count, 0);
         assert_eq!(boss.target_seat, NO_TARGET);
 
-        // Two players enter. Seat 7 is parked in the far corner, out of reach
-        // of anything the boss can fire inside this test's span, and seat 3 is nearer, so
-        // it is seat 3 the boss aims at.
-        seat_in_arena(&mut players, 3, 400, 512);
-        seat_in_arena(&mut players, 7, 100, 900);
-        arena.bullets[0] = Bullet {
-            x: 400 - BULLET_SPEED as i16,
-            y: 512,
-            dx: BULLET_SPEED as i8,
-            dy: 0,
-            active: BULLET_ACTIVE,
-            _pad0: 0,
-        };
+        // Two players enter, seat 3 standing where the shot lands.
+        seat_in_arena(&mut players, 3, px, py);
+        seat_in_arena(&mut players, 7, px, far_y);
+        arena.bullets[0] = shot;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(players.slots[3].hp, 100 - BULLET_DAMAGE);
+        assert_eq!(players.slots[7].hp, 100, "one bullet, one hit");
         assert_eq!(arena.bullets[0].active, BULLET_FREE, "a spent bullet is freed");
         assert_eq!(arena.alive_count, 2);
-        assert_eq!(boss.target_seat, 3, "nearest alive player is the aggro target");
 
         // Kill seat 3 outright. One seat down is not a wipe while seat 7 is standing, so
         // the fight carries on and the death is a respawn deadline rather than an ending.
         players.slots[3].hp = BULLET_DAMAGE;
-        arena.bullets[1] = Bullet {
-            x: 400 - BULLET_SPEED as i16,
-            y: 512,
-            dx: BULLET_SPEED as i8,
-            dy: 0,
-            active: BULLET_ACTIVE,
-            _pad0: 0,
-        };
+        arena.bullets[1] = shot;
         let died_on = arena.tick + 1;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(players.slots[3].hp, 0);
@@ -1110,16 +1415,10 @@ mod tests {
         let (mut arena, mut boss, mut players) = fight();
         // No thorns: the only bullet in this test is the one it fires by hand.
         boss.parts = [0; N_PARTS];
-        seat_in_arena(&mut players, 0, 400, 512);
+        let (shot, px, py) = open_shot();
+        seat_in_arena(&mut players, 0, px, py);
         players.slots[0].hp = BULLET_DAMAGE;
-        arena.bullets[0] = Bullet {
-            x: 400 - BULLET_SPEED as i16,
-            y: 512,
-            dx: BULLET_SPEED as i8,
-            dy: 0,
-            active: BULLET_ACTIVE,
-            _pad0: 0,
-        };
+        arena.bullets[0] = shot;
         let died_on = arena.tick + 1;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(players.slots[0].hp, 0);
@@ -1161,37 +1460,63 @@ mod tests {
     /// does not cancel it — and the clip is what still stops the bullet reaching *through*.
     #[test]
     fn a_bullet_stopped_by_a_wall_still_hits_what_it_crossed() {
-        // Map row y=15 (units 240..255): tiles x=10..14 are floor, x=15 begins the heart
-        // chamber's wall block. The bullet steps 200 → 248, ending inside tile x=15.
-        let shot = |px: i16| {
+        // A step that starts on floor, is still floor at its midpoint, and ends inside a
+        // wall — found in the generated map rather than named. The bullet is deleted this
+        // tick either way; the question is whether it swept anything on the way in.
+        let (bx, by, dx, dy) =
+            find_step(|mid, end| !mid && end).expect("the map has a wall a bullet can reach");
+        let step = |t: i32| {
+            (
+                (bx as i32 + dx as i32 * t / 2) as i16,
+                (by as i32 + dy as i32 * t / 2) as i16,
+            )
+        };
+
+        let shot = |(px, py): (i16, i16)| {
             let (mut arena, mut boss, mut players) = fight();
             boss.parts = [0; N_PARTS];
-            seat_in_arena(&mut players, 0, px, 248);
-            arena.bullets[0] = Bullet {
-                x: 200,
-                y: 248,
-                dx: BULLET_SPEED as i8,
-                dy: 0,
-                active: BULLET_ACTIVE,
-                _pad0: 0,
-            };
-            for _ in 0..ticks_to_travel(PROBE_UNITS) {
-                if arena.bullets[0].active != BULLET_ACTIVE {
-                    break;
-                }
-                tick_once(&mut arena, &mut boss, &mut players);
-            }
+            seat_in_arena(&mut players, 0, px, py);
+            arena.bullets[0] = Bullet { x: bx, y: by, dx, dy, active: BULLET_ACTIVE, _pad0: 0 };
+            tick_once(&mut arena, &mut boss, &mut players);
             (players.slots[0].hp, arena.bullets[0].active)
         };
 
-        // On the segment, hard against the wall: hit, and the bullet is spent.
+        // Halfway along the step, on the floor side of the wall: hit, and the bullet is
+        // spent. This is the case that used to be missed — the bullet was deleted for
+        // ending in a wall before anything asked what it had crossed, which made standing
+        // with your back to a wall partial immunity to fire aimed at you.
         assert_eq!(
-            shot(224),
+            shot(step(1)),
             (100 - BULLET_DAMAGE, BULLET_FREE),
             "a player against a wall is not immune to fire aimed at them"
         );
-        // Behind the wall the bullet died on: still cover, still not a hit.
-        assert_eq!(shot(264), (100, BULLET_FREE), "a bullet does not reach through the wall");
+        // A full step past the start, inside the wall the bullet died on: still cover.
+        // The wall clips the swept segment; it does not cancel it.
+        assert_eq!(
+            shot(step(2)),
+            (100, BULLET_FREE),
+            "a bullet does not reach through the wall"
+        );
+    }
+
+    /// Aggro is the whole targeting rule and there is no threat table: stepping forward
+    /// pulls fire off the group, and that is the only tanking the game has.
+    #[test]
+    fn the_boss_aims_at_the_nearest_live_player() {
+        let (mut arena, mut boss, mut players) = fight();
+        boss.parts = [0; N_PARTS];
+        let (bx, by) = (boss.x, boss.y);
+        seat_in_arena(&mut players, 3, bx + 64, by);
+        seat_in_arena(&mut players, 7, bx + 256, by);
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(boss.target_seat, 3);
+
+        // Seat 3 dies; aggro falls through to the one still standing rather than sticking
+        // to a corpse.
+        players.slots[3].hp = 0;
+        players.slots[3].respawn_at_tick = u32::MAX;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(boss.target_seat, 7);
     }
 
     /// Volleys are the difficulty curve (`3 + alive_players`) and the counterplay
@@ -1227,6 +1552,40 @@ mod tests {
         assert!(
             arena.bullets.iter().all(|b| b.active == BULLET_FREE),
             "no thorns, no volleys"
+        );
+    }
+
+    /// The opening volley gets the same wind-up every later volley gets.
+    ///
+    /// This builds the boss the way the chain does — [`Boss::reset_for_incarnation`] —
+    /// instead of taking [`fight`]'s hand-set `attack_timer`. That hand-set line is
+    /// exactly why the suite could not see `docs/review/chain.md` finding 4: with
+    /// `attack_timer = 0` the first FIGHTING tick published `target_seat` for the first
+    /// time *and* spawned an aimed volley in the same write, so the telegraph the client
+    /// draws off `attack_timer` had no frames to run in.
+    #[test]
+    fn the_first_volley_of_a_fight_has_a_wind_up() {
+        let (mut arena, mut boss, mut players) = fight();
+        boss.reset_for_incarnation([100; N_PARTS], 100, boss.x, boss.y);
+        seat_in_arena(&mut players, 0, 400, 700);
+
+        // The whole wind-up, from the first FIGHTING tick. Nothing may be in the air.
+        for t in 0..VOLLEY_INTERVAL_TICKS {
+            tick_once(&mut arena, &mut boss, &mut players);
+            assert!(
+                arena.bullets.iter().all(|b| b.active == BULLET_FREE),
+                "tick {t} of the wind-up already fired"
+            );
+        }
+        // A target was published during it, so the client had something to aim the
+        // telegraph at while the timer ran down.
+        assert_eq!(boss.target_seat, 0);
+
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(
+            arena.bullets.iter().filter(|b| b.active == BULLET_ACTIVE).count(),
+            BASE_VOLLEY_BULLETS + 1,
+            "the volley lands on the tick the wind-up ends"
         );
     }
 
@@ -1361,5 +1720,229 @@ mod tests {
             arena.bullets.map(|b| (b.x, b.y, b.dx, b.dy, b.active))
         };
         assert_eq!(run(), run());
+    }
+
+    /// A boss with both hands but no thorns: it slams and it does not shoot, so a test
+    /// can assert on health without a volley moving it.
+    fn hands_only() -> (Arena, Boss, Players) {
+        let (arena, mut boss, players) = fight();
+        for m in MUZZLES.iter() {
+            boss.parts[m.part] = 0;
+        }
+        (arena, boss, players)
+    }
+
+    /// The slam's beat, its lane bounds, and the counterplay — shoot the arm off and it
+    /// stops hitting you, which is a property of `parts` rather than a rule anyone
+    /// maintains.
+    #[test]
+    fn the_hand_slam_keeps_its_beat_and_its_own_lanes() {
+        let (arena, mut boss, _) = hands_only();
+        let seed = arena.affix_seed;
+        let in_mace = |lane: i32| (MACE_LANE_FIRST..MACE_LANE_FIRST + MACE_LANE_COUNT as i32).contains(&lane);
+        let in_claws =
+            |lane: i32| (CLAWS_LANE_FIRST..CLAWS_LANE_FIRST + CLAWS_LANE_COUNT as i32).contains(&lane);
+
+        // Nothing lands off the beat, ever.
+        for tick in 1..SLAM_PERIOD_TICKS {
+            assert_eq!(slam_lane(&seed, tick, &boss), None, "tick {tick} is not a beat");
+        }
+
+        // Every beat of a full-length fight lands, always inside one hand's own lanes,
+        // and over that many draws both hands must come up — one bit picks between them,
+        // so a hand that never appears means the bit is not doing its job.
+        let beats = ENRAGE_TICKS / SLAM_PERIOD_TICKS;
+        let (mut mace, mut claws) = (0u32, 0u32);
+        for beat in 1..=beats {
+            let lane = slam_lane(&seed, beat * SLAM_PERIOD_TICKS, &boss).expect("both hands stand");
+            assert!(in_mace(lane) || in_claws(lane), "beat {beat} slammed lane {lane}");
+            if in_mace(lane) {
+                mace += 1;
+            } else {
+                claws += 1;
+            }
+        }
+        assert!(mace > 0 && claws > 0, "one bit picks the hand; both must come up");
+
+        // Shoot the mace off: its beats go quiet and the claws keep theirs.
+        boss.parts[PART_MACE] = 0;
+        let mut silenced = 0u32;
+        for beat in 1..=beats {
+            match slam_lane(&seed, beat * SLAM_PERIOD_TICKS, &boss) {
+                None => silenced += 1,
+                Some(lane) => assert!(in_claws(lane), "a dead mace slammed lane {lane}"),
+            }
+        }
+        assert_eq!(silenced, mace, "exactly the mace's beats went quiet");
+
+        // Both hands gone and the boss cannot reach the pit at all.
+        boss.parts[PART_CLAWS] = 0;
+        for beat in 1..=beats {
+            assert_eq!(slam_lane(&seed, beat * SLAM_PERIOD_TICKS, &boss), None);
+        }
+
+        // Except with the vent exposed: the torso lunges over it whichever limbs
+        // survive, always down the centre column the stripped shell forces the raid into.
+        boss.vent_open = 1;
+        for beat in 1..=beats {
+            assert_eq!(
+                slam_lane(&seed, beat * SLAM_PERIOD_TICKS, &boss),
+                Some(SLAM_VENT_LANE)
+            );
+        }
+    }
+
+    /// The telegraph is the whole point of a derived attack: twenty clients wind up from
+    /// published bytes and must all draw the column the hand actually lands on.
+    ///
+    /// This is also the executable copy of the cycle-index recipe. A wind-up tick divides
+    /// to the *previous* cycle, so a client must round up to the next beat. Asking
+    /// `slam_lane` about the wind-up tick itself returns `None` — silently, which is
+    /// exactly how this would ship wrong.
+    #[test]
+    fn the_telegraph_announces_the_slam_that_lands() {
+        let (arena, boss, _) = hands_only();
+        let seed = arena.affix_seed;
+
+        for beat in 1..=8u32 {
+            let lands_at = beat * SLAM_PERIOD_TICKS;
+            let landed = slam_lane(&seed, lands_at, &boss);
+            for t in lands_at - SLAM_TELEGRAPH_TICKS..lands_at {
+                // The window predicate the client gates its animation on, and the beat,
+                // must describe the same ticks.
+                assert!(t % SLAM_PERIOD_TICKS >= SLAM_PERIOD_TICKS - SLAM_TELEGRAPH_TICKS);
+                assert_eq!(slam_lane(&seed, t, &boss), None, "a wind-up tick lands nothing");
+                let next_beat = (t / SLAM_PERIOD_TICKS + 1) * SLAM_PERIOD_TICKS;
+                assert_eq!(next_beat, lands_at);
+                assert_eq!(
+                    slam_lane(&seed, next_beat, &boss),
+                    landed,
+                    "the wind-up at tick {t} must draw the lane that lands"
+                );
+            }
+        }
+    }
+
+    /// A slam death has to be indistinguishable from a bullet death to everything
+    /// downstream, or the raid keeps an `alive_count` it does not have — or settles as a
+    /// wipe with a player still coming back.
+    #[test]
+    fn a_slam_death_is_recorded_exactly_like_a_bullet_death() {
+        let (mut arena, mut boss, mut players) = hands_only();
+        let lane = slam_lane(&arena.affix_seed, SLAM_PERIOD_TICKS, &boss).expect("a hand stands");
+        let hit_x = (lane * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
+        // Four lanes over: inside the arena by construction, outside the slam by
+        // construction.
+        let safe_x = (((lane + SLAM_LANES / 2) % SLAM_LANES) * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
+
+        seat_in_arena(&mut players, 2, hit_x, 512);
+        seat_in_arena(&mut players, 5, hit_x, 512);
+        seat_in_arena(&mut players, 9, safe_x, 512);
+        players.slots[5].hp = SLAM_DAMAGE;
+
+        while arena.tick < SLAM_PERIOD_TICKS {
+            tick_once(&mut arena, &mut boss, &mut players);
+        }
+
+        assert_eq!(players.slots[2].hp, 100 - SLAM_DAMAGE, "the hand lands on its lane");
+        assert_eq!(players.slots[9].hp, 100, "and on no other");
+        assert_eq!(players.slots[5].hp, 0);
+        assert_eq!(
+            players.slots[5].respawn_at_tick,
+            SLAM_PERIOD_TICKS + RESPAWN_TICKS,
+            "a slam death is a respawn deadline, like any other"
+        );
+        assert_eq!(players.slots[5].deaths, 1, "and it is counted");
+        assert_eq!(arena.alive_count, 2, "and the corpse left the live list");
+        assert_eq!(arena.phase, PHASE_FIGHTING, "a scheduled comeback is not a wipe");
+
+        // Two slams do not quite kill a full-health raider; that is the whole point of
+        // the number. It is a mechanic check, not a damage check.
+        while arena.tick < 2 * SLAM_PERIOD_TICKS {
+            tick_once(&mut arena, &mut boss, &mut players);
+        }
+        assert!(players.slots[2].hp > 0, "two slams must not be a kill on their own");
+    }
+
+    /// More players must mean a harder fight, and one player must still be able to win
+    /// one. The knob is `core_hp` and it is monotone, so it cannot be gamed by dying,
+    /// leaving, or waiting for the twentieth raider to walk back out.
+    #[test]
+    fn the_core_is_sized_to_the_raid() {
+        let core_after = |occupants: usize| {
+            let (mut arena, mut boss, mut players) = hands_only();
+            for seat in 0..occupants {
+                seat_in_arena(&mut players, seat, 400, 512);
+            }
+            tick_once(&mut arena, &mut boss, &mut players);
+            (boss.core_hp, boss.core_hp_max)
+        };
+
+        let solo = BOSS_CORE_HP;
+        let full = BOSS_CORE_HP + CORE_HP_PER_RAIDER * (MAX_SEATS as u16 - 1);
+        assert_eq!(core_after(0), (solo, solo), "an empty arena still fights the floor");
+        assert_eq!(core_after(1), (solo, solo), "solo stays winnable");
+        assert_eq!(core_after(MAX_SEATS), (full, full));
+        assert!(full > solo, "twenty raiders must be a longer fight than one");
+
+        // Monotone: the high-water record does not fall when the raid does.
+        let (mut arena, mut boss, mut players) = hands_only();
+        for seat in 0..MAX_SEATS {
+            seat_in_arena(&mut players, seat, 400, 512);
+        }
+        tick_once(&mut arena, &mut boss, &mut players);
+        for seat in 1..MAX_SEATS {
+            players.slots[seat].zone = ZONE_LOBBY;
+        }
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(boss.core_hp_max, full, "leaving does not shrink the boss");
+
+        // And it never revives a core the raid has already killed.
+        let (mut arena, mut boss, mut players) = hands_only();
+        boss.core_hp = 0;
+        seat_in_arena(&mut players, 0, 400, 512);
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(boss.core_hp, 0, "the difficulty curve does not resurrect the boss");
+        assert_eq!(arena.outcome, OUTCOME_WIN);
+    }
+
+    /// The muster: the first knight through the gate opens a fixed-length window and the
+    /// chain's own crank closes it, so a raid can never fail to start and twenty browsers
+    /// agree on the moment without talking to each other.
+    #[test]
+    fn a_muster_flips_to_fighting_on_its_own_deadline() {
+        let (mut arena, mut boss, mut players) = hands_only();
+        arena.phase = PHASE_MUSTERING;
+        // `enrage_at_tick` is match state now, not creation state: it reads 0 for the
+        // whole muster, and is stamped at the flip. Otherwise the muster would silently
+        // shorten every fight by its own length.
+        arena.enrage_at_tick = 0;
+        let flip = MUSTER_TICKS;
+        arena.fight_at_tick = flip;
+        seat_in_arena(&mut players, 0, 400, 512);
+
+        while arena.tick < flip - 1 {
+            tick_once(&mut arena, &mut boss, &mut players);
+            assert_eq!(arena.phase, PHASE_MUSTERING, "the window is fixed length");
+            assert_eq!(arena.alive_count, 0, "no step runs during a muster");
+            assert_eq!(arena.enrage_at_tick, 0, "the fight clock has not started");
+        }
+
+        // The deadline tick: the crank performs the flip, and `step` does not run on it.
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.tick, flip);
+        assert_eq!(arena.phase, PHASE_FIGHTING);
+        assert_eq!(arena.fight_at_tick, 0, "no muster is scheduled any more");
+        assert_eq!(
+            arena.enrage_at_tick,
+            flip + ENRAGE_TICKS,
+            "a full fight, not one shortened by its own muster"
+        );
+        assert_eq!(arena.alive_count, 0, "the flip tick is not a fight tick");
+
+        // The next execution is the fight's first tick.
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.alive_count, 1);
+        assert_eq!(boss.target_seat, 0);
     }
 }

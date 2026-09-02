@@ -93,7 +93,7 @@ export type HeartrotInstruction = Instruction &
 // ---------------------------------------------------------------------------
 // Argument validation
 //
-// These are a trust boundary: the browser feeds `seat`, `dir` and `seq` straight from
+// These are a trust boundary: the browser feeds `seat`, the aim pair and `seq` straight from
 // input handling, and a DataView setter silently truncates rather than throwing. A
 // truncated seat index addresses somebody else's slot.
 // ---------------------------------------------------------------------------
@@ -104,6 +104,16 @@ function req(ok: boolean, message: string): void {
 
 function u8(value: number, what: string): number {
   req(Number.isInteger(value) && value >= 0 && value <= 0xff, `${what} not a u8: ${value}`);
+  return value;
+}
+
+/**
+ * A signed byte. The aim pair comes straight off a pointer delta, which can be any
+ * magnitude at all, and `setInt8` truncates rather than throwing — a delta of 260 would
+ * silently become 4 and fire at a completely different angle. Callers scale first.
+ */
+function i8(value: number, what: string): number {
+  req(Number.isInteger(value) && value >= -128 && value <= 127, `${what} not an i8: ${value}`);
   return value;
 }
 
@@ -386,13 +396,24 @@ export function nextIncarnation(p: {
 // ---------------------------------------------------------------------------
 
 /**
- * Tag 3 — flip the arena to Fighting and schedule the 400 ms `boss_tick` crank. ER.
+ * Tag 3 — open the muster window and schedule the `boss_tick` crank. ER.
+ *
+ * It no longer starts the fight. `LOBBY -> FIGHTING` was deleted: this stamps
+ * `Arena.fight_at_tick = tick + MUSTER_TICKS` and moves the arena to `PHASE_MUSTERING`,
+ * and the **crank** performs the flip to `PHASE_FIGHTING` at that tick. That is the whole
+ * answer to "what if nobody presses start": no player, host or Worker has to act, and a
+ * raid can never fail to begin.
+ *
+ * Refuses with `NoRaiders` (custom 19) when no seat is in `ZONE_ARENA`. Treat that on the
+ * start route exactly like the existing 409 — retry, do not surface — because it means
+ * the caller raced ahead of its own `enter_gate` landing.
  *
  * The scheduling CPI freezes `[arena, boss, players, crank_signer]` into the validator's
  * task row for the whole match, and schedules every iteration up front: a crank carries
- * no writable signer, so it can never re-arm itself.
+ * no writable signer, so it can never re-arm itself. `TICK_ITERATIONS` on chain now covers
+ * the muster as well as the fight, which is why it could not stay a literal.
  */
-export function startMatch(p: {
+export function beginMuster(p: {
   programId: Address;
   payer: Address;
   arena: Address;
@@ -412,6 +433,13 @@ export function startMatch(p: {
     data,
   };
 }
+
+/**
+ * The name tag 3 had while it still meant "start the fight". Kept only so
+ * `worker/src/routes.ts` keeps building across the ship; delete it once that route calls
+ * {@link beginMuster}. Same instruction, same bytes — there is no second implementation.
+ */
+export const startMatch = beginMuster;
 
 /**
  * Tag 4 — write a seat's session key and identity. ER, treasury-signed, cold path.
@@ -541,8 +569,24 @@ export function movePlayer(p: {
 }
 
 /**
- * Tag 7 — hitscan raycast along `dir`. ER, session-signed, the other hot path.
- * Args (2 B): seat u8 @0 · dir u8 @1, eight-way, 0..7.
+ * Tag 7 — hitscan raycast along the aim vector. ER, session-signed, the other hot path.
+ * Args (3 B): seat u8 @0 · dx i8 @1 · dy i8 @2.
+ *
+ * **Free aim, not eight-way** — and this is a correctness property, not polish. With the
+ * boss fixed at top centre a 45° quantisation can only select a target whose angular size
+ * exceeds 45°: measured over 110 pit stands, 8-way aim reaches 5 of 10 parts and *never*
+ * the core, from anywhere, at any range, so the raid is unwinnable with no error anywhere
+ * (`11-immortals-spec.md` §4.1). The pair is the raw pointer delta; the chain normalises
+ * it with the same routine it uses on boss ordnance and derives `facing` from it, so a
+ * caller must **not** pre-quantize to an octant.
+ *
+ * Magnitude is ignored — `(3, -12)` and `(30, -120)` are the same shot — but it is not
+ * *free*: it is the aim resolution, so pass the pointer delta rather than rounding it to
+ * `±1`, which would throw away every angle that is not a multiple of 45°.
+ *
+ * `(0, 0)` is refused on chain and refused here. Two bytes rather than a `u16` angle
+ * because it costs the same, needs no table on either side, and measures 0.2354° of
+ * worst-case direction error.
  *
  * Writes `Boss` because the ray damages parts, and `Arena` for the shot-cooldown clock.
  */
@@ -553,12 +597,15 @@ export function shoot(p: {
   players: Address;
   session: Address;
   seat: number;
-  /** Eight-way facing, 0..7. Same encoding as `PlayerSlot.facing`. */
-  dir: number;
+  /** Aim vector, y growing DOWN. Signs and ratio are read; magnitude is not. */
+  dx: number;
+  dy: number;
 }): HeartrotInstruction {
-  const { data } = alloc(IX_SHOOT, 2);
+  req(p.dx !== 0 || p.dy !== 0, 'aim (0, 0) has no direction');
+  const { data, view } = alloc(IX_SHOOT, 3);
   data[1] = seatIndex(p.seat);
-  data[2] = dir8(p.dir, 'dir');
+  view.setInt8(2, i8(p.dx, 'dx'));
+  view.setInt8(3, i8(p.dy, 'dy'));
   return {
     programAddress: p.programId,
     accounts: [
@@ -669,7 +716,7 @@ export function commit(p: {
  * `WrongPhase`, for the same in-flight-callback reason as tag 11.
  *
  * Cancel the tag 8 crank first if the match was ever started, or it keeps firing every
- * 400 ms into accounts that no longer live on the ER. `settle` (tag 9) does both in one
+ * `TICK_MS` into accounts that no longer live on the ER. `settle` (tag 9) does both in one
  * instruction and is the normal end of a match; this tag is for the arenas that cannot
  * reach it.
  */
@@ -735,4 +782,58 @@ export async function requestRoll(p: {
     ],
     data,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Self-check
+// ---------------------------------------------------------------------------
+
+/**
+ * Assert the bytes of the two hot-path instructions, which are the two that changed and
+ * the two nothing else checks. A handler rejects a wrong *length* loudly, but a signed
+ * byte written through the wrong setter is a legal-looking instruction that aims
+ * somewhere else — `shoot`'s `dy` is negative for every shot at a boss above you, so
+ * `setUint8` here would have sent 250 instead of −6 and every upward shot would have
+ * fired down.
+ *
+ * Runnable the same way as `layoutSelfCheck`:
+ *
+ *   ./app/node_modules/.bin/esbuild packages/client/src/instructions.ts --bundle \
+ *     --format=esm --outfile=/tmp/ix.mjs && node -e \
+ *     "import('/tmp/ix.mjs').then(m => { m.instructionsSelfCheck(); console.log('OK') })"
+ */
+export function instructionsSelfCheck(): void {
+  const ok = (cond: boolean, what: string): void => {
+    if (!cond) throw new Error(`instructions self-check: ${what}`);
+  };
+  const threw = (fn: () => unknown): boolean => {
+    try {
+      fn();
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const a = '11111111111111111111111111111111' as Address;
+  const common = { programId: a, arena: a, boss: a, players: a, session: a };
+
+  const up = shoot({ ...common, seat: 19, dx: -6, dy: -120 });
+  ok(up.data.length === 4, 'shoot is 4 bytes on the wire, tag included');
+  ok(up.data[0] === IX_SHOOT && up.data[1] === 19, 'tag then seat');
+  const v = new DataView(up.data.buffer, up.data.byteOffset, up.data.byteLength);
+  ok(v.getInt8(2) === -6 && v.getInt8(3) === -120, 'the aim pair survives as i8');
+  ok(up.accounts.length === 4, 'arena, boss, players, session');
+
+  ok(threw(() => shoot({ ...common, seat: 0, dx: 0, dy: 0 })), '(0, 0) is not a direction');
+  ok(threw(() => shoot({ ...common, seat: 0, dx: 260, dy: -1 })), 'an unscaled delta is refused');
+  ok(threw(() => shoot({ ...common, seat: 0, dx: 1.5, dy: -1 })), 'a fractional aim is refused');
+  ok(threw(() => shoot({ ...common, seat: MAX_SEATS, dx: 1, dy: 0 })), 'seat 20 does not exist');
+
+  // `move` is unchanged and still eight-way: it must NOT have followed `shoot` to free aim,
+  // because the chain still quantizes it and the wire still carries a seq.
+  const step = movePlayer({ programId: a, arena: a, players: a, session: a, seat: 1, dir: 7, seq: 513 });
+  ok(step.data.length === 6, 'move is 6 bytes: tag, seat, seq u16, dx, dy');
+  const mv = new DataView(step.data.buffer, step.data.byteOffset, step.data.byteLength);
+  ok(mv.getUint16(2, true) === 513, 'seq is little-endian');
+  ok(mv.getInt8(4) === -1 && mv.getInt8(5) === -1, 'dir 7 is NW, y growing down');
 }

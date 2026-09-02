@@ -60,6 +60,7 @@
 
 import {
   PHASE_FIGHTING,
+  PHASE_MUSTERING,
   decodeArena,
   decodeBoss,
   decodePlayers,
@@ -160,17 +161,28 @@ function fromBase64(encoded: string): Uint8Array {
 
 
 /**
+ * Is this phase one the crank is supposed to be ticking through?
+ *
+ * Both, not just `Fighting`. `heartbeat` advances `tick` in every phase, and the crank is
+ * armed by `begin_muster` — so a crank that dies during the muster leaves an arena nobody
+ * is watching in a phase nobody can leave, which is the exact hang the watchdog exists to
+ * end. `MUSTERING → SETTLED` is in `PHASE_EDGES` for that recovery.
+ */
+function cranking(phase: number): boolean {
+  return phase === PHASE_FIGHTING || phase === PHASE_MUSTERING;
+}
+
+/**
  * The whole watchdog decision, and pure so it can be checked without a socket or a chain.
- * `null` means "not the watchdog's business" — the crank only advances `tick` while
- * `phase == Fighting` (`boss_tick` returns early otherwise), so a lobby with a perfectly
- * healthy socket has a frozen tick by design and judging it would settle every match
- * before it started.
+ * `null` means "not the watchdog's business" — nothing advances `tick` before the crank is
+ * armed, so a lobby with a perfectly healthy socket has a frozen tick by design and judging
+ * it would settle every match before it started.
  *
  * `anchorAge` is measured from the newer of the last tick change and the moment the arena
- * entered `Fighting`; see the note in `deliver`.
+ * entered a cranking phase; see the note in `deliver`.
  */
 export function watchdogHealth(phase: number, anchorAge: number): MatchHealth | null {
-  if (phase !== PHASE_FIGHTING) return null;
+  if (!cranking(phase)) return null;
   if (anchorAge >= TICK_STALL_HARD_MS) return 'dead';
   if (anchorAge >= TICK_STALL_SOFT_MS) return 'stalled';
   return 'live';
@@ -199,13 +211,28 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
   const subscriptionKind = new Map<number, AccountKind>();
   /** Kinds that have received a live notification since this `open`. */
   let fresh = new Set<AccountKind>();
+  /**
+   * The last base64 payload delivered per kind, and the whole of the dedupe.
+   *
+   * Measured on a live 20-seat devnet feed: **390 of 769 notifications/s are byte-identical
+   * repeats** — `Arena` 97.4% of them, because the Magic Router delivers every notification
+   * twice and 68.4% of `Players` writes during a fight change no position. Dropping them
+   * halves the store updates that reach React, and comparing the *string* rather than the
+   * decoded account also saves the 6.87 µs decode. It saves no bandwidth; the bytes have
+   * already arrived.
+   *
+   * Cleared on every `open`, which is the load-bearing half: the snapshot-on-open must
+   * never be suppressed by a payload cached from before a disconnect, because a reconnect
+   * leaves the world up to 1,681 ms stale and that snapshot is the only thing that fixes it.
+   */
+  let lastPayload = new Map<AccountKind, string>();
 
   let health: MatchHealth = 'connecting';
   let phase = -1;
   let lastTick = -1;
   let tickAt = 0;
-  /** When the arena entered `Fighting`. The watchdog's other anchor — see `deliver`. */
-  let fightingAt = 0;
+  /** When the arena entered a cranking phase. The watchdog's other anchor — see `deliver`. */
+  let crankingAt = 0;
   let lastResnapshotAt = 0;
   let previousPlayers: PlayersAccount | null = null;
 
@@ -215,22 +242,38 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     cfg.onHealth(next);
   }
 
+  /**
+   * Decode and dispatch one base64 payload, unless it is byte-identical to the last one
+   * this kind delivered. Every caller goes through here so the snapshot and the live feed
+   * share one cache — a notification repeating what the snapshot already delivered is the
+   * same duplicate as one repeating a notification.
+   */
+  function deliverEncoded(kind: AccountKind, encoded: string): void {
+    if (lastPayload.get(kind) === encoded) return;
+    lastPayload.set(kind, encoded);
+    deliver(kind, fromBase64(encoded));
+  }
+
   function deliver(kind: AccountKind, data: Uint8Array): void {
     switch (kind) {
       case 'arena': {
         const arena = decodeArena(data);
-        // Entering `Fighting` re-arms the watchdog, and it has to: `start_match` flips the
-        // phase without touching `tick`, which sits at the 0 `init` wrote until the first
-        // `boss_tick` lands ~400 ms later. Anchoring on `tick` alone hands the watchdog an
-        // anchor as old as the whole lobby wait, so a match that waited 45 s for a fourth
-        // player is reported `dead` in the first watchdog poll after it starts — and the
-        // caller's response to `dead` is to settle the raid that just began.
+        // Entering a cranking phase re-arms the watchdog, and it has to: `begin_muster`
+        // flips the phase without touching `tick`, which sits at the 0 `init` wrote until
+        // the first `boss_tick` lands ~100 ms later. Anchoring on `tick` alone hands the
+        // watchdog an anchor as old as the whole lobby wait, so a match that waited 45 s
+        // for a fourth player is reported `dead` in the first poll after it starts — and
+        // the caller's response to `dead` is to settle the raid that just began.
+        //
+        // MUSTERING is the phase this now fires on. FIGHTING is kept in `cranking` for the
+        // watchdog's own test, but the transition into it no longer needs an anchor: the
+        // crank has been advancing `tick` for the whole 20 s window by then.
         //
         // Deliberately a second variable and not a write to `tickAt`: that one is the
         // interpolation anchor `tickAlpha` reads, and moving it on anything but a real
         // tick makes every knight on screen lurch.
-        if (arena.phase !== phase && arena.phase === PHASE_FIGHTING) {
-          fightingAt = performance.now();
+        if (arena.phase !== phase && cranking(arena.phase) && !cranking(phase)) {
+          crankingAt = performance.now();
         }
         phase = arena.phase;
         // Only a *tick change* re-anchors the clock. `shoot` rewrites `Arena` without
@@ -268,7 +311,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
       // snapshot; letting the snapshot win would rewind the world by one round trip.
       if (fresh.has(kind)) continue;
       const encoded = encodedData(account);
-      if (encoded !== undefined) deliver(kind, fromBase64(encoded));
+      if (encoded !== undefined) deliverEncoded(kind, encoded);
     }
   }
 
@@ -290,8 +333,11 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     const kind = subscriptionKind.get(subscription);
     const encoded = message.params?.result?.value?.data?.[0];
     if (kind === undefined || encoded === undefined) return;
+    // Liveness first, and before the dedupe returns: a duplicate is still proof the feed
+    // is delivering. Suppressing it here would make `snapshot`'s race guard think this
+    // kind had never been heard from.
     fresh.add(kind);
-    deliver(kind, fromBase64(encoded));
+    deliverEncoded(kind, encoded);
   }
 
   /**
@@ -330,6 +376,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
       requestKind.clear();
       subscriptionKind.clear();
       fresh = new Set();
+      lastPayload = new Map();
       for (const kind of ['arena', 'boss', 'players'] as const) {
         const id = nextRequestId++;
         requestKind.set(id, kind);
@@ -370,7 +417,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
 
   const watchdog = setInterval(() => {
     if (tickAt === 0) return;
-    const verdict = watchdogHealth(phase, performance.now() - Math.max(tickAt, fightingAt));
+    const verdict = watchdogHealth(phase, performance.now() - Math.max(tickAt, crankingAt));
     if (verdict === null) return;
     if (verdict === 'dead') {
       setHealth('dead');
@@ -413,12 +460,13 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
  * world. Dev-only, in the same style as `state/store.ts`'s `screenOf` check.
  *
  * The anchor is restated rather than imported because it *is* the thing under test — the
- * `Math.max` in the watchdog body and the `fightingAt` write in `deliver` are one rule
+ * `Math.max` in the watchdog body and the `crankingAt` write in `deliver` are one rule
  * split across two places, and case 3 is the regression that rule exists for.
  */
 if (import.meta.env.DEV) {
   const NOW = 1_000_000;
-  const anchorAge = (tickAt: number, fightingAt: number): number => NOW - Math.max(tickAt, fightingAt);
+  const anchorAge = (tickAt: number, crankingAt: number): number =>
+    NOW - Math.max(tickAt, crankingAt);
 
   const cases: readonly (readonly [string, number, number, MatchHealth | null])[] = [
     // [name, phase, anchorAge, expected]
@@ -429,12 +477,15 @@ if (import.meta.env.DEV) {
     // anything tighter than this reports a recovering match as a dead one.
     ['26 s of crank retries is still not dead', PHASE_FIGHTING, 26_000, 'stalled'],
     ['past the hard limit the task is gone', PHASE_FIGHTING, TICK_STALL_HARD_MS, 'dead'],
-    // 3: `start_match` flips the phase without touching `tick`, so a 90 s lobby wait leaves
-    // `tickAt` 90 s old at the instant the fight begins. Without `fightingAt` this is
-    // 'dead' and the caller settles a raid one poll into its first tick.
-    ['a long lobby wait does not kill a fresh fight', PHASE_FIGHTING, anchorAge(NOW - 90_000, NOW), 'live'],
-    // ...and once the fight is genuinely stalled, the fight-start anchor stops mattering.
-    ['a real stall outlives the fight-start anchor', PHASE_FIGHTING, anchorAge(NOW - 60_000, NOW - 50_000), 'dead'],
+    // 3: `begin_muster` flips the phase without touching `tick`, so a 90 s lobby wait
+    // leaves `tickAt` 90 s old at the instant the window opens. Without `crankingAt` this
+    // is 'dead' and the caller settles a raid one poll into its first tick.
+    ['a long lobby wait does not kill a fresh muster', PHASE_MUSTERING, anchorAge(NOW - 90_000, NOW), 'live'],
+    // The muster is watched, and that is the point of extending it: the crank is armed by
+    // `begin_muster`, so one that dies here leaves a phase with no exit but the settle.
+    ['a muster that stalls is reported dead', PHASE_MUSTERING, TICK_STALL_HARD_MS, 'dead'],
+    // ...and once the fight is genuinely stalled, the phase-entry anchor stops mattering.
+    ['a real stall outlives the phase-entry anchor', PHASE_FIGHTING, anchorAge(NOW - 60_000, NOW - 50_000), 'dead'],
   ];
 
   for (const [name, phase, age, expected] of cases) {
@@ -443,4 +494,154 @@ if (import.meta.env.DEV) {
       throw new Error(`subscribe self-check: ${name} should be '${expected}', got '${actual}'`);
     }
   }
+
+  // ---- the payload dedupe, driven through the real socket handlers -------------------
+  //
+  // The other silent branch in this file. All three of its constraints fail invisibly —
+  // the feed keeps working and only the thing the dedupe was supposed to protect breaks —
+  // so the whole subscription is driven here rather than a cache tested in isolation:
+  // two of the three constraints are properties of the *call sites*, not of the compare.
+  //
+  //   1. per kind, and before the decoder — the compare is the only reason it saves CPU;
+  //   2. dropped on every `open` — otherwise a reconnect's snapshot repeats a payload
+  //      cached before the disconnect, is suppressed, and the client renders the world it
+  //      left 1,681 ms ago, forever, with a healthy socket;
+  //   3. a suppressed frame still counts as liveness.
+  //
+  // The payload is 'AAAA': valid base64 (so `atob` is happy) decoding to three zero bytes,
+  // which every decoder rejects on length. So "the decoder ran" is observable as a throw
+  // and "the gate stopped it first" as silence — no 1,200-byte fixture needed, and it is
+  // the gate's *ordering* that is under test, which a valid payload could not show.
+  const DUP = 'AAAA';
+
+  const built: FakeSocket[] = [];
+  class FakeSocket {
+    readonly sent: { readonly id: number }[] = [];
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    onclose: (() => void) | null = null;
+    constructor(_url: string) {
+      built.push(this);
+    }
+    send(raw: string): void {
+      this.sent.push(JSON.parse(raw) as { id: number });
+    }
+    close(): void {
+      this.readyState = 3;
+    }
+  }
+
+  // Every snapshot is held open and released by hand, one gate per `open`, because the
+  // order the snapshots land in is the only lever that can isolate constraint 3. The
+  // account is a getter: `snapshot` reads `data` only for a kind it has NOT heard from
+  // since the open, so the read count *is* the `fresh` guard, observed from outside.
+  let snapshotReads = 0;
+  const gates: (() => void)[] = [];
+  const snapshotAccount = {
+    get data(): readonly string[] {
+      snapshotReads++;
+      return [DUP, 'base64'];
+    },
+  };
+  const fakeRpc = {
+    getMultipleAccounts: () => ({
+      send: async () => {
+        await new Promise<void>((resolve) => gates.push(resolve));
+        return { value: [snapshotAccount, null, null] };
+      },
+    }),
+  } as unknown as HeartrotRpc;
+
+  const realWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const sub = subscribeMatch({
+    rpc: fakeRpc,
+    arena: 'arena' as unknown as AccountAddress,
+    boss: 'boss' as unknown as AccountAddress,
+    players: 'players' as unknown as AccountAddress,
+    onArena: () => {},
+    onBoss: () => {},
+    onPlayers: () => {},
+    onHealth: () => {},
+  });
+  // `connect` reaches `new WebSocket` with nothing awaited before it, so the socket exists
+  // by now. Restore immediately: nothing here ever fires `onclose`, so the reconnect timer
+  // that would build a real socket is never armed.
+  globalThis.WebSocket = realWebSocket;
+  const ws = built[0];
+  if (ws === undefined) throw new Error('subscribe self-check: no socket was constructed');
+
+  const expect = (ok: boolean, name: string): void => {
+    if (!ok) throw new Error(`subscribe self-check: ${name}`);
+  };
+  /** Open, then answer the three `accountSubscribe` requests so notifications route. */
+  const open = (): void => {
+    ws.onopen?.();
+    for (const [i, request] of ws.sent.entries()) {
+      ws.onmessage?.({ data: JSON.stringify({ id: request.id, result: 100 + i }) });
+    }
+    ws.sent.length = 0;
+  };
+  /** Feed one notification; `true` if it reached the decoder, which this payload kills. */
+  const reachedDecoder = (subscription: number, payload: string): boolean => {
+    const data = JSON.stringify({
+      method: 'accountNotification',
+      params: { subscription, result: { value: { data: [payload, 'base64'] } } },
+    });
+    try {
+      ws.onmessage?.({ data });
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  try {
+    open();
+    expect(reachedDecoder(100, DUP), 'the first payload of a kind must reach the decoder');
+    expect(!reachedDecoder(100, DUP), 'a byte-identical repeat must be dropped before the decoder runs');
+    expect(reachedDecoder(101, DUP), 'the cache is keyed by account kind, not by payload');
+    // 2, and the one that matters: this is a reconnect. The cache still holds arena's DUP
+    // from before it, and the snapshot that follows an `open` is the only thing that
+    // un-freezes a world up to 1,681 ms stale — suppressing it strands the player.
+    open();
+    expect(
+      reachedDecoder(100, DUP),
+      'an `open` must clear the cache, or the snapshot-on-open is suppressed and the world freezes',
+    );
+  } catch (error) {
+    sub.close();
+    throw error;
+  }
+
+  // 3, and the fiddly one. `handle` marks the kind fresh *before* the gate, so a suppressed
+  // frame still tells `snapshot` this kind has been heard from since the open. To pin that
+  // to the *suppressed* frame the check needs a state no normal sequence produces — cache
+  // full, `fresh` empty — because the first notification after an open is never a
+  // duplicate. A snapshot landing late into a later open is exactly that state: it fills
+  // the cache and never touches `fresh`. So the whole point of holding the gates is to let
+  // the first open's snapshot arrive during the third, and then read the guard off the
+  // third's own snapshot.
+  //
+  // Async because the snapshot resumes through two awaits; a macrotask clears both.
+  void (async () => {
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      open();
+      gates[0]?.(); // the first open's snapshot, landing two reconnects late
+      await settle();
+      expect(snapshotReads === 1, 'the stale snapshot should have delivered into the fresh open');
+      expect(!reachedDecoder(100, DUP), 'a payload the snapshot already delivered is a duplicate');
+      gates[2]?.(); // this open's own snapshot: it must find the kind already heard from
+      await settle();
+      expect(
+        snapshotReads === 1,
+        'a suppressed frame must still count as liveness, or the snapshot rewinds the kind it repeated',
+      );
+    } finally {
+      sub.close();
+    }
+  })();
 }

@@ -33,75 +33,78 @@ pub const TILE: i16 = 16;
 
 /// Wall bitboard: bit *x* of row *y* set means tile (x, y) is solid.
 ///
-/// Layout: a central open heart chamber around the boss spawn, four 2-tile-wide
-/// corridors radiating N/S/E/W as the only approaches to it, four large outer
-/// halls broken up by 2x2 pillars, and four edge entrances. The 2-wide fronts are
-/// the difficulty system -- a corridor has almost no perimeter to defend, a hall
-/// has perimeter everywhere.
+/// Layout, top to bottom -- the 33 Immortals composition. Open floor for the boss's
+/// air, then the shaped pit the raid fights from, then a rim wall pierced by one
+/// four-tile doorway, then the gate block, then a pillared temple approach for the
+/// lobby. The whole vertical order is the fight: you walk up the temple, through the
+/// gate, out of the doorway into the pit, and the creature is above you.
+///
+/// The rows above the pit are floor, not wall, and that is load-bearing rather than
+/// lazy drawing -- see [`PIT_TOP`].
 pub const WALLS: [u64; MAP_TILES] = [
     0xffffffffffffffff, // y=0  ################################################################
-    0x8000000000000001, // y=1  #...............................E..............................#
-    0x830c30c30c30c30d, // y=2  #.##....##....##....##....##....##....##....##....##....##.....#
-    0x830c30c30c30c30d, // y=3  #.##....##....##....##....##....##....##....##....##....##.....#
+    0x8000000000000001, // y=1  #..............................................................#
+    0x8000000000000001, // y=2  #..............................................................#
+    0x8000000000000001, // y=3  #..............................................................#
     0x8000000000000001, // y=4  #..............................................................#
-    0x87e00000000007e1, // y=5  #....######..........................................######....#
-    0x87e00000000007e1, // y=6  #....######..........................................######....#
-    0x87e00000000007e1, // y=7  #....######..........................................######....#
-    0x87ec30c30c30c7ed, // y=8  #.##.######...##....##....##....##....##....##....##.######....#
-    0x87ec30c30c30c7ed, // y=9  #.##.######...##....##....##....##....##....##....##.######....#
-    0x87e00000000007e1, // y=10 #....######..........................................######....#
+    0x8000000000000001, // y=5  #..............................................................#
+    0x8000000000000001, // y=6  #..............................................................#
+    0x8000000000000001, // y=7  #..............................................................#
+    0x8000000000000001, // y=8  #..............................................................#
+    0x8000000000000001, // y=9  #..............................................................#
+    0x8000000000000001, // y=10 #..............................................................#
     0x8000000000000001, // y=11 #..............................................................#
     0x8000000000000001, // y=12 #..............................................................#
     0x8000000000000001, // y=13 #..............................................................#
-    0x830c00000000030d, // y=14 #.##....##........................................##....##.....#
-    0x830dfffe7fff830d, // y=15 #.##....##.....################..################.##....##.....#
-    0x8001fffe7fff8001, // y=16 #..............################..################..............#
-    0x8001fffe7fff8001, // y=17 #..............################..################..............#
-    0x8001fffe7fff8001, // y=18 #..............################..################..............#
-    0x8001fffe7fff8001, // y=19 #..............################..################..............#
-    0x830dfffe7fff830d, // y=20 #.##....##.....################..################.##....##.....#
-    0x830dfffe7fff830d, // y=21 #.##....##.....################..################.##....##.....#
-    0x8001fffe7fff8001, // y=22 #..............################..################..............#
-    0x8001fffe7fff8001, // y=23 #..............################..################..............#
-    0x8001ff0000ff8001, // y=24 #..............#########................#########..............#
-    0x8001ff0000ff8001, // y=25 #..............#########................#########..............#
-    0x830dff0000ff830d, // y=26 #.##....##.....#########................#########.##....##.....#
-    0x830dff0000ff830d, // y=27 #.##....##.....#########................#########.##....##.....#
-    0x8001ff0000ff8001, // y=28 #..............#########................#########..............#
-    0x8001ff0000ff8001, // y=29 #..............#########................#########..............#
-    0x8001ff0000ff8001, // y=30 #..............#########................#########..............#
-    0x8000000000000001, // y=31 #..............................................................#
-    0x830c00000000030d, // y=32 #E##....##......................B.................##....##....E#
-    0x830dff0000ff830d, // y=33 #.##....##.....#########................#########.##....##.....#
-    0x8001ff0000ff8001, // y=34 #..............#########................#########..............#
-    0x8001ff0000ff8001, // y=35 #..............#########................#########..............#
-    0x8001ff0000ff8001, // y=36 #..............#########................#########..............#
-    0x8001ff0000ff8001, // y=37 #..............#########................#########..............#
-    0x830dff0000ff830d, // y=38 #.##....##.....#########................#########.##....##.....#
-    0x830dff0000ff830d, // y=39 #.##....##.....#########................#########.##....##.....#
-    0x8001fffe7fff8001, // y=40 #..............################..################..............#
-    0x8001fffe7fff8001, // y=41 #..............################..################..............#
-    0x8001fffe7fff8001, // y=42 #..............################..################..............#
-    0x8001fffe7fff8001, // y=43 #..............################..################..............#
-    0x830dfffe7fff830d, // y=44 #.##....##.....################..################.##....##.....#
-    0x830dfffe7fff830d, // y=45 #.##....##.....################..################.##....##.....#
-    0x8001fffe7fff8001, // y=46 #..............################..################..............#
-    0x8001fffe7fff8001, // y=47 #..............################..################..............#
-    0x8001fffe7fff8001, // y=48 #..............################..################..............#
+    0x8000000000000001, // y=14 #..............................................................#
+    0x8000000000000001, // y=15 #..............................................................#
+    0x8000000000000001, // y=16 #..............................................................#
+    0x8000000000000001, // y=17 #..............................................................#
+    0x8000000000000001, // y=18 #..............................................................#
+    0x8000000000000001, // y=19 #..............................................................#
+    0x8000000000000001, // y=20 #..............................................................#
+    0x8000000000000001, // y=21 #..............................................................#
+    0x8000000000000001, // y=22 #..............................................................#
+    0x8000000000000001, // y=23 #..............................................................#
+    0x8000000000000001, // y=24 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
+    0x8000000000000001, // y=25 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPBPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
+    0x8000000000000001, // y=26 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
+    0x8000000000000001, // y=27 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
+    0x8000000000000001, // y=28 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
+    0x8000000000000001, // y=29 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
+    0x8000000000000001, // y=30 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
+    0x8000000000000001, // y=31 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
+    0x8000000000000001, // y=32 #PPPPPPPPPEPPPPPPPPPPPEPPPPPPPPPPPPPPPPPPPEPPPPPPPPPPPEPPPPPPPP#
+    0xe000000000000007, // y=33 ###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###
+    0xf80000000000001f, // y=34 #####PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#####
+    0xff000000000000ff, // y=35 ########PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP########
+    0xfffffffc3fffffff, // y=36 ##############################PPPP##############################
+    0xfffffffc3fffffff, // y=37 ##############################PPPP##############################
+    0xfffffffc3fffffff, // y=38 ##############################GGGG##############################
+    0xfffffffc3fffffff, // y=39 ##############################GGGG##############################
+    0x8000000000000001, // y=40 #..............................................................#
+    0x8000000000000001, // y=41 #..............................................................#
+    0x8303030000c0c0c1, // y=42 #.....##......##......##................##......##......##.....#
+    0x8303030000c0c0c1, // y=43 #.....##......##......##................##......##......##.....#
+    0x8000000000000001, // y=44 #..............................................................#
+    0x8000000000000001, // y=45 #..............................................................#
+    0x80303000000c0c01, // y=46 #.........##......##........................##......##.........#
+    0x80303000000c0c01, // y=47 #.........##......##........................##......##.........#
+    0x8000000000000001, // y=48 #..............................................................#
     0x8000000000000001, // y=49 #..............................................................#
-    0x830c30c30c30c30d, // y=50 #.##....##....##....##....##....##....##....##....##....##.....#
-    0x830c30c30c30c30d, // y=51 #.##....##....##....##....##....##....##....##....##....##.....#
+    0x8303030000c0c0c1, // y=50 #.....##......##......##................##......##......##.....#
+    0x8303030000c0c0c1, // y=51 #.....##......##......##................##......##......##.....#
     0x8000000000000001, // y=52 #..............................................................#
-    0x87e00000000007e1, // y=53 #....######..........................................######....#
-    0x87e00000000007e1, // y=54 #....######..........................................######....#
-    0x87e00000000007e1, // y=55 #....######..........................................######....#
-    0x87ec30c30c30c7ed, // y=56 #.##.######...##....##....##....##....##....##....##.######....#
-    0x87ec30c30c30c7ed, // y=57 #.##.######...##....##....##....##....##....##....##.######....#
-    0x87e00000000007e1, // y=58 #....######..........................................######....#
-    0x8000000000000001, // y=59 #..............................................................#
+    0x8000000000000001, // y=53 #..............................................................#
+    0x80303000000c0c01, // y=54 #.........##......##........................##......##.........#
+    0x80303000000c0c01, // y=55 #.........##......##........................##......##.........#
+    0x8000000000000001, // y=56 #..............................................................#
+    0x8000000000000001, // y=57 #..............................................................#
+    0x8303030000c0c0c1, // y=58 #.....##......##......##................##......##......##.....#
+    0x8303030000c0c0c1, // y=59 #.....##......##......##................##......##......##.....#
     0x8000000000000001, // y=60 #..............................................................#
     0x8000000000000001, // y=61 #..............................................................#
-    0x8000000000000001, // y=62 #...............................E..............................#
+    0x8000000000000001, // y=62 #..............................................................#
     0xffffffffffffffff, // y=63 ################################################################
 ];
 
@@ -109,9 +112,8 @@ pub const WALLS: [u64; MAP_TILES] = [
 /// the same convention `handlers::player::LOBBY_ENTRANCE` and `GATE_MIN_X` are written
 /// in, and the one `is_wall` inverts with `pos / TILE`.
 ///
-/// Row-major scan order (top to bottom, then left to right), *not* compass order: for
-/// the map as drawn that happens to be north, west, east, south, but redrawing the grid
-/// re-orders this array and nothing may assume otherwise.
+/// Row-major scan order (top to bottom, then left to right), *not* compass order.
+/// Redrawing the grid re-orders this array and nothing may assume otherwise.
 ///
 /// This exists so respawn points are *read out of the map* instead of restated beside it.
 /// `handlers::tick::entrance_for` picks `ENTRANCES[seat % 4]` and fans that door's ranks
@@ -119,10 +121,10 @@ pub const WALLS: [u64; MAP_TILES] = [
 /// describe the arena a second time is gone. Move an `E` in the grid, re-run the tool,
 /// and the respawn moves with it.
 pub const ENTRANCES: [(i16, i16); 4] = [
-    (512, 16), // tile (32, 1)
-    (16, 512), // tile (1, 32)
-    (992, 512), // tile (62, 32)
-    (512, 992), // tile (32, 62)
+    (160, 512), // tile (10, 32)
+    (352, 512), // tile (22, 32)
+    (672, 512), // tile (42, 32)
+    (864, 512), // tile (54, 32)
 ];
 
 /// The `B` heart tile: where the boss stands, in world units at the tile's top-left
@@ -130,16 +132,51 @@ pub const ENTRANCES: [(i16, i16); 4] = [
 ///
 /// `handlers::init` reads this and writes it to `Boss.x`/`Boss.y` on every spawn and
 /// respawn. It is here rather than there because the boss's position is a fact about
-/// the *map*: the sprite is 230x270 units of hitbox centred on this point, and the
-/// drawn heart chamber is the only open space on the grid wide enough to hold it.
+/// the *map*: every rectangle in `hitboxes.rs` is an offset from this point, and the
+/// open rows above the pit are the only space on the grid tall enough to hold them.
+///
+/// It sits at the *top* of the pit band rather than in the middle of the map: the boss
+/// is drawn upward from here, so the creature fills the top of the frame and the raid
+/// shoots up at it from the pit below. The assertion block at the bottom of this file
+/// proves it is on floor, inside `PIT_TOP..=PIT_BOT`, and outside the gate.
 ///
 /// It used to be a pair of literals in `init.rs` reading (512, 320) -- tile (32, 20),
-/// which is the two-tile north *corridor*, not the chamber. The shell was mostly
-/// inside solid rock, `shoot`'s ray died on the corridor wall before reaching it, and
+/// which was a two-tile corridor on the map of the time. The shell was mostly inside
+/// solid rock and `shoot`'s ray died on the corridor wall before reaching it, while
 /// this generator "checked" the spawn against a hardcoded map centre attributed to a
 /// `start_match` write that never existed. Three copies, two of them wrong, and the
 /// fight had never been run on chain so nothing had noticed.
-pub const BOSS_SPAWN: (i16, i16) = (512, 512); // tile (32, 32)
+pub const BOSS_SPAWN: (i16, i16) = (512, 400); // tile (32, 25)
+
+/// The raider box: a `ZONE_ARENA` player's y is confined to `PIT_TOP..=PIT_BOT`.
+///
+/// Compiled from the `P` block's bounding rows (24..37) -- inclusive of the last
+/// row's last unit, which is the form `move_player` compares a *destination* against.
+/// Comparing the destination and not the current position is load-bearing: a player who
+/// flips zone while standing on the gate is below `PIT_BOT`, and a current-position test
+/// would refuse every direction and freeze them there for the match.
+///
+/// This is a movement rule and deliberately **not** a wall. The rows above the pit are
+/// open floor because `shoot`'s raycast tests `is_wall` before the part rectangles, so a
+/// single wall tile between a player and the boss would kill every shot in that column
+/// with nothing logged anywhere. The clamp holds raiders out of the boss's air; the
+/// bitboard holds bullets and rays to the map. Two barriers, and they can disagree --
+/// `tools/gen_map.py` proves the pit is one connected room and that the gate walks into
+/// it, which is the only guard against a clamp that boxes someone in open floor.
+pub const PIT_TOP: i16 = 384; // tile row 24
+pub const PIT_BOT: i16 = 607; // tile row 37, last unit
+
+/// The gate block `enter_gate` demands the player be standing in, compiled from the `G`
+/// rectangle -- tiles (30, 38)..(33, 39).
+///
+/// These were four hand literals in `handlers::player` that `gen_map.py` parsed back out
+/// of Rust source to validate against the drawn grid: one fact stored twice, with the
+/// tool agreeing with whichever copy it read. Drawing them is what lets the assertion
+/// below prove `BOSS_SPAWN` is outside the gate on every `cargo check`.
+pub const GATE_MIN_X: i16 = 480;
+pub const GATE_MAX_X: i16 = 543;
+pub const GATE_MIN_Y: i16 = 608;
+pub const GATE_MAX_Y: i16 = 639;
 
 /// Every entrance stands on floor in the table above.
 ///
@@ -173,4 +210,173 @@ const _: () = {
         "map::BOSS_SPAWN lands in a wall -- move the `B` in assets/map/arena.json \
          and re-run tools/gen_map.py",
     );
+
+    // The pit band is non-empty and sits inside the map.
+    assert!(PIT_TOP >= 0 && PIT_TOP < PIT_BOT && PIT_BOT < (MAP_TILES as i16) * TILE);
+    assert!(GATE_MIN_X <= GATE_MAX_X && GATE_MIN_Y <= GATE_MAX_Y);
+
+    // The boss is reachable by a raider: its anchor is inside the band they are clamped
+    // to. A boss above `PIT_TOP` would be a target no one can ever stand level with.
+    assert!(
+        by >= PIT_TOP && by <= PIT_BOT,
+        "map::BOSS_SPAWN is outside PIT_TOP..=PIT_BOT -- the raid is clamped away from \
+         its own boss; redraw assets/map/arena.json and re-run tools/gen_map.py",
+    );
+
+    // And it is not standing on the gate, which would let a player flip zone by walking
+    // into the creature. This is the assertion the four `GATE_*` literals in
+    // `handlers::player` could never carry: it needs both facts to come out of one grid.
+    assert!(
+        !(bx >= GATE_MIN_X && bx <= GATE_MAX_X && by >= GATE_MIN_Y && by <= GATE_MAX_Y),
+        "map::BOSS_SPAWN is inside the gate block",
+    );
+
+    // The gate is immediately below the pit, so stepping out of it lands in the band.
+    assert!(
+        GATE_MIN_Y == PIT_BOT + 1,
+        "the gate does not adjoin the pit -- a player who flips zone on it would have \
+         no legal destination inside PIT_TOP..=PIT_BOT and would freeze",
+    );
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const fn solid(tx: usize, ty: usize) -> bool {
+        tx >= MAP_TILES || ty >= MAP_TILES || WALLS[ty] & (1u64 << tx) != 0
+    }
+
+    /// 4-connected flood fill from the boss tile, confined to tile rows `top..=bot`.
+    ///
+    /// 4- and not 8-connected on purpose: movement is 8-way but only tests the
+    /// destination tile, so a diagonal can squeeze past a corner. Accepting that here
+    /// would sign off on passages that exist by accident.
+    ///
+    /// Relaxed to a fixpoint rather than queued, so it allocates nothing: 64x64 is four
+    /// thousand tiles and this is a test.
+    fn reachable(top: usize, bot: usize) -> [[bool; MAP_TILES]; MAP_TILES] {
+        let mut seen = [[false; MAP_TILES]; MAP_TILES];
+        seen[(BOSS_SPAWN.1 / TILE) as usize][(BOSS_SPAWN.0 / TILE) as usize] = true;
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for ty in top..=bot {
+                for tx in 0..MAP_TILES {
+                    if seen[ty][tx] || solid(tx, ty) {
+                        continue;
+                    }
+                    let touching = (ty > top && seen[ty - 1][tx])
+                        || (ty < bot && seen[ty + 1][tx])
+                        || (tx > 0 && seen[ty][tx - 1])
+                        || (tx + 1 < MAP_TILES && seen[ty][tx + 1]);
+                    if touching {
+                        seen[ty][tx] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        seen
+    }
+
+    /// One room, not several. `tools/gen_map.py` proves this against `arena.json`, but
+    /// only when someone runs it; this proves it against the table that actually
+    /// shipped, and it is what stands behind "the gate is reachable from every lobby
+    /// spawn" -- both are floor, and every floor tile is in the same component.
+    #[test]
+    fn every_floor_tile_is_one_room() {
+        let seen = reachable(0, MAP_TILES - 1);
+        for ty in 0..MAP_TILES {
+            for tx in 0..MAP_TILES {
+                assert_eq!(
+                    !solid(tx, ty),
+                    seen[ty][tx],
+                    "tile ({tx}, {ty}) is floor but sealed off from the boss",
+                );
+            }
+        }
+    }
+
+    /// The border ring is closed, so the coordinate clamp is never the only thing
+    /// holding a player on the map.
+    #[test]
+    fn the_border_is_closed() {
+        for i in 0..MAP_TILES {
+            for (x, y) in [(i, 0), (i, MAP_TILES - 1), (0, i), (MAP_TILES - 1, i)] {
+                assert!(solid(x, y), "border tile ({x}, {y}) is not wall");
+            }
+        }
+    }
+
+    /// The pit is one room *on its own terms*. A raider is clamped to
+    /// `PIT_TOP..=PIT_BOT`, so a pinch in the corner shaping cannot be walked around the
+    /// way [`every_floor_tile_is_one_room`] would let you. The two are not the same
+    /// test, and this is the one that catches a shaped pit cut in half.
+    #[test]
+    fn the_pit_is_one_room_a_raider_can_cross() {
+        let (top, bot) = ((PIT_TOP / TILE) as usize, (PIT_BOT / TILE) as usize);
+        let seen = reachable(top, bot);
+        let mut floor = 0usize;
+        for ty in top..=bot {
+            for tx in 0..MAP_TILES {
+                if !solid(tx, ty) {
+                    floor += 1;
+                    assert!(seen[ty][tx], "pit tile ({tx}, {ty}) is cut off from the boss");
+                }
+            }
+        }
+        assert_eq!(floor, 726, "the drawn pit changed size");
+    }
+
+    /// Every respawn door is inside the pit band. A raider respawned above `PIT_TOP` or
+    /// below `PIT_BOT` is a seat clamped out of every legal move, with nothing logged.
+    #[test]
+    fn every_door_is_inside_the_raider_box() {
+        for (x, y) in ENTRANCES {
+            assert!(
+                y >= PIT_TOP && y <= PIT_BOT,
+                "entrance ({x}, {y}) is outside PIT_TOP..=PIT_BOT",
+            );
+            assert!(!solid((x / TILE) as usize, (y / TILE) as usize));
+        }
+    }
+
+    /// The gate block is walkable end to end, and its columns step straight into the
+    /// pit. Walling any of it is a lobby nobody can leave; a gate that does not adjoin
+    /// the pit is a player who flips zone and then cannot move.
+    #[test]
+    fn the_gate_is_floor_and_walks_into_the_pit() {
+        for ty in (GATE_MIN_Y / TILE)..=(GATE_MAX_Y / TILE) {
+            for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {
+                assert!(!solid(tx as usize, ty as usize), "gate tile ({tx}, {ty}) is wall");
+            }
+        }
+        let last_pit_row = (PIT_BOT / TILE) as usize;
+        for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {
+            assert!(
+                !solid(tx as usize, last_pit_row),
+                "gate column {tx} runs into wall at the pit's last row",
+            );
+        }
+    }
+
+    /// The boss's air is open floor. `handlers::shoot`'s raycast tests `is_wall` before
+    /// the part rectangles, so one wall tile above the pit kills every shot in that
+    /// column -- a raid that cannot be won, reporting nothing. The pit ceiling is
+    /// `PIT_TOP`, a movement rule, and this is the test that keeps it from becoming a
+    /// wall the next time someone redraws the grid.
+    #[test]
+    fn the_boss_air_above_the_pit_is_open() {
+        let top = (PIT_TOP / TILE) as usize;
+        for ty in 1..top {
+            for tx in 1..MAP_TILES - 1 {
+                assert!(
+                    !solid(tx, ty),
+                    "tile ({tx}, {ty}) is wall above PIT_TOP -- every shot in that \
+                     column dies on it before reaching the boss",
+                );
+            }
+        }
+    }
+}

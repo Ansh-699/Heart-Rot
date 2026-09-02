@@ -80,7 +80,7 @@ pub const LAYOUT_VERSION: u8 = 1;
 /// `PHASE_SETTLED`: "did the raid win?" has to stay answerable after settlement, and
 /// encoding it in the phase would need a `SettledWon` / `SettledWiped` pair and then a
 /// third for every phase after. One axis each. Values 0..3 are frozen (accounts are live
-/// on devnet, and `packages/client` plus `app/` switch on them); 4 and 5 are appended.
+/// on devnet, and `packages/client` plus `app/` switch on them); 4, 5 and 6 are appended.
 ///
 /// The complete legal-transition table is [`Arena::may_transition`], and every phase write
 /// in the program goes through [`Arena::try_set_phase`] or one of the three total helpers
@@ -92,12 +92,26 @@ pub const PHASE_FIGHTING: u8 = 1;
 /// Reached on a win, a wipe, an enrage, and on an abandoned VRF roll.
 pub const PHASE_SETTLING: u8 = 2;
 pub const PHASE_SETTLED: u8 = 3;
-/// A VRF request for the next incarnation's seed is in flight. The accounts must **not**
-/// be committed or undelegated here: the callback would land on an account the ER no
-/// longer holds, fail, and be retried by the oracle for the whole 240-slot request TTL.
+/// A VRF request for the next incarnation's seed is in flight. Committing here is refused
+/// (tag 11): the callback would land on an account the ER no longer holds, fail, and be
+/// retried by the oracle for the whole 240-slot request TTL.
+///
+/// Undelegating (tags 9 and 12) is *allowed*, and that asymmetry is deliberate. `tick` is
+/// advanced only by `boss_tick`, so a crank that dies inside the roll window freezes the
+/// clock [`Arena::abandon_roll`] measures against — the timeout can never elapse, and
+/// without a `ROLLING → SETTLED` edge nothing in this program could ever hand `Arena`,
+/// `Boss` and `Players` back to the base layer. A bounded burst of oracle retries, capped
+/// by the request's own TTL, is strictly cheaper than three accounts delegated forever.
 pub const PHASE_ROLLING: u8 = 4;
 /// The seed is in `next_affix_seed` and the match is ready to settle.
 pub const PHASE_ROLLED: u8 = 5;
+/// The gate is open and a fixed-length muster window is running. Weapons are down —
+/// `shoot` tests `== PHASE_FIGHTING` — but joining, moving and `enter_gate` are legal, so
+/// the raid assembles in the pit while the camera pans onto the boss.
+///
+/// Appended after [`PHASE_ROLLED`] rather than inserted, so 0..=5 keep their meaning for
+/// every account already on devnet and for every deployed client's phase switch.
+pub const PHASE_MUSTERING: u8 = 6;
 
 /// `Arena.outcome` — how the fight ended. Write-once per incarnation: set by
 /// [`Arena::end_fight`] while it is [`OUTCOME_UNDECIDED`], cleared only by
@@ -113,17 +127,6 @@ pub const OUTCOME_WIPE: u8 = 2;
 /// the end screen and there is no other way to tell them apart afterwards.
 pub const OUTCOME_ENRAGE: u8 = 3;
 
-/// Crank ticks a VRF roll may stay in [`PHASE_ROLLING`] before `boss_tick` abandons it.
-///
-/// 25 ticks ≈ 10 s at the crank's 400 ms target, against a documented in-ER fulfilment of
-/// ~100 ms and a hard floor of one ER slot — so this is far past any legitimate callback
-/// while still short enough that a VRF outage does not look like a hang.
-///
-/// Abandoning writes **no seed**. The fallback is deliberately not "derive one from
-/// SlotHashes and carry on": a validator-influenceable seed is not verifiable randomness,
-/// and an incarnation whose ruleset was quietly chosen by whoever produced a block is the
-/// exact property the VRF exists to deny. `begin_next_incarnation` then refuses with
-/// `WrongPhase` — loud and recoverable, rather than silent and wrong.
 /// The crank period, and the only place a simulation rate is chosen.
 ///
 /// Every duration in this program is written in MILLISECONDS and converted through
@@ -152,8 +155,69 @@ pub const fn ticks_for(ms: u32) -> u32 {
     }
 }
 
-/// Ten seconds. A roll that has not been fulfilled by then is abandoned.
+/// Crank ticks a VRF roll may stay in [`PHASE_ROLLING`] before `boss_tick` abandons it.
+///
+/// Ten seconds, against a documented in-ER fulfilment of ~100 ms and a hard floor of one ER
+/// slot — far past any legitimate callback, still short enough that a VRF outage does not
+/// look like a hang. Written as a duration, so it stayed ten seconds when `TICK_MS` went
+/// 400 → 100 and the tick count went 25 → 100. `packages/client/src/layout.ts` mirrors this
+/// and still carries the 400 ms-era literal `25`; that mirror is wrong, not this.
+///
+/// Abandoning writes **no seed**. The fallback is deliberately not "derive one from
+/// SlotHashes and carry on": a validator-influenceable seed is not verifiable randomness,
+/// and an incarnation whose ruleset was quietly chosen by whoever produced a block is the
+/// exact property the VRF exists to deny. `begin_next_incarnation` then refuses with
+/// `WrongPhase` — loud and recoverable, rather than silent and wrong.
 pub const ROLL_TIMEOUT_TICKS: u32 = ticks_for(10_000);
+
+/// How long [`PHASE_MUSTERING`] lasts: twenty seconds from the first knight through the
+/// gate to the boss waking up.
+///
+/// The only number in the muster design with no derivation behind it — a guess at how long
+/// a player will stand still. It is one `ticks_for` call in one place, which is the whole
+/// reason it is cheap to be wrong about. If fixed-length turns out wrong in principle, the
+/// escape hatch is a monotone-decreasing clamp in `begin_muster`
+/// (`fight_at_tick = min(fight_at_tick, tick + LOCK_TICKS)`), which cannot be pumped.
+pub const MUSTER_TICKS: u32 = ticks_for(20_000);
+
+/// Six minutes of fight before [`OUTCOME_ENRAGE`]. Stamped onto `Arena::enrage_at_tick` by
+/// [`Arena::begin_fight`] at the MUSTERING → FIGHTING flip, **not** at `init`: the muster
+/// runs on the same clock, so a creation-time stamp would silently spend
+/// [`MUSTER_TICKS`] of every fight's budget before anyone could shoot.
+pub const ENRAGE_TICKS: u32 = ticks_for(360_000);
+
+/// One volley every 3.2 s. The real period is 33 ticks: `boss_tick` fires on the tick it
+/// reads 0 and reloads on the same line.
+///
+/// It lives here rather than in `handlers::tick` — where it is counted down — because
+/// [`Boss::reset_for_incarnation`] seeds `attack_timer` from it, and a duration declared
+/// in the module that spends it and again in the module that seeds it is the same
+/// duration stored twice.
+pub const VOLLEY_INTERVAL_TICKS: u8 = ticks_for(3_200) as u8;
+
+/// `Boss::core_hp` for a solo raid — the floor, not the value a full raid fights.
+pub const BOSS_CORE_HP: u16 = 2_000;
+
+/// Added to `core_hp_max` for each raider past the first, by the tick stage that already
+/// counts arena occupants.
+///
+/// The raid-size knob is the core and never `parts`: `parts` carries the incarnation
+/// scaling and already saturates `u16` around incarnation 41, and `vent_open` is a ratio
+/// over `parts`, so multiplying the shell by raid size would move the vent threshold and
+/// collapse the progression curve at the same time. `core_hp_max` is monotone and *is* its
+/// own high-water record, so the top-up needs no snapshot field, cannot be gamed by dying
+/// or leaving, and tolerates a player arriving late.
+pub const CORE_HP_PER_RAIDER: u16 = 3_000;
+
+const _: () = {
+    // The top-up runs to `MAX_SEATS` raiders and must not wrap a `u16`.
+    assert!(
+        BOSS_CORE_HP as u32 + CORE_HP_PER_RAIDER as u32 * (MAX_SEATS as u32 - 1)
+            <= u16::MAX as u32
+    );
+    // A muster that outlives the fight it precedes is a scheduling bug, not a balance one.
+    assert!(MUSTER_TICKS < ENRAGE_TICKS);
+};
 
 /// `PlayerSlot.zone`.
 pub const ZONE_LOBBY: u8 = 0;
@@ -310,7 +374,13 @@ pub struct Arena {
     /// The authoritative clock. Never wall-clock: cranks make no timing guarantee,
     /// 400 ms is a target and not a contract.
     pub tick: u32,
-    /// 6-minute timeout expressed in ticks.
+    /// Tick at which the raid enrages, or 0 for "no fight is running".
+    ///
+    /// **Match state, not creation state.** Stamped by [`Arena::begin_fight`] as
+    /// `tick + ENRAGE_TICKS` and zeroed by [`Arena::begin_next_incarnation`]; `init` does
+    /// not write it. It therefore reads 0 for the whole of [`PHASE_MUSTERING`], which
+    /// `tick.rs`'s existing `!= 0` guard already treats as "not armed" — a client drawing
+    /// an enrage clock must check the phase, not just this field.
     pub enrage_at_tick: u32,
     /// One bit per seat, low `MAX_SEATS` bits. Lets the Worker allocate a seat from a
     /// single u32 without decoding the 1,924-byte `Players` account.
@@ -344,7 +414,25 @@ pub struct Arena {
     ///
     /// Meaningful only while `phase == PHASE_ROLLING`; `begin_next_incarnation` clears it.
     pub roll_requested_tick: u32,
-    pub _pad2: [u8; 4],
+    /// Tick at which [`PHASE_MUSTERING`] flips to [`PHASE_FIGHTING`]. Set by tag 3
+    /// `begin_muster` to `tick + MUSTER_TICKS`; the crank performs the flip, so twenty
+    /// browsers agree on when the fight starts without talking to each other.
+    ///
+    /// Claimed out of `_pad2`, the same move `outcome` made out of `_pad0`: no field moves,
+    /// the account does not grow, `size_of::<Arena>()` stays 1200 and `LAYOUT_VERSION`
+    /// stays 1.
+    ///
+    /// **Zero means "no muster is scheduled"** — which is what it already means on every
+    /// account on devnet, all of which carry zeros here and none of which can be in
+    /// `PHASE_MUSTERING` (6 did not exist when they were written). So there is no
+    /// migration. [`Arena::begin_fight`] gates on the phase rather than on this field
+    /// precisely so a live account cannot be affected by the reinterpretation.
+    ///
+    /// Cleared at the flip and by [`Arena::begin_next_incarnation`], so it is non-zero
+    /// only while a muster is actually running. **This is the last free `u32` in `Arena`**:
+    /// `_pad0` (1 B @ 7) and `_pad1` (2 B @ 38) are all that remain, and anything wider has
+    /// to append past `next_affix_seed`, which grows a delegated account.
+    pub fight_at_tick: u32,
     /// The VRF seed for the **next** incarnation, or all-zero for "none".
     ///
     /// Separate from `affix_seed` because the two answer different questions and a late
@@ -383,6 +471,7 @@ const _: () = {
     assert!(offset_of!(Arena, affix_seed) == 104);
     assert!(offset_of!(Arena, bullets) == 136);
     assert!(offset_of!(Arena, roll_requested_tick) == 1160);
+    assert!(offset_of!(Arena, fight_at_tick) == 1164);
     assert!(offset_of!(Arena, next_affix_seed) == 1168);
 };
 
@@ -395,20 +484,25 @@ const _: () = {
 /// This table *is* the game loop's control flow. It lives here rather than as an `if` in
 /// each handler because the handlers that write `phase` are five files owned by different
 /// people, and five independently-edited gates are five chances for two of them to disagree
-/// about whether, say, a `ROLLING` arena may be committed. (It may not: the VRF callback
-/// would land on an undelegated account and be retried by the oracle for two minutes.)
+/// about whether, say, a `ROLLING` arena may be committed. (It may not — tag 11 refuses it
+/// outright, since a mid-roll snapshot buys nothing and costs the oracle a retry storm. It
+/// may be *undelegated*, which is a different question with a different answer: see
+/// `ROLLING → SETTLED` below.)
 ///
 /// Read as "from → the set of `to`":
 ///
 /// | From | To | Performed by |
 /// |---|---|---|
-/// | `LOBBY` | `FIGHTING` | tag 3 `start_match` |
+/// | `LOBBY` | `MUSTERING` | tag 3 `begin_muster`, and only with a seat in `ZONE_ARENA` |
+/// | `MUSTERING` | `FIGHTING` | tag 8 `boss_tick`, at [`Arena::fight_at_tick`] |
+/// | `MUSTERING` | `SETTLED` | tag 9 `settle` — dead-crank recovery, as for `FIGHTING` |
 /// | `FIGHTING` | `SETTLING` | tag 7 `shoot` (killing blow) · tag 8 `boss_tick` |
 /// | `FIGHTING` | `SETTLED` | tag 9 `settle` — dead-crank recovery, must stay legal |
 /// | `SETTLING` | `ROLLING` | tag 13 `request_roll`, and only when `outcome == OUTCOME_WIN` |
 /// | `SETTLING` | `SETTLED` | tag 9 `settle` · tag 12 `commit_and_undelegate` |
 /// | `ROLLING` | `ROLLED` | tag 14 `consume_roll`, the VRF callback |
 /// | `ROLLING` | `SETTLING` | tag 8 `boss_tick`, after [`ROLL_TIMEOUT_TICKS`] |
+/// | `ROLLING` | `SETTLED` | tag 9 `settle` · tag 12 `commit_and_undelegate` — dead-crank recovery |
 /// | `ROLLED` | `SETTLED` | tag 9 `settle` |
 /// | `SETTLED` | `SETTLED` | tag 9 retried, and the delegation program's undelegation callback |
 /// | `SETTLED` | `LOBBY` | tag 15 `next_incarnation` |
@@ -423,19 +517,45 @@ const _: () = {
 /// raid wiped; an all-zero `next_affix_seed` says the oracle never answered), so a second
 /// error code would carry no information the caller does not already hold.
 ///
-/// Everything else is rejected. Three absences carry weight: `ROLLING → SETTLED` (the
-/// commit-during-fulfilment hazard above), `LOBBY → SETTLED` (an arena that was never
-/// fought has nothing to record — the rule `settle` already enforces), and `LOBBY → LOBBY`
+/// `ROLLING → SETTLED` is the one edge here that exists *against* a hazard rather than
+/// away from one, and it is the highest-consequence line in the table. Undelegating under
+/// an in-flight VRF request does aim the callback at an account the ER no longer holds —
+/// the fulfilment fails and the oracle re-sends it — but that cost is bounded twice over:
+/// by the request's 240-slot TTL, and by `consume_roll` returning `Ok` on every rejection
+/// path, so a callback that *does* land on a `SETTLED` arena is dropped rather than
+/// reverting the oracle's transaction into a retry loop. The alternative was unbounded.
+/// `abandon_roll` — the only other way out of `ROLLING` — is measured against `tick`, and
+/// `tick` is advanced only by `boss_tick`; a crank that dies inside the ~10 s roll window
+/// therefore freezes the very clock its own timeout is read from. Without this edge that
+/// arena is terminal: three accounts delegated to the ER with no instruction in the
+/// program able to bring them back. `FIGHTING → SETTLED` and `MUSTERING → SETTLED` are the
+/// same edge for the same reason; this is their twin, and both routes to it are already
+/// `crank_authority`-gated.
+///
+/// Everything else is rejected. Three absences carry weight: `LOBBY → SETTLED` (an arena
+/// that was never fought has nothing to record — the rule `settle` already enforces
+/// and `commit_and_undelegate` routes around), `LOBBY → LOBBY`
 /// (which is what makes a second `next_incarnation` a rejection rather than a second reset,
-/// and therefore what stops two settlements racing the incarnation counter).
-const PHASE_EDGES: [(u8, u8); 10] = [
-    (PHASE_LOBBY, PHASE_FIGHTING),
+/// and therefore what stops two settlements racing the incarnation counter), and
+/// `LOBBY → FIGHTING`, **removed**: a raid could previously be armed with nobody through
+/// the gate, which spent six minutes aiming at `NO_TARGET` and recorded an enrage. Every
+/// fight now starts out of a muster whose entry condition is at least one raider.
+///
+/// `MUSTERING → SETTLED` records nothing and burns an arena id — `outcome` is still
+/// [`OUTCOME_UNDECIDED`] there, which `write_leaderboard` must refuse. It exists so a crank
+/// that dies during the muster cannot wedge three delegated accounts in a phase with no
+/// exit; if arenas start burning this way, the crank is dying and that is the real fault.
+const PHASE_EDGES: [(u8, u8); 13] = [
+    (PHASE_LOBBY, PHASE_MUSTERING),
+    (PHASE_MUSTERING, PHASE_FIGHTING),
+    (PHASE_MUSTERING, PHASE_SETTLED),
     (PHASE_FIGHTING, PHASE_SETTLING),
     (PHASE_FIGHTING, PHASE_SETTLED),
     (PHASE_SETTLING, PHASE_ROLLING),
     (PHASE_SETTLING, PHASE_SETTLED),
     (PHASE_ROLLING, PHASE_ROLLED),
     (PHASE_ROLLING, PHASE_SETTLING),
+    (PHASE_ROLLING, PHASE_SETTLED),
     (PHASE_ROLLED, PHASE_SETTLED),
     (PHASE_SETTLED, PHASE_SETTLED),
     (PHASE_SETTLED, PHASE_LOBBY),
@@ -467,6 +587,30 @@ impl Arena {
         }
         self.phase = to;
         Ok(())
+    }
+
+    /// `MUSTERING → FIGHTING` once [`Arena::fight_at_tick`] has arrived, stamping the
+    /// enrage deadline off the same clock.
+    ///
+    /// Total, because its only caller is `boss_tick` — a crank that returns `Err` ten times
+    /// is deleted and the match dies with it. Returns whether it flipped, so the tick stage
+    /// can skip `step` on the flip tick: the fight begins on the *next* tick, which keeps
+    /// "the first tick of FIGHTING" one thing rather than two.
+    ///
+    /// The gate is the phase, never `fight_at_tick != 0`. Every account already on devnet
+    /// carries zero there and none of them can be in [`PHASE_MUSTERING`], so this cannot
+    /// fire on live state. A `MUSTERING` arena that somehow held a zero deadline flips
+    /// immediately, which is the safe direction — the alternative is a muster with no end.
+    pub fn begin_fight(&mut self) -> bool {
+        if self.phase != PHASE_MUSTERING || self.tick < self.fight_at_tick {
+            return false;
+        }
+        self.phase = PHASE_FIGHTING;
+        // Saturating rather than wrapping: at u32::MAX ticks (13.6 years at 100 ms) the
+        // fight simply never enrages, which beats a deadline that lands in the past.
+        self.enrage_at_tick = self.tick.saturating_add(ENRAGE_TICKS);
+        self.fight_at_tick = 0;
+        true
     }
 
     /// End the fight: record `outcome` and move `FIGHTING → SETTLING`.
@@ -565,10 +709,11 @@ impl Arena {
     /// new one from chain state, is an incarnation whose ruleset was not rolled by anyone
     /// who can prove it, silently indistinguishable from one that was.
     ///
-    /// What carries over: `arena_id`, `bump`, `crank_authority`, `validator_identity`,
-    /// `enrage_at_tick` (a rule of the fight, not match state), and — because it is a
-    /// different account entirely — the whole `Leaderboard` ring. What
-    /// resets: the clock, the phase, the outcome, the bullet pool, the seat bitmask, and
+    /// What carries over: `arena_id`, `bump`, `crank_authority`, `validator_identity`, and
+    /// — because it is a different account entirely — the whole `Leaderboard` ring. What
+    /// resets: the clock, the phase, the outcome, the bullet pool, the seat bitmask, both
+    /// deadlines (`enrage_at_tick` and `fight_at_tick` are match state, and a deadline
+    /// measured against a clock that has just been zeroed is already in the past), and
     /// (through [`Players::reset_for_incarnation`] and [`Boss::reset_for_incarnation`])
     /// every seat and every point of boss HP.
     ///
@@ -595,6 +740,8 @@ impl Arena {
         self.incarnation = self.incarnation.saturating_add(1);
         self.outcome = OUTCOME_UNDECIDED;
         self.tick = 0;
+        self.enrage_at_tick = 0;
+        self.fight_at_tick = 0;
         self.alive_count = 0;
         self.bullet_cursor = 0;
         self.seat_occupied = 0;
@@ -663,11 +810,17 @@ impl Boss {
         self.core_hp_max = core_hp;
         self.parts = parts;
         self.parts_max = parts;
-        // A full shell is sealed, the first attack beat is the crank's to schedule, and
-        // nobody is in the arena yet. `NO_TARGET` rather than 0 so a stale index cannot
-        // read as "aiming at seat 0".
+        // A full shell is sealed and nobody is in the arena yet. `NO_TARGET` rather than 0
+        // so a stale index cannot read as "aiming at seat 0".
+        //
+        // `attack_timer` is seeded with a full interval, not 0: `boss_tick` reads 0 as
+        // *fire now*, so a zero here spends the opening volley on the same tick that first
+        // publishes `target_seat`. No client can draw a telegraph for a wind-up that never
+        // existed — `volleyTelegraph` needs the phase to be FIGHTING before it draws
+        // anything, and the phase and the bullets would arrive together. Every later
+        // volley already gets the full interval; this gives the first one the same.
         self.vent_open = 0;
-        self.attack_timer = 0;
+        self.attack_timer = VOLLEY_INTERVAL_TICKS;
         self.target_seat = NO_TARGET;
     }
 }
@@ -970,17 +1123,18 @@ mod tests {
         assert_eq!(size_of::<Leaderboard>(), 6176);
     }
 
-    const PHASES: [u8; 6] = [
+    const PHASES: [u8; 7] = [
         PHASE_LOBBY,
         PHASE_FIGHTING,
         PHASE_SETTLING,
         PHASE_SETTLED,
         PHASE_ROLLING,
         PHASE_ROLLED,
+        PHASE_MUSTERING,
     ];
 
-    /// The whole 6×6 product, so a widened `PHASE_EDGES` cannot quietly legalise an edge
-    /// nobody argued for. The four spelled out below are the ones with consequences.
+    /// The whole 7×7 product, so a widened `PHASE_EDGES` cannot quietly legalise an edge
+    /// nobody argued for. The ones spelled out below are the ones with consequences.
     #[test]
     fn only_declared_transitions_are_legal() {
         let mut legal = 0;
@@ -993,16 +1147,67 @@ mod tests {
         }
         assert_eq!(legal, PHASE_EDGES.len(), "an edge is declared twice, or outside PHASES");
 
-        // Committing an arena whose VRF callback is still in flight lands the callback on
-        // an undelegated account; the oracle then retries it for the request's whole TTL.
-        assert!(!Arena::may_transition(PHASE_ROLLING, PHASE_SETTLED));
+        // The roll's own escape hatch. `abandon_roll` is measured against `tick`, and only
+        // `boss_tick` advances `tick` — so a crank that dies inside the roll window freezes
+        // the clock its timeout is read from, and this edge is the only thing left that can
+        // hand three delegated accounts back to the base layer.
+        assert!(Arena::may_transition(PHASE_ROLLING, PHASE_SETTLED));
         // A second `next_incarnation` must be rejected, not advance the counter twice.
         assert!(!Arena::may_transition(PHASE_LOBBY, PHASE_LOBBY));
         // A retried `settle` is by design — `GetCommitmentSignature` throws on every
         // failure path, so "unknown" is the only answer the settle route ever gets.
         assert!(Arena::may_transition(PHASE_SETTLED, PHASE_SETTLED));
-        // Dead-crank recovery: a match whose task died can only ever end this way.
+        // Dead-crank recovery: a match whose task died can only ever end this way, and a
+        // crank that dies during the muster must not wedge three delegated accounts.
         assert!(Arena::may_transition(PHASE_FIGHTING, PHASE_SETTLED));
+        assert!(Arena::may_transition(PHASE_MUSTERING, PHASE_SETTLED));
+        // Every fight now starts out of a muster, whose entry condition is at least one
+        // raider through the gate. Arming a raid with an empty arena is unrepresentable.
+        assert!(!Arena::may_transition(PHASE_LOBBY, PHASE_FIGHTING));
+        assert!(Arena::may_transition(PHASE_LOBBY, PHASE_MUSTERING));
+        assert!(Arena::may_transition(PHASE_MUSTERING, PHASE_FIGHTING));
+    }
+
+    /// The muster ends on the tick it was scheduled for, not before, and the enrage clock
+    /// starts there — not at `init`, or the muster spends the fight's own budget.
+    #[test]
+    fn the_muster_ends_on_its_own_deadline() {
+        let mut arena = Arena::zeroed();
+        arena.try_set_phase(PHASE_MUSTERING).expect("the gate opens a muster");
+        arena.tick = 40;
+        arena.fight_at_tick = arena.tick + MUSTER_TICKS;
+
+        // One tick short, and every tick before it.
+        for tick in 0..arena.fight_at_tick {
+            arena.tick = tick;
+            assert!(!arena.begin_fight(), "the muster is still running at tick {tick}");
+            assert_eq!(arena.phase, PHASE_MUSTERING);
+            assert_eq!(arena.enrage_at_tick, 0, "no enrage clock runs during the muster");
+        }
+
+        arena.tick = arena.fight_at_tick;
+        assert!(arena.begin_fight(), "the crank flips it exactly on the deadline");
+        assert_eq!(arena.phase, PHASE_FIGHTING);
+        assert_eq!(arena.enrage_at_tick, 40 + MUSTER_TICKS + ENRAGE_TICKS);
+        assert_eq!(arena.fight_at_tick, 0, "no muster is scheduled any more");
+
+        // Total and single-shot: the next tick changes nothing.
+        arena.tick += 1;
+        assert!(!arena.begin_fight());
+        assert_eq!(arena.enrage_at_tick, 40 + MUSTER_TICKS + ENRAGE_TICKS);
+
+        // And it cannot fire on any live account: they are all pre-`PHASE_MUSTERING`, all
+        // carry zero in `fight_at_tick`, and the phase — not that zero — is the gate.
+        for phase in PHASES {
+            if phase == PHASE_MUSTERING {
+                continue;
+            }
+            let mut live = Arena::zeroed();
+            live.phase = phase;
+            live.tick = 9_999;
+            assert!(!live.begin_fight(), "phase {phase} is not a muster");
+            assert_eq!(live.phase, phase);
+        }
     }
 
     /// The outcome is written exactly once, by whichever of `shoot` and `boss_tick` sees
@@ -1039,6 +1244,7 @@ mod tests {
         arena.arena_id = 7;
         arena.affix_seed = [1u8; 32];
         arena.tick = 400;
+        arena.enrage_at_tick = 400 + ENRAGE_TICKS;
         arena.alive_count = 5;
         arena.seat_occupied = 0b1_1111;
         arena.bullets[3].active = BULLET_ACTIVE;
@@ -1069,6 +1275,11 @@ mod tests {
         assert_eq!(arena.next_affix_seed, [0u8; 32]);
         assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
         assert_eq!((arena.tick, arena.alive_count, arena.seat_occupied), (0, 0, 0));
+        assert_eq!(
+            (arena.enrage_at_tick, arena.fight_at_tick),
+            (0, 0),
+            "both deadlines are match state; a deadline against a zeroed clock is in the past"
+        );
         assert!(arena.bullets.iter().all(|b| b.active == BULLET_FREE));
         assert_eq!(arena.arena_id, 7, "identity carries over; the match does not");
 
@@ -1150,7 +1361,9 @@ mod rate_tests {
     fn durations_survive_the_tick_rate() {
         assert_eq!(ticks_for(3_200) * TICK_MS, 3_200, "respawn stays 3.2 s");
         assert_eq!(ticks_for(10_000) * TICK_MS, 10_000, "roll timeout stays 10 s");
-        assert_eq!(ticks_for(360_000) * TICK_MS, 360_000, "enrage stays 6 min");
+        assert_eq!(ENRAGE_TICKS * TICK_MS, 360_000, "enrage stays 6 min");
+        assert_eq!(MUSTER_TICKS * TICK_MS, 20_000, "the muster window stays 20 s");
+        assert_eq!(ROLL_TIMEOUT_TICKS * TICK_MS, 10_000);
         assert_eq!(ticks_for(800) * TICK_MS, 800, "shot cooldown stays 800 ms");
         // A duration shorter than one tick must still cost a tick, never zero.
         assert_eq!(ticks_for(1), 1, "a sub-tick cooldown is still a cooldown");

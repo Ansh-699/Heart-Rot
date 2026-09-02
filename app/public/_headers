@@ -1,0 +1,26 @@
+# Cloudflare Workers static-asset headers. Vite copies `public/` verbatim into `dist/`,
+# and `worker/wrangler.jsonc` publishes `dist/` — Workers parses this file out of the
+# asset directory and never serves it.
+#
+# The default Workers sends on a static asset is `public, max-age=0, must-revalidate`
+# (developers.cloudflare.com/workers/static-assets/headers/), which is right for
+# `index.html` and wrong for everything under `/assets/`: it makes all 45 files on the
+# critical path — 695 KiB brotli, 42 of them modulepreloaded — issue a conditional
+# request on every repeat visit, for 304s that were knowable from the URL alone.
+#
+# `immutable` is safe here BY CONSTRUCTION, not by promise: every file rolldown emits
+# into `assets/` is named `[name]-[hash]` where the hash is over the emitted content, so
+# changed content is a different URL and this rule can never pin a stale byte. Verified
+# on this tree rather than assumed — all 287 files in `app/dist/assets` match
+# `-[A-Za-z0-9_-]{8}.(js|css)`, and editing one source module moved the entry chunk's
+# hash while the untouched chunks kept theirs.
+#
+# `index.html` is deliberately NOT covered. It is the unhashed name that points at the
+# hashed ones, so it must keep revalidating or a deploy never reaches anyone.
+#
+# One caveat this file cannot express: `run_worker_first: ["/api/*"]` means `_headers`
+# does not apply to Worker responses. That is exactly the intent — `/api/*` is dynamic
+# and must not be cached — but it also means adding an asset path to `run_worker_first`
+# would silently drop this rule.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
