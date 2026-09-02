@@ -1,21 +1,19 @@
 /**
- * Palette, shape constants and the compiled dungeon — everything the primitive renderer
- * shares.
+ * Palette and shape constants — everything the renderer's layers share.
  *
- * There is no sprite rig any more: no `boss.svg`, no `knights.svg`, no slicing, no
- * `<defs>`. Players are circles, the boss is a mass with its nine generated hitboxes drawn
- * as rects, bullets are dots. So all that is left to share is colour, size, and the wall
- * geometry — and even that is *compiled* from `MAP_GRID`, the same generated table the
- * chain raycasts and `predict.ts` collides against, rather than drawn as a picture of a
- * room. Hand-copied geometry is the signature bug of this project: one disagreeing tile
- * reads as permanent lag rather than as a map bug.
+ * There is no geometry in here any more. The rooms are painted, the boss and the archer
+ * are atlases, and the ordnance is `./ordnance.gen`. The wall and rim paths this file
+ * used to compile from `MAP_GRID` were painted flat over every wall tile, which over a
+ * painted room is a colour mask over the painted walls, so they went with the vector
+ * rooms — the map is still the one generated table the chain raycasts and `predict.ts`
+ * collides against; it is simply no longer drawn a second time.
  *
  * Boss coordinates are not here at all — `PART_HITBOXES` and `CORE` come straight from
  * `@heartrot/client`, so the drawn boss and the raycast boss cannot drift.
  *
  * Nothing in here touches React or the DOM.
  */
-import { MAP_GRID, MAP_TILE, MAP_TILES } from '@heartrot/client';
+import { MAP_TILE, MAP_TILES } from '@heartrot/client';
 
 // ---------------------------------------------------------------------------
 // Arena space
@@ -33,9 +31,6 @@ export const ARENA_UNITS = MAP_TILES * MAP_TILE;
 // ---------------------------------------------------------------------------
 // Shapes
 // ---------------------------------------------------------------------------
-
-/** Bullet dot radius. */
-export const BULLET_R = 4;
 
 /**
  * Past this a position change was a teleport, not a walk — a reconcile onto a respawn at
@@ -85,7 +80,9 @@ export const FACING_UNIT: readonly (readonly [number, number])[] = [
 
 /**
  * Legibility over beauty. Three separations have to survive a dim laptop screen: you from
- * the other raiders, a live boss part from a destroyed one, and a bullet from the floor.
+ * the other raiders, a live boss part from a destroyed one, and a bullet from the floor —
+ * the last is the ordnance atlas's own amber now (`tools/gen_ordnance.py`), not a paint
+ * in here.
  */
 export const PAL = {
   wall: '#2b2733',
@@ -103,58 +100,7 @@ export const PAL = {
   partLive: '#c94f6d',
 
   ventOpen: '#ffe873',
-
-  bullet: '#ffb020',
 } as const;
-
-// ---------------------------------------------------------------------------
-// The dungeon
-// ---------------------------------------------------------------------------
-
-/** Contiguous runs of `true`, as inclusive `[start, end]` pairs. */
-function spans(flags: readonly boolean[]): Array<readonly [number, number]> {
-  const out: Array<readonly [number, number]> = [];
-  let start = -1;
-  for (let i = 0; i <= flags.length; i++) {
-    const on = i < flags.length && flags[i] === true;
-    if (on && start < 0) start = i;
-    else if (!on && start >= 0) {
-      out.push([start, i - 1]);
-      start = -1;
-    }
-  }
-  return out;
-}
-
-/**
- * 4,096 tiles would be 4,096 nodes that never change. Merging each row's runs into
- * subpaths of one `d` makes each layer a single node, built once per page load.
- */
-function tilePath(hit: (tx: number, ty: number) => boolean, h: number = MAP_TILE): string {
-  let d = '';
-  for (let ty = 0; ty < MAP_TILES; ty++) {
-    const flags = Array.from({ length: MAP_TILES }, (_, tx) => hit(tx, ty));
-    for (const [lo, hi] of spans(flags)) {
-      const w = (hi - lo + 1) * MAP_TILE;
-      d += `M${lo * MAP_TILE} ${ty * MAP_TILE}h${w}v${h}h-${w}z`;
-    }
-  }
-  return d;
-}
-
-/** Off-map reads as wall, exactly as `isWallTile` decides it. */
-function tileAt(tx: number, ty: number): string {
-  return MAP_GRID[ty]?.[tx] ?? '#';
-}
-
-/** Every solid tile: the border, the corner rocks, the chamber walls, the pillars. */
-export const MAP_WALL_PATH = tilePath((tx, ty) => tileAt(tx, ty) === '#');
-
-/** The lit top face of every wall with floor above it. Purely a legibility cue. */
-export const MAP_RIM_PATH = tilePath((tx, ty) => tileAt(tx, ty) === '#' && tileAt(tx, ty - 1) !== '#', 3);
-
-/** The four edge entrances — walkable, so a floor tint and not a wall. */
-export const MAP_ENTRANCE_PATH = tilePath((tx, ty) => tileAt(tx, ty) === 'E');
 
 /**
  * How many projectile nodes the whole scene may draw — boss ordnance plus arrows, one
@@ -181,16 +127,10 @@ export const VISIBLE_PROJECTILES = 32;
 // Boot check
 // ---------------------------------------------------------------------------
 
-// `spans` is the only non-trivial thing in this file and all of its failure modes are
-// silent — a dropped run is a wall you can walk through on screen. The facing table is the
-// other: a non-unit heading puts a player's aim stub off their own dot, which reads as a
-// rendering glitch rather than as a bad constant. Both are cheap enough to check at import,
-// and either should stop the app here rather than three layers down.
+// The facing table fails silently: a non-unit heading puts a player's aim stub off their
+// own dot, which reads as a rendering glitch rather than as a bad constant. Cheap enough
+// to check at import, and it should stop the app here rather than three layers down.
 {
-  const got = JSON.stringify(spans([false, true, true, false, true, false, false, true]));
-  if (got !== '[[1,2],[4,4],[7,7]]') throw new Error(`sprites: spans() is broken: ${got}`);
-  if (spans([]).length !== 0 || spans([true]).length !== 1) throw new Error('sprites: spans() edges');
-  if (MAP_WALL_PATH.length === 0) throw new Error('assets/map: the generated dungeon has no walls');
   if (FACING_UNIT.length !== 8) throw new Error('sprites: FACING_UNIT must have 8 headings');
   for (const [x, y] of FACING_UNIT) {
     if (Math.abs(Math.hypot(x, y) - 1) > 0.001) throw new Error(`sprites: [${x},${y}] is not a unit heading`);

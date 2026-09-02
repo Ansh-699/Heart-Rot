@@ -2,14 +2,14 @@
 //!
 //! Hand-editing this file re-creates the defect it exists to close: the drawn
 //! boss and the raycast boss stop being the same boss. Move the art, re-run
-//! `python3 tools/svg_slice.py`, then re-run the command above.
+//! `python3 tools/gen_boss.py`, then re-run the command above.
 //!
 //! Boss-local hitboxes, in arena units relative to `Boss.x` / `Boss.y`.
 //!
-//! `assets/sprites/hitboxes.json` is in sprite pixels on a 230x270 canvas, origin top-left; one sprite
-//! pixel is 3 arena units (`--scale 3`, a generator argument and never a
+//! `assets/sprites/hitboxes.json` is in sprite pixels on a 318x604 canvas, origin top-left; one sprite
+//! pixel is 1 arena units (`--scale 1`, a generator argument and never a
 //! constant here). `Boss.x`/`Boss.y` is the centre of that scaled canvas, so the two
-//! spaces differ by `local = sprite * 3 + (-345, -405)` and nothing else -- no
+//! spaces differ by `local = sprite * 1 + (-159, -302)` and nothing else -- no
 //! flip, no shear. See the tool's docstring for the derivation.
 //!
 //! **Why the `rustfmt::skip`s below.** This file is emitted, and `--check` compares it
@@ -45,23 +45,23 @@ impl Rect {
 /// straight over anything thinner.
 #[rustfmt::skip]
 pub const PART_HITBOXES: [Rect; crate::state::N_PARTS] = [
-    Rect { x:  -48, y: -321, w:  63, h: 108 }, // 0 thorn0
-    Rect { x:  195, y: -294, w: 144, h: 195 }, // 1 thorn1
-    Rect { x:  -90, y: -111, w:  60, h:  69 }, // 2 thorn2
-    Rect { x:  264, y:  -24, w:  72, h:  51 }, // 3 thorn3
-    Rect { x:   21, y: -384, w: 201, h: 177 }, // 4 crown
-    Rect { x: -141, y: -258, w: 150, h: 159 }, // 5 wolf_l
-    Rect { x:  171, y: -249, w: 138, h: 156 }, // 6 beast_r
-    Rect { x: -342, y:  -99, w: 333, h: 411 }, // 7 mace
-    Rect { x:  165, y: -114, w: 156, h: 330 }, // 8 claws
+    Rect { x:  -79, y: -254, w:  27, h:  59 }, // 0 thorn0
+    Rect { x:   59, y: -245, w:  36, h:  52 }, // 1 thorn1
+    Rect { x: -158, y:  -76, w:  50, h:  27 }, // 2 thorn2
+    Rect { x:   85, y: -132, w:  33, h:  83 }, // 3 thorn3
+    Rect { x:  -49, y: -301, w: 125, h: 118 }, // 4 crown
+    Rect { x: -147, y: -223, w: 100, h: 116 }, // 5 wolf_l
+    Rect { x:   25, y: -222, w: 131, h: 107 }, // 6 beast_r
+    Rect { x: -129, y: -114, w:  67, h: 106 }, // 7 mace
+    Rect { x:   33, y: -120, w:  87, h: 113 }, // 8 claws
 ];
 
 /// The vent: centre offset from `Boss.x`/`Boss.y` and a *squared* radius, compared
 /// against a squared distance because this program has no sqrt. It is the circle
 /// inscribed in the `core` box, so it never claims a pixel the vent does not draw.
-pub const CORE_X: i32 = 75;
-pub const CORE_Y: i32 = -54;
-pub const CORE_RADIUS_SQ: i32 = 3600;
+pub const CORE_X: i32 = -15;
+pub const CORE_Y: i32 = -108;
+pub const CORE_RADIUS_SQ: i32 = 1024;
 
 /// Where a volley leaves the boss: the `Boss.parts` index of the thorn that fires, and
 /// the boss-local point it fires from.
@@ -86,17 +86,17 @@ pub const N_MUZZLES: usize = 4;
 /// command at the top of this file, and the muzzles move with it.
 ///
 /// Each point is a DRAWN pixel — the one nearest that thorn's mask centroid, written into
-/// `hitboxes.json` by `tools/svg_slice.py`. A thorn is a diagonal spray inside an
-/// axis-aligned box that is 8–13% full, so the box centre is usually transparent: three of
+/// `hitboxes.json` by `tools/gen_boss.py`. A thorn is a diagonal spike inside an
+/// axis-aligned box that is mostly air, so the box centre is usually transparent: three of
 /// the four volleys used to spawn in mid-air beside the creature, and thorn1's spawned
 /// inside `beast_r`'s box. That is invisible while the boss is a circle and glaring the
 /// moment the art is on screen.
 #[rustfmt::skip]
 pub const MUZZLES: [Muzzle; N_MUZZLES] = [
-    Muzzle { part: 0, x:  -18, y: -273 }, // thorn0
-    Muzzle { part: 1, x:  270, y: -216 }, // thorn1
-    Muzzle { part: 2, x:  -63, y:  -75 }, // thorn2
-    Muzzle { part: 3, x:  288, y:    0 }, // thorn3
+    Muzzle { part: 0, x:  -67, y: -222 }, // thorn0
+    Muzzle { part: 1, x:   77, y: -217 }, // thorn1
+    Muzzle { part: 2, x: -130, y:  -62 }, // thorn2
+    Muzzle { part: 3, x:  102, y:  -93 }, // thorn3
 ];
 
 const _: () = {
@@ -239,12 +239,9 @@ mod tests {
         let u = parts_union();
         assert!(CORE_X - r >= u.x && CORE_X + r <= u.x + u.w, "the vent hangs off the boss");
         assert!(CORE_Y - r >= u.y && CORE_Y + r <= u.y + u.h, "the vent hangs off the boss");
-        // High on the body, as the reference composition needs.
-        assert!(CORE_Y < u.y + u.h / 2, "the vent is in the lower body");
-        // NOT centred on the union, and deliberately not asserted to be: the mace arm
-        // sweeps to the far left of the canvas, so the union's midpoint sits ~77 units
-        // left of the chest while the creature's mass centroid sits on it. Measured in
-        // docs/art/boss-rig.md 4.5; recorded here so nobody "fixes" the offset.
+        // Where on the body is NOT asserted: the vent is the painting's own orb, authored
+        // as the `core` polygon in `tools/gen_boss.py`, and the ram skull towering over the
+        // chest puts it below the union's midpoint by construction.
     }
 
     /// A sample outside every part box hits nothing -- the property `shoot.rs`'s early-out

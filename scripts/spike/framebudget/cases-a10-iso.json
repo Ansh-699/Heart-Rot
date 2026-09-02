@@ -1,0 +1,14 @@
+[
+ {"name": "iso-full", "cpu": 6, "viewport": {"width": 1920, "height": 1080},
+  "opts": {"room": "arena", "knights": 20, "bullets": 32, "archerPct": 100, "frames": 400, "feedHz": 714, "tickEvery": 71, "sparseMoves": true, "movesPerSec": 16, "movesPerWrite": 1, "arrows": true, "localArrows": true, "remoteArrows": true, "damage": true}},
+ {"name": "iso-noLocalArrows", "cpu": 6, "viewport": {"width": 1920, "height": 1080},
+  "opts": {"room": "arena", "knights": 20, "bullets": 32, "archerPct": 100, "frames": 400, "feedHz": 714, "tickEvery": 71, "sparseMoves": true, "movesPerSec": 16, "movesPerWrite": 1, "arrows": true, "localArrows": false, "remoteArrows": true, "damage": true}},
+ {"name": "iso-noArrows", "cpu": 6, "viewport": {"width": 1920, "height": 1080},
+  "opts": {"room": "arena", "knights": 20, "bullets": 32, "archerPct": 100, "frames": 400, "feedHz": 714, "tickEvery": 71, "sparseMoves": true, "movesPerSec": 16, "movesPerWrite": 1, "arrows": false, "localArrows": false, "remoteArrows": false, "damage": true}},
+ {"name": "iso-noBullets", "cpu": 6, "viewport": {"width": 1920, "height": 1080},
+  "opts": {"room": "arena", "knights": 20, "bullets": 0, "archerPct": 100, "frames": 400, "feedHz": 714, "tickEvery": 71, "sparseMoves": true, "movesPerSec": 16, "movesPerWrite": 1, "arrows": true, "localArrows": true, "remoteArrows": true, "damage": true}},
+ {"name": "iso-frozen", "cpu": 6, "viewport": {"width": 1920, "height": 1080},
+  "opts": {"room": "arena", "knights": 20, "bullets": 32, "archerPct": 100, "frames": 400, "feedHz": 714, "tickEvery": 71, "sparseMoves": true, "movesPerSec": 16, "movesPerWrite": 1, "arrows": true, "localArrows": true, "remoteArrows": true, "damage": true, "frozen": true}},
+ {"name": "iso-1knight-0bullets", "cpu": 6, "viewport": {"width": 1920, "height": 1080},
+  "opts": {"room": "arena", "knights": 1, "bullets": 0, "archerPct": 100, "frames": 400, "feedHz": 714, "tickEvery": 71, "sparseMoves": true, "movesPerSec": 16, "movesPerWrite": 1, "arrows": false, "localArrows": false, "remoteArrows": false, "damage": true}}
+]

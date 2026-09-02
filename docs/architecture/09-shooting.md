@@ -260,7 +260,7 @@ recommended against.
 
 **`programs/heartrot/src/handlers/shoot.rs`**
 
-- Instruction data becomes `&[seat, dx, dy]`. **Delete** the `dir >= FACING_STEP.len()`
+- Instruction data becomes `&[seat, dx, dy, charged]`. **Delete** the `dir >= FACING_STEP.len()`
   rejection — every `i8` pair except `(0, 0)` is a legal aim, and `(0, 0)` is rejected by
   the octant helper below, which already returns `Err(InvalidInstructionData)` for it.
 - **Delete** `FACING_STEP`. Nothing else reads it.

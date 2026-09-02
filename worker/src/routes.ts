@@ -544,11 +544,11 @@ export async function sessionInit(env: Env, body: unknown): Promise<Response> {
     throw new BadRequest('skinId out of range');
   }
 
-  // Defaulted only when absent, which is the pre-class client — and 0 is the knight every
-  // live seat already is, so that default changes nothing. An out-of-range value is
-  // refused, never clamped.
+  // Defaulted only when absent: the archer (1) is the only class the client sends. 0 stays
+  // in range because the chain still accepts it and live seats hold it. An out-of-range
+  // value is refused, never clamped.
   const rawClass = (body as Record<string, unknown>).classId;
-  const classId = rawClass === undefined ? 0 : rawClass;
+  const classId = rawClass === undefined ? 1 : rawClass;
   if (
     typeof classId !== 'number' ||
     !Number.isInteger(classId) ||

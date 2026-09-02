@@ -46,6 +46,7 @@ export const HEARTROT_ERRORS: Readonly<Record<number, HeartrotErrorInfo>> = {
   17: { name: "MatchNotRecorded", message: "next_incarnation on an arena whose result has not reached the Leaderboard yet \u2014 last_arena_id / last_incarnation do not name this match." },
   18: { name: "NotVrfIdentity", message: "A VRF callback whose signer is not vrf::pda::scoped_vrf_identity(heartrot)." },
   19: { name: "NoRaiders", message: "begin_muster (tag 3) was sent while no seat is in ZONE_ARENA \u2014 nobody has walked through the gate, so there is nothing to muster for." },
+  20: { name: "NotCharged", message: "shoot (tag 7) was sent with charged = 1 fewer than state::CHARGE_SLOTS ER slots after the seat's last accepted step, so the hold has not accrued and the shot is not charged." },
 };
 
 /**
@@ -53,4 +54,4 @@ export const HEARTROT_ERRORS: Readonly<Record<number, HeartrotErrorInfo>> = {
  * this one cannot be a `HeartrotError` at all: the deployed program is newer than
  * this client, or the failure came from a different program.
  */
-export const HEARTROT_ERROR_HIGHEST = 19;
+export const HEARTROT_ERROR_HIGHEST = 20;

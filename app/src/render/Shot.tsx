@@ -45,10 +45,15 @@
  *
  * Cost: {@link MAX_SEATS} groups, mounted once and never re-rendered into (the tree is
  * memoised on an empty dependency list — see the note above the `return`), opacity 0 at
- * rest. No allocation per shot, no pool management — `291 ms` max flight plus
+ * rest. No allocation per shot, no pool management — `265 ms` max striking flight plus
  * {@link STICK_FADE_MS} is under the 800 ms knight cooldown, so a seat can never have two
  * arrows at once (asserted below). Per frame the work is one `atan2` and one style write
  * per arrow actually in the air.
+ *
+ * A charged shot is the same arrow, bigger: `scale(1.6)` on the node and a second, wider
+ * line trailing it inside the same `<g>` — both toggled once per launch, never per frame.
+ * The local seat's charged hit is the one moment the whole picture answers: a 70 ms hit
+ * stop and a 6-unit kick of the root, both `Arena.tsx`'s, both no-ops under reduced motion.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 
@@ -56,160 +61,29 @@ import {
   CLASS_ARCHER,
   CLASS_PERIOD_MS,
   CORE,
-  MAP_TILE,
-  MAP_TILES,
   MAX_SEATS,
-  PART_HITBOXES,
-  VENT_OPEN,
   ZONE_ARENA,
   ZONE_LOBBY,
+  aimSelfCheck,
+  chargedDamage,
   classOf,
   decodeAim,
-  isWall,
+  landingOf,
+  raycastShot,
   type BossAccount,
+  type Landing,
   type PlayerSlot,
   type PlayersAccount,
 } from '@heartrot/client';
 
+import { hitStop, shake } from './Arena';
+import { play } from './sfx';
 import { FACING_UNIT, PAL, VISIBLE_PROJECTILES } from './sprites';
 import type { Room } from './viewport';
 
-// ---------------------------------------------------------------------------
-// The raycast mirror
-// ---------------------------------------------------------------------------
-
-/**
- * `programs/heartrot/src/handlers/shoot.rs::raycast` IS THE AUTHORITY. This is a third
- * copy of that algorithm and it exists only to find the point an arrow stops at, because
- * the chain publishes no such point.
- *
- * The *data* cannot drift — `isWall` reads the same generated bitboard the program
- * raycasts and `PART_HITBOXES` / `CORE` come out of the same `gen_hitboxes.py` pass — but
- * the twenty lines below are hand-written, so they are held to account by BEHAVIOURAL dev
- * assertions at the bottom of this file rather than by a table of coordinates. A test that
- * names a tile stops testing the ray the moment the map is redrawn.
- *
- * Two deliberate differences from the Rust, both provably invisible:
- *
- *  - `SHELL_AABB` is not mirrored. It is a strict superset of every part box and the core
- *    circle, folded out of the same table purely as an early-out; skipping it changes no
- *    answer, only nine rect tests on steps that were going to miss anyway. Sixty-four
- *    steps of that in a browser is 0.0024 % of a frame.
- *  - The Rust returns `None` for a miss. Here a miss still needs a POINT to draw to, so
- *    the walk reports where it died — the wall sample, or the last step of the 64.
- *
- * Integer discipline is the part that matters: `Math.trunc` everywhere Rust's `i32 /`
- * truncates toward zero, and `unitQ12` reproduced exactly, alpha-max-plus-beta-min and all.
- */
-const Q = 4096;
-const MAX_RAY_STEPS = MAP_TILES;
-
-/** `shoot.rs::unit_q12`. `null` for the zero vector, which the caller has already rejected. */
-function unitQ12(dx: number, dy: number): readonly [number, number] | null {
-  const vx = dx | 0;
-  const vy = dy | 0;
-  const ax = Math.abs(vx);
-  const ay = Math.abs(vy);
-  const len = ax > ay ? ax + ((ay / 2) | 0) : ay + ((ax / 2) | 0);
-  if (len === 0) return null;
-  return [Math.trunc((vx * Q) / len), Math.trunc((vy * Q) / len)];
-}
-
-/** Where a shot ends, and what it ended on. */
-export interface RayEnd {
-  readonly x: number;
-  readonly y: number;
-  /** True only for a live part or the core — the two things the ray can stop on. */
-  readonly struck: boolean;
-  /**
-   * The stop was the CORE rather than a part. `raycast` draws the same distinction on chain
-   * (`Hit::Core` vs `Hit::Part`) and it matters here for the reason it matters there:
-   * `shoot.rs:492` scores 0 for a core hit while the vent is sealed. The ray stays a pure
-   * mirror — the vent test lives in the caller, exactly as it does in `fire`.
-   */
-  readonly core: boolean;
-}
-
-/**
- * What an arrival MEANT, which is not the same question as what the ray stopped on.
- *
- * `absorb` is the shell eating a shot aimed at a sealed vent: the ray stopped on the
- * creature, the cooldown is spent, and `damage_dealt` never moves. Drawing that as a hit is
- * a lie the player pays for repeatedly — spec §2.3 makes the orb the brightest thing in the
- * room, so it is the first thing a new player aims at, and 20.4 % of pit stands can put a
- * ray on it through a full shell. A miss that looks like a hit is worse than a miss.
- */
-export type Landing = 'hit' | 'absorb' | 'miss';
-
-/**
- * `shoot.rs:492`'s rule, mirrored rather than approximated, in one place.
- *
- * `VENT_OPEN` is `@heartrot/client`'s, imported above. It used to be a private `const
- * VENT_OPEN = 1` right here, which made the byte's meaning a fact stored once per file that
- * reads it — and `Hud` and `Boss` were each storing it again as a bare `=== 1`.
- */
-export function landingOf(end: RayEnd, ventOpen: number): Landing {
-  if (!end.struck) return 'miss';
-  return end.core && ventOpen !== VENT_OPEN ? 'absorb' : 'hit';
-}
-
-/**
- * Walk `(dx, dy)` from `(fromX, fromY)` and report where it stops.
- *
- * `(dx, dy)` must be in the `i8` range the wire carries, so the normalisation runs over the
- * same integers the program's does. A destroyed part (0 HP) is transparent, exactly as on
- * chain: stripping the shell is what opens a lane to the core, and it falls out of the
- * geometry rather than out of a flag.
- */
-export function raycastShot(
-  fromX: number,
-  fromY: number,
-  dx: number,
-  dy: number,
-  parts: readonly number[],
-  bossX: number,
-  bossY: number,
-): RayEnd {
-  const u = unitQ12(dx, dy);
-  if (u === null) return { x: fromX, y: fromY, struck: false, core: false };
-  const [ux, uy] = u;
-
-  let fx = fromX * Q;
-  let fy = fromY * Q;
-  let x = fromX;
-  let y = fromY;
-
-  for (let step = 0; step < MAX_RAY_STEPS; step++) {
-    fx += ux * MAP_TILE;
-    fy += uy * MAP_TILE;
-    x = Math.trunc(fx / Q);
-    y = Math.trunc(fy / Q);
-
-    if (isWall(x, y)) return { x, y, struck: false, core: false };
-
-    const lx = x - bossX;
-    const ly = y - bossY;
-
-    for (let i = 0; i < PART_HITBOXES.length; i++) {
-      const r = PART_HITBOXES[i]!;
-      if (
-        (parts[i] ?? 0) !== 0 &&
-        lx >= r.x &&
-        lx < r.x + r.w &&
-        ly >= r.y &&
-        ly < r.y + r.h
-      ) {
-        return { x, y, struck: true, core: false };
-      }
-    }
-
-    const cx = lx - CORE.x;
-    const cy = ly - CORE.y;
-    if (cx * cx + cy * cy <= CORE.radiusSq) return { x, y, struck: true, core: true };
-  }
-
-  return { x, y, struck: false, core: false };
-}
+// The raycast mirror — `raycastShot`, `landingOf` and `RayEnd` — used to live here. It is
+// `packages/client/src/aim.ts` now, where `autoAim` needed it from the input path too, and
+// it is imported above like every other chain table. There is no fourth copy.
 
 // ---------------------------------------------------------------------------
 // Flight
@@ -236,10 +110,14 @@ const STICK_FADE_MS = 400;
  * is DERIVED from the shortest cooldown and the flight is clamped to it, so the invariant
  * holds by construction for any range, any speed and any map.
  *
- * It does not bind in practice: the longest terminus over all 726 pit stands x 64 angles is
- * 640 units, which is 291 ms at {@link ARROW_UNITS_PER_SEC}, against the 400 ms below. The
- * dev check confirms that headroom is still there, so a speed change that starts clamping
- * real shots is reported rather than silently making every long shot look slow.
+ * It does not bind on a shot that matters: over every pit stand on the painted map (764
+ * tiles at a 4-unit pitch, 12,224 stands x 64 angles, full shell at `BOSS_SPAWN`) the
+ * longest terminus that STRIKES the creature is 583 units — 265 ms at
+ * {@link ARROW_UNITS_PER_SEC}, against the 400 ms below. A miss can fly further (954 units,
+ * the length of the pit) and is clamped to the ceiling, which is harmless: only a strike
+ * has a damage number to arrive before. The dev check confirms the headroom is still there,
+ * so a speed change that starts clamping real shots is reported rather than silently making
+ * every long shot look slow.
  */
 const ARROW_MAX_MS = CLASS_PERIOD_MS[0]! - STICK_FADE_MS;
 
@@ -253,7 +131,8 @@ const DAMAGE_RISE = 26;
 /**
  * Warm, because reference B is a cold cyan room and a cyan tracer disappears into the
  * braziers and into the boss's own ordnance. Colour alone cannot carry the separation —
- * every arrow colour clearing 4.5:1 against the floor is within 1.68:1 of `PAL.bullet` —
+ * every arrow colour clearing 4.5:1 against the floor is within 1.68:1 of the ordnance's
+ * amber (`#ffb020`, index 5 of `tools/gen_ordnance.py`'s palette) —
  * so the arrow is separated from a boss bullet by SHAPE (a thin shaft with a head, against
  * an 8-unit round capsule) and by speed (5.2x), and the hue is only the third cue.
  */
@@ -275,8 +154,24 @@ const SPARK_ABSORB = PAL.partLive;
 const HEAD_LEN = 7;
 const SHAFT_LEN = 18;
 
-/** Perpendicular sag on an archer's arrow, as a fraction of the range. Decorative only. */
-const ARC_FRACTION = 0.1;
+/**
+ * The archer's lob: a quadratic Bezier whose control point sits this fraction of the range
+ * straight UP from the chord's midpoint, so the arrow rises and drops onto the terminus the
+ * chain already resolved. Decorative only, and derivable on every client from the same
+ * bytes as the chord — the terminus is the raycast terminus, exactly as before. Under 0.5,
+ * so the tangent can never vanish mid-flight, even on a vertical shot (`atan2` of (0, 0)
+ * would spin the head).
+ */
+const LOB_FRACTION = 0.35;
+
+/** A charged arrow: the node scaled up, and the wider trail behind the shaft (`.hr-arrow-trail`). */
+const CHARGED_SCALE = 1.6;
+const CHARGED_XFORM = ` scale(${CHARGED_SCALE})`;
+const TRAIL_LEN = 22;
+
+/** What the local seat's charged hit does to the whole picture — `Arena.tsx`'s two exports. */
+const HIT_STOP_MS = 70;
+const SHAKE_UNITS = 6;
 
 // The scene's projectile cap is `sprites.ts`'s {@link VISIBLE_PROJECTILES}, imported above.
 // It used to be typed here a second time under this name and a third time in `Arena.tsx` as
@@ -285,21 +180,20 @@ const ARC_FRACTION = 0.1;
 
 interface Flight {
   t0: number;
+  /** The Bezier: bow, control point, terminus. The control point IS the midpoint for a knight. */
   x0: number;
   y0: number;
+  cx: number;
+  cy: number;
   x1: number;
   y1: number;
-  /** Chord, precomputed. */
-  dx: number;
-  dy: number;
-  /** Unit perpendicular, for the sag. */
-  px: number;
-  py: number;
-  /** Sag amplitude in units. 0 for a knight. */
-  arc: number;
   ms: number;
   /** What the arrival means, resolved at launch against the vent as it stood then. */
   hit: Landing;
+  /** The terminus was the core — `coreHit` rather than `hitPart` when it lands. */
+  core: boolean;
+  /** Drawn big, and the local seat's hit stops the frame. */
+  charged: boolean;
   /** Arrival has been played; the node is parked. */
   landed: boolean;
 }
@@ -313,6 +207,8 @@ export interface LocalShot {
   /** The exact `i8` pair that went on the wire (or would have, for a practice shot). */
   readonly dx: number;
   readonly dy: number;
+  /** The charged byte that went with it. */
+  readonly charged: boolean;
 }
 
 /**
@@ -412,6 +308,7 @@ export function Shot({
   // seat and never resized: the pool IS the seat table.
   const muzzle = useRef<Array<SVGGElement | null>>([]);
   const arrow = useRef<Array<SVGGElement | null>>([]);
+  const trail = useRef<Array<SVGLineElement | null>>([]);
   const impactAt = useRef<Array<SVGGElement | null>>([]);
   const impact = useRef<Array<SVGGElement | null>>([]);
   const damage = useRef<Array<SVGGElement | null>>([]);
@@ -452,8 +349,20 @@ export function Shot({
     return shown === undefined || there === undefined || there === shown;
   };
 
-  /** The spark. One WAAPI one-shot on this file's own node; no per-frame cost. */
-  const land = (seat: number, hit: Landing): void => {
+  /**
+   * The spark. One WAAPI one-shot on this file's own node; no per-frame cost. The local
+   * seat's landing is also the one that is HEARD and, charged, the one that is FELT — the
+   * hit stop and the kick are `Arena`'s, keyed here because this is where the arrival is
+   * known. Remote arrivals are silent: twenty seats landing is not twenty cues.
+   */
+  const land = (seat: number, hit: Landing, core: boolean, charged: boolean): void => {
+    if (seat === localSeat && hit === 'hit') {
+      play(core ? 'coreHit' : 'hitPart');
+      if (charged) {
+        hitStop(HIT_STOP_MS);
+        shake(SHAKE_UNITS);
+      }
+    }
     const el = impact.current[seat];
     if (el === null || el === undefined) return;
     el.style.color = hit === 'hit' ? SPARK_HIT : hit === 'absorb' ? SPARK_ABSORB : SPARK_WALL;
@@ -475,7 +384,15 @@ export function Shot({
   const cap = Math.max(0, VISIBLE_PROJECTILES - budget);
 
   /** Start a seat's arrow. The one place a `Flight` is created, local or remote. */
-  const launch = (seat: number, x: number, y: number, dx: number, dy: number, cls: number): void => {
+  const launch = (
+    seat: number,
+    x: number,
+    y: number,
+    dx: number,
+    dy: number,
+    cls: number,
+    charged: boolean,
+  ): void => {
     if (seat < 0 || seat >= MAX_SEATS) return;
     if (!inRoom(seat)) return;
 
@@ -525,35 +442,44 @@ export function Shot({
     }
 
     // The loose flash sits at the bow and is the only thing that answers the key at 0 ms
-    // when the range is long. Positioned once per shot, animated once per shot.
+    // when the range is long. Positioned once per shot, animated once per shot. The local
+    // twang goes with it: at input, not at the echo.
     const flash = muzzle.current[seat];
     if (flash !== null && flash !== undefined) {
       flash.style.transform = `translate(${x}px, ${y}px)`;
       flash.animate([{ opacity: 0.95 }, { opacity: 0 }], { duration: MUZZLE_MS });
     }
+    if (seat === localSeat) play(charged ? 'looseCharged' : 'loose');
+
+    // The charged dress, once per launch: the class colours the shaft and head (`styles.css`)
+    // and the trail is shown; the scale rides the per-frame transform.
+    if (node !== null && node !== undefined) node.classList.toggle('hr-arrow-charged', charged);
+    const tail = trail.current[seat];
+    if (tail !== null && tail !== undefined) tail.style.visibility = charged ? 'visible' : 'hidden';
 
     if (reducedRef.current || range === 0 || ms === 0) {
       // No travel. The impact is the whole of the information and it appears at once.
       if (node !== null && node !== undefined) node.style.opacity = '0';
       flights.current[seat] = null;
-      land(seat, hit);
+      land(seat, hit, end.core, charged);
       return;
     }
 
-    const inv = 1 / range;
+    // The lob's control point: the chord's midpoint, lifted for an archer. For a knight it
+    // IS the midpoint, which makes the Bezier the straight line at uniform speed.
+    const lift = cls === CLASS_ARCHER ? range * LOB_FRACTION : 0;
     flights.current[seat] = {
       t0: performance.now(),
       x0: x,
       y0: y,
+      cx: x + cdx / 2,
+      cy: y + cdy / 2 - lift,
       x1: end.x,
       y1: end.y,
-      dx: cdx,
-      dy: cdy,
-      px: -cdy * inv,
-      py: cdx * inv,
-      arc: cls === CLASS_ARCHER ? range * ARC_FRACTION : 0,
       ms,
       hit,
+      core: end.core,
+      charged,
       landed: false,
     };
   };
@@ -567,7 +493,7 @@ export function Shot({
     sink = (shot) => {
       if (localSeat === undefined || shot.seat !== localSeat) return;
       const slot = players.slots[shot.seat];
-      launch(shot.seat, shot.x, shot.y, shot.dx, shot.dy, slot === undefined ? 0 : classOf(slot));
+      launch(shot.seat, shot.x, shot.y, shot.dx, shot.dy, slot === undefined ? 0 : classOf(slot), shot.charged);
     };
     return () => {
       sink = null;
@@ -605,20 +531,25 @@ export function Shot({
       // arrow out of the same bow.
       if (slot.lastShotTick > lastShot && seat !== localSeat) {
         const aim = aimOf(slot);
-        launch(seat, slot.x, slot.y, aim[0], aim[1], classOf(slot));
+        // `chargedShot` is the bit the chain set on THIS loose; the next step clears it.
+        launch(seat, slot.x, slot.y, aim[0], aim[1], classOf(slot), slot.chargedShot);
       }
 
       // Chain-only, for EVERY seat including the local one: prediction owns no number.
       // `dealt` is capped at the part's remaining HP on chain, so a finishing blow
       // legitimately reads less than the class damage — shown as-is, never rounded up.
       if (slot.damageDealt > lastDealt) {
-        showDamage(seat, slot.damageDealt - lastDealt);
+        showDamage(seat, slot.damageDealt - lastDealt, classOf(slot));
       }
     }
   });
 
-  /** The number, at the terminus this seat's last arrow found. */
-  const showDamage = (seat: number, amount: number): void => {
+  /**
+   * The number, at the terminus this seat's last arrow found. A charged landing — the
+   * class's 2.5x, or a finishing blow that still cleared it — is the one number worth
+   * reading, and `.hr-dmg-charged` (`styles.css`) draws it at 26 px in the vent's yellow.
+   */
+  const showDamage = (seat: number, amount: number, cls: number): void => {
     const el = damage.current[seat];
     const text = damageText.current[seat];
     if (el === null || el === undefined || text === null || text === undefined) return;
@@ -630,6 +561,7 @@ export function Shot({
       y: bossRef.current.y + CORE.y,
     };
     text.textContent = `${amount}`;
+    text.classList.toggle('hr-dmg-charged', amount >= chargedDamage(cls));
     el.animate(
       [
         { opacity: 1, transform: `translate(${at.x}px, ${at.y}px)` },
@@ -658,7 +590,7 @@ export function Shot({
         if (t >= 1) {
           if (!f.landed) {
             f.landed = true;
-            land(seat, f.hit);
+            land(seat, f.hit, f.core, f.charged);
           }
           flights.current[seat] = null;
           if (el !== null && el !== undefined && el.style.opacity !== '0') el.style.opacity = '0';
@@ -667,18 +599,18 @@ export function Shot({
 
         if (el === null || el === undefined) continue;
 
-        // Position, plus the archer's sag: a perpendicular `sin(pi t)` that is zero at both
-        // ends, so it never moves the terminus the chain already resolved.
-        const bow = f.arc === 0 ? 0 : f.arc * Math.sin(Math.PI * t);
-        const x = f.x0 + f.dx * t + f.px * bow;
-        const y = f.y0 + f.dy * t + f.py * bow;
-        // The tangent, so the shaft points where it is going rather than where it started.
-        const slope = f.arc === 0 ? 0 : f.arc * Math.PI * Math.cos(Math.PI * t);
-        const tx = f.dx + f.px * slope;
-        const ty = f.dy + f.py * slope;
+        // The quadratic Bezier through bow, control point and terminus — zero lift at both
+        // ends by construction, so it never moves the terminus the chain already resolved.
+        const u = 1 - t;
+        const x = u * u * f.x0 + 2 * u * t * f.cx + t * t * f.x1;
+        const y = u * u * f.y0 + 2 * u * t * f.cy + t * t * f.y1;
+        // Its derivative (halved; only the direction is read), so the shaft points where it
+        // is going rather than where it started.
+        const tx = u * (f.cx - f.x0) + t * (f.x1 - f.cx);
+        const ty = u * (f.cy - f.y0) + t * (f.y1 - f.cy);
         const deg = (Math.atan2(ty, tx) * 180) / Math.PI;
 
-        el.style.transform = `translate(${x}px, ${y}px) rotate(${deg}deg)`;
+        el.style.transform = `translate(${x}px, ${y}px) rotate(${deg}deg)${f.charged ? CHARGED_XFORM : ''}`;
         if (el.style.opacity !== '1') el.style.opacity = '1';
       }
     };
@@ -700,7 +632,7 @@ export function Shot({
   // at 20 seats); without the memo each one allocated and reconciled 261 elements AND handed
   // React 120 fresh `ref` closures, so every node in the pool was detached and re-attached —
   // the exact cost `Scene.tsx` measured at 11.2 ms/frame and paid to delete. The memo cannot
-  // go stale: every identifier in the tree below is a module constant, and the six ref
+  // go stale: every identifier in the tree below is a module constant, and the seven ref
   // arrays are stable objects the callbacks fill once at mount.
   return useMemo(
     () => (
@@ -716,6 +648,17 @@ export function Shot({
               ref={(el) => void (arrow.current[seat] = el)}
               style={{ opacity: 0, willChange: 'transform' }}
             >
+              {/* The charged trail, behind the shaft; hidden until a charged launch shows
+                  it. Its stroke is `.hr-arrow-trail`'s, so no colour is typed here twice. */}
+              <line
+                ref={(el) => void (trail.current[seat] = el)}
+                className="hr-arrow-trail"
+                x1={-SHAFT_LEN}
+                y1={0}
+                x2={-SHAFT_LEN - TRAIL_LEN}
+                y2={0}
+                style={{ visibility: 'hidden' }}
+              />
               <line
                 x1={-HEAD_LEN}
                 y1={0}
@@ -808,12 +751,10 @@ function flightCut(
 // ---------------------------------------------------------------------------
 // Self-check
 //
-// The ray is a hand-written third copy of a chain algorithm and every way it goes wrong is
-// silent: shooting is fire-and-forget with `skipPreflight`, so an arrow drawn to the wrong
-// place produces no error anywhere and is indistinguishable from the bug this file exists
-// to fix. The assertions are BEHAVIOURAL — "a shot at the boss hits the boss", never "the
-// ray ends at (x, y)" — because the map and the hitboxes are generator output and a test
-// naming a coordinate stops testing the ray the moment the art moves.
+// The ray and the auto-aim are checked where they live now (`aimSelfCheck`, in the SDK
+// beside the tables they read) and called from here so they still run on every dev boot.
+// What is left is this file's own: the pool proof and the cap's policy, both of which fail
+// silently — a clamped flight just looks slow, a wrong cut just hides the wrong arrow.
 // ---------------------------------------------------------------------------
 
 if (import.meta.env.DEV) {
@@ -821,103 +762,38 @@ if (import.meta.env.DEV) {
     if (!cond) throw new Error(`Shot self-check: ${what}`);
   };
 
+  aimSelfCheck();
+
   // The pool is one node per seat and has no management at all, which is safe only while a
   // seat cannot have two arrows at once. `ARROW_MAX_MS` makes that true by construction —
-  // so what is checked here is that the clamp is still SLACK: the measured worst-case
-  // terminus (640 units over all 726 pit stands x 64 angles, spec §4.2) must still fly at
-  // its true speed. Once it clamps, every long shot silently starts arriving late.
-  const WORST_RANGE = 640;
+  // so what is checked here is that the clamp is still SLACK for a shot that lands: the
+  // measured worst-case STRIKING terminus (583 units over 12,224 pit stands x 64 angles on
+  // the painted map, see `ARROW_MAX_MS`) must still fly at its true speed. Once it clamps,
+  // every long hit silently starts arriving late.
+  const WORST_RANGE = 583;
   ok(ARROW_MAX_MS > 0, 'the spark outlives the cooldown — the pool cannot be one node deep');
   ok(
     (WORST_RANGE / ARROW_UNITS_PER_SEC) * 1000 < ARROW_MAX_MS,
     'the longest real shot is being clamped — it will look slow, and 2200 u/s is derived',
   );
   ok(CLASS_PERIOD_MS[0]! <= CLASS_PERIOD_MS[1]!, 'the knight is the shortest cooldown');
+  ok(LOB_FRACTION < 0.5, 'a lob past half the range stalls the tangent on a vertical shot');
 
-  // A whole boss, from the generated table, at its spawn.
-  const parts = PART_HITBOXES.map(() => 100);
-  const bx = 512;
-  const by = 400;
-  // A stand in the pit, below the creature. Derived from the ray itself, not typed: the
-  // sweep below finds the angles, so a redrawn map moves the test with it.
-  const fromX = 512;
-  const fromY = 560;
-
-  /** Every angle a stand can fire, against a given shell. The tests search it. */
-  const sweep = (hp: readonly number[]): RayEnd[] => {
-    const out: RayEnd[] = [];
-    for (let i = 0; i < 64; i++) {
-      const a = (i / 64) * Math.PI * 2;
-      const dx = Math.round(Math.cos(a) * 127);
-      const dy = Math.round(Math.sin(a) * 127);
-      out.push(raycastShot(fromX, fromY, dx, dy, hp, bx, by));
-    }
-    return out;
-  };
-  const shots = sweep(parts);
-
-  // 1. A shot at the creature terminates ON the creature. Straight up from a pit stand is
-  //    the shot the whole game is: the boss is top-centre and the raid fights from below.
-  const up = raycastShot(fromX, fromY, 0, -127, parts, bx, by);
-  ok(up.struck, 'a shot straight up at a top-centre boss does not reach it');
-
-  // 2. Some angle from the same stand ends on a wall, and the terminus really is one.
-  const wall = shots.find((s) => !s.struck);
-  ok(wall !== undefined && isWall(wall.x, wall.y), 'a missed shot does not stop on a wall tile');
-
-  // 3. A 0-HP part is transparent — stripping the shell is what opens a lane to the core,
-  //    and it has to fall out of the geometry rather than out of a flag. Found by search:
-  //    which part is in the way is generator output and must not be typed here.
-  let opened = false;
-  for (let i = 0; i < PART_HITBOXES.length && !opened; i++) {
-    const gone = parts.map((hp, j) => (j === i ? 0 : hp));
-    for (let a = 0; a < 64 && !opened; a++) {
-      const ang = (a / 64) * Math.PI * 2;
-      const dx = Math.round(Math.cos(ang) * 127);
-      const dy = Math.round(Math.sin(ang) * 127);
-      const whole = raycastShot(fromX, fromY, dx, dy, parts, bx, by);
-      const holed = raycastShot(fromX, fromY, dx, dy, gone, bx, by);
-      // The ray got FURTHER once the part came off, or stopped hitting anything at all.
-      if (whole.struck && (holed.x !== whole.x || holed.y !== whole.y || !holed.struck)) {
-        opened = true;
-      }
-    }
-  }
-  ok(opened, 'a destroyed part still blocks the ray');
-
-  // 4. The zero vector is the one input `unit_q12` refuses, and the caller must not crash
-  //    on it — `octant` rejects it upstream, so this is the unreachable branch made safe.
-  const nil = raycastShot(fromX, fromY, 0, 0, parts, bx, by);
-  ok(nil.x === fromX && nil.y === fromY && !nil.struck, 'a zero aim vector must draw nothing');
-
-  // 5. `shoot.rs:492`: the shell absorbs a shot aimed at a sealed vent, so it scores
-  //    nothing and must not read as a hit. Asserted on the RULE rather than on an angle —
-  //    which angles reach the orb is generator output, so the ray finds them by search, and
-  //    the same terminus is a hit the moment the vent opens.
-  const core = sweep(parts.map(() => 0)).find((s) => s.core);
-  ok(core !== undefined, 'no angle reaches the core through a stripped shell — check CORE');
-  ok(landingOf(core!, 0) === 'absorb', 'a sealed vent must not draw the hit spark');
-  ok(landingOf(core!, 1) === 'hit', 'an open vent must still read as a hit');
-  const part = shots.find((s) => s.struck && !s.core);
-  ok(part !== undefined && landingOf(part, 0) === 'hit', 'a part hit is never an absorb');
-  ok(landingOf({ x: 0, y: 0, struck: false, core: false }, 1) === 'miss', 'a miss reads as a miss');
-
-  // 6. The cut under the projectile cap keeps the local seat and drops the OLDEST. A shot
-  //    the player cannot see is the entire bug report this file answers, and applying the
-  //    cap in the frame step hid the local seat FIRST (frame-budget-17 §5.1).
+  // The cut under the projectile cap keeps the local seat and drops the OLDEST. A shot the
+  // player cannot see is the entire bug report this file answers, and applying the cap in
+  // the frame step hid the local seat FIRST (frame-budget-17 §5.1).
   const fake = (t0: number): Flight => ({
     t0,
     x0: 0,
     y0: 0,
+    cx: 0,
+    cy: 0,
     x1: 0,
     y1: 0,
-    dx: 0,
-    dy: 0,
-    px: 0,
-    py: 0,
-    arc: 0,
     ms: 1,
     hit: 'miss',
+    core: false,
+    charged: false,
     landed: false,
   });
   const cut = flightCut([fake(30), null, fake(10), fake(20)], 0);

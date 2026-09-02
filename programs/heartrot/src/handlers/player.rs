@@ -348,6 +348,11 @@ fn gate_refusal(slot: &PlayerSlot) -> Result<(), ProgramError> {
 /// can be rewound by a caller, so `!=` is exactly as tight: one accepted move per
 /// tick while fighting, one per 50 ms slot in the lobby.
 ///
+/// The stamp this writes is now read by a second rule: `shoot::fire` measures the charged
+/// shot's hold as `Clock::get()?.slot − last_move_tick`, slot against slot. That is only a
+/// duration because this function stamps the slot in **every** phase — the day it returns
+/// `arena.tick` for any phase again, a charge becomes a subtraction across two clocks.
+///
 /// ponytail: `slot as u32` truncates, so one move is dropped every ~2^32 slots
 /// (~6.8 years of ER uptime). Widening `last_move_tick` is a layout change; it is
 /// not worth one.
@@ -373,6 +378,26 @@ fn move_clock(arena: &Arena) -> Result<u32, ProgramError> {
     // the finest granularity a client could observe its own move landing at.
     let _ = arena;
     Ok(Clock::get()?.slot as u32)
+}
+
+/// Land an accepted step on the seat: position, body direction, the client's sequence
+/// echo and the rate-limit stamp, in one write.
+///
+/// `last_move_seq` echoes the client's input sequence number back. Without it an arriving
+/// position is ambiguous as to which input produced it and prediction cannot be
+/// reconciled; the symptom is rubber-banding for every player (D14).
+///
+/// Split out of [`move_player`] for one reason: `facing` is also where `shoot::fire` parks
+/// the charged-shot flag (`state::CHARGED_SHOT_BIT`), and this write assigning a **bare
+/// octant** is what clears it — a step ends the drawn arrow's lifetime with no second field
+/// to expire. That is a rule the client mirrors, so it is asserted below against this
+/// function rather than read off an assignment inside a handler no host test can call.
+fn commit_move(slot: &mut PlayerSlot, dir: u8, (x, y): (i16, i16), seq: u16, now: u32) {
+    slot.x = x;
+    slot.y = y;
+    slot.facing = dir;
+    slot.last_move_seq = seq;
+    slot.last_move_tick = now;
 }
 
 /// Accounts must be validated before any state is touched, and every guard below
@@ -730,14 +755,7 @@ pub fn move_player(
         return Err(HeartrotError::BlockedByWall.into());
     }
 
-    slot.x = nx;
-    slot.y = ny;
-    slot.facing = dir;
-    // Echo the client's sequence number back. Without it an arriving position is
-    // ambiguous as to which input produced it and prediction cannot be reconciled;
-    // the symptom is rubber-banding for every player (D14).
-    slot.last_move_seq = seq;
-    slot.last_move_tick = now;
+    commit_move(slot, dir, (nx, ny), seq, now);
     Ok(())
 }
 
@@ -796,6 +814,8 @@ pub fn enter_gate(
     slot.zone = ZONE_ARENA;
     slot.x = x;
     slot.y = y;
+    // A bare octant, like every `facing` write outside `shoot`: it also clears the
+    // charged-shot flag, so nobody walks into the pit with a charged arrow drawn.
     slot.facing = 0;
     slot.hp = slot.hp_max;
     slot.respawn_at_tick = 0;
@@ -813,7 +833,33 @@ pub fn enter_gate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{CLASS_MASK, PHASE_ROLLED, PHASE_ROLLING, PHASE_SETTLED, PHASE_SETTLING};
+    use crate::state::{
+        CHARGED_SHOT_BIT, CLASS_MASK, PHASE_ROLLED, PHASE_ROLLING, PHASE_SETTLED, PHASE_SETTLING,
+    };
+
+    /// A step overwrites `facing` whole, so the charged-shot flag `shoot::fire` parks in
+    /// bit 3 dies with the arrow it describes — "charging accrues only while standing
+    /// still" is a property of this one write, not a rule anyone maintains. And no octant
+    /// the quantiser can answer reaches the flag, so a step can never set it by accident.
+    #[test]
+    fn a_step_clears_the_charged_shot_flag() {
+        let mut slot = PlayerSlot::zeroed();
+        slot.facing = 2 | 1 << CHARGED_SHOT_BIT;
+        commit_move(&mut slot, 6, (100, 900), 41, 7_000);
+        assert_eq!(slot.facing, 6, "the turn took the flag with it");
+        assert_eq!(
+            (slot.x, slot.y, slot.last_move_seq, slot.last_move_tick),
+            (100, 900, 41, 7_000),
+        );
+
+        for dx in i8::MIN..=i8::MAX {
+            for dy in i8::MIN..=i8::MAX {
+                if let Ok(dir) = octant(dx, dy) {
+                    assert!(dir < 1 << CHARGED_SHOT_BIT, "octant {dir} overlaps the flag");
+                }
+            }
+        }
+    }
 
     /// A seat index is re-used forever — twenty of them serve every incarnation of an arena
     /// — so a claim that leaves one field of the previous occupant behind is a scoreboard

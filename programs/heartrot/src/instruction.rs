@@ -68,7 +68,7 @@
 //! | 4 | `ClaimSeat` | `player::join` | ER | 67 B | 3 | `Arena.crank_authority` |
 //! | 5 | `EnterGate` | `player::enter_gate` | ER | 1 B | 3 | `slots[seat].session_pubkey` |
 //! | 6 | `Move` | `player::move_player` | ER | 5 B | 3 | `slots[seat].session_pubkey` |
-//! | 7 | `Shoot` | `shoot::process` | ER | 3 B | 4 | `slots[seat].session_pubkey` |
+//! | 7 | `Shoot` | `shoot::process` | ER | 4 B | 4 | `slots[seat].session_pubkey` |
 //! | 8 | `BossTick` | `tick::process` | ER | 0 B | 4 | crank signer PDA (read-only) |
 //! | 9 | `Settle` | `settle::settle` | ER | 0 B | 6 | `Arena.crank_authority` |
 //! | 10 | `WriteLeaderboard` | `settle::write_leaderboard` | base | 0 B | 4 | `init::TREASURY` |
@@ -255,15 +255,17 @@
 //!
 //! # Tag 7 — `Shoot`, ER
 //!
-//! Args, 3 bytes exactly. **This block grew from 2 bytes and is not backward
-//! compatible**: an old client sending the 2-byte block gets a clean length refusal
-//! (`InvalidInstructionData`), so the program and the app must ship together.
+//! Args, 4 bytes exactly (`shoot::parse_shot`). **This block grew from 3 bytes and is not
+//! backward compatible**, the same property it already had at 2 → 3: an old client sending
+//! the 3-byte block gets a clean length refusal (`InvalidInstructionData`) rather than a
+//! missing byte read as "uncharged", so the program and the app must ship together.
 //!
 //! | Offset | Width | Field | |
 //! |---|---|---|---|
 //! | `[0]` | 1 | `seat` | u8 |
 //! | `[1]` | 1 | `dx` | **i8**, signed — free aim, raw and unnormalised |
 //! | `[2]` | 1 | `dy` | **i8**, signed |
+//! | `[3]` | 1 | `charged` | u8; 0 or 1. **Must be `<= 1`; never masked** |
 //!
 //! `dir` is gone. Eight-way aim made a top-centre boss unhittable: replaying `raycast`
 //! over 110 pit stands, 8-way reaches a target from 68.2% of them and **never** reaches
@@ -271,9 +273,19 @@
 //! **on chain** by `tick::unit_velocity`, so no table, no extra byte and no client-supplied
 //! magnitude is trusted: `(127, 127)` and `(1, 1)` are the same shot.
 //!
+//! `charged = 1` asks for `state::charged_damage` (2.5×) and is **granted by the chain, not
+//! by the byte**: the seat's last accepted step must be at least `state::CHARGE_SLOTS` (20)
+//! ER slots old, measured as `Clock::get()?.slot − slots[seat].last_move_tick` — slot
+//! against slot, never against `Arena.tick`, which is a crank tick on another clock. A
+//! shorter hold is refused with [`crate::error::HeartrotError::NotCharged`] (`Custom(20)`)
+//! **before the cooldown is spent**, so the client resends the shot uncharged and loses a
+//! round trip, not the shot. Nothing is stored for the hold; a step cancels it by moving
+//! the stamp. The result is published in `PlayerSlot.facing` bit 3
+//! (`state::CHARGED_SHOT_BIT`), which the next step or uncharged shot clears.
+//!
 //! | # | Account | Flags | |
 //! |---|---|---|---|
-//! | 0 | arena | `w` | `tick` is read; `phase` is written on the killing blow |
+//! | 0 | arena | `w` | `tick` and `raid_size` are read; `phase` is written on the killing blow |
 //! | 1 | boss | `w` | parts, vent, core |
 //! | 2 | players | `w` | the acting seat only |
 //! | 3 | session key | `s` | must equal `slots[seat].session_pubkey` |
@@ -502,6 +514,11 @@
 //!   the ray is bounded by `MAX_RAY_STEPS`, not by the caller. `facing` is stamped by
 //!   quantizing the pair with `player::octant`, which itself rejects `(0, 0)`, so nothing
 //!   indexes the eight-way table with a value off the wire.
+//! - `charged` (tag 7) is checked `<= 1` and **rejected, never masked**, by
+//!   `shoot::parse_shot` — a 2 is version skew and has to be loud. The byte is a request,
+//!   not a grant: whether the shot *is* charged is decided by the chain from
+//!   `last_move_tick` and the ER slot, so an attacker who sets it gains nothing a player
+//!   standing still for a second does not already have.
 //! - `dx`/`dy` (tag 6) are attacker-chosen and only their **signs** are read:
 //!   `player::octant` quantizes them to one of eight octants and the displacement itself
 //!   comes off `MOVE_STEP`, so `(127, 127)` moves exactly as far as `(1, 1)`. `(0, 0)` is
@@ -521,3 +538,7 @@
 //! horizontal flip in the renderer: the knight art has one pose, so a flip cannot express
 //! NE against SE. Hitscan can, and does — `facing` is cosmetic, the `(dx, dy)` pair is what
 //! decides the hit.
+//!
+//! The octant is the low three bits only. Bit 3 of the same byte is the charged-shot flag
+//! (`state::CHARGED_SHOT_BIT`), written by tag 7 and cleared by tag 6's bare-octant write,
+//! so a client decodes `facing & 7` and `facing >> 3 & 1` as two fields.

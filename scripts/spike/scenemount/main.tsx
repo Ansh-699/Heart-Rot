@@ -15,7 +15,7 @@ import { createRoot } from 'react-dom/client';
 import App from '../../../app/src/App';
 import { StoreProvider, setAuthSource } from '../../../app/src/state/store';
 import {
-  ARENA, BOSS, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS, LAYOUT_VERSION,
+  ARENA, BOSS, BOSS_SPAWN, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS, LAYOUT_VERSION,
   MAX_SEATS, N_PARTS, PHASE_LOBBY, PHASE_FIGHTING, ZONE_ARENA, ZONE_LOBBY,
   decodeArena, decodeBoss, decodePlayers,
 } from '@heartrot/client';
@@ -34,8 +34,8 @@ function arenaBytes(phase = PHASE_LOBBY) {
 }
 function bossBytes() {
   const { d, v } = blank(BOSS.size, DISC_BOSS);
-  v.setInt16(BOSS.offsets.x, 512, true);
-  v.setInt16(BOSS.offsets.y, 400, true);
+  v.setInt16(BOSS.offsets.x, BOSS_SPAWN[0], true);
+  v.setInt16(BOSS.offsets.y, BOSS_SPAWN[1], true);
   for (let i = 0; i < N_PARTS; i++) {
     v.setUint16(BOSS.offsets.parts + i * 2, 500, true);
     v.setUint16(BOSS.offsets.parts_max + i * 2, 500, true);

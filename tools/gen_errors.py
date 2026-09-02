@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Compile the `heartrot_errors!` table in the program into the client's copy.
 
-    python3 tools/gen_errors.py
+    python3 tools/gen_errors.py           # write packages/client/src/errors.ts
+    python3 tools/gen_errors.py --check   # exit 1 if errors.ts is not what error.rs says
 
 `programs/heartrot/src/error.rs` is the map. This tool is the only thing allowed
 to write `packages/client/src/errors.ts`; that file carries a "generated" banner
@@ -154,13 +155,24 @@ export const HEARTROT_ERROR_HIGHEST = {highest};
 
 
 def main() -> int:
+    check = "--check" in sys.argv[1:]
     try:
         variants, highest = parse(ERROR_RS.read_text(encoding="utf-8"))
-        OUT_TS.write_text(emit(variants, highest), encoding="utf-8")
+        out = emit(variants, highest)
+        if check:
+            # The same drift test as the Rust `codes_are_frozen`, pointed at the mirror: a
+            # variant appended in error.rs and not regenerated here is a browser that
+            # mislabels every new code.
+            current = OUT_TS.read_text(encoding="utf-8") if OUT_TS.exists() else ""
+            if current != out:
+                die(f"{OUT_TS.relative_to(ROOT)} is stale; re-run without --check")
+        else:
+            OUT_TS.write_text(out, encoding="utf-8")
     except GenError as exc:
         print(f"gen_errors: {exc}", file=sys.stderr)
         return 1
-    print(f"gen_errors: {len(variants)} codes, highest issued {highest} -> {OUT_TS.relative_to(ROOT)}")
+    verb = "matches" if check else "->"
+    print(f"gen_errors: {len(variants)} codes, highest issued {highest} {verb} {OUT_TS.relative_to(ROOT)}")
     return 0
 
 

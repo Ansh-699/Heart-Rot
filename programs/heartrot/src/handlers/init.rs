@@ -233,8 +233,9 @@ const MAX_SIGNER_SEEDS: usize = 3;
 /// the mace 1,000: index-aligned means aligned to the *names*, and nothing in the type
 /// system can catch a permutation of nine `u16`s.
 ///
-/// 18,000 shell HP in total, so the vent opens (`sum(parts) < 35%` of max) after 11,700
-/// damage — 293 landed shots at `shoot.rs`'s `SHOT_DAMAGE`, inside the enrage window.
+/// 18,000 shell HP in total ([`SHELL_HP_BASE`]). The vent opens when `sum(parts) × 100 <
+/// sum(parts_max) × state::vent_pct(raid_size)`: 6,300 damage solo, 11,700 at twenty,
+/// linear between — the raid-size knob is the threshold, never this table.
 ///
 /// ponytail: hardcoded because the frozen 74-byte tag-1 argument block has nowhere to
 /// carry them, so retuning the fight is a redeploy rather than a Worker change. That is
@@ -259,7 +260,7 @@ const BOSS_PARTS_BASE: [u16; N_PARTS] = [
 const THORN_HP: u16 = 1_000;
 
 // A zero-HP part or core is not a weak boss, it is a broken one: the vent test is
-// `sum(parts) × 100 < sum(parts_max) × 35`, so an all-zero shell never opens, and a zero
+// `sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size)`, so an all-zero shell never opens, and a zero
 // core is a boss that was born dead. Now that these are constants, the check that used to
 // run on every spawn is a compile error instead.
 const _: () = {
@@ -270,6 +271,20 @@ const _: () = {
         index += 1;
     }
 };
+
+/// The shell's total, [`BOSS_PARTS_BASE`] summed. `state::ttk_s` models the vent curve
+/// against a literal of this number because the table is private here; the assert below
+/// makes them one fact — retune the table and the model's literal must move with it.
+const SHELL_HP_BASE: u32 = {
+    let mut total = 0u32;
+    let mut index = 0;
+    while index < N_PARTS {
+        total += BOSS_PARTS_BASE[index] as u32;
+        index += 1;
+    }
+    total
+};
+const _: () = assert!(SHELL_HP_BASE == crate::state::TTK_MODEL_SHELL_HP);
 
 // ---------------------------------------------------------------------------
 // Shared plumbing
@@ -917,7 +932,7 @@ mod tests {
     }
 
     /// The vent is the fight's only path to the core and it opens on a comparison
-    /// (`sum(parts) × 100 < sum(parts_max) × 35`) against numbers this file chooses. A
+    /// (`sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size)`) against numbers this file chooses. A
     /// shell that saturates is a boss whose difficulty silently stops tracking the
     /// incarnation; one that overflows `shoot.rs`'s u32 sum is worse.
     #[test]

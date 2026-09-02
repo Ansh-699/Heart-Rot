@@ -1,4 +1,4 @@
-//! `shoot(seat, dx, dy)` — the player attack, hitscan, free aim.
+//! `shoot(seat, dx, dy, charged)` — the player attack, hitscan, free aim.
 //!
 //! No projectile entity is ever allocated. The ray is walked here, in integer steps of
 //! one tile, and the damage lands in the same transaction that fired it. That is the
@@ -10,7 +10,7 @@
 //! bullets in the pool, so there is no starvation to police here
 //! (`docs/architecture/09-shooting.md` §3.1).
 //!
-//! Two consequences worth stating, because both are security properties:
+//! Three consequences worth stating, because all three are security properties:
 //!
 //! - **The cooldown is counted in `Arena.tick`, never milliseconds.** Ticks are the
 //!   only clock the ER agrees on — `TICK_MS` is the crank's target, not a contract —
@@ -20,6 +20,15 @@
 //!   are 0 lamports and the ER runs no fee-payer validation at all, so nothing debits
 //!   a spammer (D16). `last_shot_tick` *is* the rate limiter; refunding it on a miss
 //!   would hand an attacker an unlimited-rate instruction.
+//! - **The charged shot is stateless, and its clock is the ER slot.** A `charged` shot
+//!   deals `state::charged_damage` (2.5×) only if the seat's last accepted step is at
+//!   least `state::CHARGE_SLOTS` ER slots old — `Clock::get()?.slot` against
+//!   `last_move_tick`, which `player::move_clock` stamps from that same sysvar. No
+//!   charge timer is stored, so a client cannot start one early, and a step cancels the
+//!   hold because it moves the stamp. It is **never** `arena.tick`: that is a crank tick
+//!   on another clock, and subtracting the two is the trap `state::SLOT_MS` names. A
+//!   short hold is [`HeartrotError::NotCharged`], refused *before* the cooldown is spent,
+//!   so the client resends uncharged and the shot is not lost.
 //!
 //! **Aim is free, not eight-way** (`11-immortals-spec.md` §4.1). With the boss fixed at
 //! top centre, a 45° quantisation step can only select a target whose angular size
@@ -72,7 +81,11 @@
 //! local hit prediction disagree with the chain by exactly the amount that makes a
 //! shot look like it landed and score nothing.
 
-use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
+use pinocchio::{
+    error::ProgramError,
+    sysvars::{clock::Clock, Sysvar},
+    AccountView, Address, ProgramResult,
+};
 
 use crate::error::HeartrotError;
 use crate::guards::{
@@ -82,8 +95,9 @@ use crate::handlers::player::octant;
 use crate::hitboxes::{Rect, CORE_RADIUS_SQ, CORE_X, CORE_Y, PART_HITBOXES};
 use crate::map::{MAP_TILES, TILE, WALLS};
 use crate::state::{
-    load_mut, Arena, Boss, PlayerSlot, Players, CLASS_COOLDOWN_TICKS as CLASS_COOLDOWN,
-    CLASS_DAMAGE, OUTCOME_WIN, PHASE_FIGHTING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
+    charged_damage, load_mut, vent_pct, Arena, Boss, PlayerSlot, Players, CHARGED_SHOT_BIT,
+    CHARGE_SLOTS, CLASS_COOLDOWN_TICKS as CLASS_COOLDOWN, CLASS_DAMAGE, OUTCOME_WIN,
+    PHASE_FIGHTING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
@@ -215,29 +229,30 @@ fn encode_aim(dx: i8, dy: i8) -> u8 {
 /// `Boss.vent_open`. 1 open, 0 sealed.
 const VENT_OPEN: u8 = 1;
 
-/// The vent opens at `sum(parts) < 35% of sum(parts_max)`, compared as
-/// `sum × 100 < sum_max × 35` so no percentage is ever a float.
-const VENT_THRESHOLD_NUM: u32 = 35;
-const VENT_THRESHOLD_DEN: u32 = 100;
+/// The percentage the vent threshold is expressed in: the comparison is
+/// `sum(parts) × PERCENT < sum(parts_max) × vent_pct(raid_size)`, so no percentage is
+/// ever a float.
+const PERCENT: u32 = 100;
 
-/// Recompute `Boss.vent_open` from the parts, and answer whether it is open.
+/// Recompute `Boss.vent_open` from the parts and the raid, and answer whether it is open.
 ///
 /// The vent is **derived state**, cached on the account for the client — never set
 /// independently, or it drifts out of agreement with the numbers it summarises. This is
-/// the only place in this file that writes it, and it runs on the same line that changed
-/// a part, so "the shell crossed the threshold" and "the vent is open" cannot be two
-/// different facts.
+/// the only place in the program that writes it: here it runs on the same line that
+/// changed a part, so "the shell crossed the threshold" and "the vent is open" cannot be
+/// two different facts, and `boss_tick` calls it every tick because the threshold moves
+/// with `Arena.raid_size`, which only the tick can raise.
 ///
-/// `pub(crate)` because `boss_tick` re-derives exactly this every tick from its own copy
-/// of the rule; that copy is the shell threshold stored twice and should call this
-/// instead (see the run's todo).
+/// `raid_size` is `Arena.raid_size`, the high-water mark of raiders this incarnation, and
+/// `state::vent_pct` turns it into the threshold: 65 % of the shell standing for a raid of
+/// one, 35 % for twenty. Passed in rather than read off an `Arena` so the function stays
+/// callable on a bare `Boss` — which is how every vent test in this file drives it.
 ///
 /// The sums cannot overflow `u32` (9 × 65,535 × 100 ≈ 59 M) but are saturating anyway.
-pub(crate) fn recompute_vent(boss: &mut Boss) -> bool {
+pub(crate) fn recompute_vent(boss: &mut Boss, raid_size: u8) -> bool {
     let shell: u32 = boss.parts.iter().map(|&hp| hp as u32).sum();
     let shell_max: u32 = boss.parts_max.iter().map(|&hp| hp as u32).sum();
-    let open =
-        shell.saturating_mul(VENT_THRESHOLD_DEN) < shell_max.saturating_mul(VENT_THRESHOLD_NUM);
+    let open = shell.saturating_mul(PERCENT) < shell_max.saturating_mul(vent_pct(raid_size));
     boss.vent_open = u8::from(open);
     open
 }
@@ -427,12 +442,20 @@ const fn phase_takes_fire(phase: u8) -> bool {
 /// down, vent open, core down, match won — is testable end to end against plain structs
 /// only if it lives in a function that takes plain structs, and until this split the
 /// chain had never been executed anywhere, on chain or off (M4).
+///
+/// `charged_at` is `Some(slot)` for a shot sent charged — the ER slot it executes in, read
+/// by [`process`] from the same sysvar `player::move_clock` stamps `last_move_tick` from —
+/// and `None` for an ordinary shot. One value rather than a flag and a slot, so an
+/// uncharged shot carries no fabricated slot number and [`process`] can skip the syscall
+/// for it. Threaded in rather than read here for the same reason the accounts are: this
+/// function takes plain structs and a syscall is not one.
 fn fire(
     arena: &mut Arena,
     boss: &mut Boss,
     slot: &mut PlayerSlot,
     dx: i8,
     dy: i8,
+    charged_at: Option<u32>,
 ) -> Result<(), ProgramError> {
     // Aim first, because it is the only thing here that can be malformed rather than
     // merely refused. `octant` rejects `(0, 0)` — the one illegal aim vector — and is
@@ -454,7 +477,27 @@ fn fire(
     // The class picks both knobs, and it is read from the seat rather than sent, so a
     // client cannot pick the archer's damage on the knight's cooldown.
     let class = class_of(slot);
-    let damage = CLASS_DAMAGE[class];
+
+    // The hold. `last_move_tick` is the ER slot of the seat's last accepted step and
+    // `slot_now` the ER slot this shot executes in — slot against slot, the one pair in
+    // the layout that is a duration. Not `arena.tick`: that is a crank tick, and the two
+    // clocks share nothing but a `u32`. `wrapping_sub` because both are the slot truncated
+    // to 32 bits and the stamp may sit just below a wrap; a seat that has never stepped
+    // reads 0 and has been standing still since it joined, which is the honest answer.
+    //
+    // Refused *before* the cooldown is spent, unlike a miss: the shot was not fired, the
+    // client resends it uncharged, and what it loses is a round trip rather than a shot.
+    // Landing it quietly at 1× instead would put a number on the HUD that disagrees with
+    // the boss bar, with no error anywhere.
+    let damage = match charged_at {
+        Some(slot_now) => {
+            if slot_now.wrapping_sub(slot.last_move_tick) < CHARGE_SLOTS {
+                return Err(HeartrotError::NotCharged.into());
+            }
+            charged_damage(class as u8)
+        }
+        None => CLASS_DAMAGE[class],
+    };
 
     // Rate limit, in ticks. `saturating_add` rather than `+`: a `last_shot_tick`
     // close to u32::MAX must fail the comparison, not wrap into "ready".
@@ -470,7 +513,12 @@ fn fire(
     // single point of silent failure in the whole feature: drop it and a player changes
     // class on their first shot, with no error anywhere. That is why the write lives in
     // `state.rs` beside the field and not inlined here.
-    slot.facing = facing;
+    //
+    // The charged flag rides bit 3 of the same `facing` byte: the whole byte is assigned,
+    // so an uncharged shot clears it, and `player::commit_move` assigns a bare octant, so
+    // a step clears it too. That is exactly the lifetime of the arrow a client draws from
+    // it, and it costs no field — the slot has none left to give.
+    slot.facing = facing | (u8::from(charged_at.is_some()) << CHARGED_SHOT_BIT);
     slot.set_aim(dx, dy);
 
     let dealt = match raycast(slot.x, slot.y, dx, dy, boss) {
@@ -482,7 +530,7 @@ fn fire(
             // Reaching 0 *is* being destroyed: `raycast` skips a zeroed part, so the
             // limb detaches and the lane behind it opens with no second flag to set.
             *part = part.saturating_sub(damage);
-            recompute_vent(boss);
+            recompute_vent(boss, arena.raid_size);
             dealt
         }
 
@@ -533,29 +581,42 @@ fn fire(
 /// | 2 | `Players` | writable — the acting seat only |
 /// | 3 | `authority` | signer, the browser's session key |
 ///
-/// Instruction data (after the dispatcher has taken the instruction byte):
-/// `[seat: u8, dx: i8, dy: i8]` — 4 bytes on the wire, was 3. An old client sending the
-/// old `[tag, seat, dir]` gets a clean length refusal here, which is the whole reason
-/// this is safe to ship: program and app must ship together, and they will fail loudly
-/// rather than reinterpret a direction index as an aim vector. See
-/// `docs/architecture/05-wire-abi.md`.
+/// Tag 7's argument block, parsed and validated as bytes:
+/// `[seat: u8, dx: i8, dy: i8, charged: u8 ∈ {0, 1}]` — 5 bytes on the wire with the tag,
+/// was 4. Pure, like `player::parse_join`, so the frozen ABI is testable without the four
+/// `AccountView`s [`process`] needs.
+///
+/// An old client sending the 3-byte block gets a clean length refusal here, which is the
+/// whole reason this is safe to ship: program and app must ship together, and they will
+/// fail loudly rather than read a missing byte as "uncharged". `charged` is range-checked
+/// and never masked — a 2 is client/program skew, and skew has to be loud — with the same
+/// `InvalidInstructionData` the length check uses, for the reason `error.rs` gives the
+/// class byte: it carries nothing a caller can act on differently.
 ///
 /// Every `(dx, dy)` except `(0, 0)` is a legal aim, so there is no range check on the
 /// pair; `fire` rejects the zero vector through `octant`.
-///
+fn parse_shot(data: &[u8]) -> Result<(u8, i8, i8, bool), ProgramError> {
+    let &[seat, dx, dy, charged] = data else {
+        return Err(ProgramError::InvalidInstructionData);
+    };
+    if charged > 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    Ok((seat, dx as i8, dy as i8, charged == 1))
+}
+
 /// `program_id` is the runtime's own value, threaded down from the entrypoint like every
 /// other handler takes it. There is no hard-coded program address anywhere in this crate:
 /// the deployed key is a deploy-time fact the Worker carries in `PROGRAM_ID`, and a
 /// constant baked in here would be one more thing to get wrong on a redeploy.
+///
+/// See `docs/architecture/05-wire-abi.md` for the block, and [`parse_shot`] for the parser.
 pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
     let [arena_account, boss_account, players_account, authority, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
-    let &[seat, dx, dy] = data else {
-        return Err(ProgramError::InvalidInstructionData);
-    };
-    let (dx, dy) = (dx as i8, dy as i8);
+    let (seat, dx, dy, charged) = parse_shot(data)?;
 
     // Pinocchio validates nothing, so every one of these is hand-written and every
     // one of them is load-bearing. They run before any state is touched.
@@ -620,7 +681,19 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
     // session key stored on the seat being fired from.
     assert_session_authority(slot, authority)?;
 
-    fire(arena, boss, slot, dx, dy)
+    // The ER slot, from the sysvar `player::move_clock` stamps `last_move_tick` with — the
+    // only clock the charge hold can be measured on (see the module docs). Read only for a
+    // charged shot, and after every guard: the syscall is the bulk of the feature's cost —
+    // measured in mollusk against the pre-charge handler on identical fixtures, a plain
+    // shot is +73..+93 CU and a charged one +202..+222, the 129 CU between them being this
+    // one call — and the plain shot is the hot path, a raider holding fire while walking.
+    let charged_at = if charged {
+        Some(Clock::get()?.slot as u32)
+    } else {
+        None
+    };
+
+    fire(arena, boss, slot, dx, dy, charged_at)
 }
 
 #[cfg(test)]
@@ -628,7 +701,7 @@ mod tests {
     use super::*;
     use crate::map::BOSS_SPAWN;
     use crate::state::{
-        Bullet, BULLET_ACTIVE, CLASS_MASK, MAX_BULLETS, N_PARTS, OUTCOME_UNDECIDED,
+        Bullet, BULLET_ACTIVE, CLASS_MASK, MAX_BULLETS, MAX_SEATS, N_PARTS, OUTCOME_UNDECIDED,
         PHASE_SETTLING,
     };
     use bytemuck::Zeroable;
@@ -754,7 +827,7 @@ mod tests {
     /// archer's tests wait 1400 ms and the knight's 800 without a second helper.
     fn shoot_lane(s: &Survey, arena: &mut Arena, boss: &mut Boss, slot: &mut PlayerSlot) {
         arena.tick += CLASS_COOLDOWN[class_of(slot)] + 1;
-        fire(arena, boss, slot, s.aim.0, s.aim.1).expect("a live seat off cooldown may fire");
+        fire(arena, boss, slot, s.aim.0, s.aim.1, None).expect("a live seat off cooldown may fire");
     }
 
     /// Invert [`encode_aim`]. Test-only, and it is the *specification* the TypeScript
@@ -852,6 +925,9 @@ mod tests {
     fn shell_then_vent_then_core_is_a_recorded_win() {
         let s = survey();
         let mut arena = arena_fighting();
+        // A full raid: the threshold is `VENT_PCT_FULL`, 35 %, which the shell numbers below
+        // are cut to. The raid-size curve itself is `the_vent_opens_earlier_for_a_smaller_raid`.
+        arena.raid_size = MAX_SEATS as u8;
         let mut boss = standing_boss();
         let mut slot = shooter(&s);
 
@@ -862,7 +938,7 @@ mod tests {
                 cleared += 1;
             }
         }
-        recompute_vent(&mut boss);
+        recompute_vent(&mut boss, arena.raid_size);
         assert_eq!(boss.vent_open, 0, "400 of 900 is above the threshold");
 
         // Two shots into the blocker: the shell drops to 320/900 (35.5 %), still sealed.
@@ -912,7 +988,7 @@ mod tests {
         // The blocker gone so the ray reaches the core, but the shell is otherwise
         // intact, so the vent stays sealed.
         boss.parts[s.blocker] = 0;
-        recompute_vent(&mut boss);
+        recompute_vent(&mut boss, arena.raid_size);
         assert_eq!(boss.vent_open, 0);
         assert_eq!(
             raycast(slot.x, slot.y, s.aim.0, s.aim.1, &boss),
@@ -941,12 +1017,12 @@ mod tests {
         shoot_lane(&s, &mut arena, &mut boss, &mut slot);
         // Same tick, and one tick later: still inside the cooldown window.
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).unwrap_err(),
             HeartrotError::RateLimited.into(),
         );
         arena.tick += 1;
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).unwrap_err(),
             HeartrotError::RateLimited.into(),
         );
         assert_eq!(boss.parts[s.blocker], 60, "a refused shot deals nothing");
@@ -956,11 +1032,11 @@ mod tests {
         // divided by TICK_MS, so a literal here would silently stop testing the boundary
         // the moment the tick rate moved — which is exactly what it did.
         arena.tick += CLASS_COOLDOWN[CLASS_KNIGHT] + 1;
-        fire(&mut arena, &mut boss, &mut slot, -s.aim.0, -s.aim.1).expect("off cooldown");
+        fire(&mut arena, &mut boss, &mut slot, -s.aim.0, -s.aim.1, None).expect("off cooldown");
         assert_eq!(slot.last_shot_tick, arena.tick);
         assert_eq!(boss.parts[s.blocker], 60, "the miss dealt nothing");
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).unwrap_err(),
             HeartrotError::RateLimited.into(),
         );
     }
@@ -1045,20 +1121,20 @@ mod tests {
         let mut dead = shooter(&s);
         dead.hp = 0;
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut dead, s.aim.0, s.aim.1).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut dead, s.aim.0, s.aim.1, None).unwrap_err(),
             HeartrotError::PlayerDead.into(),
         );
 
         let mut in_lobby = shooter(&s);
         in_lobby.zone = crate::state::ZONE_LOBBY;
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut in_lobby, s.aim.0, s.aim.1).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut in_lobby, s.aim.0, s.aim.1, None).unwrap_err(),
             HeartrotError::WrongZone.into(),
         );
 
         let mut live = shooter(&s);
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut live, 0, 0).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut live, 0, 0, None).unwrap_err(),
             ProgramError::InvalidInstructionData,
         );
         assert_eq!(live.last_shot_tick, 0, "a malformed aim spends nothing");
@@ -1184,21 +1260,21 @@ mod tests {
             let mut slot = slot;
             let mut arena = arena_fighting();
             arena.tick = 1_000;
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).expect("first shot is free");
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).expect("first shot is free");
             assert_eq!(slot.damage_dealt, CLASS_DAMAGE[class] as u32);
 
             // Every tick up to and including the cooldown is refused...
             for wait in 0..=CLASS_COOLDOWN[class] {
                 arena.tick = 1_000 + wait;
                 assert_eq!(
-                    fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).unwrap_err(),
+                    fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).unwrap_err(),
                     HeartrotError::RateLimited.into(),
                     "class {class} fired {wait} ticks early",
                 );
             }
             // ...and the next one is not.
             arena.tick = 1_000 + CLASS_COOLDOWN[class] + 1;
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).expect("off cooldown");
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).expect("off cooldown");
             assert_eq!(slot.damage_dealt, 2 * CLASS_DAMAGE[class] as u32);
             ready_at[class] = CLASS_COOLDOWN[class] + 1;
         }
@@ -1287,5 +1363,135 @@ mod tests {
         assert!(!phase_takes_fire(PHASE_MUSTERING));
         assert!(!phase_takes_fire(PHASE_LOBBY));
         assert!(!phase_takes_fire(PHASE_SETTLING));
+    }
+
+    /// The charged shot: 2.5× — 175 for the archer, 100 for the knight — granted only when
+    /// the seat's last step is `CHARGE_SLOTS` ER slots old, slot against slot and never
+    /// `arena.tick`, and refused *before* the cooldown is spent so the client's uncharged
+    /// resend lands. The refusal must change nothing: not the stamp, not the shell, not the
+    /// facing byte. The flag it publishes lives until the next uncharged shot (a step clears
+    /// it too — `player.rs`), and the hold survives the slot clock wrapping at 2^32.
+    #[test]
+    fn a_charged_shot_needs_the_hold_and_deals_two_and_a_half_times() {
+        let s = survey();
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        let mut boss = standing_boss();
+        boss.parts = [1_000; N_PARTS];
+        boss.parts_max = [1_000; N_PARTS];
+        let mut slot = archer(&s);
+        slot.last_move_tick = 5_000;
+        let aim = octant(s.aim.0, s.aim.1).unwrap();
+
+        // One slot short of the hold: refused, and nothing spent.
+        let early = 5_000 + CHARGE_SLOTS - 1;
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Some(early)).unwrap_err(),
+            HeartrotError::NotCharged.into(),
+        );
+        assert_eq!(slot.last_shot_tick, 0, "a refused charge spends no cooldown");
+        assert_eq!(slot.facing, 0, "and writes nothing");
+        assert_eq!(boss.parts[s.blocker], 1_000);
+
+        // The same shot, same tick, resent uncharged: lands at 70 — the client's recovery.
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).expect("uncharged");
+        assert_eq!(boss.parts[s.blocker], 1_000 - 70);
+        assert_eq!(slot.facing, aim, "an uncharged shot carries no flag");
+
+        // Exactly the hold: 175, and the flag rides `facing` beside the octant.
+        arena.tick += CLASS_COOLDOWN[CLASS_ARCHER] + 1;
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Some(5_000 + CHARGE_SLOTS))
+            .expect("charged");
+        assert_eq!(charged_damage(CLASS_ARCHER as u8), 175);
+        assert_eq!(boss.parts[s.blocker], 1_000 - 70 - 175);
+        assert_eq!(slot.damage_dealt, 70 + 175);
+        assert_eq!(slot.facing, aim | 1 << CHARGED_SHOT_BIT);
+
+        // The next uncharged shot clears it.
+        arena.tick += CLASS_COOLDOWN[CLASS_ARCHER] + 1;
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).expect("uncharged");
+        assert_eq!(slot.facing, aim);
+
+        // Held long enough but on cooldown: the hold passes and the cooldown refuses.
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Some(9_999)).unwrap_err(),
+            HeartrotError::RateLimited.into(),
+        );
+
+        // The knight's row: 100, not 175 — the multiplier is per class. A seat that has
+        // never stepped reads `last_move_tick == 0` and has been still since it joined.
+        let mut knight = shooter(&s);
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        fire(&mut arena, &mut boss, &mut knight, s.aim.0, s.aim.1, Some(CHARGE_SLOTS))
+            .expect("still since it joined");
+        assert_eq!(knight.damage_dealt, 100);
+
+        // The slot clock is `u32` and wraps: a step stamped five slots below the wrap and a
+        // shot fifteen above it are twenty apart, and the hold must see that.
+        let mut wrapped = archer(&s);
+        wrapped.last_move_tick = u32::MAX - 4;
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut wrapped, s.aim.0, s.aim.1, Some(CHARGE_SLOTS - 6))
+                .unwrap_err(),
+            HeartrotError::NotCharged.into(),
+            "nineteen slots across the wrap is still short",
+        );
+        fire(&mut arena, &mut boss, &mut wrapped, s.aim.0, s.aim.1, Some(CHARGE_SLOTS - 5))
+            .expect("twenty slots across the wrap");
+    }
+
+    /// The vent threshold reads the raid: the same shell, 60 % standing, is an open vent
+    /// for a raid of one and a sealed one for twenty. First through `recompute_vent`, the
+    /// only writer of `vent_open`, then through `fire` on the surveyed lane, where the
+    /// difference is a core that takes damage against one that absorbs it.
+    #[test]
+    fn the_vent_opens_earlier_for_a_smaller_raid() {
+        let s = survey();
+        let mut boss = standing_boss();
+        boss.parts = [60; N_PARTS];
+        assert!(recompute_vent(&mut boss, 1), "solo: 60 % standing is under 65 %");
+        assert!(!recompute_vent(&mut boss, MAX_SEATS as u8), "twenty: 60 % is over 35 %");
+        assert!(recompute_vent(&mut boss, 0), "an uncounted raid is a solo raid");
+
+        // The blocker gone, the lane reaches the core (480 of 900 left: 53 %). Whether the
+        // core *takes* the hit is the raid's threshold and nothing else.
+        boss.parts[s.blocker] = 0;
+        for (raid, core_left) in [(1u8, 100 - CLASS_DAMAGE[CLASS_KNIGHT]), (MAX_SEATS as u8, 100)] {
+            let mut arena = arena_fighting();
+            arena.raid_size = raid;
+            let mut boss = boss;
+            recompute_vent(&mut boss, arena.raid_size);
+            let mut slot = shooter(&s);
+            shoot_lane(&s, &mut arena, &mut boss, &mut slot);
+            assert_eq!(boss.core_hp, core_left, "raid of {raid}");
+        }
+    }
+
+    /// Tag 7's wire block, byte for byte: four bytes and only four, and `charged` is 0 or 1.
+    /// Every other length is a client on the wrong side of the deploy, and a 2 is skew that
+    /// must not be masked into a legal shot.
+    #[test]
+    fn the_shot_block_is_four_bytes_with_a_binary_flag() {
+        assert_eq!(parse_shot(&[3, 5, 0xfa, 0]), Ok((3, 5, -6, false)));
+        assert_eq!(parse_shot(&[19, 0x80, 127, 1]), Ok((19, -128, 127, true)));
+        let refused: [&[u8]; 7] = [
+            &[],
+            &[3],
+            &[3, 5],
+            &[3, 5, 0xfa],
+            &[3, 5, 0xfa, 1, 0],
+            &[3, 5, 0xfa, 2],
+            &[3, 5, 0xfa, 0xff],
+        ];
+        for bad in refused {
+            assert_eq!(
+                parse_shot(bad),
+                Err(ProgramError::InvalidInstructionData),
+                "{bad:?} was accepted",
+            );
+        }
     }
 }

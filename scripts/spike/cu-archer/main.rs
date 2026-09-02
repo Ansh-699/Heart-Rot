@@ -213,7 +213,9 @@ fn mollusk_for(elf: &[u8], program: &Pubkey) -> Mollusk {
 fn shoot_ix(w: &World, seat: u8, dx: i8, dy: i8) -> Instruction {
     Instruction::new_with_bytes(
         w.program,
-        &[7u8, seat, dx as u8, dy as u8],
+        // Five bytes since the charged shot: `charged = 0` here. A pre-charged ELF (the
+        // devnet one this measured against) refuses the block with InvalidInstructionData.
+        &[7u8, seat, dx as u8, dy as u8, 0],
         vec![
             AccountMeta::new(w.arena, false),
             AccountMeta::new(w.boss, false),

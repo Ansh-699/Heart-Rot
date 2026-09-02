@@ -45,6 +45,7 @@
 //! | `next_incarnation` before the settled match reached the leaderboard | [`HeartrotError::MatchNotRecorded`] | `init::next_incarnation` |
 //! | a VRF callback not signed by the scoped VRF identity | [`HeartrotError::NotVrfIdentity`] | `roll::consume_roll` |
 //! | `begin_muster` with no seat in `ZONE_ARENA` | [`HeartrotError::NoRaiders`] | `guards::assert_any_raider`, from `settle::begin_muster` |
+//! | `shoot` with `charged = 1` fewer than `state::CHARGE_SLOTS` ER slots after the seat's last accepted step | [`HeartrotError::NotCharged`] | `shoot::fire` |
 //!
 //! ## Why the game loop added only two codes
 //!
@@ -273,6 +274,20 @@ heartrot_errors! {
     /// from [`Self::WrongPhase`] because the arena's phase is legal and the stale account
     /// is `Players`; distinct from [`Self::WrongZone`] because no seat was named at all.
     NoRaiders = 19,
+
+    /// `shoot` (tag 7) was sent with `charged = 1` fewer than `state::CHARGE_SLOTS` ER slots
+    /// after the seat's last accepted step, so the hold has not accrued and the shot is not
+    /// charged. Refused **before** the cooldown is spent — nothing on the seat changes — so
+    /// the client resends the same shot uncharged and loses a round trip, not the shot. The
+    /// alternative, landing it quietly at 1× damage, is a number on the HUD that disagrees
+    /// with the boss bar, which is this project's signature silent failure.
+    ///
+    /// Distinct from [`Self::RateLimited`], which is `last_shot_tick` against the **crank**
+    /// clock; this is `last_move_tick` against the **ER slot** clock, and the remedy is the
+    /// opposite: retry now, uncharged, rather than wait. It is the one code a correct client
+    /// expects to see in normal play — a step that landed on chain after the browser
+    /// decided the hold was complete is a race, not a bug.
+    NotCharged = 20,
 }
 
 /// Highest code ever issued, live or **retired**. Every variant is numbered at or below
@@ -280,7 +295,7 @@ heartrot_errors! {
 /// (16) being handed to a new rule, since the discriminants are wire ABI and a client in a
 /// browser tab cannot be asked to forget one.
 #[cfg(test)]
-const HIGHEST_ISSUED: u32 = 19;
+const HIGHEST_ISSUED: u32 = 20;
 
 impl From<HeartrotError> for ProgramError {
     #[inline(always)]

@@ -8,7 +8,8 @@
  * WHAT THIS FILE OWNS, after spec 17:
  *   - the page: full-bleed, no gutters, no scrollbars, no side column (§9.1)
  *   - `.stage` and its one overlay, the radial vignette (§8 row 17)
- *   - the card/button/meter chrome the screens and `ui/Hud.tsx` share
+ *   - the card/button/meter chrome the screens and `ui/Hud.tsx` share, the segmented
+ *     boss bar and the mute pill, and the charged-shot class hooks `Shot.tsx` toggles
  *   - the telemetry panel: translucency, the drag grip, the retired `--dim` (§9.3)
  *   - one reduced-motion block, as a second net over the injected `hr-` keyframes
  *
@@ -149,7 +150,7 @@ body {
  * Raster only, and `svg` is deliberately NOT in this list any more.
  *
  * `image-rendering` INHERITS. With `svg` in the selector every descendant of the scene
- * inherited `pixelated`, including the boss's `.hr-boss-grade` — a `filter` rasterises
+ * inherited `pixelated`, including any filtered subtree (the old boss grade was one) — a `filter` rasterises
  * its subtree and the result is sampled at the current scale, which at spec §1.3's
  * 1.573–2.122 px/unit is an upscale. Nearest-neighbour on a filtered raster is where the
  * grade's drop-shadow rim went chunky. The scene is vector; its sharpness is
@@ -493,13 +494,6 @@ h3 {
    Not used, on purpose: CSS containment. Measured at 0.00 ms on this scene.
    -------------------------------------------------------------------------- */
 
-/* Cold light spilling down the near face of the pit rim, which is the foreground plane
-   the whole composition reads depth from. Static — a `filter` on a node nothing animates
-   rasterises once — so it is the one scene rule that cannot be a second writer. */
-.pit-rim {
-  filter: drop-shadow(0 -2px 0 rgb(159 199 232 / 0.22));
-}
-
 /* --------------------------------------------------------------------------
    Cards — onboarding and character select
    -------------------------------------------------------------------------- */
@@ -670,6 +664,77 @@ h3 {
      composites. Measured on this project's own boss.svg, the same DOM ran at
      143fps on transform and 74.8fps on a non-composited property. */
   transition: transform 160ms linear;
+}
+
+/*
+ * The boss bar: ten meters in a row, one per part plus the core once the vent opens.
+ * `Hud.tsx` writes each segment's `flex-grow` inline as the pool's maximum, so width IS
+ * hit points and the bar is the creature's silhouette in numbers. `contain: layout` keeps
+ * ten fills draining on one 2.5 Hz notification from relaying out the cluster around
+ * them; it is not a compositing layer and adds none.
+ */
+.shell-bar {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  contain: layout;
+}
+
+.shell-seg {
+  flex: 1 1 0;
+  min-width: 3px;
+  height: 8px;
+}
+
+/* A pool at zero is charred, not empty: the track goes to ash and the border to the
+   boss's dead maroon, so a killed thorn stays legible as a kill after its fill is gone. */
+.meter.dead {
+  background: #17100f;
+  border-color: var(--maroon);
+}
+
+/* The mute toggle borrows `.pill`'s chrome; a `<button>` only needs its chrome reset. */
+.hud-mute {
+  background: none;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.hud-mute:hover {
+  color: var(--ink);
+}
+
+.hud-mute[aria-pressed='true'] {
+  color: var(--dim);
+  text-decoration: line-through;
+}
+
+/*
+ * Charged shot — the class hooks `Shot.tsx` toggles on its pooled nodes. A CSS rule beats
+ * the presentation attributes those nodes are drawn with, which is the point: the arrow
+ * keeps its one inline writer for `transform` and takes its charged look from a class.
+ * Nothing here animates; the lob, the trail's fade and the number's rise are WAAPI in
+ * `Shot.tsx`, where reduced motion is already resolved.
+ */
+.hr-arrow-charged line,
+.hr-arrow-trail {
+  stroke: var(--cyan);
+}
+
+.hr-arrow-charged path {
+  fill: var(--cyan);
+}
+
+.hr-arrow-trail {
+  stroke-width: 6;
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+
+/* 26 px against the 18 px attribute, in the vent's yellow: the one number worth reading. */
+.hr-dmg-charged {
+  font-size: 26px;
+  fill: #ffe873;
 }
 
 .vent {

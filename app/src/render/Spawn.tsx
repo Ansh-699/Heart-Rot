@@ -40,9 +40,10 @@ import {
   MAP_TILE,
   MAP_TILES,
   PHASE_FIGHTING,
-  PIT_BOT,
-  PIT_TOP,
 } from '@heartrot/client';
+
+import { EYES_PX } from './boss.gen';
+import { ARENA_PLATFORM } from './rooms.gen';
 
 /**
  * How long the beat lasts, client-local and cosmetic.
@@ -60,29 +61,19 @@ const SPAWN_MS = 1200;
 const ARENA_UNITS = MAP_TILES * MAP_TILE;
 
 /**
- * The eyes, in sprite pixels: two near-white 2x2 blocks at (137,81) and (144,81) in
- * `assets/sprites/parts/boss.svg` (spec §8.3, an inference from 8 pixels — "cheap to verify
- * on first render, cheap to move"). Converted to boss-local units through the generated
- * anchor and scale, so `gen_hitboxes.py --scale 2` moves the flare with everything else.
- *
- * ponytail: two literals the generator does not emit. If the boss rig ends up exporting
- * eye coordinates, import those and delete these three lines.
+ * The eyes, in crop pixels of the boss atlas — `EYES_PX` is what `tools/gen_boss.py` reads
+ * off the painting — converted to boss-local units through the generated anchor and
+ * scale, so `gen_hitboxes.py --scale 2` moves the flare with everything else.
  */
-const EYE_SPRITE_X = [137, 144] as const;
-const EYE_SPRITE_Y = 81;
-const EYE_X = EYE_SPRITE_X.map((x) => BOSS_ANCHOR_X + x * BOSS_SCALE);
-const EYE_Y = BOSS_ANCHOR_Y + EYE_SPRITE_Y * BOSS_SCALE;
-/** The 2x2 block scaled up, rounded out a little so it reads as a light and not a pixel. */
+const EYE_X = EYES_PX.map(([x]) => BOSS_ANCHOR_X + x * BOSS_SCALE);
+const EYE_Y = BOSS_ANCHOR_Y + (EYES_PX[0]?.[1] ?? 0) * BOSS_SCALE;
+/** Rounded out a little so it reads as a light and not a pixel. */
 const EYE_R = 3 * BOSS_SCALE;
 
 /** The vent, from the same numbers the chain compares a ray against. Never a literal. */
 const CORE_R = Math.round(Math.sqrt(CORE.radiusSq));
 
-/** The pit lip the hands grip — the rim that catches the glow. */
-const RIM_CY = (PIT_TOP + PIT_BOT) / 2;
-const RIM_RX = ARENA_UNITS / 2 - MAP_TILE;
-const RIM_RY = (PIT_BOT - PIT_TOP) / 2;
-
+/** The dais the raid fights on, `ARENA_PLATFORM` — the painted rim that catches the glow. */
 const VEIL = '#05080f';
 const GLOW = '#8fe9ff';
 const RIM = '#4fb8e6';
@@ -242,10 +233,10 @@ export function Spawn({ phase, bossX, bossY, reduced, feedEpoch = 0 }: SpawnProp
       </g>
       <ellipse
         ref={rim}
-        cx={ARENA_UNITS / 2}
-        cy={RIM_CY}
-        rx={RIM_RX}
-        ry={RIM_RY}
+        cx={ARENA_PLATFORM.cx}
+        cy={ARENA_PLATFORM.cy}
+        rx={ARENA_PLATFORM.rx}
+        ry={ARENA_PLATFORM.ry}
         fill="none"
         stroke={RIM}
         strokeWidth={6}
@@ -283,5 +274,5 @@ if (import.meta.env.DEV) {
   // Geometry comes from the generated tables, not from this file. If a `--scale` change
   // ever leaves these behind, the flare lands somewhere the boss is not.
   ok(EYE_X.length === 2 && EYE_X[0] !== EYE_X[1], 'two eyes, apart');
-  ok(CORE_R > 0 && RIM_RY > 0, 'the vent and the rim have a size');
+  ok(CORE_R > 0 && ARENA_PLATFORM.ry > 0, 'the vent and the rim have a size');
 }

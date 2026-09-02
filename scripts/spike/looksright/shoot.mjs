@@ -35,9 +35,6 @@ const ALL = [
   { name: 'plate-arena-noboss', room: 'arena', vw: 1920, vh: 1080, opts: { seats: 1, bullets: 0 },
     css: '.hud,.dev,.hr-hud,[class*="hud"],[class*="dev"],.errorbar{display:none!important}'
        + '.hr-boss-breathe{display:none!important}' },
-  { name: 'plate-lobby-noprops', room: 'lobby', vw: 1920, vh: 1080, opts: { seats: 1 },
-    hideProps: true,
-    css: '.hud,.dev,.hr-hud,[class*="hud"],[class*="dev"],.errorbar{display:none!important}' },
   { name: 'plate-lobby-nohud', room: 'lobby', vw: 1920, vh: 1080, opts: { seats: 20 },
     css: '.hud,.dev,.hr-hud,[class*="hud"],[class*="dev"],.errorbar{display:none!important}' },
   { name: 'plate-arena-nohud', room: 'arena', vw: 1920, vh: 1080, opts: { seats: 20 },
@@ -81,20 +78,6 @@ for (const c of CASES) {
     // so it is always up and eats 34.5 px of stage height that production does not.
     await pg.addStyleTag({ content: '.errorbar{display:none!important}' });
     if (c.css) await pg.addStyleTag({ content: c.css });
-    if (c.hideProps) {
-      // Props are the trailing children of the room's clip group; the wall mass is the last
-      // consecutive run of direct <path> children before them (WaitingRoom.tsx rows 6/7).
-      const cut = await pg.evaluate(() => {
-        const g = document.querySelector('#waiting-room > g[clip-path]');
-        if (!g) return -1;
-        const kids = [...g.children];
-        let last = -1;
-        kids.forEach((k, i) => { if (k.tagName.toLowerCase() === 'path') last = i; });
-        kids.slice(last + 1).forEach((k) => { k.style.display = 'none'; });
-        return kids.length - (last + 1);
-      });
-      console.log(JSON.stringify({ propNodesHidden: cut }));
-    }
     await pg.waitForTimeout(250);
     const geom = await pg.evaluate(() => {
       const stage = document.getElementById('stage');
@@ -108,7 +91,7 @@ for (const c of CASES) {
         stage: sr && { x: +sr.x.toFixed(1), y: +sr.y.toFixed(1), w: +sr.width.toFixed(1), h: +sr.height.toFixed(1) },
         viewBox: vb, svgNodes: nodes,
         ctm: m && { a: +m.a.toFixed(5), d: +m.d.toFixed(5), e: +m.e.toFixed(2), f: +m.f.toFixed(2) },
-        knightNodes: svg ? svg.querySelectorAll('[data-seat]').length : -1,
+        knightNodes: svg ? svg.querySelectorAll('#camera g[style*="will-change"]').length : -1,
         camTransform: cam?.getAttribute('transform') ?? cam?.style?.transform ?? null,
       };
     });

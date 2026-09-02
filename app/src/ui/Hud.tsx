@@ -31,7 +31,7 @@
  * notification; the renderer inside `#stage` must not.
  */
 
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
 import {
   CLASS_ARCHER,
@@ -53,9 +53,11 @@ import {
   VENT_OPEN,
   ZONE_ARENA,
   classOf,
+  ventPct,
 } from '@heartrot/client';
 
 import { shotAllowed } from '../input/controls';
+import { isMuted, play, setMuted, type SfxName } from '../render/sfx';
 import { SKIN_COLORS } from '../screens/CharacterSelect';
 import { Muster } from '../screens/Gate';
 import { mySeatSlot, useSelect } from '../state/store';
@@ -97,8 +99,12 @@ if (PART_NAMES.length !== N_PARTS) {
 const FIRST_THORN = 0;
 const LAST_THORN = 3;
 
-/** `Boss.vent_open` flips when `sum(parts) * 100 < sum(parts_max) * 35`. Integer, no float. */
-const VENT_PERCENT = 35;
+/*
+ * `Boss.vent_open` flips when `sum(parts) * 100 < sum(parts_max) * vent_pct(raid_size)` —
+ * 65 solo, 35 at a full raid, linear between. The percentage is `layout.ts`'s `ventPct`,
+ * the same mirror `shoot.rs` recomputes against; this file used to hold a literal 35 and
+ * would have taught a solo player a threshold thirty points below the real one.
+ */
 
 /**
  * The cooldown gate is `controls.ts`'s, not a copy of it.
@@ -133,6 +139,19 @@ function clock(ticks: number, tickMs: number): string {
 /** Shell integrity, in the same integer arithmetic the program compares against. */
 function shellPercent(shell: number, shellMax: number): number {
   return shellMax > 0 ? Math.floor((shell * 100) / shellMax) : 0;
+}
+
+/**
+ * Cue a sound on the tick a chain fact becomes true — and not on mount, where a reconnect
+ * re-delivers a fight whose vent opened minutes ago. `sfx.play` de-duplicates a name
+ * inside 30 ms, so a renderer cueing the same beat costs nothing.
+ */
+function usePlayOnRise(when: boolean, name: SfxName): void {
+  const was = useRef(when);
+  useEffect(() => {
+    if (when && !was.current) play(name);
+    was.current = when;
+  }, [when, name]);
 }
 
 const PHASE_NAMES: Readonly<Record<number, string>> = {
@@ -272,6 +291,7 @@ function PhaseCluster() {
         <span className="fine tabular">tick {tick}</span>
         <span className={`dot dot-${status}`} aria-hidden="true" />
         <span className="fine">{status}</span>
+        <MutePill />
       </div>
       <ol className="hud-seats">
         {Array.from({ length: MAX_SEATS }, (_, i) => {
@@ -292,6 +312,27 @@ function PhaseCluster() {
         })}
       </ol>
     </div>
+  );
+}
+
+/**
+ * A real `<button>`, for the reason `Parts`' toggle is: Space is the fire key and
+ * `controls.ts` takes it before activation; Enter toggles this. `sfx.ts` owns the
+ * remembered value — this only mirrors it into React so the label re-renders.
+ */
+function MutePill() {
+  const [muted, set] = useState(isMuted);
+  return (
+    <button
+      className="pill hud-mute"
+      aria-pressed={muted}
+      onClick={() => {
+        setMuted(!muted);
+        set(!muted);
+      }}
+    >
+      {muted ? 'MUTED' : 'SOUND'}
+    </button>
   );
 }
 
@@ -323,6 +364,9 @@ const VERDICTS: Readonly<Record<number, { readonly label: string; readonly line:
 function Verdict() {
   const outcome = useSelect((s) => s.arena?.outcome ?? OUTCOME_UNDECIDED);
   const row = VERDICTS[outcome];
+  // The verdict is the HUD's own event — the byte lands here and nowhere else draws it.
+  usePlayOnRise(outcome === OUTCOME_WIN, 'win');
+  usePlayOnRise(outcome === OUTCOME_WIPE || outcome === OUTCOME_ENRAGE, 'lose');
   if (!row) return null;
   return (
     <div className={`hud hud-ml verdict verdict-${row.label.toLowerCase()}`} role="status">
@@ -344,27 +388,37 @@ function Verdict() {
  * The fill drives a `--fill` custom property and a composited `scaleX`, never `width`:
  * ~30 of these redraw on the same 2.5 Hz notification and animating `width` relayouts
  * every one of them on every frame. Do not revert it.
+ *
+ * `segment` makes it one cell of the boss bar: `flex-grow` is the pool's maximum, so the
+ * bar's width is HP and a thorn reads as the fraction of the shell it is. An empty pool
+ * is `dead` — charred, not merely drained — because a part at zero is a different thing
+ * from a part at one.
  */
 function Meter({
   label,
   value,
   max,
   tone,
+  segment = false,
 }: {
   label: string;
   value: number;
   max: number;
   tone?: string;
+  segment?: boolean;
 }) {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+  const dead = max > 0 && value === 0;
   return (
     <span
-      className="meter"
+      className={`meter${segment ? ' shell-seg' : ''}${dead ? ' dead' : ''}`}
       role="meter"
       aria-label={label}
       aria-valuenow={value}
       aria-valuemin={0}
       aria-valuemax={max}
+      title={segment ? label : undefined}
+      style={segment ? { flexGrow: max } : undefined}
     >
       <span
         className="meter-fill"
@@ -379,27 +433,33 @@ function Meter({
 // ---------------------------------------------------------------------------
 
 /**
- * The genre convention, and every value in it lifts verbatim from the old `Vent` and
- * `BossPanel`: shell against the threshold `vent_open` actually uses, the core once it is
- * reachable, and one line of fight state. `Incoming` (the live bullet count) is not here —
- * it is a debugging number and the bullets are on screen; it moved to the telemetry Feed
- * group, where the rest of the observed numbers live.
+ * The genre convention: one bar, nine segments — one per part, each as wide as the HP it
+ * holds and each draining on its own — so the bar is the boss's silhouette in numbers
+ * and a dead thorn is a charred gap, not a lower percentage. The core joins the bar the
+ * tick the vent opens (it is unreachable before, and drawing it sealed would be a target
+ * that is not one), and one line of fight state follows. `Incoming` (the live bullet
+ * count) is not here — it is a debugging number and the bullets are on screen; it moved
+ * to the telemetry Feed group, where the rest of the observed numbers live.
  */
 function BossBar() {
   const boss = useSelect((s) => s.boss);
   const tick = useSelect((s) => s.arena?.tick ?? 0);
   const enrageAtTick = useSelect((s) => s.arena?.enrageAtTick ?? 0);
+  // 1, never 0, when the arena is not loaded: `ventPct` is a function of an occupant
+  // count and there is no such thing as a raid of nobody.
+  const raidSize = useSelect((s) => s.arena?.raidSize ?? 1);
   const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
   const alive = useSelect((s) => s.arena?.aliveCount ?? 0);
   const seat = useSelect((s) => s.match?.seat ?? -1);
+  // `VENT_OPEN` and not a bare 1: the byte's meaning belongs to `shoot.rs`, which is
+  // the handler that acts on it, and a literal here is a second copy of that rule.
+  const open = boss?.ventOpen === VENT_OPEN;
+  usePlayOnRise(open, 'ventOpen');
 
   if (!boss) return <p className="fine">Waiting for the boss to load…</p>;
 
   const shell = boss.parts.reduce((a, b) => a + b, 0);
   const shellMax = boss.partsMax.reduce((a, b) => a + b, 0);
-  // `VENT_OPEN` and not a bare 1: the byte's meaning belongs to `shoot.rs`, which is
-  // the handler that acts on it, and a literal here is a second copy of that rule.
-  const open = boss.ventOpen === VENT_OPEN;
   // `enrage_at_tick` is stamped by `Arena::begin_fight` at the MUSTERING → FIGHTING flip
   // and zeroed by `begin_next_incarnation`, so zero means "no fight is running" and not
   // "the deadline has passed". Without the `!== 0` test a fresh arena reads `tick >= 0`
@@ -416,17 +476,26 @@ function BossBar() {
       </div>
       <div className="vent-row">
         <span>Shell</span>
-        <Meter label="Shell integrity" value={shell} max={shellMax} tone="var(--flesh)" />
+        <div className="shell-bar" role="group" aria-label="Shell, by part">
+          {boss.parts.map((hp, index) => (
+            <Meter
+              key={PART_NAMES[index] ?? index}
+              label={PART_NAMES[index] ?? `part ${index}`}
+              value={hp}
+              max={boss.partsMax[index] ?? 0}
+              tone="var(--flesh)"
+              segment
+            />
+          ))}
+          {open && (
+            <Meter label="Core" value={boss.coreHp} max={boss.coreHpMax} tone="var(--olive)" segment />
+          )}
+        </div>
         <span className="fine tabular">{shellPercent(shell, shellMax)}%</span>
       </div>
-      <div className="vent-row">
-        <span>Core</span>
-        <Meter label="Core" value={boss.coreHp} max={boss.coreHpMax} tone="var(--olive)" />
-        <span className="fine tabular">
-          {open ? `${boss.coreHp} / ${boss.coreHpMax}` : `sealed below ${VENT_PERCENT}%`}
-        </span>
-      </div>
       <p className="fine tabular">
+        {open ? `core ${boss.coreHp} / ${boss.coreHpMax}` : `core sealed below ${ventPct(raidSize)}%`}{' '}
+        ·{' '}
         {enrageAtTick === 0
           ? '—'
           : enraged
@@ -517,10 +586,11 @@ function SelfPanel() {
 
   const dead = slot.hp === 0;
   const cls = classOf(slot);
-  // The two gates verbatim, so the pills go grey on exactly the ticks the chain would
-  // answer `Custom(7)`. In the lobby `boss_tick` never advances `tick`, so the move gate
-  // there is the ER slot clock, not this — hence the phase test.
-  const moveReady = phase !== PHASE_FIGHTING || slot.lastMoveTick !== tick;
+  // The move gate is NOT predictable here. `lastMoveTick` is an ER slot and `tick` is a
+  // crank tick — two clocks (`player.rs:345`) — and the comparison that used to sit here
+  // never held, so the pill read green for the whole fight. A browser cannot see slots;
+  // the one refusal it can foresee is death.
+  const moveReady = !dead;
   const live = phase === PHASE_FIGHTING && slot.zone === ZONE_ARENA;
   const shotReady = shotAllowed(tick, slot.lastShotTick, cls);
   const musterLeft = fightAtTick > tick ? clock(fightAtTick - tick, tickMs) : '0:00';
@@ -566,7 +636,7 @@ function SelfPanel() {
           than drawn as three key caps — a picture of a keyboard is a second thing to
           maintain and reads no faster at 11px. */}
       <p className="fine hud-keys">
-        <b>WASD</b> or arrows move · <b>SPACE</b> fires · hold and drag to aim
+        <b>WASD</b> or arrows move · <b>SPACE</b> fires, held still it charges · drag to aim
       </p>
       <p className="fine tabular">
         damage {slot.damageDealt} · deaths {slot.deaths}
@@ -584,6 +654,18 @@ function SelfPanel() {
 // ---------------------------------------------------------------------------
 
 if (import.meta.env.DEV) {
+  // The threshold the table below is written against: a full raid's 35 %. The solo end
+  // and monotonicity are asserted too, because the bar prints `ventPct` for every size.
+  const VENT_PERCENT = ventPct(MAX_SEATS);
+  if (ventPct(1) !== 65 || VENT_PERCENT !== 35) {
+    throw new Error(`Hud self-check: ventPct reads ${ventPct(1)} solo, ${VENT_PERCENT} full`);
+  }
+  for (let raid = 2; raid <= MAX_SEATS; raid += 1) {
+    if (ventPct(raid) > ventPct(raid - 1)) {
+      throw new Error(`Hud self-check: ventPct rises from ${raid - 1} to ${raid} raiders`);
+    }
+  }
+
   // [shell, shellMax, displayed %, vent open by the program's own comparison]
   const shells: readonly (readonly [number, number, number, boolean])[] = [
     [10_000, 10_000, 100, false],

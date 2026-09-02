@@ -1,5 +1,12 @@
 # render-scale — costing the HEARTROT visual redesign before anyone builds it
 
+> **Historical (2026-09-03).** The SVG art this document costs — `temple.svg`, `boss.svg`,
+> `knights.svg`, `room.svg`, `parts/boss.svg` — is gone: the rooms are the two reference
+> paintings as `<image>`s, the boss atlas is cut from the arena painting, the archer is a
+> generated pixel atlas. The method (frame-commit timing under a 6× CPU throttle, fresh
+> browser per case) is what `scripts/spike/framebudget` still does; the painted-room
+> numbers are in `frame-budget-rooms.md`.
+
 **Question.** Does the real art (`temple.svg`, `boss.svg`, `knights.svg`) hold 60 fps at 20
 players, and if not, what is the cheapest thing to give up: rasterising the temple,
 simplifying knight paths, capping visible bullets, or CSS containment?

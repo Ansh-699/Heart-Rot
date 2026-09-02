@@ -13,7 +13,7 @@ import { createRoot } from 'react-dom/client';
 import App from '../../../app/src/App';
 import { StoreProvider, setAuthSource, useStore } from '../../../app/src/state/store';
 import {
-  ARENA, BOSS, BULLET, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
+  ARENA, BOSS, BOSS_SPAWN, BULLET, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
   LAYOUT_VERSION, MAX_SEATS, N_PARTS, CLASS_MASK,
   PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING, ZONE_ARENA, ZONE_LOBBY,
   decodeArena, decodeBoss, decodePlayers,
@@ -47,8 +47,8 @@ function arenaBytes(phase: number, tick: number, bullets: number) {
 function bossBytes(hurt: boolean) {
   const { d, v } = blank(BOSS.size, DISC_BOSS);
   const o = BOSS.offsets;
-  v.setInt16(o.x, 512, true);
-  v.setInt16(o.y, 400, true);
+  v.setInt16(o.x, BOSS_SPAWN[0], true);
+  v.setInt16(o.y, BOSS_SPAWN[1], true);
   for (let i = 0; i < N_PARTS; i++) {
     v.setUint16(o.parts_max + i * 2, 500, true);
     v.setUint16(o.parts + i * 2, hurt && i === 7 ? 0 : 500, true);

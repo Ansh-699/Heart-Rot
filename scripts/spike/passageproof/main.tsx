@@ -13,6 +13,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 
 import {
+  BOSS_SPAWN,
   BULLET_ACTIVE,
   CLASS_KNIGHT,
   LOBBY_BOT,
@@ -70,8 +71,8 @@ function bullet(i: number, tick: number, active: boolean): Bullet {
   const a = (i * 2.399963) % (Math.PI * 2);
   const life = (tick * 42 + i * 17) % 700;
   return {
-    x: Math.round(512 + Math.cos(a) * life * 0.5),
-    y: Math.round(400 + Math.abs(Math.sin(a)) * life * 0.3),
+    x: Math.round(BOSS_SPAWN[0] + Math.cos(a) * life * 0.5),
+    y: Math.round(BOSS_SPAWN[1] + Math.abs(Math.sin(a)) * life * 0.3),
     dx: Math.round(Math.cos(a) * 42),
     dy: Math.round(Math.abs(Math.sin(a)) * 42),
     active: active ? BULLET_ACTIVE : 0,
@@ -150,8 +151,8 @@ function makeBoss(tick: number): BossAccount {
     ventOpen: 0,
     attackTimer: 32 - (tick % 33),
     targetSeat: NO_TARGET,
-    x: 512,
-    y: 400,
+    x: BOSS_SPAWN[0],
+    y: BOSS_SPAWN[1],
     coreHp: 2000,
     coreHpMax: 2000,
     parts,

@@ -280,6 +280,7 @@ fn run(tag: &str, elf_path: &str, boss_xy: (i16, i16), pit_y: i16, shoot_len: us
                 } else {
                     data.push(aim.0 as u8);
                     data.push(aim.1 as u8);
+                    if shoot_len == 5 { data.push(0u8); }  // charged = 0
                 }
                 let ix = Instruction::new_with_bytes(
                     w.program,
@@ -336,7 +337,7 @@ fn run(tag: &str, elf_path: &str, boss_xy: (i16, i16), pit_y: i16, shoot_len: us
                 arena.tick += 16;
             }
             let mut data = vec![7u8, 0u8];
-            if shoot_len == 3 { data.push(0u8); } else { data.push(0u8); data.push(0x81u8); }
+            if shoot_len == 3 { data.push(0u8); } else { data.push(0u8); data.push(0x81u8); if shoot_len == 5 { data.push(0u8); } }
             let ix = Instruction::new_with_bytes(
                 w.program,
                 &data,
@@ -358,7 +359,8 @@ fn run(tag: &str, elf_path: &str, boss_xy: (i16, i16), pit_y: i16, shoot_len: us
             let w = build(seats, boss_xy, pit_y);
             let m = mollusk_for(&elf, &w.program);
             let mut data = vec![7u8, 0u8, 0u8];
-            if shoot_len == 4 { data.push(0xFFu8); }  // dy = -1
+            if shoot_len >= 4 { data.push(0xFFu8); }  // dy = -1
+            if shoot_len == 5 { data.push(0u8); }  // charged = 0
             let ix = Instruction::new_with_bytes(
                 w.program,
                 &data,

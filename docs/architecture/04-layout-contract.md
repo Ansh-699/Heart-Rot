@@ -119,7 +119,8 @@ whether a task is alive, so a stalled `tick` is the only signal that exists.
 | `phase` | u8 | 3 | 1 | 0 Lobby · 1 Fighting · 2 Settling · 3 Settled |
 | `alive_count` | u8 | 4 | 1 | players alive in `ZONE_ARENA`; drives `bullets_per_volley = 3 + alive_count` |
 | `bullet_cursor` | u8 | 5 | 1 | next pool slot `boss_tick` probes when claiming a free bullet |
-| `_pad0` | [u8; 2] | 6 | 2 | align `arena_id` to 8 |
+| `outcome` | u8 | 6 | 1 | how the last fight ended; was `_pad0[0]` |
+| `raid_size` | u8 | 7 | 1 | high-water raiders this incarnation; `vent_pct(raid_size)` is the vent threshold. Was `_pad0[1]`; 0 on every account already on chain reads as solo |
 | `arena_id` | u64 | 8 | 8 | match identity; also the `Arena` PDA seed |
 | `crank_task_id` | **i64** | 16 | 8 | validator-**global** task id. i64, not u64 — the published docs are wrong |
 | `tick` | u32 | 24 | 4 | authoritative clock, +1 per crank execution |
@@ -201,8 +202,9 @@ program raycasts against, so the DOM and the chain cannot drift:
 **Invariants**
 
 - `parts[i] ≤ parts_max[i]` for all *i*; `core_hp ≤ core_hp_max`.
-- `vent_open == 1` ⟺ `sum(parts) × 100 < sum(parts_max) × 35`. Recomputed every tick
-  from the parts; never set independently. (Integer comparison — no percentage float.)
+- `vent_open == 1` ⟺ `sum(parts) × 100 < sum(parts_max) × vent_pct(arena.raid_size)`
+  (65 solo → 35 at twenty, linear). Recomputed every tick from the parts; never set
+  independently. (Integer comparison — no percentage float.)
 - `core_hp` may only decrease while `vent_open == 1`.
 - `target_seat` is `NO_TARGET` (0xFF) or `< 20`. 0xFF is outside the seat range so a
   bounds check catches it rather than silently aiming at seat 0.
@@ -234,7 +236,7 @@ The slot **index is the seat number**; there is no `seat` field to disagree with
 | Field | Type | Offset | Size | Meaning |
 |---|---|---|---|---|
 | `zone` | u8 | 0 | 1 | 0 lobby · 1 arena. The gate tile flips it |
-| `facing` | u8 | 1 | 1 | 0..7, eight-way. Hitscan raycasts along it |
+| `facing` | u8 | 1 | 1 | bits 0..2: octant 0..7, eight-way; bit 3: charged-shot flag (`CHARGED_SHOT_BIT`), set by a charged `shoot`, cleared by the next `move`. Readers mask `& 7` |
 | `skin_id` | u8 | 2 | 1 | chosen at character select |
 | `_pad0` | u8 | 3 | 1 | align `x` |
 | `x` | i16 | 4 | 2 | position, same units as `Bullet` and `Boss` |
@@ -259,7 +261,9 @@ The slot **index is the seat number**; there is no `seat` field to disagree with
   at all, so nothing debits a spammer and the network offers no economic backstop.
   `last_shot_tick` and `last_move_tick` **are** the rate limiter. Reject
   `move` unless `arena.tick > last_move_tick`, and `shoot` unless
-  `arena.tick > last_shot_tick + SHOT_COOLDOWN_TICKS`.
+  `arena.tick > last_shot_tick + SHOT_COOLDOWN_TICKS`. A `shoot` with `charged = 1` also
+  requires `Clock.slot − last_move_tick >= CHARGE_SLOTS` (20 ER slots), refused with
+  `NotCharged` (20) before the cooldown is spent.
 - Aliveness is **derived** (`hp != 0 && zone == ZONE_ARENA`), never stored. There is no
   second flag to fall out of sync with the number.
 - Occupancy is **derived** from `session_pubkey != [0; 32]`, and must agree with bit

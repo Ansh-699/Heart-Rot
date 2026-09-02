@@ -1,0 +1,14 @@
+{"t":"2026-09-02T20:43:29.657Z","event":"start","arenaId":"1788381809","arena":"8U8VMk3wLyFLMgKmkRswP7Cor99rEjGhEeJdiqYke3SN","boss":"HiuX1Dsf7Wxxdvo8LG6e2TPZKqaGaaiEj8EsXwJLEhbm","players":"Ge64qoopeAtQqHXR8WeexDnMnr2sEGKWipLyNsEjLaPV","sweep":[{"seats":1,"arenaWritable":false},{"seats":5,"arenaWritable":false},{"seats":10,"arenaWritable":false},{"seats":20,"arenaWritable":false},{"seats":20,"arenaWritable":false},{"seats":10,"arenaWritable":false},{"seats":5,"arenaWritable":false},{"seats":1,"arenaWritable":false}],"blockMs":20000,"gapMs":6000,"quietMs":20000,"sendMs":50,"spamMs":25,"shootMs":0}
+{"t":"2026-09-02T20:43:30.592Z","event":"init_arena","signature":"4fFJtn4S3H2ACMkTpc6vCUkMwJwxGp4SsjetE6WfzhiztwwqqXEFbx143bsTDNZdrGzruTpDoZ4NhicS2ehJn1n6"}
+{"t":"2026-09-02T20:43:31.483Z","event":"delegate","signature":"5i6sLeP684CSh2aBattRHr17gxmPxVvJEr4UP5u5csSKgBmym4NcSzePZCyRJ8vq55N2C4iMbmuB83b6V65Je5yv"}
+{"t":"2026-09-02T20:43:32.745Z","event":"connected","erFqdn":"https://devnet-as.magicblock.app/","erWs":"wss://devnet-as.magicblock.app/"}
+{"t":"2026-09-02T20:43:36.097Z","event":"claimed","seats":20}
+{"t":"2026-09-02T20:43:36.270Z","event":"walk","iteration":0,"walking":20}
+{"t":"2026-09-02T20:43:39.345Z","event":"walk","iteration":10,"walking":20}
+{"t":"2026-09-02T20:43:42.408Z","event":"walk","iteration":20,"walking":6}
+{"t":"2026-09-02T20:43:44.856Z","event":"at_gate","seats":20}
+{"t":"2026-09-02T20:43:46.441Z","event":"in_arena","seats":20}
+{"t":"2026-09-02T20:43:46.606Z","event":"start_match","signature":"4jpTuER4RiqcrtRQk2KbpPWAQgmr1dE4AtybRjLtbSdCuTKZLX2RUyP4WZ8Njg7aLZqc9A8riAC6VCpdTKerB1Hd","mode":"fight"}
+{"t":"2026-09-02T20:43:46.927Z","event":"decoders_warmed","iterations":20000,"usPerTriple":0}
+{"t":"2026-09-02T20:43:47.129Z","event":"feed_live","frames":3}
+{"t":"2026-09-02T20:44:07.131Z","event":"block_done","label":"quiet","frames":603}

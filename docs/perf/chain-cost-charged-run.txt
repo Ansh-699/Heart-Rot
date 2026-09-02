@@ -1,0 +1,34 @@
+base 117928 bytes, cand 117928 bytes, boss at (512, 352), shots execute in slot 10000
+
+| case | n | min | p50 | p95 | max |
+|---|---|---|---|---|---|
+| _point blank: stand (612, 382) aim (-32, -127)_ | | | | | |
+| BASE point blank (0/64 hit) | 0 | 0 | 0 | 0 | 0 |
+| CAND point blank charged=0 (64/64 hit) | 64 | 2968 | 2968 | 2968 | 2968 |
+| CAND point blank charged=1 (64/64 hit) | 64 | 3097 | 3097 | 3097 | 3097 |
+|   BASE point blank REFUSED Err(InvalidInstructionData) | 64 | 141 | 141 | 141 | 141 |
+| _120u hit: stand (662, 472) aim (-51, -127)_ | | | | | |
+| BASE 120u hit (0/64 hit) | 0 | 0 | 0 | 0 | 0 |
+| CAND 120u hit charged=0 (64/64 hit) | 64 | 6312 | 6312 | 6312 | 6312 |
+| CAND 120u hit charged=1 (64/64 hit) | 64 | 6441 | 6441 | 6441 | 6441 |
+|   BASE 120u hit REFUSED Err(InvalidInstructionData) | 64 | 141 | 141 | 141 | 141 |
+| _200u hit: stand (712, 602) aim (-50, -127)_ | | | | | |
+| BASE 200u hit (0/64 hit) | 0 | 0 | 0 | 0 | 0 |
+| CAND 200u hit charged=0 (64/64 hit) | 64 | 11066 | 11066 | 11066 | 11066 |
+| CAND 200u hit charged=1 (64/64 hit) | 64 | 11195 | 11195 | 11195 | 11195 |
+|   BASE 200u hit REFUSED Err(InvalidInstructionData) | 64 | 141 | 141 | 141 | 141 |
+| _full miss: stand (662, 472) aim (0, 127)_ | | | | | |
+| BASE full miss (0/64 hit) | 0 | 0 | 0 | 0 | 0 |
+| CAND full miss charged=0 (0/64 hit) | 64 | 4902 | 4902 | 4902 | 4902 |
+| CAND full miss charged=1 (0/64 hit) | 64 | 5031 | 5031 | 5031 | 5031 |
+|   BASE full miss REFUSED Err(InvalidInstructionData) | 64 | 141 | 141 | 141 | 141 |
+| CAND NotCharged refusal (accepted 0): Err(Custom(20)) | 64 | 931 | 931 | 931 | 931 |
+| CAND old 4-byte block: Err(InvalidInstructionData) | 64 | 141 | 141 | 141 | 141 |
+| BASE new 5-byte block:  | 0 | 0 | 0 | 0 | 0 |
+
+| case | p50 delta charged=0 | p50 delta charged=1 |
+|---|---|---|
+| point blank | +2968 | +3097 |
+| 120u hit | +6312 | +6441 |
+| 200u hit | +11066 | +11195 |
+| full miss | +4902 | +5031 |

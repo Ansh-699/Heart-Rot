@@ -214,6 +214,62 @@ export function cooldownTicks(slot: Pick<PlayerSlot, 'classAim'>): number {
   return CLASS_COOLDOWN_TICKS[classOf(slot)]!;
 }
 
+// ---------------------------------------------------------------------------
+// The charged shot — `state.rs`'s charge block
+//
+// Stateless on chain: no charge timer is stored. A shot sent with `charged` is granted
+// 2.5x only if the seat's last accepted step is at least `CHARGE_MS` old, measured by the
+// chain as ER slots — `Clock.slot - lastMoveTick`, both slots. `Arena.tick` is a crank
+// tick on another clock and must never enter that subtraction (the MOVE pill was green
+// for a whole fight the last time somebody compared the two). A shorter hold is refused
+// with `HeartrotError.NotCharged` (20) *before* the cooldown is spent: resend uncharged.
+// ---------------------------------------------------------------------------
+
+/** `state::CHARGE_MS` — the hold. Add any send-latency margin in the client, never here. */
+export const CHARGE_MS = 1_000;
+
+/** `state::CHARGED_NUM / CHARGED_DEN` — a charged shot deals 2.5x, on the same cooldown. */
+export const CHARGED_NUM = 5;
+export const CHARGED_DEN = 2;
+
+/** `state::charged_damage(class)` — exact on both rows; the chain const-asserts it divides. */
+export function chargedDamage(cls: number): number {
+  return (CLASS_DAMAGE[cls]! * CHARGED_NUM) / CHARGED_DEN;
+}
+
+/**
+ * `state::CHARGED_SHOT_BIT` — bit 3 of `PlayerSlot.facing` says the seat's last shot was
+ * charged. Bits 0..2 are the octant. Set by `shoot`, cleared by the next step or uncharged
+ * shot, which is exactly the in-flight arrow's lifetime. Decoded into
+ * {@link PlayerSlot.chargedShot}; nothing should mask the byte at a call site.
+ */
+export const CHARGED_SHOT_BIT = 3;
+
+// ---------------------------------------------------------------------------
+// The vent threshold — `state.rs`'s `vent_pct`
+// ---------------------------------------------------------------------------
+
+/**
+ * `state::VENT_PCT_SOLO` / `VENT_PCT_FULL`: shell remaining, in percent, below which the
+ * vent opens, for a raid of one and for a full raid. Shell HP is flat at every raid size;
+ * the *threshold* is the raid-size knob, so solo strips 35 % of the shell before the core
+ * is reachable and twenty strip 65 %.
+ */
+export const VENT_PCT_SOLO = 65;
+export const VENT_PCT_FULL = 35;
+
+/**
+ * `state::vent_pct(raid_size)` — the threshold for `arena.raidSize`, linear between the two
+ * endpoints and clamped into `1..=MAX_SEATS`: 0, which every account that predates the
+ * field carries, reads as solo. The chain's comparison is
+ * `sum(parts) * 100 < sum(partsMax) * ventPct(arena.raidSize)`, in integers, so a HUD that
+ * draws the line must call this rather than type a 35.
+ */
+export function ventPct(raidSize: number): number {
+  const n = Math.min(Math.max(raidSize, 1), MAX_SEATS);
+  return VENT_PCT_SOLO - Math.floor(((VENT_PCT_SOLO - VENT_PCT_FULL) * (n - 1)) / (MAX_SEATS - 1));
+}
+
 /**
  * The direction a seat last fired, as a vector whose **major axis is 1** — the exact
  * inverse of `PlayerSlot::set_aim`, and the thing a drawn arrow points along.
@@ -270,6 +326,9 @@ export const ARENA = {
     alive_count: 4,
     bullet_cursor: 5,
     outcome: 6,
+    // Was `_pad0`, the same move `outcome` made: no field moved, the account did not grow,
+    // `LAYOUT_VERSION` stays 1, and every live account reads 0 here — the solo threshold.
+    raid_size: 7,
     arena_id: 8,
     crank_task_id: 16,
     tick: 24,
@@ -391,6 +450,12 @@ export type ArenaAccount = {
   outcome: number;
   aliveCount: number;
   bulletCursor: number;
+  /**
+   * High-water mark of seats that have stood in the arena this incarnation — the raid
+   * size both difficulty knobs read: {@link ventPct} and the core top-up. Written only by
+   * `boss_tick`, monotone, zeroed with the incarnation.
+   */
+  raidSize: number;
   arenaId: bigint;
   crankTaskId: bigint;
   /** The authoritative clock. Also the crank-liveness heartbeat. */
@@ -460,7 +525,10 @@ export type PlayerSlot = {
   /** All-zero `sessionPubkey` means the seat was never claimed. */
   occupied: boolean;
   zone: number;
+  /** The octant 0..7 (0 N ... 7 NW, y down) — the low three bits of the byte, already masked. */
   facing: number;
+  /** Bit 3 of the same byte: the last shot was charged. Cleared by the next step. */
+  chargedShot: boolean;
   skinId: number;
   /**
    * Class and last aim, packed — bit 7 class, bits 6..4 aim sector, bits 3..0 aim ratio.
@@ -568,6 +636,7 @@ export function decodeArena(data: Uint8Array): ArenaAccount {
     outcome: v.getUint8(o.outcome),
     aliveCount: v.getUint8(o.alive_count),
     bulletCursor: v.getUint8(o.bullet_cursor),
+    raidSize: v.getUint8(o.raid_size),
     arenaId: v.getBigUint64(o.arena_id, true),
     crankTaskId: v.getBigInt64(o.crank_task_id, true),
     tick: v.getUint32(o.tick, true),
@@ -618,11 +687,13 @@ export function decodePlayers(data: Uint8Array): PlayersAccount {
   for (let seat = 0; seat < MAX_SEATS; seat++) {
     const s = o.slots + seat * PLAYER_SLOT.size;
     const sessionPubkey = bytes(data, s + p.session_pubkey, 32);
+    const facingByte = v.getUint8(s + p.facing);
     slots.push({
       seat,
       occupied: !isZero(sessionPubkey),
       zone: v.getUint8(s + p.zone),
-      facing: v.getUint8(s + p.facing),
+      facing: facingByte & 7,
+      chargedShot: ((facingByte >> CHARGED_SHOT_BIT) & 1) === 1,
       skinId: v.getUint8(s + p.skin_id),
       classAim: v.getUint8(s + p.class_aim),
       x: v.getInt16(s + p.x, true),
@@ -876,6 +947,8 @@ export function layoutSelfCheck(): void {
     const { data, v } = blank(ARENA.size, DISC_ARENA);
     const o = ARENA.offsets;
     v.setUint8(o.phase, PHASE_MUSTERING);
+    v.setUint8(o.outcome, OUTCOME_WIPE);
+    v.setUint8(o.raid_size, 13);
     v.setUint32(o.tick, 1_234, true);
     v.setUint32(o.enrage_at_tick, 0, true); // zero for the whole muster, by design
     v.setUint32(o.roll_requested_tick, 111, true);
@@ -883,6 +956,17 @@ export function layoutSelfCheck(): void {
     data[o.next_affix_seed] = 0xab;
     const a = decodeArena(data);
     ok(a.phase === PHASE_MUSTERING, 'phase 6 decodes as MUSTERING');
+    // `raid_size` is the reinterpreted `_pad0` at offset 7, between `outcome` and the low
+    // byte of `arena_id`; both neighbours are plausible small numbers, so both are pinned.
+    ok(a.raidSize === 13, 'raidSize reads offset 7');
+    ok(a.outcome === OUTCOME_WIPE, 'raidSize did not eat outcome');
+    ok(a.arenaId === 0n, 'nor the low byte of arena_id');
+    ok(ventPct(a.raidSize) === 65 - Math.floor((30 * 12) / 19), 'the threshold follows the raid');
+    ok(ventPct(0) === 65 && ventPct(1) === 65, 'an uncounted raid is a solo raid');
+    ok(ventPct(MAX_SEATS) === 35 && ventPct(255) === 35, 'a full raid, and anything past it');
+    for (let n = 1; n < MAX_SEATS; n++) {
+      ok(ventPct(n) >= ventPct(n + 1) && ventPct(n) - ventPct(n + 1) <= 2, `ventPct is linear at ${n}`);
+    }
     ok(a.fightAtTick === 1_434, 'fightAtTick reads offset 1164');
     ok(a.rollRequestedTick === 111, 'fightAtTick did not eat rollRequestedTick');
     ok(a.nextAffixSeed[0] === 0xab, 'fightAtTick did not eat the seed');
@@ -945,7 +1029,7 @@ export function layoutSelfCheck(): void {
     const { data, v } = blank(PLAYERS.size, DISC_PLAYERS);
     const s = PLAYERS.offsets.slots + 19 * PLAYER_SLOT.size;
     v.setUint8(s + PLAYER_SLOT.offsets.zone, ZONE_ARENA);
-    v.setUint8(s + PLAYER_SLOT.offsets.facing, 3);
+    v.setUint8(s + PLAYER_SLOT.offsets.facing, 3 | (1 << CHARGED_SHOT_BIT)); // SE, charged
     v.setUint8(s + PLAYER_SLOT.offsets.skin_id, 2);
     v.setUint8(s + PLAYER_SLOT.offsets.class_aim, CLASS_MASK | 0x38); // archer, aiming (1, -2)
     v.setInt16(s + PLAYER_SLOT.offsets.x, 512, true);
@@ -957,6 +1041,11 @@ export function layoutSelfCheck(): void {
     ok(p.slots.length === MAX_SEATS, 'twenty seats');
     ok(last.occupied && last.zone === ZONE_ARENA && last.skinId === 2, 'seat 19 lands on stride');
     ok(last.x === 512 && last.y === 500 && last.respawnAtTick === 77, 'seat 19 fields');
+    // One byte, two fields: the octant is the low three bits and the flag is bit 3. A
+    // renderer that indexed an eight-entry table with the raw byte would read past it on
+    // every charged shot.
+    ok(last.facing === 3 && last.chargedShot, 'facing is the octant, chargedShot is bit 3');
+    ok(p.slots[0]!.facing === 0 && !p.slots[0]!.chargedShot, 'a zeroed seat faces north, uncharged');
     ok(!p.slots[18]!.occupied, 'the stride did not smear into seat 18');
     ok(PLAYERS.offsets.slots + MAX_SEATS * PLAYER_SLOT.size <= PLAYERS.size, 'slots fit');
 
@@ -1016,6 +1105,13 @@ export function layoutSelfCheck(): void {
     ok(CLASS_DAMAGE[0]! * (CLASS_COOLDOWN_TICKS[1]! + 1) === CLASS_DAMAGE[1]! * (CLASS_COOLDOWN_TICKS[0]! + 1),
       'the two classes are DPS-neutral, so the boss needs no rescaling');
     ok(CLASS_COOLDOWN_TICKS[0] === 7 && CLASS_COOLDOWN_TICKS[1] === 13, 'ticksFor(800) - 1, ticksFor(1400) - 1');
+    // The charged multiplier, exact on both rows — the number `showDamage` styles on.
+    ok(chargedDamage(CLASS_ARCHER) === 175 && chargedDamage(CLASS_KNIGHT) === 100, '2.5x, both rows');
+    for (let c = 0; c < N_CLASSES; c++) {
+      ok(Number.isInteger(chargedDamage(c)) && chargedDamage(c) * CHARGED_DEN === CLASS_DAMAGE[c]! * CHARGED_NUM,
+        `class ${c}: charged damage divides exactly, as the chain asserts`);
+    }
+    ok(CHARGE_MS % 50 === 0 && CHARGE_MS / 50 === 20, 'the hold is a whole number of ER slots (20)');
   }
 
   // `mayMoveTo` — the movement rule, not a layout offset, and checked here because it is

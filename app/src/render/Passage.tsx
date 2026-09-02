@@ -83,6 +83,7 @@ import {
 } from '@heartrot/client';
 
 import { Arena, CAMERA_EASE, usePrefersReducedMotion, type ArenaProps } from './Arena';
+import { play } from './sfx';
 import { ARENA_UNITS, SELF_SNAP } from './sprites';
 import { VIEW_ARENA, VIEW_LOBBY, type Room } from './viewport';
 
@@ -134,10 +135,6 @@ const CAMERA_LIFT = VIEW_LOBBY.y - VIEW_ARENA.y;
 /**
  * The core, in world units. Both terms are generated — `BOSS_SPAWN` by `gen_map.py`,
  * `CORE` by `gen_hitboxes.py` — so when the boss moves, this light moves with it.
- *
- * ponytail: `Scene.tsx` computes the identical pair as a private `CORE_WORLD`. Export it
- * there and these two lines go; two generated terms is under the threshold worth a
- * cross-file import today.
  */
 const CORE_X = BOSS_SPAWN[0] + CORE.x;
 const CORE_Y = BOSS_SPAWN[1] + CORE.y;
@@ -160,8 +157,8 @@ const COVER_H = ARENA_UNITS + 2 * BLEED;
 
 /** The dark, matched to `Spawn.tsx`'s veil so the two beats overlap without a seam. */
 const VEIL = '#05080f';
-/** Room B's temperature, sampled from `actual_boss_arena.png` at (543, 290). */
-const TEAL = '#183a44';
+/** Room B's temperature, sampled from the served `app/src/render/rooms/arena.png` at px (543, 290). */
+const TEAL = '#113541';
 /** The vent's own colour, as `Spawn.tsx` reads it. */
 const GLOW = '#8fe9ff';
 
@@ -401,12 +398,10 @@ export function Passage(props: PassageProps) {
       }
       // The last moment room A is the room.
       push(portcullis?.animate(LIFT, { duration: 180, easing: 'ease-out', fill: 'forwards' }));
-      // `#gate-sign` is NOT animated, and that is a decision rather than an omission. It
-      // rests at full opacity — `WaitingRoom.tsx` calls it "the most saturated red in the
-      // frame and the only text" — so the only composited move available to it is a fade
-      // DOWN and back, which is a dip on a node that is supposed to be burning. A flare
-      // wants a filter or a colour, neither of which is composited, and neither of which
-      // may be written onto a node this file has borrowed.
+      play('gate');
+      // Nothing else in room A moves: the sign, the tower and the braziers are paint in
+      // `LOBBY_IMG`, and the portcullis is the one thing `gen_rooms.py` cuts out of that
+      // painting (`GATE_IMG`) precisely so it can.
     }
 
     // Skip. `finish()` jumps to the last keyframe; because the cut hangs off

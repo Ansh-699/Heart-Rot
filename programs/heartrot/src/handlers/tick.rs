@@ -57,6 +57,11 @@ use crate::guards::{assert_owned_by, assert_pda_at_bump, assert_signer, assert_w
 // compile. A drift is invisible in production — the task fails every tick, burns its ten
 // retries and is deleted ~26 s into the match while every path here still returns `Ok(())`.
 use crate::handlers::settle::{CRANK_PROGRAM_ID, CRANK_SIGNER_SEED};
+// The vent rule, imported rather than re-derived: `shoot` recomputes it on every landed
+// shot and this handler on every tick, and a second copy of the threshold here is the
+// shell threshold stored twice — which it was, as a literal 35 beside `shoot.rs`'s, until
+// the threshold became a function of the raid.
+use crate::handlers::shoot::recompute_vent;
 // The boss's geometry, generated from `assets/sprites/hitboxes.json` by
 // `tools/gen_hitboxes.py` alongside the TypeScript the renderer draws with. `shoot.rs`
 // raycasts against the boxes these muzzles were cut from in this same frame, so
@@ -169,13 +174,6 @@ const BASE_VOLLEY_BULLETS: usize = 3;
 /// Fan width as a tangent denominator: the outermost bullet of a full 23-shot volley is
 /// offset by `11/24`, ≈ 25° off the aim line. Larger denominator, tighter fan.
 const SPREAD_DEN: i32 = 24;
-
-/// The vent opens at `sum(parts) < 35 % of sum(parts_max)`, compared as
-/// `sum × 100 < sum_max × 35` so no percentage is ever a float. Same numbers as
-/// `shoot.rs`, which recomputes this on every landed shot; the tick recomputes it too
-/// because parts can also be destroyed between ticks by other players' transactions.
-const VENT_THRESHOLD_NUM: u32 = 35;
-const VENT_THRESHOLD_DEN: u32 = 100;
 
 // ---------------------------------------------------------------------------
 // The hand slam
@@ -613,27 +611,36 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         live_n += 1;
     }
 
-    // ---- 1b. size the core to the raid -----------------------------------
+    // ---- 1b. size the boss to the raid -----------------------------------
     //
-    // Difficulty scales on `core_hp`, and on nothing else. Measured time-to-kill with a
+    // `raid_size` is the high-water mark of seats that have stood in the arena this
+    // incarnation. It never falls when a raider leaves or dies, so nothing about it can be
+    // gamed, it tolerates late entry, and it is the one number both raid-size knobs read:
+    // the vent threshold (`state::vent_pct`, through `recompute_vent` in stage 3 and in
+    // `shoot`) and the core top-up below. This is its only writer;
+    // `Arena::begin_next_incarnation` zeroes it.
+    //
+    // Difficulty scales on those two and on nothing else. Measured time-to-kill with a
     // fixed core ran 307 s solo against 15 s at twenty players — a 20× spread against a
     // volley that scales 5.75× — which inverts the one requirement the whole design was
-    // built on. Topping the core up per raider compresses that to 3.9× and leaves the
-    // solo fight untouched, which matters because a devnet demo is usually one or two
-    // people and the first thing a visitor would otherwise experience is an unwinnable
-    // boss.
-    //
-    // `core_hp_max` *is* the high-water record, so this needs no snapshot and no new
-    // field on an account that has none to give. It is monotone, so it cannot be gamed by
-    // dying, leaving, or waiting for the twentieth player to walk out; it tolerates late
-    // entry; and it is orthogonal to incarnation scaling, which writes `parts`.
+    // built on. Topping the core up per raider compressed that to 3.9×; the solo fight
+    // was still 274 s of shell-stripping against a flat 35 % vent, which is what moving
+    // the threshold with the raid fixes (`state::ttk_s`: 166 s solo, 71 s at twenty).
     //
     // **Not `parts`.** `u16` saturation already caps the crown at incarnation 41 and a
     // raid multiplier on the shell would collapse that to incarnation ~2 at twenty
-    // players. `vent_open` is a ratio over `parts` and is untouched by this for the same
-    // reason.
+    // players. `vent_open` is a ratio over `parts`; the *threshold* moves, the shell
+    // does not.
+    if arena_occupants > arena.raid_size as u32 {
+        // `arena_occupants <= MAX_SEATS` by construction (one pass over the seats), so the
+        // narrowing cast cannot truncate; `min` keeps that a property of this line rather
+        // than of the loop above it.
+        arena.raid_size = arena_occupants.min(MAX_SEATS as u32) as u8;
+    }
+    // `core_hp_max` *is* its own high-water record, so the top-up needs no snapshot: it is
+    // monotone, and orthogonal to incarnation scaling, which writes `parts`.
     let required = BOSS_CORE_HP.saturating_add(
-        CORE_HP_PER_RAIDER.saturating_mul(arena_occupants.max(1).min(MAX_SEATS as u32) as u16 - 1),
+        CORE_HP_PER_RAIDER.saturating_mul(arena.raid_size.max(1) as u16 - 1),
     );
     // `core_hp != 0` is not decoration. Without it a raid that has just killed the core
     // and gained a raider in the same 100 ms would have it topped back up *before* the
@@ -753,18 +760,15 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     //
     // Derived state, cached for the client. Recomputed from the parts every tick and
     // never set independently: the boss is a shell, and `sum(parts)` *is* its health.
-    // 9 × 65,535 × 100 ≈ 59 M, so u32 is ample; saturating anyway.
+    // `shoot` runs the same function on every landed shot; the tick runs it too because
+    // the threshold moves with `raid_size`, which only stage 1b above can raise.
     //
     // Computed here, ahead of the slam, rather than after the volley where it used to
     // sit: the slam's vent branch reads it, and a slam resolving against last tick's
     // `vent_open` would lunge over a chest that closed 100 ms ago. Nothing between the
     // bullet loop and here touches `parts` — only `shoot` does, in its own transaction —
     // so moving it changes no value, only when it is available.
-    let shell: u32 = boss.parts.iter().map(|&hp| hp as u32).sum();
-    let shell_max: u32 = boss.parts_max.iter().map(|&hp| hp as u32).sum();
-    boss.vent_open = u8::from(
-        shell.saturating_mul(VENT_THRESHOLD_DEN) < shell_max.saturating_mul(VENT_THRESHOLD_NUM),
-    );
+    recompute_vent(boss, arena.raid_size);
 
     // ---- 4. the hand slam -------------------------------------------------
     //
@@ -1804,7 +1808,8 @@ mod tests {
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.phase, PHASE_FIGHTING);
 
-        // The vent is derived: strip the shell past 35 % and it opens, on its own.
+        // The vent is derived: strip the shell past the raid's threshold (65 % standing
+        // for this one raider) and it opens, on its own.
         let (mut arena, mut boss, mut players) = fight();
         seat_in_arena(&mut players, 0, 400, 512);
         tick_once(&mut arena, &mut boss, &mut players);
@@ -1871,10 +1876,16 @@ mod tests {
 
     /// A boss with both hands but no thorns: it slams and it does not shoot, so a test
     /// can assert on health without a volley moving it.
+    ///
+    /// The thorns leave `parts_max` as well as `parts`, so the shell reads 100 % and the
+    /// vent stays sealed at every raid size. Stripped from `parts` alone they read as 44 %
+    /// damage, which the raid-sized threshold opens for any raid under eight — and an open
+    /// vent moves the slam to the vent lane, which is not what a test about hands asks.
     fn hands_only() -> (Arena, Boss, Players) {
         let (arena, mut boss, players) = fight();
         for m in MUZZLES.iter() {
             boss.parts[m.part] = 0;
+            boss.parts_max[m.part] = 0;
         }
         (arena, boss, players)
     }
@@ -2088,6 +2099,52 @@ mod tests {
             "the difficulty curve does not resurrect the boss"
         );
         assert_eq!(arena.outcome, OUTCOME_WIN);
+    }
+
+    /// The raid size both knobs read is a high-water mark: it counts the biggest raid
+    /// that has stood in the pit, never the one standing there now, and the vent threshold
+    /// follows it. Solo opens the vent with 60 % of the shell left; twenty do not.
+    #[test]
+    fn the_raid_size_is_a_high_water_mark_and_the_vent_reads_it() {
+        // `fight()`, not `hands_only()`: the vent half below needs a `parts_max` the shell
+        // is measured against, and nothing fires inside the three ticks the first half runs.
+        let (mut arena, mut boss, mut players) = fight();
+        assert_eq!(arena.raid_size, 0, "nothing counted before the first tick");
+        for seat in 0..3 {
+            seat_in_arena(&mut players, seat, 400, 512);
+        }
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.raid_size, 3);
+        assert_eq!(boss.core_hp_max, BOSS_CORE_HP + 2 * CORE_HP_PER_RAIDER);
+
+        // Two leave: the mark holds, and so does the core.
+        players.slots[1].zone = ZONE_LOBBY;
+        players.slots[2].zone = ZONE_LOBBY;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.raid_size, 3, "leaving does not shrink the raid");
+        assert_eq!(boss.core_hp_max, BOSS_CORE_HP + 2 * CORE_HP_PER_RAIDER);
+
+        // Seven arrive: it grows, and only ever grows.
+        for seat in 0..7 {
+            seat_in_arena(&mut players, seat, 400, 512);
+        }
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.raid_size, 7);
+        assert_eq!(boss.core_hp_max, BOSS_CORE_HP + 6 * CORE_HP_PER_RAIDER);
+
+        // The vent reads the mark. 60 % of the shell standing: open for a raid of one
+        // (threshold 65 %), sealed for a raid of twenty (35 %), from the same parts.
+        let vent_after = |occupants: usize| {
+            let (mut arena, mut boss, mut players) = fight();
+            for seat in 0..occupants {
+                seat_in_arena(&mut players, seat, 400, 512);
+            }
+            boss.parts = [60; N_PARTS];
+            tick_once(&mut arena, &mut boss, &mut players);
+            (arena.raid_size as usize, boss.vent_open)
+        };
+        assert_eq!(vent_after(1), (1, 1), "solo opens the vent at 60 %");
+        assert_eq!(vent_after(MAX_SEATS), (MAX_SEATS, 0), "twenty do not");
     }
 
     /// The muster: the first knight through the gate opens a fixed-length window and the

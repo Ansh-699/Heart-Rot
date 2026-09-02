@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """hitboxes.json -> the Rust hitbox table AND the TypeScript one, from ONE pass.
 
-`svg_slice.py` already partitions the boss into parts and writes the tight bounds
+`gen_boss.py` already partitions the boss into parts and writes the tight bounds
 of the pixels each part actually owns. Those bounds are the only truthful hitboxes
-there are: they came off the same partition that produced the `<g>` groups the
+there are: they came off the same partition that produced the atlas cells the
 browser draws, so a box and its art cannot disagree by construction.
 
 Everything downstream of that used to re-state them. `shoot.rs` carried a
@@ -14,7 +14,7 @@ delete the copy. This emits both consumers from the JSON, so the only way to mov
 a hitbox is to move the art.
 
     python3 tools/gen_hitboxes.py        # rewrites both generated files
-    python3 tools/gen_hitboxes.py --scale 2   # the documented fallback lever
+    python3 tools/gen_hitboxes.py --scale 2   # the lever: twice the creature, one command
 
 Outputs (checked in, never hand-edited):
     programs/heartrot/src/hitboxes.rs
@@ -39,24 +39,25 @@ number living outside the art, and a number living outside the art is what drift
 The renderer must place the sprite's top-left at `(Boss.x + ANCHOR_X,
 Boss.y + ANCHOR_Y)` -- it is exported from the TS output so it, too, is stated once.
 
-The canvas centre deliberately includes the baked-in `ground` strip: it is part of
-the drawn canvas, the renderer translates the whole canvas, and excluding it would
-put the art and the raycast 27 units apart again for no gain.
+The canvas centre deliberately includes the transparent lower half `gen_boss.py`
+pads on: the canvas centre is the creature's feet line, so `Boss.x`/`Boss.y` IS
+`BOSS_SPAWN` on the pit rim, and the rig's top-left is `BOSS_SPAWN + ANCHOR` --
+the identity the room renderer checks at boot.
 
 
 THE SCALE
 ---------
-`--scale` (default 3) is how big the creature is drawn in arena units per sprite
+`--scale` (default 1) is how big the creature is drawn in arena units per sprite
 pixel. It is a PARAMETER OF THIS TOOL and never a constant in Rust or TypeScript,
 because it moves every hitbox, every muzzle, the anchor and the core radius at
-once -- which is exactly why the spec keeps it here: `--scale 2` is the one
-reversible decision in the top-centre composition, and it must be one command.
+once. The default is 1 because the boss is cut out of the arena painting, which is
+drawn at one unit per pixel: any other scale would lift the rig off the paint it
+is meant to sit on pixel-exact.
 
     local = sprite * SCALE + ANCHOR        ANCHOR = -round(canvas * SCALE / 2)
 
-The core centre and radius are computed in SPRITE space and scaled afterwards, so
-`--scale 3` lands on the spec's (75, -54) r=60 rather than a rounding neighbour of
-it. Scaling a centre is not the same as centring a scaled box; this file does the
+The core centre and radius are computed in SPRITE space and scaled afterwards.
+Scaling a centre is not the same as centring a scaled box; this file does the
 former.
 """
 import argparse, json, math, os
@@ -112,7 +113,7 @@ def load(path):
         if not (isinstance(m, list) and len(m) == 2 and all(isinstance(v, int) for v in m)):
             raise SystemExit(
                 f"{path}: {name} is a volley emitter with no `muzzle: [x, y]`. "
-                f"`tools/svg_slice.py` writes it -- the drawn pixel nearest the part's "
+                f"`tools/gen_boss.py` writes it -- the drawn pixel nearest the part's "
                 f"mask centroid. A box centre is not a substitute; it is usually air.")
     return order, boxes, sprite["w"], sprite["h"]
 
@@ -138,7 +139,7 @@ def to_local(boxes, order, w, h, scale):
             raise SystemExit(
                 f"{name} is {bw}x{bh} at scale {scale}, thinner than TILE={TILE}: the ray "
                 f"samples one point per tile and would step over it. Widen the part in "
-                f"svg_slice.py, or raise --scale.")
+                f"gen_boss.py, or raise --scale.")
         parts.append((name, b["x"] * scale + ax, b["y"] * scale + ay, bw, bh))
     c = boxes["core"]
     # Floor division, not round(), so the centre is reproducible in any language.
@@ -161,7 +162,7 @@ def to_muzzles(boxes, parts, anchor, scale):
     THE POINT IS A DRAWN PIXEL, not the box centre. A thorn is a diagonal spray inside
     an axis-aligned box that is 8-13% full, so its centre is usually transparent: three
     of the four muzzles used to sit in mid-air beside the creature, and thorn1's sat
-    inside `beast_r`'s box where the raycast could not even reach it. `svg_slice.py`
+    inside `beast_r`'s box where the raycast could not even reach it. `gen_boss.py`
     writes the drawn pixel nearest each thorn's mask centroid into `hitboxes.json`; this
     reads it and scales it exactly as it scales the boxes. `load()` refuses a thorn with
     no muzzle, so there is no box-centre fallback left to silently regress to.
@@ -355,7 +356,7 @@ def header(src, p):
             f"{p}\n"
             f"{p} Hand-editing this file re-creates the defect it exists to close: the drawn\n"
             f"{p} boss and the raycast boss stop being the same boss. Move the art, re-run\n"
-            f"{p} `python3 tools/svg_slice.py`, then re-run the command above.\n")
+            f"{p} `python3 tools/gen_boss.py`, then re-run the command above.\n")
 
 
 def emit_rust(parts, anchor, core, muzzles, src, w, h, scale):
@@ -442,8 +443,8 @@ pub const N_MUZZLES: usize = {len(muzzles)};
 /// command at the top of this file, and the muzzles move with it.
 ///
 /// Each point is a DRAWN pixel — the one nearest that thorn's mask centroid, written into
-/// `hitboxes.json` by `tools/svg_slice.py`. A thorn is a diagonal spray inside an
-/// axis-aligned box that is 8–13% full, so the box centre is usually transparent: three of
+/// `hitboxes.json` by `tools/gen_boss.py`. A thorn is a diagonal spike inside an
+/// axis-aligned box that is mostly air, so the box centre is usually transparent: three of
 /// the four volleys used to spawn in mid-air beside the creature, and thorn1's spawned
 /// inside `beast_r`'s box. That is invisible while the boss is a circle and glaring the
 /// moment the art is on screen.
@@ -592,12 +593,9 @@ mod tests {{
         let u = parts_union();
         assert!(CORE_X - r >= u.x && CORE_X + r <= u.x + u.w, "the vent hangs off the boss");
         assert!(CORE_Y - r >= u.y && CORE_Y + r <= u.y + u.h, "the vent hangs off the boss");
-        // High on the body, as the reference composition needs.
-        assert!(CORE_Y < u.y + u.h / 2, "the vent is in the lower body");
-        // NOT centred on the union, and deliberately not asserted to be: the mace arm
-        // sweeps to the far left of the canvas, so the union's midpoint sits ~77 units
-        // left of the chest while the creature's mass centroid sits on it. Measured in
-        // docs/art/boss-rig.md 4.5; recorded here so nobody "fixes" the offset.
+        // Where on the body is NOT asserted: the vent is the painting's own orb, authored
+        // as the `core` polygon in `tools/gen_boss.py`, and the ram skull towering over the
+        // chest puts it below the union's midpoint by construction.
     }}
 
     /// A sample outside every part box hits nothing -- the property `shoot.rs`'s early-out
@@ -698,8 +696,8 @@ export interface Muzzle {{
  * bullets at, emitted from the same JSON in the same pass, so a locally predicted volley
  * and the chain's volley leave the same thorn.
  *
- * Each point is its thorn box's centre: inside the box by construction, and needing no
- * notion of "outward", which is a direction the art does not carry.
+ * Each point is a DRAWN pixel of its thorn -- the one nearest the mask centroid, written
+ * by `tools/gen_boss.py` -- so a volley leaves paint and not the air beside it.
  */
 export const MUZZLES: readonly [{muzzle_t}] = [
 {muzzle_rows}
@@ -715,11 +713,11 @@ if __name__ == '__main__':
     a.add_argument('src', nargs='?', default=f'{root}/assets/sprites/hitboxes.json')
     a.add_argument('-r', '--out-rust', default=f'{root}/programs/heartrot/src/hitboxes.rs')
     a.add_argument('-t', '--out-ts', default=f'{root}/packages/client/src/hitboxes.ts')
-    a.add_argument('-s', '--scale', type=int, default=3,
-                   help='arena units per sprite pixel (default 3). The documented '
-                        'fallback lever is --scale 2; it moves every hitbox, muzzle, '
-                        'anchor and the core radius in one pass. PULLING THE LEVER MEANS '
-                        'CHANGING THIS DEFAULT: --check re-derives with it, so a tree '
+    a.add_argument('-s', '--scale', type=int, default=1,
+                   help='arena units per sprite pixel (default 1: the boss is cut from '
+                        'the room painting at one unit per pixel). It moves every hitbox, '
+                        'muzzle, anchor and the core radius in one pass. PULLING THE LEVER '
+                        'MEANS CHANGING THIS DEFAULT: --check re-derives with it, so a tree '
                         'generated at one scale and checked at another reads as stale.')
     a.add_argument('-m', '--map', default=f'{root}/assets/map/arena.json',
                    help='arena.json, for the pit-reachability check')
@@ -740,7 +738,7 @@ if __name__ == '__main__':
     # `--check` IS the test for this tool: it re-derives both files and proves the
     # committed ones are what the art currently says. Anything that would silently
     # reintroduce the drift -- editing a generated file, moving a part in
-    # svg_slice.py and not re-running -- fails here loudly.
+    # gen_boss.py and not re-running -- fails here loudly.
     if n.check:
         stale = [p for p, text in want.items()
                  if not os.path.exists(p) or open(p).read() != text]

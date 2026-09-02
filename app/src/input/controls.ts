@@ -11,9 +11,25 @@
  * fights from a pit below it, so a 45 degree aim step selects nothing: measured against the
  * real hitboxes, eight-way aim reaches 5 of 10 targets and **never the core**, from any
  * stand in the pit (`docs/architecture/09-shooting.md` §1.1 — the raid is unwinnable with no
- * error anywhere). `shoot` therefore carries the raw pointer vector scaled to `i8` and the
+ * error anywhere). `shoot` therefore carries a free `(dx, dy)` pair scaled to `i8` and the
  * chain normalises it; `move` still quantises to the eight-way `MOVE_STEP` table, because a
- * step is a tile and a tile has eight neighbours.
+ * step is a tile and a tile has eight neighbours. This module does not choose the pair: it
+ * asks {@link ControlsConfig.aim} at the trigger, and `App.tsx` answers with
+ * `@heartrot/client`'s `autoAim` off the predicted position — or the body's facing when
+ * nothing is in reach. The pointer aims nothing any more; a pointer down is fire held.
+ *
+ * **The hold.** Fire held while standing still is a charged shot: after `CHARGE_MS` plus a
+ * send-latency margin the trigger fires with `charged = true` and the chain deals 2.5x —
+ * or refuses with `NotCharged` if a step was still in flight, which `App.tsx` answers by
+ * resending uncharged. The hold is measured from the later of the press and the last step
+ * (`chargeSince = max(fireDownAt, lastMoveAt)`): charge accrues ONLY while standing still,
+ * and a step cancels it. That is the rule of the mechanic, not a lock on the keys —
+ * suppressing `onMove` instead would break shoot-while-walking and trap a player mid-slam.
+ * (Hard-rooting the player during the hold is one line in the step branch below, if it is
+ * ever insisted on.) Standing still, nothing auto-repeats: the tap at the press answers the
+ * key at 0 ms, and the next arrow is the charged one. Walking, the tap path auto-repeats
+ * uncharged exactly as it always has. {@link ControlsConfig.onCharge} is the hold's edge,
+ * for the archer's draw pose and the arc.
  *
  * **Why the rate limits live here as well as on chain.** ER transaction fees are zero and
  * the forked SVM runs no fee-payer validation at all, so nothing debits a spammer and the
@@ -32,6 +48,7 @@
  * | `shoot` | `arena.phase == Fighting` -> else `WrongPhase` (6) | `live` below |
  * | `shoot` | `slot.zone == ZONE_ARENA` -> else `WrongZone` (9) | `live` below |
  * | `shoot` | `tick > last_shot_tick + CLASS_COOLDOWN_TICKS[class]` | {@link shotAllowed} |
+ * | `shoot`, charged | `Clock.slot - last_move_tick >= CHARGE_SLOTS` -> else `NotCharged` (20) | {@link chargeAccrued} |
  * | either, dead | `hp == 0` -> `PlayerDead` (Custom 8) | `clock().alive === false` sends nothing |
  *
  * **All four shot gates are mirrored now, and that is what makes the trigger honest.**
@@ -84,6 +101,8 @@
  */
 
 import {
+  AIM_MAX,
+  CHARGE_MS,
   CLASS_ARCHER,
   CLASS_COOLDOWN_TICKS,
   CLASS_KNIGHT,
@@ -173,7 +192,10 @@ const MIN_GAP_MS = 45;
  * disagree again, and the archer's 1400 ms lands in both the day a seat carries one.
  *
  * `cls` is `PlayerSlot.class_aim >> 7`, so 0 or 1 — the fallback is totality, not defence,
- * and it must resolve to the knight because every seat live on devnet reads 0 in that byte.
+ * and it resolves to the knight because that is what a zeroed byte decodes to (`classOf`),
+ * which is every seat that predates the class. Every caller passes the seat's own decoded
+ * byte; the class this CLIENT sends when its clock names none is the pump's own default,
+ * the archer, and a different question.
  */
 export function shotAllowed(tick: number, lastShotTick: number, cls: number = CLASS_KNIGHT): boolean {
   return tick > lastShotTick + cooldownTicksFor(cls);
@@ -192,11 +214,21 @@ const cooldownTicksFor = (cls: number): number =>
 const periodMsFor = (cls: number): number => CLASS_PERIOD_MS[cls] ?? CLASS_PERIOD_MS[CLASS_KNIGHT]!;
 
 /**
- * Aim vectors leave here scaled so the larger component is this — the `i8` ceiling, and the
- * finest direction the wire can carry. The chain normalises with alpha-max-plus-beta-min, so
- * only the ratio matters; filling the byte is what buys the 0.235 degree resolution.
+ * Send latency, on top of `CHARGE_MS`, before a hold is sent as charged. The chain measures
+ * the hold in ER slots between the last accepted step and the shot's arrival; the client
+ * measures it in wall clock between the two SENDS. The margin covers the step landing later
+ * than the shot's clock assumes — a whole `NotCharged` round trip is what it saves.
  */
-const AIM_MAX = 127;
+const CHARGE_MARGIN_MS = 250;
+
+/**
+ * Has a hold that began at `fireDownAt`, with the last step sent at `lastMoveAt`, accrued?
+ * The later of the two starts the clock: charge accrues only while standing still, and a
+ * step restarts it. Pure, so the rule is checkable without a DOM.
+ */
+function chargeAccrued(now: number, fireDownAt: number, lastMoveAt: number): boolean {
+  return now - Math.max(fireDownAt, lastMoveAt) >= CHARGE_MS + CHARGE_MARGIN_MS;
+}
 
 /**
  * Physical keys, by `KeyboardEvent.code` rather than `key`. `code` is layout-independent,
@@ -226,24 +258,11 @@ export function dirFromVector(dx: number, dy: number): number {
 }
 
 /**
- * Screen vector → the `(dx, dy)` `i8` pair the wire carries, larger component ±`AIM_MAX`.
- * `null` for the zero vector, which the chain rejects (`octant` returns
- * `InvalidInstructionData`) and which a pointer resting exactly on the player produces.
- *
- * This is the whole free-aim change on the client: the same `atan2` input, scaled instead of
- * quantised. Precision surviving to the chain is 0.235°, against 45° through `dirFromVector`.
- */
-export function aimFromVector(dx: number, dy: number): readonly [number, number] | null {
-  const longest = Math.max(Math.abs(dx), Math.abs(dy));
-  if (longest === 0) return null;
-  return [Math.round((dx / longest) * AIM_MAX), Math.round((dy / longest) * AIM_MAX)];
-}
-
-/**
- * Inverse of `dirFromVector`: the aim vector of an eight-way facing. Keyboard fire has no
- * pointer, so it aims along the body's own facing — exactly as accurate as the shipped
- * eight-way client, and no worse. Trig rather than a table because `dirFromVector` is
- * `atan2` and this has to be its exact inverse; the self-check round-trips all eight.
+ * Inverse of `dirFromVector`: the aim vector of an eight-way facing, `AIM_MAX` long. The
+ * fallback when auto-aim has nothing in reach: the shot goes along the body's own facing —
+ * exactly as accurate as the shipped eight-way client, and no worse. Trig rather than a
+ * table because `dirFromVector` is `atan2` and this has to be its exact inverse; the
+ * self-check round-trips all eight.
  */
 export function octantAim(dir: number): readonly [number, number] {
   const angle = (dir & 7) * (Math.PI / 4);
@@ -278,7 +297,7 @@ function nextMoveDeadline(now: number, lastMoveAt: number): number {
 }
 
 export interface ControlsConfig {
-  /** Element the pointer aims over — the arena viewport. Keyboard binds to `window`. */
+  /** Element the pointer fires over — the arena viewport. Keyboard binds to `window`. */
   readonly surface: HTMLElement;
   /**
    * The live arena clock, read on every pump. `tick` is authoritative; wall clock is not.
@@ -289,10 +308,10 @@ export interface ControlsConfig {
    *
    * `zone` is the local seat's `PlayerSlot.zone`, and it is the fourth chain gate: a shot
    * from `ZONE_LOBBY` is `WrongZone` (Custom 9) however alive and however Fighting the
-   * arena is. `cls` is `class_aim >> 7` and picks the cooldown. Both optional and both
-   * default to what every seat live on devnet already is — in the pit, a knight — so a
-   * caller that has not wired them yet keeps sending real shots in a fight rather than
-   * silently downgrading every one of them to a practice arrow.
+   * arena is. `cls` is `class_aim >> 7` and picks the cooldown. Both optional: `zone`
+   * defaults to the pit, so a caller that has not wired it keeps sending real shots in a
+   * fight rather than silently downgrading every one of them to a practice arrow, and
+   * `cls` defaults to the archer, the only class this client sends.
    */
   clock(): {
     readonly phase: number;
@@ -302,45 +321,50 @@ export interface ControlsConfig {
     readonly cls?: number;
   };
   /**
-   * The local player's position in client pixels, or `null` when it is off screen or not
-   * yet known. Pointer aim needs an origin; without one, shots follow the last `facing`.
+   * The pair the next shot is aimed along — `i8`, never `(0, 0)`; only its ratio reaches
+   * the chain. Read at the trigger and nowhere else, so the caller resolves it against the
+   * world as it stands at that instant: `App.tsx` auto-aims from the predicted position and
+   * falls back to {@link octantAim} of the body's facing.
    */
-  aimOrigin(): { readonly x: number; readonly y: number } | null;
+  aim(): readonly [number, number];
   onMove(dir: number): void;
   /**
    * Every accepted trigger, live or practice, with the exact `i8` pair the shot was aimed
-   * along — draw it here and nowhere else. Called BEFORE {@link onShoot} so the arrow
-   * leaves the bow at 0 ms rather than after a transaction is built.
+   * along and whether it went as charged — draw it here and nowhere else. Called BEFORE
+   * {@link onShoot} so the arrow leaves the bow at 0 ms rather than after a transaction is
+   * built.
    *
    * Optional so a caller can be wired in either order, but a build that never sets it has
    * a spacebar that does nothing outside a fight, which is the bug this module was opened
    * for. `Shot.tsx::fireLocal` is what this is for.
    */
-  onTrigger?(dx: number, dy: number): void;
+  onTrigger?(dx: number, dy: number, charged: boolean): void;
   /**
    * The subset of {@link onTrigger} that goes on the wire: free aim as an `i8` pair, never
-   * `(0, 0)`. The caller passes it straight to `shoot({ dx, dy })`; the chain normalises it
-   * and stamps `facing` from the same pair, so nothing out here decides an octant on the
-   * shot path.
+   * `(0, 0)`, and the charged byte. The caller passes both straight to `shoot({ dx, dy,
+   * charged })`; the chain normalises the pair and stamps `facing` from it, so nothing out
+   * here decides an octant on the shot path.
    *
    * Called only when all four chain gates pass. Anything sent from here that the chain
    * refuses is invisible under `skipPreflight`, which is exactly why the gates are mirrored
-   * rather than the refusals reported.
+   * rather than the refusals reported — with one exception, `NotCharged`, which the caller
+   * confirms and answers by resending uncharged, because the client cannot see the step
+   * still in flight that the chain can.
    */
-  onShoot(dx: number, dy: number): void;
+  onShoot(dx: number, dy: number, charged: boolean): void;
+  /**
+   * The hold's edge: `true` when fire is held with no direction under it, `false` on
+   * release or on a step. Once per transition, never per pump — the archer's draw pose and
+   * arc hang off it (`Knight.tsx::chargeLocal`).
+   */
+  onCharge(on: boolean): void;
 }
 
 /** Attaches every listener and the pump. The returned function removes all of them. */
 export function attachControls(cfg: ControlsConfig): () => void {
   const held = new Set<string>();
   let pointerDown = false;
-  let pointerX = 0;
-  let pointerY = 0;
   let fireKeyDown = false;
-
-  // Last direction actually emitted. The chain sets `facing` on both `move` and `shoot`,
-  // so this tracks it locally for the keyboard-fire path, which has no aim vector.
-  let facing = 0;
 
   let lastMoveAt = Number.NEGATIVE_INFINITY;
   // Below any real tick by more than any class cooldown, so the first shot of a match is
@@ -349,6 +373,12 @@ export function attachControls(cfg: ControlsConfig): () => void {
   // Wall clock of the last trigger of either kind. Paces the practice arrow, which has no
   // tick to pace it, and stops one following a real shot through the gate inside a period.
   let lastFireAt = Number.NEGATIVE_INFINITY;
+  // When the current hold began — the first of the pointer and the fire key to go down.
+  let fireDownAt = Number.NEGATIVE_INFINITY;
+  // The last value handed to `onCharge`, so the edge fires once.
+  let charging = false;
+
+  const fireHeld = (): boolean => pointerDown || fireKeyDown;
 
   function heldDirection(): number | null {
     let dx = 0;
@@ -363,26 +393,28 @@ export function attachControls(cfg: ControlsConfig): () => void {
     return dx === 0 && dy === 0 ? null : dirFromVector(dx, dy);
   }
 
-  /** Never `(0, 0)`: every fallback path ends on `octantAim`, which is a unit direction. */
-  function aimVector(): readonly [number, number] {
-    if (pointerDown) {
-      const origin = cfg.aimOrigin();
-      // No origin yet, or the pointer resting on the player: fall through to the body's
-      // facing rather than inventing an angle.
-      const aim = origin === null ? null : aimFromVector(pointerX - origin.x, pointerY - origin.y);
-      if (aim !== null) return aim;
-    }
-    return octantAim(facing);
+  function setCharging(on: boolean): void {
+    if (on === charging) return;
+    charging = on;
+    cfg.onCharge(on);
   }
 
-  function pump(): void {
+  /**
+   * `tap` marks the pump a fire press dispatched itself: the one uncharged shot a standing
+   * player gets, at 0 ms. Every other pump standing still waits for the hold.
+   */
+  function pump(tap = false): void {
     const { phase, tick, alive, zone, cls } = cfg.clock();
     const now = performance.now();
 
     // Dead. Every move and shot would come back `PlayerDead`, invisibly. Held keys are
     // deliberately NOT cleared: the respawn eight ticks later resumes whatever the player
     // is still pressing, and clearing would strand them standing still at the entrance.
-    if (alive === false) return;
+    // The draw, though, comes down: a corpse does not hold a bow.
+    if (alive === false) {
+      setCharging(false);
+      return;
+    }
 
     const dir = heldDirection();
     if (dir !== null) {
@@ -391,13 +423,18 @@ export function attachControls(cfg: ControlsConfig): () => void {
       // `arena.tick`; it has not since the chain moved both phases onto the slot.
       if (moveAllowed(now, lastMoveAt)) {
         lastMoveAt = nextMoveDeadline(now, lastMoveAt);
-        facing = dir;
         cfg.onMove(dir);
       }
     }
 
-    if (!pointerDown && !fireKeyDown) return;
-    const klass = cls ?? CLASS_KNIGHT;
+    // Standing still is "no direction held". A direction held into a wall counts as walking
+    // here although no step leaves — the chain would grant that hold and this mirror does
+    // not, which errs toward a plain shot rather than a `NotCharged` round trip.
+    const still = dir === null;
+    const held = fireHeld();
+    setCharging(held && still);
+    if (!held) return;
+    const klass = cls ?? CLASS_ARCHER;
 
     // `shoot` is Fighting-only AND arena-only on chain: outside either, the transaction is
     // built, signed, sent and refused with nothing to show for it. So it is not sent — the
@@ -409,16 +446,24 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // would claim a shot the chain never took.
     if (live ? !shotAllowed(tick, lastShotTick, klass) : now - lastFireAt < periodMsFor(klass)) return;
 
+    // The hold. Standing still, the next arrow is the charged one and nothing auto-repeats
+    // before it — except the tap at the press itself. Walking, every arrow is plain and the
+    // tap path auto-repeats as it always has.
+    const charged = still && chargeAccrued(now, fireDownAt, lastMoveAt);
+    if (still && !charged && !tap) return;
+
     if (live) lastShotTick = tick;
     lastFireAt = now;
-    const [dx, dy] = aimVector();
-    // The chain stamps `facing = octant(dx, dy)` from the same pair, so tracking it
-    // here keeps the keyboard's next shot aimed where the last one went.
-    facing = dirFromVector(dx, dy);
+    const [dx, dy] = cfg.aim();
     // Draw first, send second: the arrow is client-side either way, and a practice arrow
     // and a real one are the same arrow.
-    cfg.onTrigger?.(dx, dy);
-    if (live) cfg.onShoot(dx, dy);
+    cfg.onTrigger?.(dx, dy, charged);
+    if (live) cfg.onShoot(dx, dy, charged);
+  }
+
+  /** The hold begins with whichever of the two fire inputs goes down first. */
+  function fireDown(now: number): void {
+    if (!fireHeld()) fireDownAt = now;
   }
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -432,7 +477,9 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // focus: the default activation is cancelled here, at the end of the bubble path.
     event.preventDefault();
     if (event.repeat) return;
-    if (event.code === FIRE_KEY) {
+    const fire = event.code === FIRE_KEY;
+    if (fire) {
+      fireDown(performance.now());
       fireKeyDown = true;
     } else {
       held.add(event.code);
@@ -440,7 +487,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // Straight to the wire rather than waiting out the pump. `pump` re-reads the clock
     // and every gate, so this can only send what the next pump would have sent anyway,
     // one period sooner.
-    pump();
+    pump(fire);
   };
 
   const onKeyUp = (event: KeyboardEvent): void => {
@@ -457,17 +504,11 @@ export function attachControls(cfg: ControlsConfig): () => void {
   };
 
   const onPointerDown = (event: PointerEvent): void => {
+    fireDown(performance.now());
     pointerDown = true;
-    pointerX = event.clientX;
-    pointerY = event.clientY;
-    // Keeps aim tracking after the pointer leaves the viewport mid-drag.
+    // Keeps the hold alive after the pointer leaves the viewport mid-press.
     cfg.surface.setPointerCapture(event.pointerId);
-    pump();
-  };
-
-  const onPointerMove = (event: PointerEvent): void => {
-    pointerX = event.clientX;
-    pointerY = event.clientY;
+    pump(true);
   };
 
   const onPointerUp = (event: PointerEvent): void => {
@@ -481,7 +522,6 @@ export function attachControls(cfg: ControlsConfig): () => void {
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
   cfg.surface.addEventListener('pointerdown', onPointerDown);
-  cfg.surface.addEventListener('pointermove', onPointerMove);
   cfg.surface.addEventListener('pointerup', onPointerUp);
   cfg.surface.addEventListener('pointercancel', onPointerUp);
   const pumpTimer = setInterval(pump, PUMP_MS);
@@ -492,7 +532,6 @@ export function attachControls(cfg: ControlsConfig): () => void {
     window.removeEventListener('keyup', onKeyUp);
     window.removeEventListener('blur', onBlur);
     cfg.surface.removeEventListener('pointerdown', onPointerDown);
-    cfg.surface.removeEventListener('pointermove', onPointerMove);
     cfg.surface.removeEventListener('pointerup', onPointerUp);
     cfg.surface.removeEventListener('pointercancel', onPointerUp);
   };
@@ -559,17 +598,24 @@ if (import.meta.env.DEV) {
       !shotAllowed(8 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_ARCHER),
     'the archer must be the slower class',
   );
-  // Every seat live on devnet reads 0 in `class_aim`, so both the default and any byte this
-  // build does not understand have to resolve to the knight rather than to `undefined`.
-  assert(shotAllowed(9, 0) === shotAllowed(9, 0, CLASS_KNIGHT), 'the default class is the knight');
+  // A zeroed `class_aim` decodes to the knight, so an omitted class and any byte this build
+  // does not understand resolve to it rather than to `undefined` — `Hud.tsx` pins the same
+  // default. The class this client SENDS is the pump's `cls ?? CLASS_ARCHER`, not this.
+  assert(shotAllowed(9, 0) === shotAllowed(9, 0, CLASS_KNIGHT), 'an omitted class is the zeroed byte, the knight');
   assert(cooldownTicksFor(99) === cooldownTicksFor(CLASS_KNIGHT), 'an unknown class falls back to the knight');
   assert(periodMsFor(99) === periodMsFor(CLASS_KNIGHT), 'and so does its practice period');
 
-  // Free aim. The larger component fills the byte — anything smaller throws away chain-side
-  // resolution for nothing — and the pair must never be (0, 0), which the chain rejects.
-  const aim = aimFromVector(10, -40);
-  assert(aim !== null && aim[0] === 32 && aim[1] === -127, 'aim fills i8 on its longer axis');
-  assert(aimFromVector(0, 0) === null, 'the zero vector has no aim, and the chain refuses it');
+  // The hold. Measured from the LATER of the press and the last step, with the margin on
+  // top of the chain's `CHARGE_MS`: a step inside the hold restarts it, a press after a
+  // long stand still waits the full hold, and the first hold of a match is finite.
+  const hold = CHARGE_MS + CHARGE_MARGIN_MS;
+  assert(!chargeAccrued(hold - 1, 0, Number.NEGATIVE_INFINITY), 'a hold short of the margin is not charged');
+  assert(chargeAccrued(hold, 0, Number.NEGATIVE_INFINITY), 'a hold at the margin is charged');
+  assert(!chargeAccrued(hold, 0, 400), 'a step inside the hold restarts it');
+  assert(chargeAccrued(400 + hold, 0, 400), 'and it accrues again from that step');
+  assert(!chargeAccrued(hold - 1, hold - 1 - 100, Number.NEGATIVE_INFINITY), 'a long stand still does not pre-charge a fresh press');
+  assert(CHARGE_MARGIN_MS > 0 && CHARGE_MARGIN_MS < CHARGE_MS, 'the margin is a margin, not a second hold');
+
   for (let dir = 0; dir < 8; dir += 1) {
     const [sx, sy] = octantAim(dir);
     if (dirFromVector(sx, sy) !== dir) {

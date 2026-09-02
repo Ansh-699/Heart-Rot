@@ -30,6 +30,7 @@ import {
 import { recordWorld } from '../net/metrics';
 
 import {
+  CLASS_ARCHER,
   ZONE_ARENA,
   loadOrCreateSession,
   type ArenaAccount,
@@ -89,8 +90,9 @@ export type State = {
   sessionKey: Session | null;
   skinId: number;
   /**
-   * `CLASS_KNIGHT` (0) or `CLASS_ARCHER` (1). Chosen before the seat, like `skinId`, because
-   * the class reaches the chain inside `claim_seat` and no route edits a seat afterwards.
+   * Always `CLASS_ARCHER`: the archer is the only class this client sends. Still a field
+   * because it travels inside `claim_seat` and `App.tsx` compares it to a returning seat's
+   * class, which the chain keeps (class 0 seats still exist).
    */
   classId: number;
   match: MatchInfo | null;
@@ -116,7 +118,6 @@ export type Store = {
   /** Prove identity. Resolves the session keypair at the same time. */
   signIn(): Promise<void>;
   setSkin(skinId: number): void;
-  setClass(classId: number): void;
   /** `POST /api/session/init` — identity in, a seat and a routing bundle out. */
   join(): Promise<void>;
   /**
@@ -279,7 +280,7 @@ const INITIAL: State = {
   authenticated: false,
   sessionKey: null,
   skinId: 0,
-  classId: 0,
+  classId: CLASS_ARCHER,
   match: null,
   status: 'idle',
   error: null,
@@ -375,10 +376,6 @@ export function createStore(): Store {
 
     setSkin(skinId) {
       set({ skinId });
-    },
-
-    setClass(classId) {
-      set({ classId });
     },
 
     async join() {

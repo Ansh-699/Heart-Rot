@@ -1,4 +1,31 @@
-# bundle — what the inlined SVG art actually costs to download
+# bundle — what the art costs to download
+
+> **Re-baselined 2026-09-03 (painted rooms).** Everything below the rule is the
+> 2026-09-02 measurement of the *inlined-SVG* art (`temple.svg`, `parts/boss.svg`,
+> `knights.svg`), all three of which are gone: the rooms are the two reference paintings
+> as `<image>`s, the boss atlas is cut from the arena painting, the archer is a generated
+> pixel atlas. Kept as the record of why inlining was rejected. Current numbers, from
+> `node scripts/spike/bundle_size.mjs app/dist` on the build in the same tree
+> (`vite build`, 294 files):
+>
+> | set | files | raw KiB | gzip -9 | brotli q11 |
+> |---|---|---|---|---|
+> | all | 294 | 6,133.6 | 2,757.2 | 2,541.9 |
+> | critical (index.html + entry + modulepreload + css) | 45 | 2,576.8 | 737.8 | 629.0 |
+> | lazy | 249 | 3,556.9 | 2,019.4 | 1,912.9 |
+>
+> The art is five hashed PNGs under `/assets/` (served `immutable` by `app/public/_headers`,
+> never base64): `lobby` 563,470 B, `arena` 485,360 B, `gate` 15,185 B — the **paintings
+> total 1,064,015 B = 1,039 KiB**, above the plan's "two PNGs < 900 KB" figure, kept on
+> purpose: the quantisers that meet 900 KB (fast-octree, max-coverage) visibly posterise the
+> painted floor (A1's measurement, `tools/gen_rooms.py`). `boss_parts` 146,038 B,
+> `archer` 17,231 B. They load from the entry (`rooms.gen.ts` warms both rooms at import)
+> and are already compressed, so gzip/brotli buy nothing on them. The app entry
+> (`index-*.js`, 329.4 kB raw / 107.3 kB gzip) is **smaller** than the inlined-SVG entry
+> this document measured (865,459 B raw / 159,181 B brotli): the literals left the JS.
+
+---
+
 
 Measured 2026-09-02 against the real `vite build` output, not a model of it. Every number
 below is reproducible with the four throwaway harnesses in `scripts/spike/`:

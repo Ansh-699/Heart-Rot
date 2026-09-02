@@ -483,11 +483,16 @@ function paint(kind?: 'arena' | 'boss' | 'players'): void {
 
 /** The local seat's own trigger, at its class cadence, through the shipped sink. */
 let lastLocalShot = 0;
+let lastLocalCharged = 0;
 function localFire(now: number): void {
   if (!opts.arrows || !opts.localArrows) return;
   const period = opts.archerPct > 0 ? 800 : 800; // seat 0 is a knight by `seat % 100 < pct`
   if (now - lastLocalShot < period) return;
   lastLocalShot = now;
+  // A charged shot per 1.4 s (the plan's frame-budget shape): the bigger arrow, the trail,
+  // the hit-stop and the shake on its landing.
+  const charged = now - lastLocalCharged >= 1400;
+  if (charged) lastLocalCharged = now;
   const s = cur.p.slots[0]!;
   const a = (now / 900) % (Math.PI * 2);
   fireLocal({
@@ -496,6 +501,7 @@ function localFire(now: number): void {
     y: s.y,
     dx: Math.round(Math.cos(a) * 120),
     dy: Math.round(Math.sin(a) * 120),
+    charged,
   });
 }
 

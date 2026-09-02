@@ -218,6 +218,49 @@ const _: () = {
     assert!(MUSTER_TICKS < ENRAGE_TICKS);
 };
 
+/// Shell remaining, in percent, below which the vent opens — for a raid of one and for a
+/// full raid; [`vent_pct`] draws the line between them.
+///
+/// The **other** raid-size knob, and the one that reaches the shell. Shell HP is flat at
+/// every raid size (see [`CORE_HP_PER_RAIDER`] for why `parts` can never scale), so a solo
+/// raider used to strip 65 % of 18,000 shell HP at 50 DPS — 234 s of a 360 s enrage — before
+/// the vent opened, while twenty players did it in 12 s. Moving the *threshold* instead of
+/// the shell keeps every `u16` where it is and keeps `vent_open` a ratio over `parts`: solo
+/// opens the vent with 65 % of the shell still standing (35 % stripped, 126 s), twenty with
+/// 35 % (65 % stripped, 12 s), linear between. One byte on `Arena`, one function, the same
+/// tick stage the core top-up already runs in.
+pub const VENT_PCT_SOLO: u32 = 65;
+pub const VENT_PCT_FULL: u32 = 35;
+
+/// The vent threshold for a raid of `raid_size`, in percent of `sum(parts_max)`.
+///
+/// The comparison at both call sites is `sum(parts) × 100 < sum(parts_max) × vent_pct`, so
+/// no percentage is ever a float. Linear in the raid size from [`VENT_PCT_SOLO`] at one
+/// raider to [`VENT_PCT_FULL`] at [`MAX_SEATS`], clamped into `1..=MAX_SEATS` — 0 is what
+/// every account already on chain carries in `raid_size` and what an arena reads before the
+/// first raider is counted, and it must mean the solo fight rather than divide by zero.
+/// `const`, so the TTK model below is checked on every `cargo check`.
+pub const fn vent_pct(raid_size: u8) -> u32 {
+    let n = if raid_size == 0 {
+        1
+    } else if raid_size as usize > MAX_SEATS {
+        MAX_SEATS as u32
+    } else {
+        raid_size as u32
+    };
+    VENT_PCT_SOLO - (VENT_PCT_SOLO - VENT_PCT_FULL) * (n - 1) / (MAX_SEATS as u32 - 1)
+}
+
+const _: () = {
+    // A threshold at or above 100 opens the vent on a full shell; one at 0 never opens it.
+    assert!(VENT_PCT_SOLO < 100 && VENT_PCT_FULL > 0);
+    // Solo is the *easier* threshold — more shell may stand. Inverting these two makes the
+    // integer subtraction in `vent_pct` wrap, which `const` turns into a compile error.
+    assert!(VENT_PCT_SOLO >= VENT_PCT_FULL);
+    assert!(vent_pct(0) == VENT_PCT_SOLO && vent_pct(1) == VENT_PCT_SOLO);
+    assert!(vent_pct(MAX_SEATS as u8) == VENT_PCT_FULL && vent_pct(u8::MAX) == VENT_PCT_FULL);
+};
+
 /// `PlayerSlot.zone`.
 pub const ZONE_LOBBY: u8 = 0;
 pub const ZONE_ARENA: u8 = 1;
@@ -364,7 +407,19 @@ pub struct Arena {
     /// grow, and every account already on chain carries 0 there — which decodes as
     /// `OUTCOME_UNDECIDED`, the correct reading for a match that has not ended.
     pub outcome: u8,
-    pub _pad0: u8,
+    /// High-water mark of seats that have stood in `ZONE_ARENA` this incarnation — the
+    /// raid size the vent threshold and the core top-up are sized to.
+    ///
+    /// Written only by `boss_tick` (stage 1b, monotone: it never falls when a player leaves
+    /// or dies, so it cannot be gamed) and zeroed by [`Arena::begin_next_incarnation`].
+    /// Read by [`vent_pct`] through `shoot::recompute_vent` on every landed shot and every
+    /// tick, so the two writers of `vent_open` agree on the threshold by construction.
+    ///
+    /// Claimed out of `_pad0`, the same move `outcome` made: no field moved, the account did
+    /// not grow, `LAYOUT_VERSION` stays 1. Every account already on chain carries 0 here,
+    /// which [`vent_pct`] reads as the solo threshold — correct for an arena the crank has
+    /// not yet counted, and the first FIGHTING tick overwrites it anyway.
+    pub raid_size: u8,
     /// Match identity. Also the `Arena` PDA seed.
     pub arena_id: u64,
     /// Validator-**global** crank namespace, so it must be a wide random positive
@@ -431,8 +486,8 @@ pub struct Arena {
     ///
     /// Cleared at the flip and by [`Arena::begin_next_incarnation`], so it is non-zero
     /// only while a muster is actually running. **This is the last free `u32` in `Arena`**:
-    /// `_pad0` (1 B @ 7) and `_pad1` (2 B @ 38) are all that remain, and anything wider has
-    /// to append past `next_affix_seed`, which grows a delegated account.
+    /// `_pad1` (2 B @ 38) is all that remains — `raid_size` took the byte at 7 — and
+    /// anything wider has to append past `next_affix_seed`, which grows a delegated account.
     pub fight_at_tick: u32,
     /// The VRF seed for the **next** incarnation, or all-zero for "none".
     ///
@@ -461,6 +516,7 @@ const _: () = {
     assert!(offset_of!(Arena, alive_count) == 4);
     assert!(offset_of!(Arena, bullet_cursor) == 5);
     assert!(offset_of!(Arena, outcome) == 6);
+    assert!(offset_of!(Arena, raid_size) == 7);
     assert!(offset_of!(Arena, arena_id) == 8);
     assert!(offset_of!(Arena, crank_task_id) == 16);
     assert!(offset_of!(Arena, tick) == 24);
@@ -712,11 +768,12 @@ impl Arena {
     ///
     /// What carries over: `arena_id`, `bump`, `crank_authority`, `validator_identity`, and
     /// — because it is a different account entirely — the whole `Leaderboard` ring. What
-    /// resets: the clock, the phase, the outcome, the bullet pool, the seat bitmask, both
-    /// deadlines (`enrage_at_tick` and `fight_at_tick` are match state, and a deadline
-    /// measured against a clock that has just been zeroed is already in the past), and
-    /// (through [`Players::reset_for_incarnation`] and [`Boss::reset_for_incarnation`])
-    /// every seat and every point of boss HP.
+    /// resets: the clock, the phase, the outcome, the bullet pool, the seat bitmask, the
+    /// raid-size high-water (a new raid is sized from its own first tick), both deadlines
+    /// (`enrage_at_tick` and `fight_at_tick` are match state, and a deadline measured
+    /// against a clock that has just been zeroed is already in the past), and (through
+    /// [`Players::reset_for_incarnation`] and [`Boss::reset_for_incarnation`]) every seat
+    /// and every point of boss HP.
     ///
     /// `crank_task_id` is deliberately left alone: `start_match` mints a fresh one over it
     /// before scheduling, and zeroing it here would only invite a caller to schedule
@@ -744,6 +801,7 @@ impl Arena {
         self.enrage_at_tick = 0;
         self.fight_at_tick = 0;
         self.alive_count = 0;
+        self.raid_size = 0;
         self.bullet_cursor = 0;
         self.seat_occupied = 0;
         self.bullets = [Bullet::zeroed(); MAX_BULLETS];
@@ -767,8 +825,9 @@ pub struct Boss {
     pub discriminator: u8,
     pub version: u8,
     pub bump: u8,
-    /// 0 sealed, 1 open. Recomputed every tick from `sum(parts) < 35% of sum(parts_max)`,
-    /// so it is derived state cached for the client, never an independent flag.
+    /// 0 sealed, 1 open. Recomputed every tick and on every landed shot from
+    /// `sum(parts) × 100 < sum(parts_max) × vent_pct(arena.raid_size)`, so it is derived
+    /// state cached for the client, never an independent flag.
     pub vent_open: u8,
     /// Ticks until the next melee/volley beat.
     pub attack_timer: u8,
@@ -802,8 +861,8 @@ impl Boss {
     /// one owns *what the numbers are*.
     ///
     /// `parts_max` is set from the same array as `parts`, which is what keeps the vent
-    /// threshold (`sum(parts) × 100 < sum(parts_max) × 35`) meaningful: a full shell is
-    /// exactly 100 % by construction, on every incarnation.
+    /// threshold (`sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size)`) meaningful: a
+    /// full shell is exactly 100 % by construction, on every incarnation.
     pub fn reset_for_incarnation(&mut self, parts: [u16; N_PARTS], core_hp: u16, x: i16, y: i16) {
         self.x = x;
         self.y = y;
@@ -900,6 +959,116 @@ const _: () = {
     assert!(N_CLASSES == 2 && CLASS_MASK == 0b1000_0000);
 };
 
+// ---------------------------------------------------------------------------
+// The charged shot — a hold, stateless on chain
+// ---------------------------------------------------------------------------
+
+/// How long a raider must stand still before a shot may be sent charged. A duration in
+/// milliseconds like every other knob here; the chain counts it in ER slots below.
+pub const CHARGE_MS: u32 = 1_000;
+
+/// One ER slot, the finest clock a player instruction can read. `PlayerSlot::last_move_tick`
+/// is stamped in **this** unit (`player::move_clock` reads `Clock::get()?.slot` in every
+/// phase); `Arena.tick` is a crank tick of [`TICK_MS`] and is a different clock. Never
+/// subtract one from the other — that trap already shipped once, as a MOVE pill that was
+/// permanently green in a fight.
+pub const SLOT_MS: u32 = 50;
+
+/// [`CHARGE_MS`] in ER slots: the gap `shoot::fire` requires between the seat's last
+/// accepted step and the slot the charged shot lands in. Slot-to-slot, so a client on a
+/// bad connection is judged on when its step landed, not on when it was sent.
+pub const CHARGE_SLOTS: u32 = CHARGE_MS / SLOT_MS;
+
+/// Charged damage is `CLASS_DAMAGE × CHARGED_NUM / CHARGED_DEN` — 2.5×, in integers.
+/// Same cooldown, so it is 2.5× DPS *while rooted*; the vent constants above are the
+/// tuning knob for that, and a charged-shot cooldown penalty is written down, not built.
+pub const CHARGED_NUM: u16 = 5;
+pub const CHARGED_DEN: u16 = 2;
+
+/// The bit of `PlayerSlot::facing` that says "the shot this seat last fired was charged".
+/// Bits 0..2 are the octant; 3..7 were the only free bits left in the 96-byte slot, and
+/// this spends one of them. Set by `shoot::fire`, cleared by the next `facing` write — a
+/// step or an uncharged shot — which is exactly the lifetime of the arrow a client draws
+/// from it.
+pub const CHARGED_SHOT_BIT: u8 = 3;
+
+/// Damage per landed **charged** shot, per class. Index with [`PlayerSlot::class`], which
+/// is total. Exact, never truncated: the block below proves `× 5 / 2` divides for every
+/// row and fits the `u16` the boss's parts are counted in.
+pub const fn charged_damage(class: u8) -> u16 {
+    (CLASS_DAMAGE[class as usize] as u32 * CHARGED_NUM as u32 / CHARGED_DEN as u32) as u16
+}
+
+const _: () = {
+    assert!(CHARGE_MS % SLOT_MS == 0 && CHARGE_SLOTS > 0);
+    // The octant owns bits 0..2 (`player::octant` answers 0..7); the flag must not alias it
+    // and must fit the byte.
+    assert!(CHARGED_SHOT_BIT >= 3 && CHARGED_SHOT_BIT < 8);
+    let mut class = 0;
+    while class < N_CLASSES {
+        let base = CLASS_DAMAGE[class as usize] as u32;
+        // Fits u16 — `boss.parts` and `core_hp` are u16 and the subtraction saturates, but a
+        // multiplier that overflowed the cast would silently *shrink* the shot instead.
+        assert!(base * CHARGED_NUM as u32 / CHARGED_DEN as u32 <= u16::MAX as u32);
+        // ...and divides exactly, so the client's `chargedDamage` mirror and the chain
+        // agree to the point, not to the rounding.
+        assert!(charged_damage(class) as u32 * CHARGED_DEN as u32 == base * CHARGED_NUM as u32);
+        class += 1;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// The time-to-kill model
+// ---------------------------------------------------------------------------
+
+/// Time-to-kill, in whole seconds rounded up, for a raid of `raid_size` against a shell of
+/// `shell_hp` — the balance model the vent curve was tuned with, uncharged, every shot
+/// landing.
+///
+/// `(shell stripped to open the vent + the core the raid fights) / the raid's DPS`. The
+/// shell term is the complement of [`vent_pct`] — the vent opens once `100 − pct` percent
+/// of the shell is gone — and the core term is `tick.rs`'s top-up for the same raid size.
+/// Per-raider DPS is read off the knight row; the DPS-neutral assert above is what makes
+/// that the archer's number too.
+///
+/// It ignores geometry (the limb in the lane is not always the one you want stripped) and
+/// charging (2.5× damage while rooted), so it is a floor, not a forecast: the time a
+/// perfect solo player cannot beat.
+pub const fn ttk_s(shell_hp: u32, raid_size: u8) -> u32 {
+    let n = if raid_size == 0 {
+        1
+    } else if raid_size as usize > MAX_SEATS {
+        MAX_SEATS as u32
+    } else {
+        raid_size as u32
+    };
+    let dps = n * (CLASS_DAMAGE[CLASS_KNIGHT as usize] as u32 * 1_000
+        / CLASS_PERIOD_MS[CLASS_KNIGHT as usize]);
+    let shell = shell_hp * (100 - vent_pct(raid_size)) / 100;
+    let core = BOSS_CORE_HP as u32 + CORE_HP_PER_RAIDER as u32 * (n - 1);
+    (shell + core + dps - 1) / dps
+}
+
+/// The shell the vent curve was tuned against: `init::BOSS_PARTS_BASE` summed — four thorns
+/// at 1,000, the crown at 4,000, four limbs at 2,500 — on the day [`VENT_PCT_SOLO`] and
+/// [`VENT_PCT_FULL`] were chosen. A modelling input, not a second definition of the shell:
+/// that table is private to `init.rs`, which pins this literal to its sum with a const
+/// assert (`init::SHELL_HP_BASE`). Retune the shell and this is the number to move; the
+/// block below then says whether the curve still lands where the design promised.
+pub(crate) const TTK_MODEL_SHELL_HP: u32 = 18_000;
+
+const _: () = {
+    let seconds_to_enrage = ENRAGE_TICKS * TICK_MS / 1_000;
+    // Solo: 6,300 shell + 2,000 core at 50 DPS = 166 s of a 360 s enrage, down from 274.
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, 1) == 166);
+    // Twenty: 11,700 shell + 59,000 core at 1,000 DPS = 71 s.
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) == 71);
+    // More raiders must never be a longer fight, and a perfect solo run must fit the enrage
+    // window twice over — the second half is the allowance for play that is not perfect.
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) < ttk_s(TTK_MODEL_SHELL_HP, 1));
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, 1) * 2 < seconds_to_enrage);
+};
+
 /// One seat. Slot index *is* the seat number, so there is no `seat` field to
 /// disagree with it.
 #[repr(C)]
@@ -907,7 +1076,16 @@ const _: () = {
 pub struct PlayerSlot {
     /// `ZONE_LOBBY` or `ZONE_ARENA`. The gate tile flips it.
     pub zone: u8,
-    /// 0..7, eight-way. Hitscan raycasts along it.
+    /// Bits 0..2: the octant this seat last stepped or fired along, 0 N … 7 NW, y down —
+    /// the sprite's body direction (the arrow is drawn from `class_aim`, at 1.90° rather
+    /// than 45°). Bit 3, [`CHARGED_SHOT_BIT`]: the last shot was charged. Bits 4..7 are the
+    /// last free bits in the slot.
+    ///
+    /// **A reader wants `facing & 7`**, and that is the client's job (`layout.ts` decodes
+    /// the octant and the flag as two fields); nothing on chain reads the byte back. Every
+    /// on-chain writer assigns a bare octant — `move_player` and `enter_gate` — except
+    /// `shoot::fire`, which ORs the flag in. So a step clears it, which is the lifetime of
+    /// the in-flight arrow, with no second field to expire.
     pub facing: u8,
     pub skin_id: u8,
     /// Class and last aim, packed:
@@ -1388,6 +1566,7 @@ mod tests {
         arena.tick = 400;
         arena.enrage_at_tick = 400 + ENRAGE_TICKS;
         arena.alive_count = 5;
+        arena.raid_size = 5;
         arena.seat_occupied = 0b1_1111;
         arena.bullets[3].active = BULLET_ACTIVE;
 
@@ -1426,6 +1605,10 @@ mod tests {
         assert_eq!(
             (arena.tick, arena.alive_count, arena.seat_occupied),
             (0, 0, 0)
+        );
+        assert_eq!(
+            arena.raid_size, 0,
+            "the next raid is sized from its own first tick, not the last raid's peak"
         );
         assert_eq!(
             (arena.enrage_at_tick, arena.fight_at_tick),
@@ -1543,6 +1726,86 @@ mod rate_tests {
         // A duration shorter than one tick must still cost a tick, never zero.
         assert_eq!(ticks_for(1), 1, "a sub-tick cooldown is still a cooldown");
         assert_eq!(ticks_for(0), 1);
+        // The charge is counted in ER slots, never crank ticks: 1 s is 20 slots and would be
+        // 10 ticks, and a chain that compared the two would let a step-then-fire through at
+        // half the hold.
+        assert_eq!(CHARGE_SLOTS * SLOT_MS, CHARGE_MS, "the charge stays 1 s");
+        assert_eq!(CHARGE_SLOTS, 20);
+    }
+}
+
+/// The two raid-size knobs and the charged multiplier: the numbers a solo player feels.
+#[cfg(test)]
+mod balance_tests {
+    use super::*;
+
+    /// Solo opens the vent with 65 % of the shell standing, twenty with 35 %, and every
+    /// raid size between is between — never a step *up* in difficulty for one more player
+    /// walking through the gate. 0 and anything past `MAX_SEATS` clamp rather than divide
+    /// by zero or wrap: 0 is what every live account carries today.
+    #[test]
+    fn the_vent_threshold_is_linear_in_the_raid() {
+        assert_eq!(vent_pct(1), 65);
+        assert_eq!(vent_pct(MAX_SEATS as u8), 35);
+        assert_eq!(vent_pct(0), vent_pct(1), "an uncounted raid is a solo raid");
+        assert_eq!(vent_pct(MAX_SEATS as u8 + 1), vent_pct(MAX_SEATS as u8));
+        assert_eq!(vent_pct(u8::MAX), 35);
+        for n in 1..MAX_SEATS as u8 {
+            assert!(
+                vent_pct(n) >= vent_pct(n + 1),
+                "a {}th raider made the vent harder to open ({} -> {})",
+                n + 1,
+                vent_pct(n),
+                vent_pct(n + 1),
+            );
+            assert!(vent_pct(n) - vent_pct(n + 1) <= 2, "the curve is linear, not stepped");
+        }
+        // The client mirror reads the same two endpoints; the midpoint pins the slope.
+        assert_eq!(vent_pct(11), 65 - 30 * 10 / 19);
+    }
+
+    /// 2.5× on both rows, exactly — the archer's 70 becomes 175, the knight's 40 becomes
+    /// 100 — and the multiplier is the same ratio for every class, so the classes stay
+    /// DPS-neutral charged as well as uncharged.
+    #[test]
+    fn a_charged_shot_is_two_and_a_half_times_the_class_damage() {
+        assert_eq!(charged_damage(CLASS_ARCHER), 175);
+        assert_eq!(charged_damage(CLASS_KNIGHT), 100);
+        for class in [CLASS_KNIGHT, CLASS_ARCHER] {
+            assert_eq!(
+                charged_damage(class) as u32 * 2,
+                CLASS_DAMAGE[class as usize] as u32 * 5,
+            );
+        }
+        assert_eq!(
+            charged_damage(CLASS_KNIGHT) as u32 * (CLASS_COOLDOWN_TICKS[1] + 1),
+            charged_damage(CLASS_ARCHER) as u32 * (CLASS_COOLDOWN_TICKS[0] + 1),
+            "charged DPS is class-neutral too",
+        );
+    }
+
+    /// The model behind the two vent numbers, over every raid size and not just the two
+    /// endpoints the compile-time block pins: time-to-kill falls monotonically as the raid
+    /// grows, from 166 s solo to 71 s at twenty, and a 20-seat raid at the old flat 35 %
+    /// threshold would have been the same 71 s — the curve changed the solo fight, not the
+    /// full one.
+    #[test]
+    fn the_ttk_model_falls_with_every_raider() {
+        let shell = TTK_MODEL_SHELL_HP;
+        assert_eq!(ttk_s(shell, 1), 166);
+        assert_eq!(ttk_s(shell, MAX_SEATS as u8), 71);
+        for n in 1..MAX_SEATS as u8 {
+            assert!(
+                ttk_s(shell, n + 1) <= ttk_s(shell, n),
+                "raid {} kills slower than raid {}",
+                n + 1,
+                n,
+            );
+        }
+        // Solo under the old flat 35 % line, for the record: 11,700 + 2,000 at 50 DPS.
+        let old_solo = (shell * (100 - VENT_PCT_FULL) / 100 + BOSS_CORE_HP as u32 + 49) / 50;
+        assert_eq!(old_solo, 274, "the number the plan called nearly unwinnable");
+        assert!(ttk_s(shell, 1) < old_solo);
     }
 }
 

@@ -42,6 +42,7 @@ import {
   PHASE_SETTLING,
   ZONE_ARENA,
   ZONE_LOBBY,
+  autoAim,
   classOf,
   confirmSignature,
   connectMatch,
@@ -56,12 +57,14 @@ import {
   type SessionSigner,
 } from '@heartrot/client';
 
-import { attachControls } from './input/controls';
+import { attachControls, octantAim } from './input/controls';
 import { recordSend } from './net/metrics';
 import DevPanel from './ui/DevPanel';
 import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
+import { chargeLocal } from './render/Knight';
 import { Passage } from './render/Passage';
+import { play } from './render/sfx';
 import { fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
 import { gateOpen } from './screens/Gate';
@@ -443,9 +446,9 @@ function World({
 
           `undefined` until `useMatchLink` resolves, which `Arena` reads as "interpolate
           every seat" — the prop is optional and deliberately not `| null`, so this is the
-          one absent value it accepts. Same object `aimOrigin` reads below, so the pointer
-          aims at the dot the player is actually looking at rather than at a position 127 ms
-          behind it.
+          one absent value it accepts. Same object `aim` reads below, so the auto-aim fires
+          from the archer the player is actually looking at rather than from a position
+          127 ms behind it.
 
           `Passage`, not `Arena`: it *is* `Arena`, wrapped in the gate beat — it owns which
           room is on screen and the hold that keeps the local knight still under the veil,
@@ -492,12 +495,21 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
     //
     // ponytail: one outstanding confirm per client, ~2 status polls a second. Confirm
     // every send if a one-off rejection ever needs to be attributed exactly.
+    //
+    // The one send that is never sampled out is a charged shot, which carries `uncharged`:
+    // the chain refuses it with `NotCharged` (20) BEFORE spending the cooldown when a step
+    // was still in flight — the client cannot see that step land, so the refusal is the
+    // only signal — and the same shot uncharged is what the chain would have taken. Sent
+    // once; the resend carries no callback of its own.
     let confirming = false;
 
-    const send = (instruction: Parameters<typeof sendInstructions>[2][number]): void => {
+    const send = (
+      instruction: Parameters<typeof sendInstructions>[2][number],
+      uncharged?: () => void,
+    ): void => {
       void sendInstructions(er, signer, [instruction])
         .then(async (signature) => {
-          if (confirming) return;
+          if (confirming && uncharged === undefined) return;
           confirming = true;
           try {
             await confirmSignature(er, signature, { timeoutMs: 2_000, pollMs: 400 });
@@ -513,6 +525,10 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           // returns `code: undefined` and silently drops every refusal this confirm
           // exists to sample.
           const decoded = refusalOf(error);
+          if (decoded.code === 20 && uncharged !== undefined) {
+            uncharged();
+            return;
+          }
           // `BlockedByWall` is expected traffic — one per tick from anyone holding a
           // direction into a wall — and a timeout is the ER being slow, not a refusal.
           if (decoded.code === 14 || decoded.code === undefined) return;
@@ -548,20 +564,17 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           cls: slot === null ? 0 : classOf(slot),
         };
       },
-      aimOrigin: () => {
-        // Straight off `#camera`'s own screen matrix, which is the only thing that knows
-        // the fitted `viewBox` (spec §1.8). The old `box.width / ARENA_UNITS` assumed the
-        // whole 1024-unit world was on screen at scale 1; under the §1.2 fit that is wrong
-        // on every stage aspect, and a wrong aim under `skipPreflight` produces no error
-        // anywhere — it is indistinguishable from the shooting bug being fixed.
-        //
-        // Forward transform, not the inverse: this returns the knight's position in the
-        // same client coordinates `attachControls` reads the pointer in.
-        const camera = host.querySelector<SVGGElement>('#camera');
-        const matrix = camera?.getScreenCTM();
-        if (!matrix) return null;
-        const point = new DOMPoint(predictor.self.x, predictor.self.y).matrixTransform(matrix);
-        return { x: point.x, y: point.y };
+      aim: () => {
+        // Auto-aim, from the PREDICTED position — the archer the player is looking at, not
+        // the one Singapore has — in arena units, the space `predictor.self` and the boss
+        // already share. No screen matrix is involved anywhere on the shot path any more:
+        // the old pointer aim went through `#camera`'s CTM, and a wrong aim under
+        // `skipPreflight` produces no error anywhere. Nothing in reach — a stripped shell
+        // with the vent sealed, or the waiting area — aims along the body's own facing,
+        // exactly as accurate as the eight-way client was.
+        const { boss } = store.getState();
+        const picked = boss === null ? null : autoAim(predictor.self.x, predictor.self.y, boss);
+        return picked ?? octantAim(predictor.self.facing);
       },
       onMove: (dir) => {
         // `push` returns `null` when the chain would reject the move anyway — a wall, or a
@@ -576,7 +589,7 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         recordSend(seq);
         send(movePlayer({ ...common, session, seat: match.seat, dir, seq }));
       },
-      onTrigger: (dx, dy) => {
+      onTrigger: (dx, dy, charged) => {
         // Every accepted trigger, live or practice, drawn at 0 ms from the exact pair that
         // went on the wire — the whole of "fix the person shooting mechanics I cannot see
         // anything". `shoot.rs` is hitscan and allocates no projectile, so there has never
@@ -585,18 +598,28 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         //
         // A practice shot reaches here and never reaches `onShoot`. That is the point: the
         // arrow answers "is the key bound", and only `damageDealt` answers "did it hurt".
-        fireLocal({ seat: match.seat, x: predictor.self.x, y: predictor.self.y, dx, dy });
+        fireLocal({ seat: match.seat, x: predictor.self.x, y: predictor.self.y, dx, dy, charged });
       },
-      onShoot: (dx, dy) => {
-        // Free aim: the raw `(i8, i8)` the pointer or the held keys produced, normalised
-        // on chain. Not an octant — a top-centre boss on eight-way aim is measurably
-        // unwinnable (33.6% of pit stands can hit anything at all, and the core never),
-        // and the client is not trusted to resolve the hit either way.
+      onShoot: (dx, dy, charged) => {
+        // Free aim: the raw `(i8, i8)` the auto-aim picked, normalised on chain. Not an
+        // octant — a top-centre boss on eight-way aim is measurably unwinnable (33.6% of
+        // pit stands can hit anything at all, and the core never), and the client is not
+        // trusted to resolve the hit either way.
         //
         // No `seq` on the wire for `shoot`, so it counts toward throughput and never
         // toward latency. Inventing a round trip for it would be a made-up number.
         recordSend();
-        send(shoot({ ...common, boss: match.boss, session, seat: match.seat, dx, dy }));
+        const ix = (c: boolean) => shoot({ ...common, boss: match.boss, session, seat: match.seat, dx, dy, charged: c });
+        // A charged send that loses the race with a step in flight is refused for free;
+        // the answer is the same shot uncharged, once — see `send`.
+        send(ix(charged), charged ? () => send(ix(false)) : undefined);
+      },
+      onCharge: (on) => {
+        // The hold's edge, for the local archer only: the draw pose and the arc are
+        // `Knight`'s, the ready chime is played there when the arc closes, and the draw
+        // itself is cued here so the two cannot double up.
+        chargeLocal(on);
+        if (on) play('chargeStart');
       },
     });
 

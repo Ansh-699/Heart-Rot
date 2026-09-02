@@ -74,20 +74,21 @@ export type Room = 'lobby' | 'arena';
 /**
  * Masonry above the drawn lobby floor and floor below it, in units.
  *
- * Reference A (1122x785) puts the floor interior at y 250..690 -- 250 px above and 95 px
- * below a 440 px band, so 0.568 and 0.216 of it. Tile multiples so the compiled wall
- * geometry lands on the frame edge instead of half a tile inside it.
+ * The waiting hall is a painting (`assets/rooms/lobby.png`, 1122x785) and
+ * `tools/gen_rooms.py` fits it to this room's HEIGHT: 656 / 785 units per px. Its floor
+ * sits at px y 248..690 -- 248 px of wall and gate tower above, 95 px of wall below a
+ * 442 px band -- which at that fit is 207 units above and 79 below: 13 and 5 tiles. Tile
+ * multiples so the painting's own floor edge lands on the map's `LOBBY_TOP` row and the
+ * compiled walls on the frame edge instead of half a tile inside it.
  *
- * `LOBBY_HEAD` is 16 tiles, not the 13 that matched reference A's ratio against the old
- * 368-unit floor band, and it is LOAD-BEARING rather than a taste: the open-arena map
- * (spec 18) gave the pit three rows and took them off the lobby, so the band is 320 units
- * and 13 tiles would silently take {@link ROOM_H} to 608. Both rooms would still be equal
- * -- they share the constant -- so the equal-size check below would not fire. What fires
- * instead is the crown check at the bottom of this file: a 608-tall arena frame starts at
- * y = 48 and cuts the boss's own hittable extent, which tops out at y = 16. 16 tiles holds
- * `ROOM_H` at 656 and keeps `VIEW_LOBBY` byte-identical to the pre-spec-18 rect.
+ * Both constants are LOAD-BEARING and READ BACK: `gen_rooms.py` parses them out of this
+ * file to place `LOBBY_IMG` and to size the room, so this is the one place they are
+ * typed. Change 13 and the painted floor no longer lands on the lobby rows -- the
+ * generator refuses, and `WaitingRoom.tsx` asserts `LOBBY_IMG.y === VIEW_LOBBY.y` at
+ * boot. 13 + the 23-row lobby band + 5 also holds {@link ROOM_H} at 656, which keeps
+ * `VIEW_LOBBY` byte-identical to the rect every earlier spec was measured against.
  */
-const LOBBY_HEAD = 16 * MAP_TILE;
+const LOBBY_HEAD = 13 * MAP_TILE;
 const LOBBY_FOOT = 5 * MAP_TILE;
 
 /**
@@ -111,17 +112,19 @@ export const VIEW_LOBBY: ViewRect = {
  * The boss arena, sitting on the pit rim.
  *
  * `PIT_BOT + 1` is the RIM — the last walkable row of the pit, plus one — and the frame
- * bottom is anchored there so the rim occluder has something to sit on. It is deliberately
- * NOT the boss clip any more: `#heartrot-boss-clip` used to cut at this same edge, but
- * `PART_HITBOXES` reaches lower, so 104 units of mace arm and claw were hittable and drawn
- * nowhere. `Arena.tsx` now derives that clip from the hitbox table (`boss.y +
- * BOSS_HIT_BOT`), which is below this line — so below aspect ~1.561, where the fitted box
- * grows on y, some of the creature legitimately renders under the rim against the void.
- * Under spec 18's map the top lands on y = 0, the map's own edge, rather than 48 units of
- * void above it: the pit's last row moved from 37 to 40, so the rim it hangs from moved
- * down 48 units and took the frame with it. The crown then clears the frame edge by a
- * single tile, and nothing but the check at the bottom of this file says so — the pit
- * cannot take a fourth row without cutting the creature. See {@link LOBBY_HEAD}.
+ * bottom is anchored there: it is also the bottom edge of the arena painting
+ * (`ARENA_IMG` in `rooms.gen.ts`, one unit per px), so the stairs run off the frame exactly
+ * where the paint ends. It is deliberately NOT the boss clip: `#heartrot-boss-clip` used to
+ * cut at this same edge, but `PART_HITBOXES` reaches lower, so 104 units of mace arm and
+ * claw were hittable and drawn nowhere. `Arena.tsx` derives that clip from the hitbox
+ * table (`boss.y + BOSS_HIT_BOT`), which is below this line — so below aspect ~1.561,
+ * where the fitted box grows on y, some of the creature legitimately renders under the rim
+ * against the void. With the painted pit ending on row 37 the rim is 608 and this frame
+ * spans -48..608: the painting's top edge is at -4, so the top 44 units are void — the
+ * same near-black its own ceiling fades into — and the crown has that much more headroom
+ * than the map's top row gave it. Every row the pit gains raises this frame's top edge 16
+ * units toward a crown that does not move, and nothing but the check at the bottom of this
+ * file says whether it still fits. See {@link LOBBY_HEAD}.
  */
 export const VIEW_ARENA: ViewRect = {
   x: 0,
@@ -138,15 +141,14 @@ export const VIEWS: Readonly<Record<Room, ViewRect>> = {
 /**
  * Tower above the floor line the fit must keep, in units.
  *
- * `WaitingRoom.tsx` hangs the gate's crest -- the hero of room A -- 12.5 tiles above
- * `LOBBY_TOP` (its `CREST_CY` less the skull's radius; read off the render at 488 units,
- * 200 above the floor). 14 tiles keeps it with a course and a half of tower above it, the
- * way reference A shows it, and gives the fit the other 2 tiles of shaft to crop. Not
+ * The lobby painting's gate tower is the hero of room A: the ram skull over the BOSS
+ * FIGHT sign crests at px y ~60, which at the lobby fit ({@link LOBBY_HEAD}) is 158 units
+ * above `LOBBY_TOP` -- 9.9 tiles. 11 tiles keeps it with a course of tower above it, the
+ * way the painting shows it, and gives the fit the other 2 tiles of shaft to crop. Not
  * imported from the room, because the room imports {@link VIEW_LOBBY} from here -- a
- * cycle at module load -- so `WaitingRoom.tsx` asserts its crest lies inside
- * {@link KEEP} instead.
+ * cycle at module load.
  */
-const LOBBY_HERO = 14 * MAP_TILE;
+const LOBBY_HERO = 11 * MAP_TILE;
 
 /** One course of masonry under the bottom wall the fit must keep, so the wall has depth. */
 const LOBBY_SILL = MAP_TILE;
@@ -173,12 +175,12 @@ export const KEEP: Readonly<Record<Room, ViewRect>> = {
 };
 
 /**
- * How far outside the room to author scenery, per side.
+ * How far outside the room the frame can reach, per side.
  *
  * The fitted box grows past the room only where {@link KEEP} forces it, and the surplus
  * is world space the room does not fill. Narrower than the keep's own aspect the box grows
- * on y, all of it ABOVE the room (the fit is bottom-anchored, so the surplus lands beside
- * the tower and over the boss's masonry rather than under the bottom wall): `1024/a - 656`,
+ * on y, all of it ABOVE the room (the fit is bottom-anchored, so the surplus lands over
+ * the tower and the boss's ceiling rather than under the bottom wall): `1024/a - 656`,
  * inside 256 for **aspect >= 1.12**. Wider than 16:9 it grows on x, `(576a - 1024) / 2`
  * per side for room A and `(656a - 1024) / 2` for room B, inside 256 up to **aspect
  * 2.34**. 1024x768 (1.33), 1440x900 (1.60), 1920x1080 (1.78) and 1366x768 (1.78) are all
@@ -186,8 +188,9 @@ export const KEEP: Readonly<Record<Room, ViewRect>> = {
  *
  * Wider than that it does not: a 3440x1392 ultrawide consumes 299 units in x. That is not
  * a hole, because {@link useViewport} sizes every `.vp-void` rect from the LIVE box rather
- * than from this constant -- past 2.34 the far edge is painted void instead of authored
- * masonry, which is the intended degradation and the reason the void rect exists.
+ * than from this constant -- the surplus is painted `VOID` (`rooms.gen.ts`, the painting's
+ * own edge colour) wherever the painting stops, which is the intended degradation and the
+ * reason the void rect exists.
  */
 export const VIEW_BLEED = 256;
 

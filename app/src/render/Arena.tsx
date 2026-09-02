@@ -33,13 +33,15 @@
  *
  *   room        the active room whole: void rect, floor, markings, floor light, wall mass
  *               and props (rows 1-6). Room A or room B, never both.
- *   boss        rows 7-9, room B only, clipped at the rim.
+ *   boss        rows 7-9, room B only, clipped at its hittable extent.
  *   telegraphs  row 10, over the boss and UNDER the knights.
- *   bullets     row 11, boss ordnance, capped at 32 drawn, ROOM B ONLY.
+ *   bullets     row 11, boss ordnance and its four muzzle bursts, capped at 32 drawn
+ *               bullets, ROOM B ONLY.
  *   knights     row 12. THE PLAYER IS ON TOP: nothing in the scene is drawn over a body.
  *   arrows      row 13, above the knights — an arrow under twenty bodies is the "I cannot
  *               see anything" report.
- *   rim         row 14, the one earned occluder, two tile rows, room B only.
+ *   rim         row 14 is GONE: the painted room carries its own rim, and the flat
+ *               `PAL.wall` this used to draw over every wall tile was a colour mask.
  *   spawn       row 15, the opening light, pointer-transparent.
  *   veil        row 16, the passage, mounted last so it covers the flare.
  *
@@ -111,20 +113,14 @@ import {
 import { useSeatInterpolation, type PredictedSelf, type Predictor } from '../net/predict';
 import { BOSS_ARENA } from './BossArena';
 import { Boss } from './Boss';
-import { KNIGHT_POSE_DEFS, Knight, knightDrawOrder } from './Knight';
+import { Knight, knightDrawOrder } from './Knight';
+import { ORDNANCE_DEFS, ORD_BULLET, ORD_BURST } from './ordnance.gen';
+import { play } from './sfx';
 import { Shot } from './Shot';
 import { Spawn } from './Spawn';
 import { WAITING } from './WaitingRoom';
 import { useViewport, type Room } from './viewport';
-import {
-  ARENA_UNITS,
-  BULLET_R,
-  MAP_RIM_PATH,
-  MAP_WALL_PATH,
-  PAL,
-  SELF_SNAP,
-  VISIBLE_PROJECTILES,
-} from './sprites';
+import { ARENA_UNITS, PAL, SELF_SNAP, VISIBLE_PROJECTILES } from './sprites';
 
 /**
  * The input period the local seat is chased at: one move per 50 ms ER slot, so the chase
@@ -228,6 +224,16 @@ function visibleBullets(bullets: readonly Bullet[], slots: readonly PlayerSlot[]
 }
 
 /**
+ * Which of the sixteen tail sprites a velocity gets: `ord-b0` points along +x and the
+ * sectors run clockwise with y down, 22.5° a step — the atlas is drawn in the SVG's own
+ * frame, so this is `atan2` and nothing else. Chosen once per node by React, never in
+ * the frame loop; a bullet's velocity is fixed for its whole flight.
+ */
+function sector(dx: number, dy: number): number {
+  return Math.round(Math.atan2(dy, dx) / (Math.PI / 8)) & 15;
+}
+
+/**
  * Move `at` toward `to` by at most `step` units. Snaps when the target is within reach, or
  * when the gap is a teleport rather than a walk. Mutated in place: this runs every frame.
  *
@@ -249,13 +255,68 @@ export function chase(at: { x: number; y: number }, to: { x: number; y: number }
 }
 
 // ---------------------------------------------------------------------------
+// Feel: hit stop and shake
+// ---------------------------------------------------------------------------
+//
+// Two module-scope sinks in the shape of `Shot`'s `fireLocal`, called when the local
+// player's charged shot lands: there is exactly one arena renderer on a page, so a call
+// is one import rather than a prop threaded through three layers. Both are no-ops under
+// reduced motion, which the mounted `Arena` mirrors into `reducedNow` from the one
+// resolver (`usePrefersReducedMotion`) rather than asking `matchMedia` a second time.
+
+/** The frame loop skips its bullet and local-seat writes until this instant. */
+let hitStopUntil = 0;
+/** The root `<svg>`, held while an `Arena` is mounted. */
+let shakeRoot: SVGSVGElement | null = null;
+let reducedNow = false;
+
+/**
+ * How long a shake and a muzzle burst last. Cosmetic and local, like `CAMERA_MS`: nothing
+ * on chain waits for either and no two clients need to agree on them.
+ */
+const SHAKE_MS = 160;
+const BURST_MS = 150;
+
+/**
+ * Freeze the picture for `ms`: bullets and the local seat keep their last drawn
+ * transform and snap forward when it ends — the seat is PLACED, not chased, exactly as
+ * after a passage hold. The rAF loop keeps running and `Shot` keeps stepping, so the
+ * arrow that earned the stop still lands.
+ */
+export function hitStop(ms: number): void {
+  if (reducedNow) return;
+  hitStopUntil = performance.now() + ms;
+}
+
+/**
+ * Kick the ROOT `<svg>` by `units` world units, settling over {@link SHAKE_MS}. The root
+ * and never `#camera`: `Passage` borrows `#camera` for the gate move, and a node with
+ * two writers silently drops one of them. Units become CSS pixels through the live fit,
+ * so the kick is the same fraction of the room on every stage.
+ */
+export function shake(units: number): void {
+  const root = shakeRoot;
+  if (reducedNow || root === null) return;
+  const px = units * (root.getScreenCTM()?.a ?? 1);
+  root.animate(
+    [
+      { transform: `translate(${px}px, ${-px / 2}px)` },
+      { transform: `translate(${-px}px, ${px / 2}px)` },
+      { transform: `translate(${px / 2}px, 0)` },
+      { transform: 'translate(0, 0)' },
+    ],
+    { duration: SHAKE_MS },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The gate move, and the room contract
 // ---------------------------------------------------------------------------
 
 /**
  * How long the pit reveal takes, and the curve it takes it on. A camera has no twin on
- * chain — the one duration in this file allowed to be a local number, because nothing on
- * chain is waiting for it and no two clients need to agree on it.
+ * chain — a local number, like `SHAKE_MS` and `BURST_MS` above, because nothing on chain
+ * is waiting for it and no two clients need to agree on it.
  *
  * Exported rather than used here: `#camera` rests at identity in both rooms and `Passage`
  * is its only writer (spec §7.3). Restating 900 there would be one fact stored twice, which
@@ -358,17 +419,6 @@ const SEAT_STYLE = { willChange: 'transform' } as const;
 
 /** The lane a slam claims, floor to ceiling of the raider box. */
 const LANE_H = PIT_BOT - PIT_TOP + 1;
-
-/**
- * First unit of the rim band — the two tile rows the rim occluder (row 14) is clipped to.
- *
- * Named because it was typed twice: once in the clip rect and once, as the literal 576, in
- * the check that was supposed to guard it. The literal only ever held while `PIT_BOT` was
- * 607, so the guard stopped being a guard the moment spec 18 moved the pit's last row, and
- * it would have thrown in DEV and passed silently in a production build — the failure mode
- * this file spends its comments on.
- */
-const RIM_TOP = PIT_BOT + 1 - 2 * MAP_TILE;
 
 /**
  * The volley currently being wound up: which live muzzle fires at whom, and how long is
@@ -556,15 +606,54 @@ export function Arena({
   const bullets = useRef(arena.bullets);
   const pace = useRef(tickMs);
   const tickAt = useRef(0);
+  // The four muzzle bursts, one strip per thorn, indexed like `MUZZLES`.
+  const burstNodes = useRef<(SVGUseElement | null)[]>([]);
   useEffect(() => {
-    bullets.current = arena.bullets;
+    const prev = bullets.current;
+    const next = arena.bullets;
+    // A volley leaves the pool as slots turning free→active AT a muzzle: `spawn_volley`
+    // writes the muzzle's own point into `x`/`y`, and the bullet does not move until the
+    // next tick. That edge plays the thorn's burst and the `volley` cue — once per muzzle
+    // per tick however many bullets it fired — and it is taken on VALUES rather than on
+    // the array: every delivery decodes into a fresh object, the Magic Router delivers
+    // each one twice, and identical bytes have no edge in them. A slot reused inside one
+    // missed notification (active before, at another point) counts as an edge too.
+    if (prev !== next) {
+      let fired = 0;
+      for (let slot = 0; slot < next.length; slot++) {
+        const b = next[slot]!;
+        const was = prev[slot];
+        if (b.active === 0 || (was !== undefined && was.active !== 0 && was.x === b.x && was.y === b.y)) continue;
+        for (const [i, m] of MUZZLES.entries()) {
+          if (b.x === boss.x + m.x && b.y === boss.y + m.y) fired |= 1 << i;
+        }
+      }
+      if (fired !== 0) {
+        play('volley');
+        if (!reduced) {
+          for (const [i, el] of burstNodes.current.entries()) {
+            if (el !== null && (fired & (1 << i)) !== 0) el.animate(BURST_KEYFRAMES, BURST_TIMING);
+          }
+        }
+      }
+    }
+    bullets.current = next;
     pace.current = tickMs;
   });
+  // `hitStop` and `shake` see the root and the motion preference only while an `Arena`
+  // is mounted. One effect for both: they are two facts about the one mounted scene.
+  useEffect(() => {
+    shakeRoot = svgRef.current;
+    reducedNow = reduced;
+    return () => {
+      shakeRoot = null;
+    };
+  }, [reduced]);
   useEffect(() => {
     tickAt.current = performance.now();
   }, [arena.tick]);
 
-  const nodes = useRef(new Map<number, SVGLineElement>());
+  const nodes = useRef(new Map<number, SVGUseElement>());
   // `Shot`'s per-frame step, driven from the ONE rAF loop in the scene. A second loop is
   // what that module exists not to add, so the driver is a mandatory prop over there and
   // this ref is the whole of the wiring.
@@ -610,7 +699,9 @@ export function Arena({
     let raf = 0;
     const frame = () => {
       const now = performance.now();
-      if (!reduced) {
+      // A hit stop holds the two writers below for its length; both snap forward after.
+      const stopped = now < hitStopUntil;
+      if (!reduced && !stopped) {
         const f = Math.min(1, (now - tickAt.current) / pace.current);
         for (const [slot, el] of nodes.current) {
           const b = bullets.current[slot];
@@ -628,7 +719,7 @@ export function Arena({
       // PLACES it at the entrance `enter_gate` chose instead of chasing it there. The
       // ceiling is the release that does not depend on `Passage` being well behaved.
       const el = selfNode.current;
-      const frozen = held.current && now - heldAt.current < HOLD_CEILING_MS;
+      const frozen = stopped || (held.current && now - heldAt.current < HOLD_CEILING_MS);
       if (frozen) drawn.current = null;
       else if (el !== null && predictor !== undefined) {
         let at = drawn.current;
@@ -681,6 +772,16 @@ export function Arena({
   const slamRef = useRef<SVGRectElement | null>(null);
   const slamElapsed = slam === null || reduced ? null : (SLAM_TELEGRAPH_TICKS - slam.ticksToImpact) * tickMs;
   useSeeked(slamRef, SLAM_KEYFRAMES, windupMs, slamElapsed);
+  // The slam's two cues, off the same derivation the lane is drawn from: the warn when a
+  // wind-up appears, the impact when it resolves. Room B only, like the lane, and the
+  // first render starts with nothing winding up, so a mount plays nothing.
+  const slamming = shown === 'arena' && slam !== null;
+  const slamHeard = useRef(false);
+  useEffect(() => {
+    if (slamming) play('slamWarn');
+    else if (slamHeard.current) play('slam');
+    slamHeard.current = slamming;
+  }, [slamming]);
 
   const volley = volleyTelegraph(arena, boss, players);
   const volleyRef = useRef<SVGGElement | null>(null);
@@ -694,35 +795,12 @@ export function Arena({
 
   // ---- the static layers ------------------------------------------------
   //
-  // Rows 1-6 — floor, markings, floor light, wall mass, props — belong to `WAITING_ROOM`
-  // and `BOSS_ARENA`, which are module-scope elements React never walks again. The wall
-  // layer that used to live here went with them: the generated bitboard drawn twice is one
-  // fact stored twice, and a wall the art disagrees with is a legal-looking move the chain
-  // rejects, which is this project's signature misdiagnosis.
-  //
-  // What is left is one memo with an empty dependency list, so React holds one identical
-  // element reference and skips the subtree on every update. Rebuilding a layer of this
-  // size per notification is the measured way to crash a renderer process — 11.2 ms a
-  // frame, and 3/3 crashes at 300 frames.
-  const rim = useMemo(
-    () => (
-      // The pit's near wall, drawn a second time OVER everything: the boss's hands grip a
-      // rim that is in front of them, and a knight at the bottom of the pit stands behind
-      // it. It is the same generated wall geometry the chain collides against, clipped to
-      // the two rim rows, so it cannot disagree with the map about where the wall is.
-      //
-      // `pit-rim` is `art.md` fix 5a: the rule (`drop-shadow(0 -2px 0 …)`, cold light down
-      // the near face) was written in `styles.css` and matched no node, so the strongest
-      // depth cue in the composition was drawn nowhere. The class goes on this `<g>` and
-      // not on either `<path>` — the shadow is of the rim silhouette, and two shadows on
-      // two overlapping paths would draw the wall's edge through the rim's.
-      <g className="pit-rim" clipPath="url(#heartrot-rim-clip)">
-        <path d={MAP_WALL_PATH} fill={PAL.wall} />
-        <path d={MAP_RIM_PATH} fill={PAL.rim} />
-      </g>
-    ),
-    [],
-  );
+  // Rows 1-6 — floor, markings, floor light, wall mass, props — belong to `WAITING`
+  // and `BOSS_ARENA`, which are module-scope elements React never walks again. Nothing
+  // static is built in here: the rim occluder that used to be was the generated wall
+  // bitboard drawn a second time in flat `PAL.wall`, which over a painted room is a colour
+  // mask over the painted walls — and a wall the art disagrees with is a legal-looking
+  // move the chain rejects, which is this project's signature misdiagnosis.
 
   // Sorted at notification rate, never per frame: a knight lower on the screen is nearer,
   // so it is drawn later. Authoritative `y` on every seat including the local one — the
@@ -779,9 +857,6 @@ export function Arena({
         aria-label={`Boss arena, tick ${arena.tick}, ${arena.aliveCount} raiders alive`}
       >
         <defs>
-          <clipPath id="heartrot-rim-clip">
-            <rect x={0} y={RIM_TOP} width={ARENA_UNITS} height={2 * MAP_TILE} />
-          </clipPath>
           {/* The boss ends where the boss ENDS. At SCALE=3 the sprite is 810 units tall and
               reaches world y 805 — 200 units below the pit — so the legs and the lower claw
               were drawn straight down the temple approach, over the stairs and the gate.
@@ -792,9 +867,8 @@ export function Arena({
               nowhere: an arrow fired down the pit stopped in mid-air and sparked gold on
               bare stone while the chain scored the damage. Art that disagrees with the
               hitboxes is one fact stored twice, and the chain owns the table — so the cut
-              is derived from it ({@link BOSS_HIT_BOT}) and follows `boss.y`, and the rim
-              composition is bought back by the rim occluder alone (row 14), which still
-              redraws over the hands.
+              is derived from it ({@link BOSS_HIT_BOT}) and follows `boss.y`. The painted
+              room carries its own rim under the hands; nothing here redraws one.
               Clipped here rather than inside `Boss`: `clip-path` resolves against the
               element's own transform, and `.hr-boss` carries `translate(boss.x, boss.y)`,
               so a clip there moves with the boss instead of standing still in world space. */}
@@ -806,11 +880,14 @@ export function Arena({
               height={ARENA_UNITS + boss.y + BOSS_HIT_BOT}
             />
           </clipPath>
-          {/* The fifteen knight poses, mounted once. Every seat draws `<use href="#kN-…">`
-              against these, and a dangling href renders nothing and throws nothing — so
-              without this line the pit is twenty invisible knights and no error anywhere.
-              A module-scope constant, so React never walks its ~4,300 subpaths again. */}
-          {KNIGHT_POSE_DEFS}
+          {/* The ordnance atlas, mounted once: sixteen tail sprites, the muzzle burst and
+              the hit splat, each a `<symbol>` cropping the one PNG. Every bullet below is
+              a `<use>` against these, and a dangling href renders nothing and throws
+              nothing — without this line a volley is invisible and no error anywhere.
+              Generated markup, so `dangerouslySetInnerHTML` is the only way to put it
+              inside an SVG parent; it is a build artefact of `tools/gen_ordnance.py`, not
+              anything a user can reach. */}
+          <g dangerouslySetInnerHTML={{ __html: ORDNANCE_DEFS }} />
         </defs>
 
         {/* `#camera` rests at IDENTITY. It carries no transform from this file, ever — it
@@ -904,27 +981,28 @@ export function Arena({
             </g>
           )}
 
-          {/* Row 11. Each is a capsule stretched back along its own velocity — at 42 units
-              per tick a 4-unit dot jumps ~7 units per frame and strobes, and the trail is
-              what makes 420 u/s legible rather than merely correct. */}
+          {/* Row 11. Each bullet is one `<use>` of the sector sprite its velocity falls in
+              (`tools/gen_ordnance.py`: a thorn seed dragging an ember tail, drawn at
+              sixteen angles — at 42 units a tick a dot jumps ~7 units a frame and strobes,
+              and the tail is what makes 420 u/s legible rather than merely correct). The
+              sector is chosen once here by React; the frame loop owns the transform and
+              nothing else about the node ever changes. */}
           <g>
             {shownBullets.map((slot) => {
               const b = arena.bullets[slot];
               if (b === undefined) return null;
               return (
-                <line
+                <use
                   key={slot}
                   ref={(el) => {
                     if (el) nodes.current.set(slot, el);
                     else nodes.current.delete(slot);
                   }}
-                  x1={0}
-                  y1={0}
-                  x2={-b.dx * BULLET_TRAIL}
-                  y2={-b.dy * BULLET_TRAIL}
-                  stroke={PAL.bullet}
-                  strokeWidth={BULLET_R * 2}
-                  strokeLinecap="round"
+                  href={`#ord-b${sector(b.dx, b.dy)}`}
+                  x={-ORD_BULLET.w / 2}
+                  y={-ORD_BULLET.h / 2}
+                  width={ORD_BULLET.w}
+                  height={ORD_BULLET.h}
                   style={{
                     willChange: 'transform',
                     // The published position. The frame loop overwrites this between ticks;
@@ -934,10 +1012,36 @@ export function Arena({
                 />
               );
             })}
+            {/* The muzzle bursts: one frame-sized window per thorn, parked over its muzzle,
+                with the three-frame strip behind it at opacity 0. The bullets effect plays
+                one by stepping the strip across the window — WAAPI is that node's only
+                writer, and React sets nothing on it after mount. Room B only, like the
+                thorns they sit on. */}
+            {shown === 'arena' &&
+              MUZZLES.map((m, i) => (
+                <svg
+                  key={i}
+                  aria-hidden="true"
+                  x={boss.x + m.x - ORD_BURST.w / 2}
+                  y={boss.y + m.y - ORD_BURST.h / 2}
+                  width={ORD_BURST.w}
+                  height={ORD_BURST.h}
+                >
+                  <use
+                    ref={(el) => {
+                      burstNodes.current[i] = el;
+                    }}
+                    href="#ord-burst"
+                    width={ORD_BURST.w * ORD_BURST.frames}
+                    height={ORD_BURST.h}
+                    style={{ opacity: 0 }}
+                  />
+                </svg>
+              ))}
           </g>
 
           {/* Row 12 — THE PLAYER IS ON TOP. Every scene layer is behind this one, and the
-              only thing above it is the arrow the player fires and the two rows of pit rim.
+              only thing above it is the arrow the player fires.
               Nothing decorative may be added between here and the top: a knight occluded by
               scenery is the report this composition exists to close.
 
@@ -992,11 +1096,6 @@ export function Arena({
             room={shown}
           />
 
-          {/* Row 14, room B only: the one earned occluder, and bounded to two tile rows so
-              it covers the lower ~10 units of a knight on the last walkable row and nothing
-              else. In room A it would paint over the gate tower. */}
-          {shown === 'arena' && rim}
-
           {/* Row 15. Over the boss, the raiders and the bullets. Pointer-transparent, and
               nothing waits for it. Room B: it is the light the cavern plays when the muster
               ends, and the muster ends in the pit. */}
@@ -1023,13 +1122,19 @@ export function Arena({
 // ---------------------------------------------------------------------------
 
 /**
- * How far back a bullet's trail reaches, as a fraction of one tick's travel.
- *
- * Not a look: at `BULLET_UNITS_PER_SEC = 420` a bullet crosses ~7 units between frames and
- * is 8 wide, so a dot strobes. Half a tick of stretch closes that gap without drawing a
- * bullet anywhere the chain does not have one — the head of the capsule is the position.
+ * The muzzle burst: the strip stepped across its window, one frame per step. `steps`
+ * jumps at the END of each interval, so frame 0 shows first; at the final instant the
+ * strip has left the window, and with the default `fill: 'none'` the base opacity 0 is
+ * what remains.
  */
-const BULLET_TRAIL = 0.5;
+const BURST_KEYFRAMES: Keyframe[] = [
+  { opacity: 1, transform: 'translateX(0)' },
+  { opacity: 1, transform: `translateX(${-ORD_BURST.w * ORD_BURST.frames}px)` },
+];
+const BURST_TIMING: KeyframeAnimationOptions = {
+  duration: BURST_MS,
+  easing: `steps(${ORD_BURST.frames})`,
+};
 
 /** The lane goes from a hint to a claim as the hand comes down. */
 const SLAM_KEYFRAMES: Keyframe[] = [
@@ -1183,12 +1288,19 @@ if (import.meta.env.DEV) {
   ok(roomSeats(both, 'lobby', inPit.seat).length === 2, 'the hold adds one seat and removes none');
   ok(seatShown(inLobby, 'lobby') && !seatShown(inLobby, 'arena'), 'R3 answers from the room on screen');
 
-  // The rim occluder must sit ON the rim and nowhere else: a clip one tile out paints a
-  // wall over rows of the pit the knights stand in. Stated as the RELATIONSHIP, because the
-  // literal that used to stand here (`=== 576`) was only ever true at one value of
-  // `PIT_BOT` and said nothing at all about the rect it was guarding.
-  ok(RIM_TOP + 2 * MAP_TILE === PIT_BOT + 1, 'the rim clip ends on the pit rim');
-  ok(RIM_TOP >= PIT_TOP, 'the rim clip stays inside the raider box');
+  // Every sector a velocity can fall in has a sprite, and the cardinals land where the
+  // atlas drew them (`ord-b0` along +x, clockwise with y down). A dangling href draws
+  // nothing and throws nothing, which for a bullet is a hit from nowhere.
+  ok(
+    sector(42, 0) === 0 && sector(0, 42) === 4 && sector(-42, 0) === 8 && sector(0, -42) === 12,
+    'cardinal velocities map to the cardinal sectors',
+  );
+  ok(sector(30, 30) === 2 && sector(-30, -30) === 10 && sector(30, -30) === 14, 'diagonals land between them');
+  for (let k = 0; k < 16; k++) ok(ORDNANCE_DEFS.includes(`id="ord-b${k}"`), `the ordnance atlas has sector ${k}`);
+  ok(
+    ORDNANCE_DEFS.includes('id="ord-burst"') && ORDNANCE_DEFS.includes('id="ord-hit"'),
+    'the ordnance atlas has the burst and the splat',
+  );
 
   // THE DRAWN RIG AND THE HITTABLE RIG ARE THE SAME RIG. `#heartrot-boss-clip` cuts the
   // art; `PART_HITBOXES` and `CORE` are what `shoot.rs` and `raycastShot` resolve against.
