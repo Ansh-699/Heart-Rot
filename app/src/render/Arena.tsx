@@ -63,6 +63,9 @@ import {
   GATE_MAX_X,
   GATE_MAX_Y,
   GATE_MIN_X,
+  LOBBY_SPAWN_MAX_X,
+  LOBBY_SPAWN_Y,
+  LOBBY_SPAWN_MIN_X,
   GATE_MIN_Y,
   MAP_TILE,
   MAX_BULLETS,
@@ -237,7 +240,22 @@ export function chase(at: { x: number; y: number }, to: { x: number; y: number }
  */
 const LOBBY_ZOOM = 2;
 const LOBBY_SPAN = ARENA_UNITS / LOBBY_ZOOM;
-const LOBBY_X = (GATE_MIN_X + GATE_MAX_X + 1) / 2 - LOBBY_SPAN / 2;
+// Framed on the gate AND every lobby spawn, not the gate alone.
+//
+// `lobby_spawn` fans the seats symmetrically about `LOBBY_ENTRANCE`, so they span
+// x 208..664 while a gate-centred window showed 256..768 — seats 0 and 1 stood outside it
+// and drew nothing a player could find. Seat 0 is what the FIRST player to join gets, so
+// the default experience of the game was an empty room with a knight you never see.
+// Nothing was broken in the sprite path; the camera was pointed at the wrong place.
+const LOBBY_FOCUS_MIN = Math.min(GATE_MIN_X, LOBBY_SPAWN_MIN_X);
+const LOBBY_FOCUS_MAX = Math.max(GATE_MAX_X, LOBBY_SPAWN_MAX_X);
+const LOBBY_X = Math.max(
+  0,
+  Math.min(
+    ARENA_UNITS - LOBBY_SPAN,
+    Math.round((LOBBY_FOCUS_MIN + LOBBY_FOCUS_MAX + 1) / 2 - LOBBY_SPAN / 2),
+  ),
+);
 const LOBBY_Y = ARENA_UNITS - LOBBY_SPAN;
 
 const CAM_LOBBY = `scale(${LOBBY_ZOOM}) translate(${-LOBBY_X}px, ${-LOBBY_Y}px)`;
@@ -958,6 +976,17 @@ if (import.meta.env.DEV) {
   // The lobby framing has to contain the one thing the lobby is for. A camera that cuts
   // the gate off is not a rendering glitch to a player, it is a game with no way in.
   ok(LOBBY_X <= GATE_MIN_X && GATE_MAX_X < LOBBY_X + LOBBY_SPAN, 'the lobby camera frames the gate in x');
+  // And the thing the gate is for: the players walking to it. This is the check whose
+  // absence shipped a lobby where seat 0 could not see their own knight — the gate was
+  // framed perfectly and the spawns were never tested at all.
+  ok(
+    LOBBY_X <= LOBBY_SPAWN_MIN_X && LOBBY_SPAWN_MAX_X < LOBBY_X + LOBBY_SPAN,
+    'the lobby camera frames every seat spawn in x',
+  );
+  ok(
+    LOBBY_Y <= LOBBY_SPAWN_Y && LOBBY_SPAWN_Y < LOBBY_Y + LOBBY_SPAN,
+    'the lobby camera frames the spawn row in y',
+  );
   ok(LOBBY_Y <= GATE_MIN_Y && GATE_MAX_Y < LOBBY_Y + LOBBY_SPAN, 'the lobby camera frames the gate in y');
   ok(Number.isInteger(LOBBY_ZOOM), 'both camera scales are integers, so both ends are pixel-exact');
 

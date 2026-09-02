@@ -144,6 +144,17 @@ export const GATE_MAX_X = 543;
 export const GATE_MIN_Y = 608;
 export const GATE_MAX_Y = 639;
 
+/**
+ * The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
+ *
+ * The lobby camera frames THIS, not just the gate: seat 0 sits `MAX_SEATS / 2` spacings
+ * left of the entrance, and a gate-centred camera showed x 256..768 while seat 0 stood at
+ * 208 -- the first player to join could not see their own knight.
+ */
+export const LOBBY_SPAWN_MIN_X = 208;
+export const LOBBY_SPAWN_MAX_X = 664;
+export const LOBBY_SPAWN_Y = 832;
+
 /** Is this arena-space point inside the gate block? `handlers::player::on_gate`. */
 export function onGate(x: number, y: number): boolean {
   return x >= GATE_MIN_X && x <= GATE_MAX_X && y >= GATE_MIN_Y && y <= GATE_MAX_Y;

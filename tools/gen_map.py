@@ -161,6 +161,28 @@ def spawn_tiles(grid: list[str], g: dict[str, object]) -> list[tuple[str, tuple[
     return out
 
 
+def lobby_spawn_extent(g: dict[str, object]) -> dict[str, int]:
+    """The x span every `lobby_spawn` occupies, and the row they share.
+
+    Emitted because the lobby CAMERA has to frame it. `lobby_spawn` fans the seats
+    symmetrically about `LOBBY_ENTRANCE`, so seat 0 sits `MAX_SEATS / 2` spacings to its
+    left -- 240 units at the shipped numbers -- while a camera centred on the gate alone
+    showed x 256..768 and cropped seats 0 and 1 off the left edge entirely. The first
+    player to join takes seat 0, so the commonest case was the invisible one.
+    """
+    tile, max_xy = g["TILE"], g["MAP_TILES"] * g["TILE"] - 1
+    half = g["MAX_SEATS"] // 2
+    xs = [
+        min(max(g["LOBBY_ENTRANCE"][0] + (seat - half) * g["LOBBY_SPACING"], 0), max_xy)
+        for seat in range(g["MAX_SEATS"])
+    ]
+    return {
+        "LOBBY_SPAWN_MIN_X": min(xs),
+        "LOBBY_SPAWN_MAX_X": max(xs),
+        "LOBBY_SPAWN_Y": min(max(g["LOBBY_ENTRANCE"][1], 0), max_xy),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -445,6 +467,7 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
     (hx, hy) = heart_world(grid, g["TILE"])
     pit = pit_box(grid, g["TILE"])
     gate = gate_box(grid, g["TILE"])
+    spawn = lobby_spawn_extent(g)
     ptop, pbot = pit["PIT_ROWS"]
     gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
     pit_floor = sum(sum(1 for c in row if c != WALL) for row in grid[ptop:pbot + 1])
@@ -560,6 +583,15 @@ pub const GATE_MIN_X: i16 = {gate["GATE_MIN_X"]};
 pub const GATE_MAX_X: i16 = {gate["GATE_MAX_X"]};
 pub const GATE_MIN_Y: i16 = {gate["GATE_MIN_Y"]};
 pub const GATE_MAX_Y: i16 = {gate["GATE_MAX_Y"]};
+
+/// The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
+///
+/// Emitted so the client's lobby camera can frame every spawn instead of guessing. Seat 0
+/// sits `MAX_SEATS / 2` spacings left of `LOBBY_ENTRANCE`, which a gate-centred camera
+/// cropped off screen -- and seat 0 is what the first player to join always gets.
+pub const LOBBY_SPAWN_MIN_X: i16 = {spawn["LOBBY_SPAWN_MIN_X"]};
+pub const LOBBY_SPAWN_MAX_X: i16 = {spawn["LOBBY_SPAWN_MAX_X"]};
+pub const LOBBY_SPAWN_Y: i16 = {spawn["LOBBY_SPAWN_Y"]};
 
 /// Every entrance stands on floor in the table above.
 ///
@@ -777,6 +809,7 @@ def emit_ts(grid: list[str], g: dict[str, object]) -> str:
     (hx, hy) = heart_world(grid, g["TILE"])
     pit = pit_box(grid, g["TILE"])
     gate = gate_box(grid, g["TILE"])
+    spawn = lobby_spawn_extent(g)
     ptop, pbot = pit["PIT_ROWS"]
     gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
     return f'''/**
@@ -857,6 +890,17 @@ export const GATE_MIN_X = {gate["GATE_MIN_X"]};
 export const GATE_MAX_X = {gate["GATE_MAX_X"]};
 export const GATE_MIN_Y = {gate["GATE_MIN_Y"]};
 export const GATE_MAX_Y = {gate["GATE_MAX_Y"]};
+
+/**
+ * The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
+ *
+ * The lobby camera frames THIS, not just the gate: seat 0 sits `MAX_SEATS / 2` spacings
+ * left of the entrance, and a gate-centred camera showed x 256..768 while seat 0 stood at
+ * 208 -- the first player to join could not see their own knight.
+ */
+export const LOBBY_SPAWN_MIN_X = {spawn["LOBBY_SPAWN_MIN_X"]};
+export const LOBBY_SPAWN_MAX_X = {spawn["LOBBY_SPAWN_MAX_X"]};
+export const LOBBY_SPAWN_Y = {spawn["LOBBY_SPAWN_Y"]};
 
 /** Is this arena-space point inside the gate block? `handlers::player::on_gate`. */
 export function onGate(x: number, y: number): boolean {{

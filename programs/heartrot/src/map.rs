@@ -178,6 +178,15 @@ pub const GATE_MAX_X: i16 = 543;
 pub const GATE_MIN_Y: i16 = 608;
 pub const GATE_MAX_Y: i16 = 639;
 
+/// The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
+///
+/// Emitted so the client's lobby camera can frame every spawn instead of guessing. Seat 0
+/// sits `MAX_SEATS / 2` spacings left of `LOBBY_ENTRANCE`, which a gate-centred camera
+/// cropped off screen -- and seat 0 is what the first player to join always gets.
+pub const LOBBY_SPAWN_MIN_X: i16 = 208;
+pub const LOBBY_SPAWN_MAX_X: i16 = 664;
+pub const LOBBY_SPAWN_Y: i16 = 832;
+
 /// Every entrance stands on floor in the table above.
 ///
 /// The generator proves the same thing plus reachability, but only when someone runs it.
