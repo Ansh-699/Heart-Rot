@@ -14,6 +14,8 @@
  * read at a glance in a crowd of twenty.
  */
 
+import { CLASS_DAMAGE, CLASS_PERIOD_MS, N_CLASSES } from '@heartrot/client';
+
 import { useSelect, useStore } from '../state/store';
 import { SeatLoader } from './Onboarding';
 
@@ -35,9 +37,25 @@ const SKINS = [
   { name: 'Argent', note: 'Silver plate, cross-emblem round shield.' },
 ] as const;
 
+/**
+ * Index **is** the class byte, the same way `SKINS`'s index is `skin_id`. The numbers are
+ * never typed here: they come from `CLASS_DAMAGE` / `CLASS_PERIOD_MS`, which the program's
+ * own table mirrors, so a balance change moves one place. `N_CLASSES` is the bound the
+ * Worker and the program both enforce, and this array has to be as long as it.
+ */
+const CLASSES = [
+  { name: 'Knight', note: 'Steady trigger.' },
+  { name: 'Archer', note: 'Slower draw, heavier arrow.' },
+] as const;
+
+if (CLASSES.length !== N_CLASSES) {
+  throw new Error(`CharacterSelect lists ${CLASSES.length} classes, the wire has ${N_CLASSES}`);
+}
+
 export function CharacterSelect() {
   const store = useStore();
   const skinId = useSelect((s) => s.skinId);
+  const classId = useSelect((s) => s.classId);
   const joining = useSelect((s) => s.status === 'joining');
 
   // Onboarding card 2. The seat claim is the slow half of onboarding and it starts here.
@@ -72,11 +90,35 @@ export function CharacterSelect() {
         ))}
       </div>
 
+      <p className="eyebrow">Choose a weapon</p>
+
+      <div className="skins">
+        {CLASSES.map((cls, index) => (
+          <button
+            key={cls.name}
+            className="skin"
+            aria-pressed={index === classId}
+            onClick={() => store.setClass(index)}
+          >
+            <b>
+              {index + 1}. {cls.name}
+            </b>
+            <span className="fine">
+              {CLASS_DAMAGE[index]} damage every {(CLASS_PERIOD_MS[index]! / 1000).toFixed(1)} s
+              &middot; {cls.note}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <p className="fine">
-        The armour is cosmetic. Every knight has the same reach, the same speed and the same
-        health — what changes the fight is which part of the boss the raid agrees to break
-        first. Your own knight carries a marker above it so you can find yourself in a
-        crowd, and the colour above is what the roster shows.
+        The two weapons deal the same damage per second — {CLASS_DAMAGE[0]}&times;
+        {CLASS_PERIOD_MS[1]! / CLASS_PERIOD_MS[0]!} is {CLASS_DAMAGE[1]}, by construction —
+        so neither is the stronger pick. The archer trades cadence for weight. The armour is
+        cosmetic: every raider has the same reach, the same speed and the same health, and
+        what changes the fight is which part of the boss the raid agrees to break first.
+        Your own knight carries a marker above it so you can find yourself in a crowd, and
+        the colour above is what the roster shows.
       </p>
 
       <button className="btn btn-primary" onClick={() => void store.join()}>

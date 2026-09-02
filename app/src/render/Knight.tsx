@@ -10,14 +10,16 @@
  *
  *   seat  <g>                 position          — the existing loops. NOT TOUCHED HERE.
  *     <ellipse shadow>        static            — React
- *     <circle  ring>          static            — React (local seat only)
+ *     <ellipse ring x2>       static            — React (local seat only)
  *     <circle  respawn arc>   dash offset       — React, once per notification
  *     <g       body>          transform+opacity — WAAPI one-shots (recoil, fall, revive,
  *                                                 idle breathe). Resting values are React
  *                                                 attributes, so a reload with no
  *                                                 animation running still looks right.
- *       <use   key light>     href + flip/bob   — React
+ *       <use   rim halo>      href + flip/bob   — React
  *       <use   knight>        href + flip/bob   — React
+ *       <g     archer kit>    flip/bob          — React (archers only)
+ *         <path arrow>        transform+opacity — WAAPI one-shot (loose)
  *       <use   flash>         opacity           — WAAPI one-shot
  *     <path    chevron>       static            — React (local seat only)
  *     <rect    hp bar>        React, only when damaged
@@ -35,7 +37,7 @@
  */
 import { useEffect, useRef } from 'react';
 
-import { MAP_TILE, type PlayerSlot } from '@heartrot/client';
+import { CLASS_ARCHER, MAP_TILE, classOf, type PlayerSlot } from '@heartrot/client';
 
 import { KNIGHT_DEFS, KNIGHT_SKINS, SPRITE_H, SPRITE_W } from './knights.gen';
 import { FACING_UNIT, HP_BAR_W, PAL, SELF_SNAP } from './sprites';
@@ -56,14 +58,33 @@ const KNIGHT_SKIN_COUNT = KNIGHT_SKINS.length;
 /**
  * `rest` doubles as the walk's pass frame (with a one-unit bob) and as the respawn and
  * standing pose. `fallen` is a lossless 90° transpose, so it arrives on a transposed
- * canvas. `sil` is the flat union silhouette used for the hit flash.
+ * canvas. `sil` is the flat union silhouette used for the hit flash. `halo` / `halo-fallen`
+ * are that union dilated two units and minus itself — the boundary rim `docs/art/
+ * legibility.md` §3.1 derives, generated so nothing here has to dilate a `<use>`.
  */
-export type KnightPose = 'rest' | 'contactL' | 'contactR' | 'fallen' | 'sil';
+export type KnightPose = 'rest' | 'contactL' | 'contactR' | 'fallen' | 'sil' | 'halo' | 'halo-fallen';
 
-/** Canvas each pose is emitted on. Only `fallen` is transposed. */
+/** Canvas each pose is emitted on. Only the two fallen poses are transposed. */
 function poseBox(pose: KnightPose): readonly [number, number] {
-  return pose === 'fallen' ? [KNIGHT_SPRITE_H, KNIGHT_SPRITE_W] : [KNIGHT_SPRITE_W, KNIGHT_SPRITE_H];
+  return pose === 'fallen' || pose === 'halo-fallen'
+    ? [KNIGHT_SPRITE_H, KNIGHT_SPRITE_W]
+    : [KNIGHT_SPRITE_W, KNIGHT_SPRITE_H];
 }
+
+/**
+ * Does the checked-in sheet carry the dilated halo groups yet.
+ *
+ * A dangling `<use href>` renders nothing and throws nothing, so shipping the halo href
+ * against a sheet that predates it is twenty knights with **no** boundary rim at all —
+ * strictly worse than the one-sided key light it replaces, and invisible in review. One
+ * substring test over a module-scope string, evaluated once at load.
+ *
+ * ponytail: a compatibility branch. Ceiling: until `tools/gen_knights.py` emits the halo
+ * and `knights.gen.ts` is regenerated, the rim stays the shipped up-left offset and the
+ * down-right edge keeps measuring 1.06:1. Upgrade path: re-run the generator, then delete
+ * this const and the two ternaries that read it.
+ */
+const HAS_HALO = KNIGHT_DEFS.includes('id="k0-halo"');
 
 /**
  * The `<defs>` id for a pose. `skin_id` is clamped here and this is the **only** place it
@@ -120,65 +141,57 @@ function anchorX(w: number, flip: boolean): number {
 }
 
 /**
- * Per-skin key light — the rim of accent colour behind each body, one unit up-left.
+ * Per-skin rim light — the boundary contrast, drawn behind each body as the generated
+ * two-unit halo (`docs/art/legibility.md` §3.1, §3.2).
  *
- * `docs/review/art.md` finding 3 measured the shipped sprites against the pit floor at its
- * stated p50 (sRGB 53) and found every skin under the legibility floor: **Nocturne 1.91:1,
- * Argent 2.11:1, Cobalt 2.54:1**. (`sprites.ts`'s old "ally 4.35:1" was measured against
- * the deleted primitive circles and is not true of this art.) `mode_downsample` compounds
- * it — the dark keyline takes 49.0% of Argent's surviving pixels and 48.7% of Nocturne's,
- * while the *identifying* accent survives at 56 / 48 / 40 px, 6-7.5% of the body. Three
- * skins at ~2:1 whose identity lives in 6% of their pixels are three dark blobs at 21 px.
+ * **The metric is the boundary, not the average.** Over 60% of every skin is its own dark
+ * keyline (p5 and p25 of all three sit at Y = 0.0076), so an area-weighted body-vs-floor
+ * number measures the wrong thing and cannot be fixed anyway: 4.5:1 against image B's p95
+ * lit ring stone needs a body 3.10x Cobalt / 4.58x Nocturne, which is re-tracing the sheet.
+ * WCAG 1.4.11 is defined on the boundary of a graphical object, and that is reachable.
  *
- * `sil` is the only pose the generator emits with `fill="currentColor"`, so it is the only
- * one that can be recoloured by a `<use>`; every other pose carries per-path hex fills that
- * an inherited `fill` cannot override. Drawn first inside the body `<g>`, offset one unit,
- * it survives only as the ~13% of pixels the body does not cover — a hard rim, which is how
- * pixel art at this size lights a figure.
+ * The rim value is solved, not chosen: `4.5 x (0.0767 + 0.05) - 0.05 = 0.5202`, where
+ * 0.0767 is the brightest floor either reference scene samples. Each accent's HSL lightness
+ * is lifted until its relative luminance reaches that, hue and saturation untouched, so the
+ * rim still *says* Cobalt / Nocturne / Argent. Measured with `docs/art/legibility.py`, worst
+ * over all ten sampled floor percentiles of both scenes:
  *
- * `accent` is the fill the review identified, and is checked against the art below.
- * `key` is that accent lifted to a common HSL L of 0.72 — hue and saturation untouched, so
- * the rim still *says* Cobalt / Nocturne / Argent. Argent's silver is already brighter than
- * that, so it is its own key light.
+ *   skin      accent    rim        Y       worst   on its own contact shadow
+ *   Cobalt    #2f5585   #a8c1e0    0.5185  4.49:1  7.02:1
+ *   Nocturne  #b97055   #dcb7aa    0.5198  4.50:1  7.03:1
+ *   Argent    #b4b4c1   #bebec9    0.5199  4.50:1  7.04:1
  *
- * Measured with the review's own method (WCAG relative luminance, weighted by surviving
- * pixel count, against the same sRGB-53 floor), reproducing its three numbers first:
+ * Cobalt's 4.49 is 4.5:1 only to two significant figures and is the binding case; it occurs
+ * on image B's p95 alone. The "contact shadow" column is why the `<ellipse>` at `FEET_Y` is
+ * load-bearing and not decoration: the knight lands its rim on ground it has itself darkened.
+ * Rim against the sprite's own keyline is 9.9:1, so the halo reads as a halo, not as body.
  *
- *   skin      rim px  rim vs floor   knight vs floor    skin-coloured px
- *   Cobalt      86      5.74:1        2.54 -> 2.87:1     7.5% -> 17.1%
- *   Nocturne    96      5.87:1        1.91 -> 2.40:1     7.1% -> 18.6%
- *   Argent     103      5.98:1        2.11 -> 2.63:1     6.1% -> 18.9%
+ * Two values this supersedes, so nobody restores them from an older document: the common
+ * HSL L of 0.72 the previous rims were solved to (`#95b4da` / `#d5aa9a` / `#b4b4c1`, worst
+ * 3.88-4.04:1 on these scenes), and `sprites.ts`'s "ally 4.35:1", which was measured against
+ * the primitive circles that predate this art and was never true of it.
  *
- * The aggregate barely moves because the rim is 13% of the figure; the *separation* is the
- * point, and that roughly triples. Getting the aggregate over 4.5:1 needs the pit floor
- * lifted too — `Scene.tsx`'s half of the same finding.
+ * The rim is **opaque**, not the 0.5 the original review asked for. At 0.5 it is a blend of
+ * the accent and whatever floor it happens to stand on, which makes this file's value depend
+ * on a pool gradient another commit is about to change and measures *worse than doing
+ * nothing*: Cobalt's accent is a dark blue, and `#2f5585` over the floor at 0.5 is 1.25:1.
  *
- * Opaque, not the review's 0.5. At 0.5 the rim is a blend of the accent and whatever floor
- * it happens to stand on, which (a) makes this file's value depend on a pool gradient
- * another commit is about to change, and (b) measures *worse than doing nothing*: Cobalt's
- * accent is a dark blue, `#2f5585` over the floor at 0.5 is 1.25:1 — invisible — and drags
- * the aggregate from 2.54:1 down to 2.41:1. Opaque and lifted is the same one node.
+ * `accent` is the fill each skin actually paints and is checked against the art below; the
+ * halo groups are emitted `fill="currentColor"` exactly as `sil` is, which is what lets one
+ * `<use>` colour them (every other pose carries per-path hex fills an inherited `fill`
+ * cannot override).
  *
  * Index is `skin_id`, as in `KNIGHT_SKINS`.
  */
 const SKIN_KEY: readonly { readonly accent: string; readonly key: string }[] = [
-  { accent: '#2f5585', key: '#95b4da' }, // Cobalt   — blue
-  { accent: '#b97055', key: '#d5aa9a' }, // Nocturne — copper
-  { accent: '#b4b4c1', key: '#b4b4c1' }, // Argent   — silver, already at key value
+  { accent: '#2f5585', key: '#a8c1e0' }, // Cobalt   — blue
+  { accent: '#b97055', key: '#dcb7aa' }, // Nocturne — copper
+  { accent: '#b4b4c1', key: '#bebec9' }, // Argent   — silver
 ];
 
 /** Clamped exactly as `knightPoseId` clamps, and for the same reachable bad `skin_id`. */
 function keyLight(skinId: number): string {
   return (SKIN_KEY[skinId] ?? SKIN_KEY[0]!).key;
-}
-
-/**
- * The rim offset, in the `<use>`'s own coordinates. One unit up and one unit *left on
- * screen*: a flipped knight is drawn through `scale(-1,1)`, so local +x is screen -x and
- * the sign has to follow the flip or half the raid is lit from the other side.
- */
-function keyDx(flip: boolean): number {
-  return flip ? 1 : -1;
 }
 
 /** Feet-level chrome: the shadow, the local ring and the respawn arc all sit here. */
@@ -309,6 +322,82 @@ function walkPose(d: number): { pose: KnightPose; bob: number } {
 }
 
 // ---------------------------------------------------------------------------
+// The archer kit
+//
+// There is no archer sheet: `gen_knights.py` traces one body per skin and re-tracing it is
+// out of scope here. So the class reads as **authored vector geometry hung on the shared
+// body**, drawn in the sprite's own local frame so the flip, the bob, the recoil, the
+// breathe, the fall and the revive all carry it for free.
+//
+// It has to survive 21 device pixels, which rules out detail and rules in silhouette. The
+// bow is the whole read: a 36-unit recurve arc at local x 12..19, entirely outside the body's
+// own x -8..11, so an archer breaks the knight outline at a glance and from any distance. The
+// quiver's fletchings break it again above the shoulder, and the nocked arrow crosses the
+// body horizontally — three orthogonal directions of silhouette change, none of them colour,
+// which is also what keeps the class legible to a dichromat.
+//
+// Local +x is forward: `flip` is false for facings 1..3 (NE/E/SE), and the whole kit sits
+// inside the same `scale(-1,1)` group as the body, so a west-facing archer mirrors with it.
+//
+// Two tones everywhere, the same construction the sprites and the local marker use: a wide
+// `#05060a` keyline under a narrow `#e0d3ae` fill. Measured with `docs/art/legibility.py`'s
+// own method: `#e0d3ae` is Y 0.6549, worst 5.57:1 over all ten sampled floor percentiles of
+// both scenes, and 13.60:1 against the keyline — so whichever ground the bow crosses, floor
+// or lit ally rim, one of the two tones is winning. Nothing is thinner than 2 units
+// (`docs/art/legibility.md` §4.2's device-pixel floor).
+// ---------------------------------------------------------------------------
+
+const KIT_LIGHT = '#e0d3ae';
+const KEYLINE = '#05060a';
+
+/**
+ * The bow limbs and the drawn string, as one two-subpath outline drawn twice.
+ *
+ * The sprite content sits at local x -8..11 (canvas 8..27 under `anchorX`'s -16), so a bow at
+ * x 12..19 is entirely *outside* the knight outline, and its tips at y -23 / 13 clear the helm
+ * top at -20. That is the whole silhouette argument: at any size where the knight is a shape
+ * rather than a texture, an archer is the shape with a bow beside it.
+ */
+const BOW_D = 'M12,-23 Q22,-5 12,13 M12,-23 L5,-5 L12,13';
+/**
+ * Quiver, and the fletchings clearing the shoulder. Two subpaths, one filled path.
+ * The fletch tops out at y -24, which is exactly where the local-seat chevron's point ends.
+ */
+const KIT_D = 'M-12,-16 L-6,-19 L-2,-4 L-8,-1 Z M-13,-21 L-7,-24 L-5,-19 L-11,-16 Z';
+/** The nocked arrow: shaft from the string's nock, through the bow, with a head. */
+const ARROW_D = 'M5,-6.2 L18,-6.2 L18,-8 L23,-5 L18,-2 L18,-3.8 L5,-3.8 Z';
+
+/**
+ * Everything about the kit that never changes, as one element built once at module load and
+ * shared by all twenty seats. Only the arrow needs a ref, so only the arrow is per-seat.
+ */
+const ARCHER_STATIC = (
+  <>
+    <path d={BOW_D} fill="none" stroke={KEYLINE} strokeWidth={5} strokeLinecap="round" />
+    <path d={BOW_D} fill="none" stroke={KIT_LIGHT} strokeWidth={2.6} strokeLinecap="round" />
+    <path d={KIT_D} fill={KIT_LIGHT} stroke={KEYLINE} strokeWidth={2} paintOrder="stroke" />
+  </>
+);
+
+/**
+ * Draw and loose, as one WAAPI one-shot on one node.
+ *
+ * The resting state is **drawn**: the string is bent back to a nock at local x 5 and the
+ * arrow sits on it. That is the honest resting pose for a class whose whole silhouette is
+ * "about to shoot", and it means the shot event — which only ever arrives *after* the fact,
+ * as a `last_shot_tick` rising edge — animates the half that can be shown: the arrow leaps
+ * forward off the string, vanishes, and a fresh one is nocked.
+ *
+ * Transform and opacity only, so it composites; `fill: 'none'` hands both properties back at
+ * the end, which is what makes the React attributes below the resting truth after a reload.
+ *
+ * ponytail: the string does not flex. Ceiling: at 21 px the bend is under a pixel of travel
+ * and animating it means animating `d`, which is not a composited property. Upgrade path: a
+ * second path with a `path()` CSS transition, once someone reports the bow reads as static.
+ */
+const LOOSE_MS = 420;
+
+// ---------------------------------------------------------------------------
 // The component
 // ---------------------------------------------------------------------------
 
@@ -342,7 +431,17 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
   const [pw, ph] = poseBox(pose);
   const ox = anchorX(pw, w.flip);
   const oy = -(ph >> 1);
+  const archer = classOf(slot) === CLASS_ARCHER;
   const [sw, sh] = poseBox('sil');
+  // The rim. With the halo generated it is the full dilated boundary at the pose's own
+  // anchor, and the corpse gets one too; without it, the shipped one-unit up-left offset of
+  // `sil`, whose down-right edge measures 1.06:1 (see HAS_HALO).
+  const rimPose: KnightPose = HAS_HALO ? (dead ? 'halo-fallen' : 'halo') : 'sil';
+  const [rw, rh] = poseBox(rimPose);
+  // One unit up and one unit *left on screen*: a flipped knight is drawn through
+  // `scale(-1,1)`, so local +x is screen -x and the sign has to follow the flip or half the
+  // raid is lit from the other side. Zero once the halo is symmetric.
+  const rimDx = HAS_HALO ? 0 : w.flip ? 1 : -1;
   // A knight standing still shows `contactL` at bob 0; the pass frame is the only one that
   // lifts. Under reduced motion the lift goes and the cycle reads as pose changes alone.
   const lift = reduced ? 0 : bob;
@@ -351,6 +450,7 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
 
   const bodyRef = useRef<SVGGElement | null>(null);
   const flashRef = useRef<SVGUseElement | null>(null);
+  const arrowRef = useRef<SVGPathElement | null>(null);
   const breathe = useRef<Animation | null>(null);
   // What has already been played, so the effect is a no-op on mount and on every
   // re-render that carried no event.
@@ -389,6 +489,21 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
         duration: 120,
         easing: 'ease-out',
       });
+    }
+
+    // Loose, then re-nock. Fires on the same value diff the recoil does, so it is duplicate-
+    // proof for the same reason, and it is skipped for the dead and under reduced motion for
+    // the same reasons the recoil is.
+    if (w.shots !== p.shots && !dead && !reduced && arrowRef.current !== null) {
+      arrowRef.current.animate(
+        [
+          { transform: 'translate(0px,0px)', opacity: 1 },
+          { transform: 'translate(20px,0px)', opacity: 0, offset: 0.4 },
+          { transform: 'translate(0px,0px)', opacity: 0, offset: 0.42 },
+          { transform: 'translate(0px,0px)', opacity: 1 },
+        ],
+        { duration: LOOSE_MS, easing: 'ease-out' },
+      );
     }
 
     // A flat silhouette at full opacity, faded out. Never a CSS `filter`: twenty
@@ -445,10 +560,26 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
     <>
       <ellipse cy={FEET_Y} rx={11} ry={4} fill={PAL.outline} opacity={0.45} />
 
-      {/* Cue 2 of 3 for finding yourself: not occluded by the knights standing behind you,
-          and the direct descendant of the old `PLAYER_R + 5` ring. */}
+      {/* Cue 2 of 3 for finding yourself, and the direct descendant of the old `PLAYER_R + 5`
+          ring. Two tones, wide dark under narrow bright, because one of the two has to be
+          winning on every ground the ring can land on: `#eafff4` is 7.94:1 against the
+          darkest sampled floor and `#05060a` is 10.96:1 against a lit ally rim or a brazier
+          patch. Geometry is larger than what shipped because `LOBBY_ZOOM = 2` is deleted with
+          the follow camera — `rx 15 / width 2` was 1.4 device px at a 720 px square and was
+          only ever legible because the lobby camera doubled it (legibility.md §4.1, §5.2). */}
       {mine && (
-        <ellipse cy={FEET_Y} rx={15} ry={6} fill="none" stroke={PAL.selfRing} strokeWidth={2} opacity={0.8} />
+        <>
+          <ellipse cy={FEET_Y} rx={18} ry={7} fill="none" stroke={KEYLINE} strokeWidth={5} opacity={0.75} />
+          <ellipse
+            cy={FEET_Y}
+            rx={18}
+            ry={7}
+            fill="none"
+            stroke={PAL.selfRing}
+            strokeWidth={3}
+            opacity={0.9}
+          />
+        </>
       )}
 
       {waiting && (
@@ -465,15 +596,18 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
       )}
 
       <g ref={bodyRef} opacity={dead ? 0.55 : 1}>
-        {/* Key light. First child, so the body covers all of it but the up-left rim; inside
-            the body `<g>`, so the recoil and the breathe carry it rather than leaving it
-            behind. `sil` is the standing union, so it is dropped for the corpse — `fallen`
-            is a transposed canvas and a standing halo behind a lying body reads as a ghost. */}
-        {!dead && (
+        {/* The rim. First child, so the body covers everything but the boundary; inside the
+            body `<g>`, so the recoil and the breathe carry it rather than leaving it behind.
+            One `<use>` for one `<use>` — node count is unchanged from the key light this
+            replaces — and with the halo generated the corpse gains an outline it does not
+            have today. Without it there is no fallen union to draw, so the corpse is skipped:
+            `fallen` is a transposed canvas and a standing halo behind a lying body reads as
+            a ghost. */}
+        {(HAS_HALO || !dead) && (
           <use
-            href={`#${knightPoseId(slot.skinId, 'sil')}`}
-            x={anchorX(sw, w.flip) + keyDx(w.flip)}
-            y={-(sh >> 1) - 1}
+            href={`#${knightPoseId(slot.skinId, rimPose)}`}
+            x={anchorX(rw, w.flip) + rimDx}
+            y={-(rh >> 1) + (HAS_HALO ? 0 : -1)}
             transform={knightT}
             // Both, for the same reason the flash sets both: the generated silhouette may
             // carry `currentColor` or its own fill, and this has to win either way.
@@ -482,6 +616,24 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
           />
         )}
         <use href={`#${knightPoseId(slot.skinId, pose)}`} x={ox} y={oy} transform={knightT} />
+
+        {/* The class, as silhouette. Inside the body `<g>` and inside the body's own
+            `scale(-1,1) translate(0,bob)`, so it flips, bobs, recoils, falls and revives with
+            the figure and never needs a writer of its own. Dropped for the corpse: the kit is
+            authored against the standing pose and `fallen` is a transposed canvas. */}
+        {archer && !dead && (
+          <g transform={knightT}>
+            {ARCHER_STATIC}
+            <path
+              ref={arrowRef}
+              d={ARROW_D}
+              fill={KIT_LIGHT}
+              stroke={KEYLINE}
+              strokeWidth={1.6}
+              paintOrder="stroke"
+            />
+          </g>
+        )}
         <use
           ref={flashRef}
           href={`#${knightPoseId(slot.skinId, 'sil')}`}
@@ -496,9 +648,27 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
         />
       </g>
 
-      {/* Cue 1 of 3, and the only one that works when you are completely hidden behind
-          another knight. Nine units clear of the helm. */}
-      {mine && <path d="M-5,-30 L5,-30 L0,-23 Z" fill={PAL.selfRing} />}
+      {/* Cue 1 of 3, and the only one that works when you are completely hidden behind another
+          knight — so it is never clipped, never faded, and never suppressed while dead: a
+          player watching their own respawn countdown still needs to know which corpse is
+          theirs. 16 x 12 units against the shipped 10 x 7, for legibility.md §4.1's reason.
+          The keyline exists because the chevron's one bad background is an ally's lifted rim:
+          `#eafff4` on that is 1.76:1, and on the keyline 10.96:1. `paint-order: stroke` puts
+          the keyline outside the fill so the shape does not shrink to pay for it.
+
+          It cannot be occluded, and that is arithmetic rather than luck: draw order is
+          ascending `y`, so only an ally with a larger `y` paints later, and such an ally's
+          head top sits at `y_self + d - 21` with d >= 16 — at worst 29 units below this
+          chevron. No separate marker layer is needed (legibility.md §5.4). */}
+      {mine && (
+        <path
+          d="M-8,-36 L8,-36 L0,-24 Z"
+          fill={PAL.selfRing}
+          stroke={KEYLINE}
+          strokeWidth={2}
+          paintOrder="stroke"
+        />
+      )}
 
       {/* Twenty always-on bars is twenty pieces of chrome over the area the boss art
           occupies. One comparison removes most of them for most of the fight. */}
@@ -615,10 +785,12 @@ if (import.meta.env.DEV) {
   });
   // Identity is the point: two skins lit the same colour are the blobs, one rim brighter.
   ok(new Set(SKIN_KEY.map((k) => k.key)).size === KNIGHT_SKIN_COUNT, 'every skin lights differently');
-  // Screen-left under the mirror is local-right; the same sign both ways lights half the
-  // raid from the wrong side and nothing about that reads as a bug.
-  ok(keyDx(false) === -1 && keyDx(true) === 1, 'the key light stays up-left through a flip');
   ok(keyLight(200) === SKIN_KEY[0]!.key, 'an out-of-range skin clamps here too');
+
+  // The halo is transposed exactly where `fallen` is, and on the same canvas as `sil`
+  // otherwise. Getting this wrong lays the corpse's outline across its own body.
+  ok(poseBox('halo').join() === poseBox('sil').join(), 'the halo shares the standing canvas');
+  ok(poseBox('halo-fallen').join() === poseBox('fallen').join(), 'the fallen halo is transposed');
 
   // The odd canvas is what makes the mirror lossless; the two halves must differ by one or
   // a flipped knight stands one unit off from an unflipped one.

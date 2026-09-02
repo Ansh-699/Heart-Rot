@@ -1,0 +1,168 @@
+[
+ {
+  "name": "p4-live-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "p4-live-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "p4-live-noarrows",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "arrows": false
+  }
+ },
+ {
+  "name": "p4-live-20hz",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 20,
+   "frames": 400,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "p4-live-lobby",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "lobby",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "p4-live-passage",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "passage",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 600,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "p4-live-k10",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 10,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "p4-live-k5",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 5,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "p4-live-k1",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 1,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "p4-b128-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 128
+  }
+ },
+ {
+  "name": "p4-live-1366",
+  "cpu": 6,
+  "viewport": {
+   "width": 1366,
+   "height": 768
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14
+  }
+ }
+]

@@ -1,0 +1,176 @@
+[
+ {
+  "name": "a-base",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "a-nochrome",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14,
+   "hud": false,
+   "dev": false
+  }
+ },
+ {
+  "name": "a-nohud",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14,
+   "hud": false
+  }
+ },
+ {
+  "name": "a-noarrows",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14,
+   "arrows": false
+  }
+ },
+ {
+  "name": "a-frozen",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14,
+   "frozen": true
+  }
+ },
+ {
+  "name": "a-feed20",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 20,
+   "frames": 300,
+   "bullets": 14
+  }
+ },
+ {
+  "name": "a-livetick",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14,
+   "tickEvery": 71
+  }
+ },
+ {
+  "name": "a-nograde",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14,
+   "css": "#stage svg g[style*=filter]{filter:none!important}.hr-boss-grade{filter:none!important}"
+  }
+ },
+ {
+  "name": "a-novignette",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14,
+   "noVignette": true
+  }
+ },
+ {
+  "name": "a-b128",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 128
+  }
+ },
+ {
+  "name": "a-k0",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 0,
+   "feedHz": 714,
+   "frames": 300,
+   "bullets": 14,
+   "arrows": false
+  }
+ }
+]

@@ -1,0 +1,10 @@
+{
+ "c0_shipped": "",
+ "c1_b55k16": ".hr-boss-grade{filter:grayscale(0.7) sepia(0.6) hue-rotate(185deg) saturate(1.6) brightness(0.55) contrast(1.6) drop-shadow(-2px -2px 0 rgb(159 232 255 / 0.25))!important}",
+ "c2_b70k20": ".hr-boss-grade{filter:grayscale(0.7) sepia(0.6) hue-rotate(185deg) saturate(1.6) brightness(0.70) contrast(2.0) drop-shadow(-2px -2px 0 rgb(159 232 255 / 0.25))!important}",
+ "c3_b50k22": ".hr-boss-grade{filter:grayscale(0.7) sepia(0.6) hue-rotate(185deg) saturate(1.6) brightness(0.50) contrast(2.2) drop-shadow(-2px -2px 0 rgb(159 232 255 / 0.25))!important}",
+ "c4_mauve": ".hr-boss-grade{filter:saturate(0.45) brightness(0.55) contrast(1.9) drop-shadow(-2px -2px 0 rgb(159 232 255 / 0.25))!important}",
+ "c5_mauve2": ".hr-boss-grade{filter:saturate(0.40) brightness(0.62) contrast(2.1) drop-shadow(-2px -2px 0 rgb(159 232 255 / 0.25))!important}",
+ "c6_cool": ".hr-boss-grade{filter:grayscale(0.35) sepia(0.35) hue-rotate(200deg) saturate(0.9) brightness(0.60) contrast(1.9) drop-shadow(-2px -2px 0 rgb(159 232 255 / 0.25))!important}",
+ "c7_norim": ".hr-boss-grade{filter:saturate(0.45) brightness(0.55) contrast(1.9)!important}"
+}

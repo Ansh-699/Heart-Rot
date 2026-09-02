@@ -1,0 +1,18 @@
+[workspace]
+
+[package]
+name = "cu-archer"
+version = "0.0.0"
+edition = "2021"
+
+[[bin]]
+name = "cu-archer"
+path = "main.rs"
+
+[dependencies]
+mollusk-svm = "0.15.1"
+solana-pubkey = "4"
+solana-account = "4"
+solana-instruction = "3.2"
+bytemuck = "1"
+heartrot = { path = "../../../programs/heartrot" }

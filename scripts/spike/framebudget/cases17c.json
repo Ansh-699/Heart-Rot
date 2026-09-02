@@ -1,0 +1,122 @@
+[
+ {
+  "name": "p3-base",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400
+  }
+ },
+ {
+  "name": "p3-k0",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 0,
+   "feedHz": 714,
+   "frames": 400
+  }
+ },
+ {
+  "name": "p3-k5",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 5,
+   "feedHz": 714,
+   "frames": 400
+  }
+ },
+ {
+  "name": "p3-k10",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 10,
+   "feedHz": 714,
+   "frames": 400
+  }
+ },
+ {
+  "name": "p3-noarrows",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "arrows": false
+  }
+ },
+ {
+  "name": "p3-noarrows-frozen",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "arrows": false,
+   "frozen": true
+  }
+ },
+ {
+  "name": "p3-noarrows-fullhp",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "arrows": false,
+   "fullHp": true
+  }
+ },
+ {
+  "name": "p3-noarrows-frozen-fullhp",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "arrows": false,
+   "frozen": true,
+   "fullHp": true
+  }
+ }
+]

@@ -589,7 +589,10 @@ mod tests {
     fn commit_and_undelegate_recovers_a_lobby_arena_without_settling_it() {
         let mut a = arena_in(PHASE_LOBBY);
         apply_commit_phase(&mut a, true).expect("a stranded lobby arena must be recoverable");
-        assert_eq!(a.phase, PHASE_LOBBY, "a match that never ran is not settled");
+        assert_eq!(
+            a.phase, PHASE_LOBBY,
+            "a match that never ran is not settled"
+        );
     }
 
     /// Every other phase tag 12 accepts goes through `state.rs`'s table, including the
@@ -678,7 +681,11 @@ mod tests {
         ));
         // Right length, wrong bytes — a one-byte tag match would let this through.
         assert!(matches!(
-            process_undelegation(&program_id, empty, &[EXTERNAL_UNDELEGATE_DISCRIMINATOR[0]; 8]),
+            process_undelegation(
+                &program_id,
+                empty,
+                &[EXTERNAL_UNDELEGATE_DISCRIMINATOR[0]; 8]
+            ),
             Err(ProgramError::InvalidInstructionData)
         ));
         // Correct prefix: reaches the account list, which is empty here.

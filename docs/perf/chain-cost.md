@@ -197,6 +197,11 @@ single-account design. Another reason §12.12's split stays cut.)
 
 ### 5.1 The arena PDA's bump is worth up to 7,500 CU per instruction
 
+> **Superseded for `shoot` and `boss_tick` — see `docs/perf/chain-cost-archer.md` §5.**
+> Both now verify their child PDAs with the account's own stored bump (one `sol_sha256`)
+> and are flat at 7,572 / 22,192 CU on a 251/254 arena. `move` (+1,500) and `join`
+> (+1,500) still pay the search. The "unlucky arena worst tick of ~32,000" below is stale.
+
 `assert_pda` re-derives with `find_program_address`, which walks bumps down from 255 at
 about 1,500 CU per rejected candidate. `shoot` does this twice (`boss`, `players`) and
 `boss_tick` does it twice. Measured, identical scenario, two different arena keys:

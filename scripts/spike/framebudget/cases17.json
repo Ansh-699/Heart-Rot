@@ -1,0 +1,490 @@
+[
+ {
+  "name": "arena-1-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 1
+  }
+ },
+ {
+  "name": "lobby-1-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 1
+  }
+ },
+ {
+  "name": "arena-1-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 1
+  }
+ },
+ {
+  "name": "lobby-1-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 1
+  }
+ },
+ {
+  "name": "arena-5-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 5
+  }
+ },
+ {
+  "name": "lobby-5-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 5
+  }
+ },
+ {
+  "name": "arena-5-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 5
+  }
+ },
+ {
+  "name": "lobby-5-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 5
+  }
+ },
+ {
+  "name": "arena-10-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 10
+  }
+ },
+ {
+  "name": "lobby-10-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 10
+  }
+ },
+ {
+  "name": "arena-10-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 10
+  }
+ },
+ {
+  "name": "lobby-10-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 10
+  }
+ },
+ {
+  "name": "arena-20-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20
+  }
+ },
+ {
+  "name": "lobby-20-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 20
+  }
+ },
+ {
+  "name": "arena-20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20
+  }
+ },
+ {
+  "name": "lobby-20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 20
+  }
+ },
+ {
+  "name": "arena-20-714-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "lobby-20-714-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "arena-20-714-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "lobby-20-714-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "lobby",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "attr-novignette",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "noVignette": true
+  }
+ },
+ {
+  "name": "attr-noarrows",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "arrows": false
+  }
+ },
+ {
+  "name": "attr-nobullets",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "bullets": 0
+  }
+ },
+ {
+  "name": "attr-allknight",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "archerPct": 0
+  }
+ },
+ {
+  "name": "attr-allarcher",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "archerPct": 100
+  }
+ },
+ {
+  "name": "attr-noveil",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "layer": "noveil"
+  }
+ },
+ {
+  "name": "layer-bossarena",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "layer": "bossarena"
+  }
+ },
+ {
+  "name": "layer-waiting",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "layer": "waiting"
+  }
+ },
+ {
+  "name": "layer-boss",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 400,
+   "layer": "boss"
+  }
+ },
+ {
+  "name": "passage-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 600,
+   "room": "passage",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "passage-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "frames": 600,
+   "room": "passage",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "area-1024sq-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1024,
+   "height": 1024
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "area-1366-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1366,
+   "height": 768
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "area-uw-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 3440,
+   "height": 1440
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "area-1024sq-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1024,
+   "height": 1024
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714
+  }
+ },
+ {
+  "name": "area-uw-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 3440,
+   "height": 1440
+  },
+  "opts": {
+   "frames": 400,
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714
+  }
+ }
+]

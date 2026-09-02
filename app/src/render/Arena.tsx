@@ -1,45 +1,58 @@
 /**
- * The arena viewport — the composition, and nothing else.
+ * The arena composition — where things sit relative to each other, and who writes which
+ * node. There is no camera in this file any more, and that is the point of it.
  *
- * This file owns *where things sit relative to each other* and *who writes which node*.
- * The art itself lives in three sibling modules, each of which owns one layer and its own
- * animation, so that a change to the boss rig cannot reach into the seat loop:
+ * ONE ROOM IS ON SCREEN AND IT FILLS THE STAGE (spec 17 §1). `./viewport`'s `useViewport`
+ * owns the `viewBox` attribute and is its only writer; `#camera` rests at IDENTITY in both
+ * rooms and is written in exactly one place — `./Passage`, during the gate move. Nothing
+ * pans, nothing follows anybody, nothing is cropped. The follow camera, its dead zone and
+ * its fourteen constants are deleted rather than disabled: they were the reported bug (a
+ * lobby that panned to half a doorway on the first notification, spec §1.6), and their
+ * self-checks moved to `./viewport` where the framing now lives.
  *
- *   `./Scene`   `{SCENE}`                            the temple, graded and lit. One element
- *                                                    built at module load: no props, no memo,
- *                                                    nothing React can walk again.
- *   `./Boss`    `<Boss boss arena />`                the 13-group rig at `BOSS_SPAWN`.
- *   `./Knight`  `<Knight slot tick mine reduced />`  the CHILDREN of one seat `<g>`, never
- *                                                    the `<g>` itself, whose transform the
- *                                                    loops below own. `knightDrawOrder` is
- *                                                    its paint order.
+ * The art lives in sibling modules, each of which owns one layer and its own animation, so
+ * a change to the boss rig cannot reach into the seat loop:
+ *
+ *   `./WaitingRoom` `{WAITING}`                      room A, framed on `VIEW_LOBBY`.
+ *   `./BossArena`   `{BOSS_ARENA}`                    room B, framed on `VIEW_ARENA`.
+ *                                                     Both are ONE element built at module
+ *                                                     load: no props, no memo, nothing
+ *                                                     React can walk again.
+ *   `./Boss`    `<Boss boss arena />`                 the rig at `BOSS_SPAWN`, top centre,
+ *                                                     unmoved by anything in here.
+ *   `./Knight`  `<Knight slot tick mine reduced />`   the CHILDREN of one seat `<g>`, never
+ *                                                     the `<g>` itself, whose transform the
+ *                                                     loops below own.
+ *   `./Shot`    `<Shot … />`                          the arrows, ABOVE the knights.
  *   `./Spawn`   `<Spawn phase bossX bossY reduced />` the light the cavern plays when the
- *                                                    muster ends. Last child, over everything.
+ *                                                     muster ends.
  *
- * The shot this assembles is the reference: the creature fixed at the TOP CENTRE with its
- * hands over the rim, the pit below it, twenty small knights in the pit, bullets falling
- * into them and hitscan going back up. Layer order under `#camera`, back to front:
+ * Layer order under `#camera`, back to front — spec §8, rows 1..16:
  *
- *   scene      static, module-scope. React never walks it again after mount.
- *   walls      the generated wall bitboard, ON TOP of the temple. The floor is art; the
- *              walls are the geometry the chain raycasts, and art that hides one reads as
- *              lag. With them, the entrance marks and the 4x2 gate block `enter_gate`
- *              accepts — rules, drawn, not decoration.
- *   bullets    BENEATH the boss, so a bullet's first frames are hidden by the silhouette
- *              it left. One `<rect>`-shaped `<line>` per active slot, positioned
- *              imperatively from the rAF loop.
- *   boss       behind the players, per the reference.
- *   telegraphs the slam lane and the volley's aim lines. Both are pure functions of
- *              published state (`slamTelegraph`, `boss.attack_timer` + `MUZZLES`), so all
- *              twenty clients draw the same wind-up over the same column with no new byte
- *              on chain and no new notification.
- *   knights    one `<g>` per occupied seat, sorted by authoritative `y` so a knight in
- *              front of another is drawn in front of them.
- *   rim        the pit's near wall, drawn AGAIN on top of everything, so the hands grip a
- *              rim that is in front of them and the knights stand *inside* a pit.
- *   spawn      the opening light, over all of it and pointer-transparent.
+ *   room        the active room whole: void rect, floor, markings, floor light, wall mass
+ *               and props (rows 1-6). Room A or room B, never both.
+ *   boss        rows 7-9, room B only, clipped at the rim.
+ *   telegraphs  row 10, over the boss and UNDER the knights.
+ *   bullets     row 11, boss ordnance, capped at 32 drawn.
+ *   knights     row 12. THE PLAYER IS ON TOP: nothing in the scene is drawn over a body.
+ *   arrows      row 13, above the knights — an arrow under twenty bodies is the "I cannot
+ *               see anything" report.
+ *   rim         row 14, the one earned occluder, two tile rows, room B only.
+ *   spawn       row 15, the opening light, pointer-transparent.
+ *   veil        row 16, the passage, mounted last so it covers the flare.
  *
- * Three things in here were measured and must not be undone:
+ * Rows 1-6 belong to the room modules. A wall drawn here as well would be a second copy of
+ * the bitboard, which is this project's signature defect.
+ *
+ * R3, the room contract that makes room A's painted gate tower legal (spec §3): A SEAT AND
+ * EVERYTHING IT LOOSES ARE DRAWN ONLY IN THE ROOM ON SCREEN. `VIEW_LOBBY` and `VIEW_ARENA`
+ * overlap in world space; break R3 and the lobby's fake masonry paints over the pit and
+ * over the allies standing in it. `seatShown` is the whole of the enforcement and it is
+ * exported so `Shot` gates arrows and damage numbers on the same predicate — R3 answered
+ * twice, once against `room` and once against a raw `zone`, is one fact stored twice, and
+ * the two answers differ by construction for the whole of a gate cover.
+ *
+ * Four things in here were measured and must not be undone:
  *
  *   1. The LOCAL seat renders from `predictor.self`, chased in the rAF loop; every REMOTE
  *      seat renders from `useSeatInterpolation`. That split took static frames during a
@@ -47,30 +60,27 @@
  *   2. The frame loop is the ONLY writer of a bullet's and the local seat's transform.
  *      A node carrying an inline transform *and* a running animation silently discards the
  *      inline write; one writer per node is mechanical here, not a discipline.
- *   3. The camera is a `<g>` transform. Animating the `viewBox` attribute measured
- *      9.6 ms/frame against ~1.7 for the identical scene on a transform.
+ *   3. The `viewBox` is set, never animated: animating it measured 9.6 ms/frame against
+ *      ~1.7 for the identical scene on a `<g>` transform. That is why the gate move is a
+ *      transform on `#camera` and why the fit hook writes the attribute only on a resize or
+ *      a room change.
+ *   4. The 32-bullet visible cap: 11.46/16.96 ms → 9.38/14.92 at 20 knights and 6x throttle.
  */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
+  BOSS_SPAWN,
+  CORE,
   GATE_MAX_X,
   GATE_MAX_Y,
   GATE_MIN_X,
-  LOBBY_SPAWN_MAX_X,
-  LOBBY_SPAWN_Y,
-  LOBBY_SPAWN_MIN_X,
   GATE_MIN_Y,
+  MAP_ENTRANCES,
   MAP_TILE,
   MAX_BULLETS,
   MUZZLES,
   NO_TARGET,
+  PART_HITBOXES,
   PHASE_FIGHTING,
   PHASE_LOBBY,
   PHASE_MUSTERING,
@@ -79,6 +89,8 @@ import {
   SLAM_LANE_W,
   SLAM_TELEGRAPH_TICKS,
   TICK_MS,
+  ZONE_ARENA,
+  ZONE_LOBBY,
   onGate,
   slamTelegraph,
   type ArenaAccount,
@@ -89,18 +101,21 @@ import {
 } from '@heartrot/client';
 
 import { useSeatInterpolation, type PredictedSelf, type Predictor } from '../net/predict';
+import { BOSS_ARENA } from './BossArena';
 import { Boss } from './Boss';
 import { KNIGHT_POSE_DEFS, Knight, knightDrawOrder } from './Knight';
-import { SCENE } from './Scene';
+import { Shot } from './Shot';
 import { Spawn } from './Spawn';
+import { WAITING } from './WaitingRoom';
+import { useViewport, type Room } from './viewport';
 import {
   ARENA_UNITS,
   BULLET_R,
-  MAP_ENTRANCE_PATH,
   MAP_RIM_PATH,
   MAP_WALL_PATH,
   PAL,
   SELF_SNAP,
+  VISIBLE_PROJECTILES,
 } from './sprites';
 
 /**
@@ -117,18 +132,15 @@ import {
 export const MOVE_MS = 50;
 
 /**
- * How many bullets are DRAWN. `MAX_BULLETS` is 128 and stays 128: it is a chain fact, and
- * so is `bullets_per_volley = 3 + alive_count`. This caps the picture, never the
- * simulation — the client must not disagree with the crank about what is on the board.
- *
- * Measured (`docs/perf/frame-budget.md`), 20 knights + full art + the real 714 notif/s
- * feed at 6x CPU throttle: 128 drawn is 11.46 ms p50 / 16.96 p95 with 7.2% of frames over
- * budget; 32 drawn is 9.38 / 14.92 with 4.6% over, and the client services 72 notifications
- * a second instead of 61. Nothing else measured was worth half of it. The live instrument
- * saw only 13-15 bullets in flight at 20 seats, so the cap is almost never reached — which
- * is also why the ranking below is allowed to cost anything at all.
+ * How many bullets are DRAWN — the scene's whole projectile budget, of which whatever this
+ * file does not spend is handed to `Shot` as `budget`. One number, and it is
+ * {@link VISIBLE_PROJECTILES} in `sprites.ts` rather than a second name here: the two used
+ * to be typed separately and nothing cross-checked them, so lowering one of them silently
+ * restored the cap through the other. The live instrument saw only 13-15 bullets in flight
+ * at 20 seats, so the cap is almost never reached — which is also why the ranking below is
+ * allowed to cost anything at all.
  */
-const VISIBLE_BULLETS = 32;
+const VISIBLE_BULLETS = VISIBLE_PROJECTILES;
 
 /**
  * How far ahead a bullet is looked at when ranking it. The game already has exactly one
@@ -226,69 +238,98 @@ export function chase(at: { x: number; y: number }, to: { x: number; y: number }
 }
 
 // ---------------------------------------------------------------------------
-// The camera
+// The gate move, and the room contract
 // ---------------------------------------------------------------------------
 
 /**
- * The lobby framing, derived rather than typed: centred on the gate the whole lobby is
- * built around, sitting on the bottom edge of the world, at an INTEGER zoom so both ends
- * of the pan land on whole device pixels.
+ * How long the pit reveal takes, and the curve it takes it on. A camera has no twin on
+ * chain — the one duration in this file allowed to be a local number, because nothing on
+ * chain is waiting for it and no two clients need to agree on it.
  *
- * This is also the boss reveal the brief asks for. The creature stands at `BOSS_SPAWN`
- * from `init` onward and is simply off-camera; walking the doorway pans it into frame.
- * Zero chain machinery buys the entire reveal.
+ * Exported rather than used here: `#camera` rests at identity in both rooms and `Passage`
+ * is its only writer (spec §7.3). Restating 900 there would be one fact stored twice, which
+ * is the defect this project keeps paying for.
  */
-const LOBBY_ZOOM = 2;
-const LOBBY_SPAN = ARENA_UNITS / LOBBY_ZOOM;
-// Framed on the gate AND every lobby spawn, not the gate alone.
-//
-// `lobby_spawn` fans the seats symmetrically about `LOBBY_ENTRANCE`, so they span
-// x 208..664 while a gate-centred window showed 256..768 — seats 0 and 1 stood outside it
-// and drew nothing a player could find. Seat 0 is what the FIRST player to join gets, so
-// the default experience of the game was an empty room with a knight you never see.
-// Nothing was broken in the sprite path; the camera was pointed at the wrong place.
-const LOBBY_FOCUS_MIN = Math.min(GATE_MIN_X, LOBBY_SPAWN_MIN_X);
-const LOBBY_FOCUS_MAX = Math.max(GATE_MAX_X, LOBBY_SPAWN_MAX_X);
-const LOBBY_X = Math.max(
-  0,
-  Math.min(
-    ARENA_UNITS - LOBBY_SPAN,
-    Math.round((LOBBY_FOCUS_MIN + LOBBY_FOCUS_MAX + 1) / 2 - LOBBY_SPAN / 2),
-  ),
+export const CAMERA_MS = 900;
+export const CAMERA_EASE = 'cubic-bezier(0.65, 0, 0.20, 1)';
+
+/**
+ * Longest a passage hold may freeze the local seat, whatever `Passage` does or fails to do.
+ *
+ * The third of the hold's three independent releases (spec §7.3), and the only one that
+ * survives a `Passage` that never unmounts, never resolves and never cleans up — including
+ * a player who tabs out mid-passage, since WAAPI pauses on a hidden document and
+ * `cover.finished` then never settles. 2.2x the longest legitimate cover (1,100 ms of beat,
+ * 460 ms of it opaque), so it never fires on a healthy path and always fires on a broken
+ * one. A leaked hold is a knight frozen for the rest of the match.
+ */
+const HOLD_CEILING_MS = 1000;
+
+/** Which room a `zone` byte names. The only place the two vocabularies are joined. */
+export const roomOf = (zone: number): Room => (zone === ZONE_ARENA ? 'arena' : 'lobby');
+
+/**
+ * Is this seat's content drawn right now? R3, and the ONE answer to it — the seat loop
+ * below filters on it, and `Shot` gates arrows and damage numbers on it, because a seat
+ * and the arrow it looses are the same fact and one fact stored twice is what this repo
+ * keeps paying for.
+ *
+ * `VIEW_LOBBY` (y 432..1088) and `VIEW_ARENA` (y -48..608) overlap in world space, and room
+ * A authors a gate tower over what is really pit floor. That is only safe while nobody in
+ * the other zone is drawn: a seat still in the lobby, painted onto the arena frame, lands
+ * 400 units below the pit; an ally in the pit, painted onto the lobby frame, stands behind
+ * room A's fake masonry. Both read as a rendering bug rather than as the framing.
+ *
+ * THE ROOM ON SCREEN DECIDES, never a zone compared against the local player's zone. The
+ * two answers differ by construction for the whole of a gate cover, because `Passage` lags
+ * `room` behind the chain on purpose (spec §7.3): gate an ally's arrow on raw zone and it
+ * is drawn at pit coordinates over the waiting room, under a veil still fading in.
+ *
+ * `holdSeat` is the single exception and it is the local player's own seat. The payload
+ * that flips `zone` to `ZONE_ARENA` lands one commit BEFORE `Passage` can open the beat,
+ * so without it the local knight is unmounted from room A with nothing covering it — "I
+ * cannot see my character", at the exact moment the beat exists to prevent it. Held, the
+ * seat stays mounted in whatever room is on screen and the frozen frame loop leaves it at
+ * its last drawn position, which is what `hold` has always claimed to do.
+ *
+ * Deliberate consequence, so it is not reported as a defect: during a muster a player in
+ * the pit no longer sees allies still in the lobby, and vice versa. They are in a different
+ * room behind a shut gate, and the HUD roster already reports the count.
+ */
+export function seatShown(slot: PlayerSlot, room: Room, holdSeat?: number): boolean {
+  if (holdSeat !== undefined && slot.seat === holdSeat) return true;
+  return roomOf(slot.zone) === room;
+}
+
+/**
+ * The seats drawn in the room on screen, in paint order.
+ *
+ * Pure, and the paint order is still `knightDrawOrder`'s — this only removes seats from it,
+ * so two knights in the same room keep the depth order they had, and an empty seat is
+ * dropped there rather than here.
+ */
+export function roomSeats(slots: readonly PlayerSlot[], room: Room, holdSeat?: number): PlayerSlot[] {
+  return knightDrawOrder(slots).filter((s) => seatShown(s, room, holdSeat));
+}
+
+/**
+ * How far BELOW its own origin the boss can still be hit, in boss-local units.
+ *
+ * The clip on the drawn rig is derived from this and never typed, because the art and the
+ * hitboxes disagreeing is one fact stored twice and it fails silently in the ugliest way
+ * this file has: `#heartrot-boss-clip` used to cut the rig at `PIT_BOT + 1 = 608` while
+ * `PART_HITBOXES` reaches boss-local y 312 — world 712 at `BOSS_SPAWN` — so 104 units of
+ * mace arm and claw were hittable and drawn nowhere. An arrow fired down the pit stopped
+ * dead in mid-air and sparked gold on empty stone, and the chain scored the damage.
+ *
+ * The chain owns the table, so the art moves to it: `Rect::contains` is half-open, so
+ * `y + h` is the first unit NOT hittable and is exactly the right cut. The vent is a
+ * circle, so it contributes its centre plus its radius.
+ */
+const BOSS_HIT_BOT = Math.max(
+  CORE.y + Math.sqrt(CORE.radiusSq),
+  ...PART_HITBOXES.map((r) => r.y + r.h),
 );
-const LOBBY_Y = ARENA_UNITS - LOBBY_SPAN;
-
-/**
- * How close to the window edge the local knight gets before the lobby camera re-centres.
- * A dead zone, so ordinary walking pans nothing and only approaching the edge moves it.
- */
-const LOBBY_MARGIN = 96;
-
-/** The lobby window's top-left that centres `(x, y)`, clamped inside the map. */
-function lobbyOriginFor(x: number, y: number): { x: number; y: number } {
-  const lim = ARENA_UNITS - LOBBY_SPAN;
-  const fit = (v: number): number => Math.max(0, Math.min(lim, Math.round(v - LOBBY_SPAN / 2)));
-  return { x: fit(x), y: fit(y) };
-}
-
-/** Is `(x, y)` within `LOBBY_MARGIN` of the edge of the window at `o` — or outside it? */
-function nearLobbyEdge(o: { x: number; y: number }, x: number, y: number): boolean {
-  return (
-    x < o.x + LOBBY_MARGIN ||
-    x > o.x + LOBBY_SPAN - LOBBY_MARGIN ||
-    y < o.y + LOBBY_MARGIN ||
-    y > o.y + LOBBY_SPAN - LOBBY_MARGIN
-  );
-}
-const CAM_ARENA = 'scale(1) translate(0px, 0px)';
-
-/**
- * How long the pit reveal takes. A camera has no twin on chain — it is the one duration in
- * this file that is allowed to be a local number, because nothing on chain is waiting for
- * it and no two clients need to agree on it.
- */
-const CAMERA_MS = 900;
-const CAMERA_EASE = 'cubic-bezier(0.65, 0, 0.20, 1)';
 
 // ---------------------------------------------------------------------------
 // Telegraph geometry
@@ -385,6 +426,46 @@ export interface ArenaProps {
    * the clock; the crank promises no wall-clock period.
    */
   tickMs?: number;
+  /**
+   * Which room is on screen. `Passage` owns it, because during the 460 ms cover it and the
+   * seat's own `zone` disagree ON PURPOSE — the swap hangs off `cover.finished` so the
+   * outgoing room is unmounted only once the veil is opaque (spec §7.3).
+   *
+   * Absent, it falls back to the one rule in §1.7: the local seat's `zone`, and the phase
+   * when there is no seat. That fallback is the whole behaviour with no `Passage` mounted,
+   * so this file is correct on its own and `Passage` only adds the beat.
+   */
+  room?: Room;
+  /**
+   * Freeze the local seat while the veil is opaque. While set the frame loop writes no
+   * transform, so the knight holds its last drawn position and is PLACED at the entrance on
+   * release rather than chased 387 units across the room in front of the player.
+   *
+   * A HINT, not the trigger. The hold that matters is derived here from `room` disagreeing
+   * with the local seat's own zone, because that is true one commit earlier than `Passage`
+   * can set this — and that commit is where the knight used to disappear. This prop only
+   * extends the freeze past the cut on the paths where `Passage` keeps it set.
+   *
+   * Release 3 of 3 lives here as {@link HOLD_CEILING_MS}: whatever `Passage` does, the hold
+   * expires. The other two are `cover.finished` and `Passage`'s own effect cleanup.
+   */
+  hold?: boolean;
+  /**
+   * Row 16: the passage veils and the teal wash, mounted after `Spawn` so the veil covers
+   * the flare when both fire. A slot rather than an import, because `Passage` owns `room`
+   * and `hold` above it — it renders `<Arena>`, and its veils have to land INSIDE this
+   * `<svg>` to be in the camera's space.
+   */
+  veil?: ReactNode;
+  /**
+   * Bumped by the store whenever the feed drops and resubscribes. Forwarded to BOTH
+   * readers, `Shot` and `Spawn`: a diff baseline that is not reseeded replays every shot
+   * and every cinematic a reconnect re-delivers — the bug `Spawn.tsx` shipped with, and
+   * the reason a resync gate exists at
+   * all rather than reading `state.status` (which `store.ts:415` forces to `'live'` on
+   * every payload, so it races the thing it gates).
+   */
+  feedEpoch?: number;
   className?: string;
 }
 
@@ -395,13 +476,43 @@ export function Arena({
   localSeat,
   predictor,
   tickMs = TICK_MS,
+  room,
+  hold = false,
+  veil,
+  feedEpoch = 0,
   className,
 }: ArenaProps) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const reduced = usePrefersReducedMotion();
 
-  const crisp = usePixelFit(boxRef, svgRef);
+  const localSlot = localSeat === undefined ? undefined : players.slots[localSeat];
+  // §1.7's ONE rule, and the shipped `wide = phase === LOBBY || MUSTERING` is deleted with
+  // the camera: `enter_gate` flips one seat to `ZONE_ARENA` while the arena is still
+  // MUSTERING, so a phase-derived framing showed the lobby to a player already through the
+  // gate. The seat's own zone is the only thing that knows which side of the door it is on.
+  const shown: Room =
+    room ??
+    (localSlot?.occupied === true
+      ? roomOf(localSlot.zone)
+      : arena.phase === PHASE_LOBBY || arena.phase === PHASE_MUSTERING
+        ? 'lobby'
+        : 'arena');
+
+  // A passage is in flight exactly while the room on screen and the local seat's own zone
+  // disagree — `Passage` holds `room` back for the length of the cover on purpose. Derived
+  // here rather than taken from the `hold` prop because it is true in the SAME commit the
+  // payload lands in, and `hold` cannot be until `Passage`'s passive effect has run and a
+  // second render has reached its layout effect. That one commit is the whole of the
+  // defect: it unmounted the local knight with the veil still at opacity 0.
+  //
+  // With no `Passage` mounted `shown` is derived from this very zone, so it is never set.
+  const crossing = localSlot?.occupied === true && roomOf(localSlot.zone) !== shown;
+  const holding = hold || crossing;
+
+  // Sole writer of the `viewBox`. No React attribute, no second source for the framing:
+  // two writers of one size is the defect class this repo keeps paying for.
+  useViewport(shown, boxRef, svgRef);
 
   // `tickMs`, not the `TICK_MS` default: the ceiling on the interpolation window has to be
   // the crank period the worker actually reports, or every remote seat paces itself against
@@ -422,6 +533,10 @@ export function Arena({
   }, [arena.tick]);
 
   const nodes = useRef(new Map<number, SVGLineElement>());
+  // `Shot`'s per-frame step, driven from the ONE rAF loop in the scene. A second loop is
+  // what that module exists not to add, so the driver is a mandatory prop over there and
+  // this ref is the whole of the wiring.
+  const shotFrame = useRef<((now: number) => void) | null>(null);
   // The local seat's `<g>`, owned by the frame loop the way `nodes` owns the bullets.
   const selfNode = useRef<SVGGElement | null>(null);
   // The gate's under-foot light. Same ownership rule: the frame loop writes its opacity and
@@ -430,6 +545,16 @@ export function Arena({
   const gateNode = useRef<SVGRectElement | null>(null);
   const drawn = useRef<{ x: number; y: number } | null>(null);
   const frameAt = useRef(0);
+  // The hold, read by the frame loop rather than closed over: the loop must not be torn
+  // down and rebuilt when the veil opens. `heldAt` is what makes the ceiling a WALL clock
+  // and not a frame count — a backgrounded tab runs no frames at all, and that is exactly
+  // the case release 3 exists for.
+  const held = useRef(false);
+  const heldAt = useRef(0);
+  if (held.current !== holding) {
+    held.current = holding;
+    heldAt.current = performance.now();
+  }
   // Placed on attach, not on the next frame: a seat that waits for one sits at the SVG
   // origin, which reads as the knight teleporting to the corner. Stable while `predictor`
   // is, so React does not detach and reattach the node on every update.
@@ -445,10 +570,11 @@ export function Arena({
     [predictor],
   );
   useEffect(() => {
-    // Under reduced motion bullets snap to each published position: React already writes
-    // that transform, so there is nothing left for a frame loop to do — but the local
-    // seat has no transform of its own to snap to, so the loop still runs for it.
-    if (reduced && predictor === undefined) return;
+    // Unconditional. Under reduced motion bullets snap to each published position — React
+    // already writes that transform — but the local seat has no transform of its own to
+    // snap to, and `Shot` still needs its step called to land arrows and retire flights.
+    // The loop used to bail for a reduced-motion spectator; that would leave every arrow
+    // parked at its bow with no error anywhere.
     let raf = 0;
     const frame = () => {
       const now = performance.now();
@@ -464,8 +590,15 @@ export function Arena({
       // One more node per frame, off the predicted position rather than the feed, so the
       // knight the player is watching moves when they press a key and not when Singapore
       // says so. Under reduced motion the step is unbounded, which is a snap.
+      //
+      // Under the passage hold it writes nothing at all: the knight keeps its last drawn
+      // transform under an opaque veil, and clearing `drawn` means the next unheld frame
+      // PLACES it at the entrance `enter_gate` chose instead of chasing it there. The
+      // ceiling is the release that does not depend on `Passage` being well behaved.
       const el = selfNode.current;
-      if (el !== null && predictor !== undefined) {
+      const frozen = held.current && now - heldAt.current < HOLD_CEILING_MS;
+      if (frozen) drawn.current = null;
+      else if (el !== null && predictor !== undefined) {
         let at = drawn.current;
         if (at === null) at = drawn.current = { x: predictor.self.x, y: predictor.self.y };
         // Real elapsed time, not an assumed 1/60: a 144 Hz screen would otherwise chase
@@ -486,6 +619,10 @@ export function Arena({
         }
       }
 
+      // The arrows, last: they are drawn over the bodies this loop has just placed, and
+      // `Shot` reads no state of its own from the loop beyond `now`.
+      shotFrame.current?.(now);
+
       frameAt.current = now;
       raf = requestAnimationFrame(frame);
     };
@@ -493,50 +630,6 @@ export function Arena({
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
   }, [reduced, predictor]);
-
-  // ---- the camera -------------------------------------------------------
-  //
-  // Sole writer of `#camera`'s transform, WAAPI only: no React attribute, no inline style.
-  // The first pass runs at duration 0, which is how the resting framing is set without a
-  // second writer arguing with the pan over the same property.
-  const cameraRef = useRef<SVGGElement | null>(null);
-  const cameraAnim = useRef<Animation | null>(null);
-  const cameraFrom = useRef<string | null>(null);
-  const wide = arena.phase === PHASE_LOBBY || arena.phase === PHASE_MUSTERING;
-  // The lobby camera FOLLOWS the local knight rather than framing a fixed window.
-  //
-  // A fixed window cannot show a player who is outside it, and there is always a way to be
-  // outside it: seats written by an older program, and — before the pit clamp — simply
-  // walking north out of the lobby, which is how the first report of this arrived. The
-  // chain held the knight at (66, 20), the renderer drew it there faithfully, and the
-  // window showed x 181..693 / y 512..1024. Nothing was broken except where we were looking.
-  const camOrigin = useRef<{ x: number; y: number }>({ x: LOBBY_X, y: LOBBY_Y });
-  const localSlot = localSeat === undefined ? undefined : players.slots[localSeat];
-  const followX = localSlot?.occupied === true ? localSlot.x : undefined;
-  const followY = localSlot?.occupied === true ? localSlot.y : undefined;
-  useLayoutEffect(() => {
-    const el = cameraRef.current;
-    if (el === null) return;
-    if (wide && followX !== undefined && followY !== undefined) {
-      // Re-centre only near the edge, so ordinary walking pans nothing.
-      if (nearLobbyEdge(camOrigin.current, followX, followY)) {
-        camOrigin.current = lobbyOriginFor(followX, followY);
-      }
-    }
-    const o = camOrigin.current;
-    const to = wide ? `scale(${LOBBY_ZOOM}) translate(${-o.x}px, ${-o.y}px)` : CAM_ARENA;
-    const from = cameraFrom.current;
-    if (from === to) return;
-    cameraAnim.current?.cancel();
-    // Reduced motion asks for a cut, not a faster pan — a full-frame translate is the one
-    // genuinely vestibular thing in this scene.
-    const duration = from === null || reduced ? 0 : CAMERA_MS;
-    cameraAnim.current = el.animate(
-      from === null ? [{ transform: to }] : [{ transform: from }, { transform: to }],
-      { duration, easing: CAMERA_EASE, fill: 'both' },
-    );
-    cameraFrom.current = to;
-  }, [wide, reduced, followX, followY]);
 
   // ---- the two telegraphs -----------------------------------------------
   //
@@ -569,39 +662,16 @@ export function Arena({
 
   // ---- the static layers ------------------------------------------------
   //
-  // Each is one memo with an empty dependency list, so React holds one identical element
-  // reference and skips the whole subtree on every update from here on. Rebuilding a layer
-  // of this size per notification is the measured way to crash a renderer process — 11.2
-  // ms a frame, and 3/3 crashes at 300 frames. `SCENE` needs no memo at all: it is one
-  // element built at module load, so its reference is already constant.
-  const overlay = useMemo(
-    () => (
-      <g>
-        {/* Every solid tile, over the temple. `SCENE` replaces the floor fill and nothing
-            else: a wall the art hides is a legal-looking move the chain rejects, which is
-            this project's signature misdiagnosis. */}
-        <path d={MAP_WALL_PATH} fill={PAL.wall} />
-        <path d={MAP_RIM_PATH} fill={PAL.rim} />
-        {/* The four `E` respawn marks. Walkable floor, so a tint and not a wall — but a
-            player who has just died needs to know where they are about to reappear. */}
-        <path d={MAP_ENTRANCE_PATH} fill={PAL.entrance} opacity={0.18} />
-        {/* The gate. Without it drawn, "walk to the doorway" is a guess — this 4x2 tile
-            block is the whole of matchmaking and it is plain floor in the map grid. */}
-        <rect
-          x={GATE_MIN_X}
-          y={GATE_MIN_Y}
-          width={GATE_MAX_X - GATE_MIN_X + 1}
-          height={GATE_MAX_Y - GATE_MIN_Y + 1}
-          fill={PAL.ventOpen}
-          fillOpacity={0.12}
-          stroke={PAL.ventOpen}
-          strokeWidth={2}
-          strokeDasharray="8 6"
-        />
-      </g>
-    ),
-    [],
-  );
+  // Rows 1-6 — floor, markings, floor light, wall mass, props — belong to `WAITING_ROOM`
+  // and `BOSS_ARENA`, which are module-scope elements React never walks again. The wall
+  // layer that used to live here went with them: the generated bitboard drawn twice is one
+  // fact stored twice, and a wall the art disagrees with is a legal-looking move the chain
+  // rejects, which is this project's signature misdiagnosis.
+  //
+  // What is left is one memo with an empty dependency list, so React holds one identical
+  // element reference and skips the subtree on every update. Rebuilding a layer of this
+  // size per notification is the measured way to crash a renderer process — 11.2 ms a
+  // frame, and 3/3 crashes at 300 frames.
   const rim = useMemo(
     () => (
       // The pit's near wall, drawn a second time OVER everything: the boss's hands grip a
@@ -625,7 +695,21 @@ export function Arena({
   // Sorted at notification rate, never per frame: a knight lower on the screen is nearer,
   // so it is drawn later. Authoritative `y` on every seat including the local one — the
   // local knight drawn out of order would jump in front of an ally it is standing behind.
-  const drawOrder = useMemo(() => knightDrawOrder(players.slots), [players]);
+  // Filtered to the room on screen: R3, and the reason room A may paint a gate tower over
+  // what is really pit floor.
+  // The local seat is kept in the room on screen while the passage is crossing — see
+  // `seatShown`. That, and not the `hold` prop, is what makes the documented hold real.
+  const holdSeat = holding ? localSeat : undefined;
+  const drawOrder = useMemo(
+    () => roomSeats(players.slots, shown, holdSeat),
+    [players, shown, holdSeat],
+  );
+
+  // Which pool slots get a node, decided once per render rather than in the JSX: `Shot`
+  // needs the COUNT to know what is left of the 32, and boss ordnance ranks first. Rooms
+  // do not enter it — the pool is empty outside a fight, and `arena.bullets` is the chain's
+  // answer either way.
+  const shownBullets = visibleBullets(arena.bullets, players.slots);
 
   // One cached slot for the predicted seat, see `predictedSlot`. A ref and not a memo: it
   // is keyed on a mutable position no dependency array can watch.
@@ -635,23 +719,24 @@ export function Arena({
     <div
       ref={boxRef}
       className={className}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-        minHeight: 0,
-      }}
+      // The flex centring is gone with the camera: there is nothing left to centre, the
+      // room fills the stage. `overflow: hidden` stays because the void bleed is allowed to
+      // paint past the room and must not scroll the page.
+      style={{ position: 'relative', overflow: 'hidden', minHeight: 0 }}
     >
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${ARENA_UNITS} ${ARENA_UNITS}`}
-        // Crisp only where a whole number of device pixels is available. Below 1:1 there is
-        // no integer to snap to, and snapping anyway drops a different row of a 19%-keyline
-        // sprite on every frame it translates through — flicker, where softness is the
-        // better failure.
-        shapeRendering={crisp ? 'crispEdges' : 'geometricPrecision'}
-        style={{ display: 'block' }}
+        // No `viewBox` attribute: `useViewport` owns it, and React writing one too would be
+        // two writers for one framing. No `width`/`height` presentation attributes either —
+        // the CSS below wins and two sources for one size is the defect class this repo
+        // keeps paying for.
+        preserveAspectRatio="xMidYMid meet"
+        // Unconditional. The integer device-pixel snap is deleted, not fixed: an integer
+        // scale is available on 16 of 96 window/dpr shapes, so `crispEdges` was a coin flip
+        // that reframed mid-drag for one user in six and shimmered for the other five.
+        // "Sharper" is delivered as BIGGER — 1.008 to 1.573 px/unit on a 1080p screen.
+        shapeRendering="geometricPrecision"
+        style={{ display: 'block', width: '100%', height: '100%' }}
         role="img"
         aria-label={`Boss arena, tick ${arena.tick}, ${arena.aliveCount} raiders alive`}
       >
@@ -659,24 +744,28 @@ export function Arena({
           <clipPath id="heartrot-rim-clip">
             <rect x={0} y={PIT_BOT + 1 - 2 * MAP_TILE} width={ARENA_UNITS} height={2 * MAP_TILE} />
           </clipPath>
-          {/* The boss ends at the rim. At SCALE=3 the sprite is 810 units tall and reaches
-              world y 805 — 200 units BELOW the pit — so the legs and the lower claw were
-              drawn straight down the temple approach, over the stairs and the gate, in
-              full view of the lobby camera. That is not a rig bug: spec §1.2's own
-              footprint has the mace at y 301..711 while §1.4 assumes the boss is
-              off-camera during the lobby, and both cannot hold.
+          {/* The boss ends where the boss ENDS. At SCALE=3 the sprite is 810 units tall and
+              reaches world y 805 — 200 units below the pit — so the legs and the lower claw
+              were drawn straight down the temple approach, over the stairs and the gate.
+              That art is still cut; what is no longer cut is anything the chain can hit.
+              The cut used to be `PIT_BOT + 1 = 608`, the bottom of the rim band, chosen so
+              the hands read as gripping the rim. But `PART_HITBOXES` reaches world y 712 at
+              `BOSS_SPAWN`, so 104 units of mace arm and claw were hittable and drawn
+              nowhere: an arrow fired down the pit stopped in mid-air and sparked gold on
+              bare stone while the chain scored the damage. Art that disagrees with the
+              hitboxes is one fact stored twice, and the chain owns the table — so the cut
+              is derived from it ({@link BOSS_HIT_BOT}) and follows `boss.y`, and the rim
+              composition is bought back by the rim occluder alone (row 14), which still
+              redraws over the hands.
               Clipped here rather than inside `Boss`: `clip-path` resolves against the
               element's own transform, and `.hr-boss` carries `translate(boss.x, boss.y)`,
-              so a clip there moves with the boss instead of staying on the rim. Cut at
-              `PIT_BOT + 1`, which is the BOTTOM of the rim band the occluder redraws over
-              everything — so the cut edge lands under the rim and the hands read as
-              gripping it, which is the composition the reference is built on. */}
+              so a clip there moves with the boss instead of standing still in world space. */}
           <clipPath id="heartrot-boss-clip">
             <rect
               x={-ARENA_UNITS}
               y={-ARENA_UNITS}
               width={3 * ARENA_UNITS}
-              height={ARENA_UNITS + PIT_BOT + 1}
+              height={ARENA_UNITS + boss.y + BOSS_HIT_BOT}
             />
           </clipPath>
           {/* The fifteen knight poses, mounted once. Every seat draws `<use href="#kN-…">`
@@ -686,72 +775,53 @@ export function Arena({
           {KNIGHT_POSE_DEFS}
         </defs>
 
-        <g ref={cameraRef} id="camera">
-          {SCENE}
-          {overlay}
+        {/* `#camera` rests at IDENTITY. It carries no transform from this file, ever — it
+            exists so `Passage` has one node to translate for the gate move and so
+            `App.tsx`'s `aimOrigin` has one `getScreenCTM()` to aim through. No ref here:
+            one writer, and it is not this one. */}
+        <g id="camera">
+          {/* Rows 1-6: the active room, whole. Exactly one is mounted — R3 depends on it,
+              and so does the frame budget: two rooms is two full scene rasters. */}
+          {shown === 'lobby' ? WAITING : BOSS_ARENA}
 
-          {/* The gate lighting up under your feet. Outside `overlay`'s memo because it is
-              the one part of that layer that is not static — the frame loop owns its
-              opacity and nothing else may set it, which is why React gives it none. It is
-              feedback, never a send: `enter_gate` stays on `useGateEntry`'s authoritative
-              poll, and the version that fired from the input path stranded players. */}
-          <rect
-            ref={gateNode}
-            aria-hidden="true"
-            x={GATE_MIN_X}
-            y={GATE_MIN_Y}
-            width={GATE_MAX_X - GATE_MIN_X + 1}
-            height={GATE_MAX_Y - GATE_MIN_Y + 1}
-            fill={PAL.ventOpen}
-            fillOpacity={0.3}
-            stroke={PAL.ventOpen}
-            strokeWidth={3}
-            // Snaps rather than fades: the whole point is that it answers the keypress, and
-            // a 90 ms cross-fade is 90 ms of the lag this exists to remove.
-            style={{ opacity: 0, pointerEvents: 'none' }}
-          />
+          {/* The gate lighting up under your feet, room A only. Not part of the room
+              element because it is the one part of that layer that is not static — the
+              frame loop owns its opacity and nothing else may set it, which is why React
+              gives it none. It is feedback, never a send: `enter_gate` stays on
+              `useGateEntry`'s authoritative poll, and the version that fired from the input
+              path stranded players. */}
+          {shown === 'lobby' && (
+            <rect
+              ref={gateNode}
+              aria-hidden="true"
+              x={GATE_MIN_X}
+              y={GATE_MIN_Y}
+              width={GATE_MAX_X - GATE_MIN_X + 1}
+              height={GATE_MAX_Y - GATE_MIN_Y + 1}
+              fill={PAL.ventOpen}
+              fillOpacity={0.3}
+              stroke={PAL.ventOpen}
+              strokeWidth={3}
+              // Snaps rather than fades: the whole point is that it answers the keypress,
+              // and a 90 ms cross-fade is 90 ms of the lag this exists to remove.
+              style={{ opacity: 0, pointerEvents: 'none' }}
+            />
+          )}
 
-          {/* Beneath the boss: a bullet's first frames belong inside the silhouette that
-              fired it. Each is a capsule stretched back along its own velocity — at 42
-              units per tick a 4-unit dot jumps ~7 units per frame and strobes, and the
-              trail is what makes 420 u/s legible rather than merely correct. */}
-          <g>
-            {visibleBullets(arena.bullets, players.slots).map((slot) => {
-              const b = arena.bullets[slot];
-              if (b === undefined) return null;
-              return (
-                <line
-                  key={slot}
-                  ref={(el) => {
-                    if (el) nodes.current.set(slot, el);
-                    else nodes.current.delete(slot);
-                  }}
-                  x1={0}
-                  y1={0}
-                  x2={-b.dx * BULLET_TRAIL}
-                  y2={-b.dy * BULLET_TRAIL}
-                  stroke={PAL.bullet}
-                  strokeWidth={BULLET_R * 2}
-                  strokeLinecap="round"
-                  style={{
-                    willChange: 'transform',
-                    // The published position. The frame loop overwrites this between ticks;
-                    // under reduced motion it is the only thing that ever writes it.
-                    transform: `translate(${b.x}px, ${b.y}px)`,
-                  }}
-                />
-              );
-            })}
-          </g>
+          {/* Rows 7-11, room B only. The boss, its telegraphs and its ordnance have no
+              business in a room the pit is not in: `VIEW_LOBBY` overlaps the creature's
+              lower body, so drawing it there would put a claw through room A's masonry. */}
+          {shown === 'arena' && (
+            <g clipPath="url(#heartrot-boss-clip)">
+              <Boss boss={boss} arena={arena} />
+            </g>
+          )}
 
-          <g clipPath="url(#heartrot-boss-clip)">
-            <Boss boss={boss} arena={arena} />
-          </g>
-
-          {/* The slam lane. Drawn over the boss because the hand that lands in it is drawn
-              over it too, and a wind-up you cannot see through the mace is not a wind-up.
+          {/* Row 10. Over the boss because the hand that lands in the lane is drawn over it
+              too, and a wind-up you cannot see through the mace is not a wind-up. Under the
+              knights, because the player is on top of everything the scene does.
               Under reduced motion the same shape FILLS by height instead of scaling. */}
-          {slam !== null && (
+          {shown === 'arena' && slam !== null && (
             <g aria-hidden="true">
               <rect
                 ref={slamRef}
@@ -779,7 +849,7 @@ export function Arena({
 
           {/* Where the next volley goes. `spawn_volley` fans around exactly these lines,
               so this is the shot itself drawn 1.5 s early, not an impression of one. */}
-          {volley !== null && (
+          {shown === 'arena' && volley !== null && (
             <g ref={volleyRef} aria-hidden="true" opacity={reduced ? 0.5 : 0}>
               {volley.lines.map(([x1, y1, x2, y2], i) => (
                 <line
@@ -796,12 +866,46 @@ export function Arena({
             </g>
           )}
 
+          {/* Row 11. Each is a capsule stretched back along its own velocity — at 42 units
+              per tick a 4-unit dot jumps ~7 units per frame and strobes, and the trail is
+              what makes 420 u/s legible rather than merely correct. */}
+          <g>
+            {shownBullets.map((slot) => {
+              const b = arena.bullets[slot];
+              if (b === undefined) return null;
+              return (
+                <line
+                  key={slot}
+                  ref={(el) => {
+                    if (el) nodes.current.set(slot, el);
+                    else nodes.current.delete(slot);
+                  }}
+                  x1={0}
+                  y1={0}
+                  x2={-b.dx * BULLET_TRAIL}
+                  y2={-b.dy * BULLET_TRAIL}
+                  stroke={PAL.bullet}
+                  strokeWidth={BULLET_R * 2}
+                  strokeLinecap="round"
+                  style={{
+                    willChange: 'transform',
+                    // The published position. The frame loop overwrites this between ticks;
+                    // under reduced motion it is the only thing that ever writes it.
+                    transform: `translate(${b.x}px, ${b.y}px)`,
+                  }}
+                />
+              );
+            })}
+          </g>
+
+          {/* Row 12 — THE PLAYER IS ON TOP. Every scene layer is behind this one, and the
+              only thing above it is the arrow the player fires and the two rows of pit rim.
+              Nothing decorative may be added between here and the top: a knight occluded by
+              scenery is the report this composition exists to close.
+
+              `drawOrder` is already filtered to the room on screen (R3). */}
           <g>
             {drawOrder.map((slot) => {
-              // Any seated player, in either zone. `zone` is a one-way flag on the SAME
-              // map — everyone spawns in ZONE_LOBBY and walks to the gate — so filtering
-              // to ZONE_ARENA drew an empty room for the whole of the lobby, which is the
-              // one phase where you have to be able to see yourself to play.
               const mine = slot.seat === localSeat;
               // Prediction for the seat the player drives, interpolation for everyone else.
               // Both machines already existed; this is the line that stops the local knight
@@ -832,11 +936,49 @@ export function Arena({
             })}
           </g>
 
-          {rim}
+          {/* Row 13. ABOVE the knights, in both rooms: the waiting area fires practice
+              arrows and they have to be as visible there as in the pit, which is the whole
+              of "the space bar doesn't work". An arrow drawn under twenty bodies is the "I
+              cannot see anything" report with extra steps.
+              `room={shown}` and not a second derivation inside `Shot`: R3 is the same fact
+              `drawOrder` filters on above, and during the cover the local seat's `zone`
+              already reads `ZONE_ARENA` while room A is still painted — so a layer that
+              re-derives the room from `zone` draws pit arrows and pit damage numbers over
+              the waiting room for the whole of the cover. `holdSeat` is deliberately NOT
+              passed: the held knight is a body parked at its last drawn position, but an
+              arrow it looses is loosed in the pit at pit coordinates, and drawing that in
+              room A is the bug this prop exists to close, not an exception to it. */}
+          <Shot
+            players={players}
+            boss={boss}
+            localSeat={localSeat}
+            reduced={reduced}
+            frameRef={shotFrame}
+            budget={shownBullets.length}
+            feedEpoch={feedEpoch}
+            room={shown}
+          />
 
-          {/* Last, so the opening light sits over the boss, the raiders and the bullets and
-              pans with them. Pointer-transparent, and nothing waits for it. */}
-          <Spawn phase={arena.phase} bossX={boss.x} bossY={boss.y} reduced={reduced} />
+          {/* Row 14, room B only: the one earned occluder, and bounded to two tile rows so
+              it covers the lower ~10 units of a knight on the last walkable row and nothing
+              else. In room A it would paint over the gate tower. */}
+          {shown === 'arena' && rim}
+
+          {/* Row 15. Over the boss, the raiders and the bullets. Pointer-transparent, and
+              nothing waits for it. Room B: it is the light the cavern plays when the muster
+              ends, and the muster ends in the pit. */}
+          {shown === 'arena' && (
+            <Spawn
+              phase={arena.phase}
+              bossX={boss.x}
+              bossY={boss.y}
+              reduced={reduced}
+              feedEpoch={feedEpoch}
+            />
+          )}
+
+          {/* Row 16. After `Spawn`, so the veil covers the flare when both fire. */}
+          {veil}
         </g>
       </svg>
     </div>
@@ -908,58 +1050,10 @@ function useSeeked<T extends Element>(
 }
 
 /**
- * Size the SVG so one arena unit covers a whole number of device pixels, and report
- * whether that was possible.
- *
- * `shape-rendering: crispEdges` snaps every edge to the device grid, so at a fractional
- * effective scale — which is what a 125% OS display scale gives you, dpr 1.1875 — wall
- * edges come out uneven and the unevenness *moves* as the scene translates. Picking the
- * largest integer device scale that fits and working back to a (fractional, correct) CSS
- * size removes the cause. Below 1:1 there is no integer to pick, so the caller drops to
- * `geometricPrecision` instead: softness rather than a keyline that flickers row by row as
- * a sprite walks.
- *
- * ponytail: driven by ResizeObserver alone. Browser zoom resizes the container so it is
- * caught, but a pure device-pixel-ratio change with no layout change (dragging the window
- * to a different-density monitor) is missed until the next resize. Add a `matchMedia
- * (resolution: Ndppx)` listener, re-armed after each change, if that shows up in testing.
- */
-function usePixelFit(
-  box: React.RefObject<HTMLDivElement | null>,
-  svg: React.RefObject<SVGSVGElement | null>,
-): boolean {
-  const [crisp, setCrisp] = useState(true);
-  useEffect(() => {
-    const b = box.current;
-    const s = svg.current;
-    if (!b || !s) return;
-    const fit = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const r = b.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;
-      const raw = (Math.min(r.width, r.height) * dpr) / ARENA_UNITS;
-      const scale = raw >= 1 ? Math.floor(raw) : raw;
-      const css = `${(ARENA_UNITS * scale) / dpr}px`;
-      s.style.width = css;
-      s.style.height = css;
-      // Only on a change: this runs on every resize frame, and a setState per frame during
-      // a window drag is the churn the whole file is built to avoid.
-      const integral = raw >= 1;
-      setCrisp((was) => (was === integral ? was : integral));
-    };
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(b);
-    return () => ro.disconnect();
-  }, [box, svg]);
-  return crisp;
-}
-
-/**
  * A rAF loop is not a keyframe — it has to be told about reduced motion.
  *
  * The one JS resolver (spec §7.6). CSS gates itself beside the rules it cancels; anything
- * that has to *decide* in JavaScript — the camera pan becoming a cut, the chase easing,
+ * that has to *decide* in JavaScript — the chase easing, the gate move becoming a cut,
  * `Spawn`'s veil — takes it from here as a prop rather than reading `matchMedia` again.
  */
 export function usePrefersReducedMotion(): boolean {
@@ -983,9 +1077,16 @@ export function usePrefersReducedMotion(): boolean {
 // floats behind the input, too large a one is the 16-unit teleport it exists to remove,
 // and a missing snap slides a respawning corpse across the dungeon.
 //
-// The composition has two failure modes with the same shape — silent, and wrong in a way
-// that reads as lag or as a bug in the chain: a camera framing that does not contain the
-// gate, and a slam wind-up drawn over the wrong column. Both are cheap here. Dev-only.
+// The composition's failure modes have the same shape — silent, and wrong in a way that
+// reads as lag or as a bug in the chain: a seat painted into the wrong room, a slam
+// wind-up drawn over the wrong column, an entrance close enough to the gate that the hold
+// chases a knight across the room instead of placing it. All cheap here. Dev-only.
+//
+// The camera's own checks are gone with the camera. Their INTENT — that the framing
+// contains what the player has to see — moved to `./viewport`, where the framing is: the
+// two rooms are equal in size, they derive from the generated map, and the fitted viewBox
+// contains the room on every stage aspect. Assertions about a window that no longer exists
+// would have passed forever while the bug they were written for shipped.
 // ---------------------------------------------------------------------------
 
 if (import.meta.env.DEV) {
@@ -1012,47 +1113,65 @@ if (import.meta.env.DEV) {
   chase(at, { x: 900, y: 900 }, MAP_TILE);
   ok(at.x === 900 && at.y === 900, 'a respawn-sized gap snaps instead of chasing');
 
-  // The lobby framing has to contain the one thing the lobby is for. A camera that cuts
-  // the gate off is not a rendering glitch to a player, it is a game with no way in.
-  ok(LOBBY_X <= GATE_MIN_X && GATE_MAX_X < LOBBY_X + LOBBY_SPAN, 'the lobby camera frames the gate in x');
-  // And the thing the gate is for: the players walking to it. This is the check whose
-  // absence shipped a lobby where seat 0 could not see their own knight — the gate was
-  // framed perfectly and the spawns were never tested at all.
-  ok(
-    LOBBY_X <= LOBBY_SPAWN_MIN_X && LOBBY_SPAWN_MAX_X < LOBBY_X + LOBBY_SPAN,
-    'the lobby camera frames every seat spawn in x',
-  );
-  ok(
-    LOBBY_Y <= LOBBY_SPAWN_Y && LOBBY_SPAWN_Y < LOBBY_Y + LOBBY_SPAN,
-    'the lobby camera frames the spawn row in y',
-  );
-
-  // The follow camera's real contract, and the one the fixed window could not meet: for
-  // ANY position on the map there is a window containing it. A player the camera cannot
-  // reach is a player who cannot find their own knight, whatever put them there.
-  for (const [px, py] of [
-    [0, 0],
-    [66, 20],
-    [ARENA_UNITS - 1, ARENA_UNITS - 1],
-    [LOBBY_SPAWN_MIN_X, LOBBY_SPAWN_Y],
-    [LOBBY_SPAWN_MAX_X, LOBBY_SPAWN_Y],
-  ] as const) {
-    const o = lobbyOriginFor(px, py);
+  // The passage hold PLACES the local seat at its entrance rather than chasing it there,
+  // and `chase` decides which by comparing the gap against `SELF_SNAP`. `enter_gate` calls
+  // `entrance_for(seat)`, so every entrance has to be a teleport-sized distance from the
+  // gate the player left — the shortest today is 171.0 units against a 64-unit snap. A map
+  // redraw that brings one inside the snap would freeze that seat mid-walk under an opaque
+  // veil, which is the worst-looking failure this file has.
+  const gateCx = (GATE_MIN_X + GATE_MAX_X + 1) / 2;
+  const gateCy = (GATE_MIN_Y + GATE_MAX_Y + 1) / 2;
+  for (const [ex, ey] of MAP_ENTRANCES) {
     ok(
-      o.x >= 0 && o.y >= 0 && o.x <= ARENA_UNITS - LOBBY_SPAN && o.y <= ARENA_UNITS - LOBBY_SPAN,
-      `the lobby window stays on the map for (${px}, ${py})`,
-    );
-    ok(
-      px >= o.x && px < o.x + LOBBY_SPAN && py >= o.y && py < o.y + LOBBY_SPAN,
-      `the lobby camera can show (${px}, ${py})`,
+      Math.hypot(ex - gateCx, ey - gateCy) > SELF_SNAP,
+      `entrance (${ex}, ${ey}) is a snap away from the gate, not a walk`,
     );
   }
-  ok(LOBBY_Y <= GATE_MIN_Y && GATE_MAX_Y < LOBBY_Y + LOBBY_SPAN, 'the lobby camera frames the gate in y');
-  ok(Number.isInteger(LOBBY_ZOOM), 'both camera scales are integers, so both ends are pixel-exact');
+
+  // R3, the room contract. Both directions fail silently and both are ugly: a lobby seat
+  // painted onto the arena frame stands 400 units under the pit floor, and a pit seat
+  // painted onto the lobby frame stands behind room A's fake masonry.
+  const inLobby = { seat: 0, occupied: true, hp: 100, x: 512, y: 832, zone: ZONE_LOBBY } as PlayerSlot;
+  const inPit = { seat: 1, occupied: true, hp: 100, x: 512, y: 500, zone: ZONE_ARENA } as PlayerSlot;
+  const both = [inLobby, inPit];
+  ok(roomSeats(both, 'lobby').length === 1 && roomSeats(both, 'lobby')[0] === inLobby, 'room A draws only lobby seats');
+  ok(roomSeats(both, 'arena').length === 1 && roomSeats(both, 'arena')[0] === inPit, 'room B draws only arena seats');
+  ok(
+    roomSeats([{ ...inLobby, occupied: false }], 'lobby').length === 0,
+    'an empty seat is drawn in neither room',
+  );
+
+  // The hold. The seat crossing the gate reads `ZONE_ARENA` while room A is still on
+  // screen, and it must stay drawn there — unmounting it is the "I cannot see my
+  // character" report, delivered at the one moment the beat exists to cover it.
+  ok(roomSeats([inPit], 'lobby').length === 0, 'without the hold, a crossed seat leaves room A');
+  ok(roomSeats([inPit], 'lobby', inPit.seat)[0] === inPit, 'the held seat stays drawn in the room on screen');
+  ok(roomSeats([inPit], 'arena', inPit.seat)[0] === inPit, 'and is still drawn once the room cuts');
+  ok(roomSeats(both, 'lobby', inPit.seat).length === 2, 'the hold adds one seat and removes none');
+  ok(seatShown(inLobby, 'lobby') && !seatShown(inLobby, 'arena'), 'R3 answers from the room on screen');
 
   // The rim occluder must cover the rim rows and nothing the raider box needs to see: a
   // clip one tile out paints a wall over the bottom rows of the pit the knights stand in.
   ok(PIT_BOT + 1 - 2 * MAP_TILE === 576, 'the rim clip starts at the first rim row');
+
+  // THE DRAWN RIG AND THE HITTABLE RIG ARE THE SAME RIG. `#heartrot-boss-clip` cuts the
+  // art; `PART_HITBOXES` and `CORE` are what `shoot.rs` and `raycastShot` resolve against.
+  // A cut above a hitbox is an arrow stopping dead on bare stone while the chain scores
+  // the damage, and it is silent in both directions. Measured against `BOSS_SPAWN`, which
+  // is where `init` puts the creature and where it stays.
+  const clipBot = BOSS_SPAWN[1] + BOSS_HIT_BOT;
+  PART_HITBOXES.forEach((r, i) => {
+    ok(BOSS_SPAWN[1] + r.y + r.h <= clipBot, `part ${i} is drawn everywhere the chain can hit it`);
+  });
+  ok(
+    BOSS_SPAWN[1] + CORE.y + Math.sqrt(CORE.radiusSq) <= clipBot,
+    'the vent is drawn everywhere the chain can hit it',
+  );
+
+  // The hold's ceiling is the release that does not depend on `Passage`. It must clear the
+  // longest legitimate cover by a margin no timing jitter can close, or it fires mid-beat
+  // and the knight is chased across the room in front of the player after all.
+  ok(HOLD_CEILING_MS > 460 * 2, 'the hold ceiling clears the longest opaque cover twice over');
 
   // Every lane a slam can name is inside the arena, so the drawn column and the column
   // `damage_seat` tests are the same column.

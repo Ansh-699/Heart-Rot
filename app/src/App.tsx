@@ -24,22 +24,27 @@
  *   at either end, and both watch the chain's copy of the player rather than an input
  *   callback, because the version that fired from `onMove` stranded players permanently.
  *
- * The panels themselves live in `screens/` and `ui/Hud.tsx`, and the world is drawn by
- * `render/Arena.tsx`. They are imported, never re-implemented: a second copy of the part
- * list or the skin table drifts from the chain layout the moment either is touched.
+ * The 320 px side panel is gone (`17-fullscreen-spec.md` §9.1) and the scene fills the
+ * stage edge to edge, so the chrome is `ui/Hud.tsx`'s fixed clusters, mounted once here
+ * for both sides of the gate. `screens/Lobby.tsx` is down to the one line of instruction
+ * that is genuinely the waiting room's. The world is drawn by `render/Passage.tsx`, which
+ * is `render/Arena.tsx` wrapped in the gate beat. All of it is imported, never
+ * re-implemented: a second copy of the part list or the skin table drifts from the chain
+ * layout the moment either is touched.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
-  MAP_TILE,
-  MAP_TILES,
+  PHASE_FIGHTING,
   PHASE_LOBBY,
+  PHASE_MUSTERING,
   PHASE_SETTLED,
   PHASE_SETTLING,
   ZONE_ARENA,
   ZONE_LOBBY,
+  classOf,
   confirmSignature,
   connectMatch,
   createSessionSigner,
@@ -58,28 +63,13 @@ import { recordSend } from './net/metrics';
 import DevPanel from './ui/DevPanel';
 import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
-import { Arena } from './render/Arena';
+import { Passage } from './render/Passage';
+import { fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
 import { Lobby } from './screens/Lobby';
 import { Onboarding } from './screens/Onboarding';
-import {
-  mySeatSlot,
-  screenOf,
-  useSelect,
-  useStore,
-  type ConnectionStatus,
-} from './state/store';
+import { mySeatSlot, screenOf, useSelect, useStore } from './state/store';
 import { Hud } from './ui/Hud';
-
-const STATUS_LABEL: Record<ConnectionStatus, string> = {
-  idle: 'offline',
-  joining: 'joining',
-  connecting: 'syncing',
-  live: 'live',
-  stale: 'stalled',
-  settling: 'settling',
-  error: 'error',
-};
 
 /**
  * `Address` without importing `@solana/kit`: `app/package.json` does not depend on it
@@ -88,14 +78,6 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
  */
 type Addr = Parameters<HeartrotRpc['getAccountInfo']>[0];
 const addr = (value: string): Addr => value as Addr;
-
-/**
- * The arena's own coordinate space, straight from the generated map table — not from
- * `render/sprites`. The renderer is free to be an `<svg>`, a `<canvas>` or a pile of
- * `<div>`s, and this file has no business knowing which; what it needs is the number both
- * ends agree the world is measured in, and `tools/gen_map.py` emits that for both sides.
- */
-const ARENA_UNITS = MAP_TILES * MAP_TILE;
 
 /**
  * `enter_gate` is rejected silently while the chain still has you off the tile, and
@@ -116,14 +98,15 @@ export default function App() {
   /**
    * The one `#stage` node, owned here rather than by the two screens that show it.
    *
-   * It used to be declared twice — once in `screens/Lobby.tsx`, once in `ArenaScreen` —
-   * and `World` portalled into whichever one was mounted. React reconciles a portal on
+   * It used to be declared twice — once in `screens/Lobby.tsx`, once in the arena screen
+   * — and `World` portalled into whichever one was mounted. React reconciles a portal on
    * container *identity*, so walking through the gate swapped the container and the whole
    * arena was deleted and rebuilt: `SCENE` (16 paths, 332 KB of path data, 46.3 ms to
    * build), the knight pose defs, the boss art, every walk odometer, both rAF loops, the
    * ResizeObserver and the camera — on the single most important transition in the game.
    * Declared once, at a fixed position in `<main>`'s children, the node survives the flip
-   * and React only swaps the panel beside it.
+   * and React swaps nothing around it. Any restructure of `<main>`'s children must keep
+   * this slot where it is; remounting it costs 46.3 ms of scene rebuild.
    *
    * A ref, not `getElementById` in an effect: refs are attached in the commit phase, so
    * the portal has its host in the same paint the node appears in rather than one frame
@@ -132,7 +115,25 @@ export default function App() {
   const [stage, setStage] = useState<HTMLElement | null>(null);
   const hasStage = screen === 'lobby' || screen === 'arena';
 
-  const link = useMatchLink();
+  /**
+   * The resync gate (spec §7.2), bumped whenever the world feed leaves `'live'`.
+   *
+   * Every diff-triggered cinematic downstream — the passage, the spawn — resets its
+   * baseline on a change here, because the renderer does **not** unmount across the
+   * measured 1,681 ms reconnect: without this a player who drops in the waiting room and
+   * returns in the pit replays the gate beat over a fight already in progress.
+   *
+   * `useReducer` for the stable dispatch, so `useMatchLink`'s effect does not re-subscribe
+   * when it fires. **Never derive this from `state.status`** — `store.ts` forces that to
+   * `'live'` on every payload, so the gate would race the thing it gates.
+   *
+   * ponytail: local to the shell rather than a store field, because `state/store.ts` is
+   * not this change's to edit. Move it there when the two readers stop being the shell's
+   * own children.
+   */
+  const [feedEpoch, bumpFeedEpoch] = useReducer((n: number) => n + 1, 0);
+
+  const link = useMatchLink(bumpFeedEpoch);
   // Not inside `World`: the gate is what gets you *out* of the lobby, and it must keep
   // running on a screen whose stage node the renderer has not attached to yet.
   useGateEntry(link);
@@ -148,15 +149,25 @@ export default function App() {
     <div className="shell">
       <Header />
       <main className="main">
-        {/* First, so the grid puts it in the wide column and the panel beside it. The
-            renderer's territory — see `World`. React never touches what is inside it. */}
+        {/* The renderer's territory, and now the whole of the main row — see `World`.
+            React never touches what is inside it. */}
         {hasStage && <div id="stage" className="stage" role="presentation" ref={setStage} />}
         {screen === 'onboarding' && <Onboarding />}
         {screen === 'select' && <CharacterSelect />}
         {screen === 'lobby' && <Lobby />}
-        {screen === 'arena' && <ArenaScreen />}
       </main>
-      <World host={hasStage ? stage : null} link={link} />
+      <World host={hasStage ? stage : null} link={link} feedEpoch={feedEpoch} />
+      {/* One HUD, both sides of the gate. Its clusters are `position: fixed`, so they are
+          mounted once here rather than by each screen — which is also what finally puts a
+          shot indicator in the waiting area, the one screen the dead spacebar lived on
+          (spec §9.2). */}
+      {hasStage && <Hud />}
+      {/* `hasStage`, not `screen === 'arena'`: a seat that never crossed the gate is still
+          in the match the chain just settled, and gating this on the arena screen left
+          that player on `GatePrompt`'s "Hold here" forever with no verdict and no button —
+          `leaveMatch` has no other caller in the app. The card is the way out for both
+          sides of the gate. */}
+      {hasStage && phase === PHASE_SETTLED && <Result />}
       <ErrorBar />
       <DevPanel />
     </div>
@@ -167,28 +178,18 @@ export default function App() {
 // Chrome
 // ---------------------------------------------------------------------------
 
+/**
+ * The wordmark, and nothing else.
+ *
+ * Spec §9.1 keeps the 48 px bar — the wordmark is a branding decision the user has not
+ * made — but every number that used to sit beside it (phase, tick, seat, socket) is now
+ * `Hud`'s top-left cluster. Two copies of the tick, one 48 px above the other, is this
+ * repo's named defect in its smallest possible form.
+ */
 function Header() {
-  const status = useSelect((s) => s.status);
-  const seat = useSelect((s) => s.match?.seat ?? null);
-  const incarnation = useSelect((s) => s.match?.incarnation ?? 0);
-  const tick = useSelect((s) => s.arena?.tick ?? 0);
-
   return (
     <header className="header">
       <h1 className="wordmark">HEARTROT</h1>
-      {/* Two clusters, not five loose tags: what match this is on the left, how it is
-          running on the right. Tight gaps inside a cluster and a wide one between them
-          do the grouping, so nothing needs a divider. */}
-      <div className="header-group">
-        <span className="tag">incarnation {incarnation}</span>
-        {seat !== null && <span className="tag">seat {seat}</span>}
-      </div>
-      <span className="spacer" />
-      <div className="header-group">
-        <span className="tag tabular">tick {tick}</span>
-        <span className={`dot dot-${status}`} aria-hidden="true" />
-        <span className="tag">{STATUS_LABEL[status]}</span>
-      </div>
     </header>
   );
 }
@@ -196,14 +197,37 @@ function Header() {
 /**
  * Errors are shown, never swallowed. A stalled crank and a dry treasury both present as
  * "nothing is happening", and a player with no message assumes the former is their wifi.
+ *
+ * Third source, same bar: the class the chain actually gave you. `claim_seat`'s returning
+ * branch rotates `session_pubkey` and `skin_id` and deliberately **not** `class` — a
+ * rotation would let a player fire the archer's 70 and take the next shot on the knight's
+ * 800 ms — and it returns `Ok`, so a returning identity that picked the other weapon is
+ * told nothing at all today. The chain is right and is not in scope; this is the sentence
+ * that was missing. It names no class on purpose: `Hud`'s bottom-left pill already reads
+ * the seat's own byte, and a second class-name table here is the repo's signature defect.
  */
 function ErrorBar() {
   const error = useSelect((s) => s.error);
   const status = useSelect((s) => s.status);
-  if (!error && status !== 'stale') return null;
+  // A primitive, so the bar does not re-render on every `Players` notification that
+  // leaves the answer unchanged.
+  const keptOldClass = useSelect((s) => {
+    const slot = mySeatSlot(s);
+    return slot !== null && slot.occupied && classOf(slot) !== s.classId;
+  });
+
+  const message =
+    error ??
+    (status === 'stale'
+      ? 'The boss clock has stopped advancing. Waiting for the rollup to answer.'
+      : keptOldClass
+        ? 'Your seat already existed, so it kept the weapon it was claimed with — the class shown bottom-left is the one you are fighting with. A seat cannot change class mid-raid; the next one takes your new pick.'
+        : null);
+
+  if (message === null) return null;
   return (
     <div className="errorbar" role="status">
-      {error ?? 'The boss clock has stopped advancing. Waiting for the rollup to answer.'}
+      {message}
     </div>
   );
 }
@@ -211,31 +235,25 @@ function ErrorBar() {
 // ---------------------------------------------------------------------------
 // Screen 4 — arena
 //
-// Named `ArenaScreen`, not `Arena`: `render/Arena` is the renderer and this is the panel
-// beside it. Screens 1–3 are `screens/*`; the arena's panel is `ui/Hud`, so all this
-// screen owns is the panel and the result card — `#stage` is `App`'s, and deliberately
-// not this screen's, so that the gate transition cannot remount the arena.
+// There is no `ArenaScreen` any more. It was the 320 px panel and the result card; the
+// panel is deleted (spec §9.1) and `Hud`'s fixed clusters replace it on both sides of the
+// gate, so the only thing left was one conditional render and `App` already holds both
+// values it tested.
 // ---------------------------------------------------------------------------
 
-function ArenaScreen() {
-  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
-
-  return (
-    <>
-      <aside className="panel">
-        <Hud />
-      </aside>
-      {phase === PHASE_SETTLED && <Result />}
-    </>
-  );
-}
-
-/** The match is over and the leaderboard row is written. Nothing here is on chain twice. */
+/**
+ * The match is over and the leaderboard row is written. Nothing here is on chain twice.
+ *
+ * Shown on both sides of the gate, so the line under the verdict has to be honest about a
+ * seat that never left the waiting room: `0 damage dealt · survived` reads as a fight that
+ * went badly rather than a match that was never joined.
+ */
 function Result() {
   const store = useStore();
   const slot = useSelect(mySeatSlot);
   const coreHp = useSelect((s) => s.boss?.coreHp ?? 0);
   const won = coreHp === 0;
+  const watched = slot !== null && slot.zone === ZONE_LOBBY;
 
   return (
     <div className="overlay">
@@ -243,7 +261,11 @@ function Result() {
         <p className="eyebrow">{won ? 'The core stopped' : 'The raid broke'}</p>
         <h2>{won ? 'It is dead. It will be back, larger.' : 'Wiped.'}</h2>
         <p className="lede tabular">
-          {slot ? `${slot.damageDealt} damage dealt · ${slot.hp === 0 ? 'died' : 'survived'}` : ''}
+          {slot === null
+            ? ''
+            : watched
+              ? 'You watched this one from the waiting room — the gate is open from the first tick of the next raid.'
+              : `${slot.damageDealt} damage dealt · ${slot.hp === 0 ? 'died' : 'survived'}`}
         </p>
         <p className="fine">
           The arena has been committed back to the base layer and your row is on the
@@ -266,14 +288,22 @@ function Result() {
  *
  * A portal rather than a child so that this component — and only this component — carries
  * the three subscriptions that fire 10-20 times a second. Inlining the tree into `App`
- * would re-render the header, the panels and the error bar at notification rate for a
+ * would re-render the header, the HUD and the error bar at notification rate for a
  * subtree that is drawn by the frame loop anyway.
  *
  * `host` is `App`'s single stage node and never changes identity between the lobby and
  * the arena, which is what keeps the portal from being torn down and rebuilt at the gate.
  * A portal whose container changes is deleted and remounted, never moved.
  */
-function World({ host, link }: { host: HTMLElement | null; link: Link }) {
+function World({
+  host,
+  link,
+  feedEpoch,
+}: {
+  host: HTMLElement | null;
+  link: Link;
+  feedEpoch: number;
+}) {
   const arena = useSelect((s) => s.arena);
   const boss = useSelect((s) => s.boss);
   const players = useSelect((s) => s.players);
@@ -285,7 +315,7 @@ function World({ host, link }: { host: HTMLElement | null; link: Link }) {
   if (!host || !arena || !boss || !players) return null;
 
   // `.hr-stage` sizes itself from its parent, and a portal's parent is the stage cell:
-  // this grid box is what gives it one, so `usePixelFit` has a rect to measure.
+  // this grid box is what gives it one, so the fit hook has a rect to measure.
   return createPortal(
     <div style={{ position: 'absolute', inset: 0, display: 'grid' }}>
       {/* `predictor` is what lets the renderer draw the local seat from prediction instead
@@ -300,14 +330,20 @@ function World({ host, link }: { host: HTMLElement | null; link: Link }) {
           every seat" — the prop is optional and deliberately not `| null`, so this is the
           one absent value it accepts. Same object `aimOrigin` reads below, so the pointer
           aims at the dot the player is actually looking at rather than at a position 127 ms
-          behind it. */}
-      <Arena
+          behind it.
+
+          `Passage`, not `Arena`: it *is* `Arena`, wrapped in the gate beat — it owns which
+          room is on screen and the hold that keeps the local knight still under the veil,
+          because during the 460 ms cover the room and the seat's own `zone` disagree on
+          purpose. Mounting `Arena` directly still renders correctly; it just cuts. */}
+      <Passage
         arena={arena}
         boss={boss}
         players={players}
         localSeat={seat}
         tickMs={tickMs}
         predictor={link?.predictor}
+        feedEpoch={feedEpoch}
       />
     </div>,
     host,
@@ -395,29 +431,32 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           phase: arena?.phase ?? PHASE_LOBBY,
           tick: arena?.tick ?? 0,
           alive: slot === null || slot.hp > 0,
+          // `shoot.rs` refuses outside the pit as hard as it refuses outside `FIGHTING`
+          // (spec §6.1). Without this a seat that never crossed the gate sends a doomed
+          // `Custom(9)` every 800 ms for the whole match, and — because sends are
+          // fire-and-forget under `skipPreflight` — sees nothing at all for it.
+          zone: slot?.zone ?? ZONE_LOBBY,
+          // The class is the seat's own byte, off the roster and never off what the join
+          // sent: `claim_seat` keeps a returning identity's class, so the two can differ.
+          // It picks the damage and the cooldown, so the pump has to read it or the
+          // archer's trigger gates on the knight's 800 ms.
+          cls: slot === null ? 0 : classOf(slot),
         };
       },
       aimOrigin: () => {
-        // Whichever drawing surface the renderer chose. Its box is the arena square, so
-        // its width is the scale; `null` when there is none yet, which `attachControls`
-        // reads as "keep the last facing" rather than as an aim at the origin.
+        // Straight off `#camera`'s own screen matrix, which is the only thing that knows
+        // the fitted `viewBox` (spec §1.8). The old `box.width / ARENA_UNITS` assumed the
+        // whole 1024-unit world was on screen at scale 1; under the §1.2 fit that is wrong
+        // on every stage aspect, and a wrong aim under `skipPreflight` produces no error
+        // anywhere — it is indistinguishable from the shooting bug being fixed.
         //
-        // `box.width / ARENA_UNITS` assumes the WHOLE 1024-unit world is on screen, which
-        // is true only while `#camera` is at scale 1 — `FIGHTING` onward. That is also the
-        // only phase in which `shoot` is legal, so this is correct today, but it is an
-        // undocumented coupling between two files: if anything ever calls `aimOrigin`
-        // outside a fight, it has to multiply by the camera's own scale (2 in the lobby)
-        // and offset by its translate, or every shot lands 512 units from where it was
-        // aimed.
-        const surface = host.querySelector('svg, canvas');
-        if (surface === null) return null;
-        const box = surface.getBoundingClientRect();
-        if (box.width === 0) return null;
-        const scale = box.width / ARENA_UNITS;
-        return {
-          x: box.left + predictor.self.x * scale,
-          y: box.top + predictor.self.y * scale,
-        };
+        // Forward transform, not the inverse: this returns the knight's position in the
+        // same client coordinates `attachControls` reads the pointer in.
+        const camera = host.querySelector<SVGGElement>('#camera');
+        const matrix = camera?.getScreenCTM();
+        if (!matrix) return null;
+        const point = new DOMPoint(predictor.self.x, predictor.self.y).matrixTransform(matrix);
+        return { x: point.x, y: point.y };
       },
       onMove: (dir) => {
         // `push` returns `null` when the chain would reject the move anyway — a wall, or a
@@ -431,6 +470,17 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // in flight and ages into the unacked bucket rather than vanishing.
         recordSend(seq);
         send(movePlayer({ ...common, session, seat: match.seat, dir, seq }));
+      },
+      onTrigger: (dx, dy) => {
+        // Every accepted trigger, live or practice, drawn at 0 ms from the exact pair that
+        // went on the wire — the whole of "fix the person shooting mechanics I cannot see
+        // anything". `shoot.rs` is hitscan and allocates no projectile, so there has never
+        // been anything on screen to see; this is the tracer, and it is drawn from the
+        // PREDICTED position because that is the knight the player is looking at.
+        //
+        // A practice shot reaches here and never reaches `onShoot`. That is the point: the
+        // arrow answers "is the key bound", and only `damageDealt` answers "did it hurt".
+        fireLocal({ seat: match.seat, x: predictor.self.x, y: predictor.self.y, dx, dy });
       },
       onShoot: (dx, dy) => {
         // Free aim: the raw `(i8, i8)` the pointer or the held keys produced, normalised
@@ -477,7 +527,16 @@ function useGateEntry(link: Link): void {
 
     const timer = setInterval(() => {
       if (inFlight) return;
-      const slot = mySeatSlot(store.getState());
+      const state = store.getState();
+      // `assert_playable` (handlers/player.rs:501) refuses `enter_gate` outside these
+      // three, so from `PHASE_SETTLING` onward every send is a `WrongPhase` the client
+      // cannot see — `skipPreflight` returns a signature and the `.catch` below only fires
+      // on a transport failure. Without this a stranded seat pushes two doomed
+      // transactions a second into the ER for as long as the tab is open. Not an ordering
+      // test: `PHASE_MUSTERING` is 6, appended after `PHASE_ROLLED`.
+      const phase = state.arena?.phase ?? PHASE_LOBBY;
+      if (phase !== PHASE_LOBBY && phase !== PHASE_MUSTERING && phase !== PHASE_FIGHTING) return;
+      const slot = mySeatSlot(state);
       if (!slot || slot.zone !== ZONE_LOBBY) return;
       if (!onGate(slot.x, slot.y)) return;
       inFlight = true;
@@ -558,7 +617,7 @@ type Link = {
  * lobby↔arena transition must not tear it down, because the measured reconnect outage is
  * ~1.7 s and in a bullet-hell fight that is a death and a visible teleport.
  */
-function useMatchLink(): Link {
+function useMatchLink(onFeedDrop: () => void): Link {
   const store = useStore();
   const match = useSelect((s) => s.match);
   const session = useSelect((s) => s.sessionKey);
@@ -617,6 +676,10 @@ function useMatchLink(): Link {
             if (slot !== undefined) predictor.reconcile(slot);
           },
           onHealth: (health) => {
+            // The resync gate. `subscribeMatch` only calls this on a *change*, so this
+            // fires once per departure from a healthy feed and every diff-triggered
+            // cinematic re-baselines on the payload after it rather than replaying.
+            if (health !== 'live') onFeedDrop();
             // `live` and `connecting` are already carried by `setWorld` and `join`, and
             // writing them here would stomp the held statuses the player is waiting on.
             if (health === 'stalled') store.setStatus('stale');
@@ -651,7 +714,11 @@ function useMatchLink(): Link {
       subscription?.close();
       setLink(null);
     };
-  }, [match, session, store]);
+    // `onFeedDrop` is a `useReducer` dispatch and therefore stable for the life of the
+    // component; it is in the deps to satisfy the linter, never because it changes. A
+    // callback that *did* change identity here would tear the subscription down and pay
+    // the 1,681 ms outage this hook exists to avoid.
+  }, [match, session, store, onFeedDrop]);
 
   return link;
 }

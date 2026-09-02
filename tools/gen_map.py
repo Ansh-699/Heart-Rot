@@ -139,6 +139,24 @@ def entrance_for(seat: int, doors: list[tuple[int, int]], g: dict[str, object]) 
     return ex, clamp(ey + offset)
 
 
+def lobby_spawn(seat: int, g: dict[str, object]) -> tuple[int, int]:
+    """`player::lobby_spawn` in Python: seat -> waiting-room spawn, in world units.
+
+    The ONE copy of that formula in this tool. It used to be written twice -- once in
+    [`spawn_tiles`], which validates that the spawn is on floor, and once in
+    [`lobby_spawn_extent`], which emits `LOBBY_SPAWN_MIN_X`/`MAX_X`/`Y` for the browser
+    to frame the waiting room on. The tool would then have validated one set of points
+    and shipped another, and the drift would have surfaced as a knight standing outside
+    its own frame -- the exact defect `LOBBY_SPAWN_*` was added to close.
+    """
+    max_xy = g["MAP_TILES"] * g["TILE"] - 1
+    offset = (seat - g["MAX_SEATS"] // 2) * g["LOBBY_SPACING"]
+    return (
+        min(max(g["LOBBY_ENTRANCE"][0] + offset, 0), max_xy),
+        min(max(g["LOBBY_ENTRANCE"][1], 0), max_xy),
+    )
+
+
 def spawn_tiles(grid: list[str], g: dict[str, object]) -> list[tuple[str, tuple[int, int]]]:
     """Every point the program can place a player on, as tile coordinates.
 
@@ -148,13 +166,11 @@ def spawn_tiles(grid: list[str], g: dict[str, object]) -> list[tuple[str, tuple[
     exists -- is that the tile underneath is floor. A spawn inside a wall is a
     player who cannot move in any direction for the life of the match.
     """
-    tile, max_xy = g["TILE"], g["MAP_TILES"] * g["TILE"] - 1
-    half = g["MAX_SEATS"] // 2
+    tile = g["TILE"]
     doors = entrance_world(grid, tile)
     out = []
     for seat in range(g["MAX_SEATS"]):
-        lx = min(max(g["LOBBY_ENTRANCE"][0] + (seat - half) * g["LOBBY_SPACING"], 0), max_xy)
-        ly = min(max(g["LOBBY_ENTRANCE"][1], 0), max_xy)
+        lx, ly = lobby_spawn(seat, g)
         out.append((f"lobby_spawn({seat})", (lx // tile, ly // tile)))
         ax, ay = entrance_for(seat, doors, g)
         out.append((f"entrance_for({seat})", (ax // tile, ay // tile)))
@@ -169,17 +185,15 @@ def lobby_spawn_extent(g: dict[str, object]) -> dict[str, int]:
     left -- 240 units at the shipped numbers -- while a camera centred on the gate alone
     showed x 256..768 and cropped seats 0 and 1 off the left edge entirely. The first
     player to join takes seat 0, so the commonest case was the invisible one.
+
+    Reads [`lobby_spawn`], the same function the floor sweep validates through, so the
+    span that ships is the span that was checked.
     """
-    tile, max_xy = g["TILE"], g["MAP_TILES"] * g["TILE"] - 1
-    half = g["MAX_SEATS"] // 2
-    xs = [
-        min(max(g["LOBBY_ENTRANCE"][0] + (seat - half) * g["LOBBY_SPACING"], 0), max_xy)
-        for seat in range(g["MAX_SEATS"])
-    ]
+    seats = [lobby_spawn(seat, g) for seat in range(g["MAX_SEATS"])]
     return {
-        "LOBBY_SPAWN_MIN_X": min(xs),
-        "LOBBY_SPAWN_MAX_X": max(xs),
-        "LOBBY_SPAWN_Y": min(max(g["LOBBY_ENTRANCE"][1], 0), max_xy),
+        "LOBBY_SPAWN_MIN_X": min(x for x, _ in seats),
+        "LOBBY_SPAWN_MAX_X": max(x for x, _ in seats),
+        "LOBBY_SPAWN_Y": seats[0][1],
     }
 
 
@@ -293,6 +307,27 @@ def gate_box(grid: list[str], tile: int) -> dict[str, int]:
     return {"GATE_MIN_X": x0 * tile, "GATE_MAX_X": (x1 + 1) * tile - 1,
             "GATE_MIN_Y": y0 * tile, "GATE_MAX_Y": (y1 + 1) * tile - 1,
             "GATE_TILES": (x0, y0, x1, y1)}
+
+
+def lobby_band(grid: list[str], tile: int, gate: dict[str, int]) -> dict[str, int]:
+    """`LOBBY_TOP` / `LOBBY_BOT`: the floor rows below the gate -- the waiting room.
+
+    Emitted for the same reason `PIT_TOP`/`PIT_BOT` are: the renderer frames on it.
+    `docs/architecture/17-fullscreen-spec.md` 1.1 builds `VIEW_LOBBY` as this band plus
+    208 units of masonry above it and 80 below, and its own self-check asserts the frame
+    still lands on `LOBBY_BOT + 1`. Without this pair the browser would retype 640/1008
+    beside a map that owns them, which is the one defect this whole tool exists to stop.
+
+    Not a movement rule. The lobby *box* is `PIT_BOT + 1 ..= MAP_MAX_XY`
+    (`player::zone_box`) and is wider than this: it includes the gate rows and the
+    border ring. This is only where the floor is drawn.
+    """
+    rows = [y for y in range(gate["GATE_TILES"][3] + 1, len(grid))
+            if any(c != WALL for c in grid[y])]
+    if not rows:
+        die("no floor row below the gate -- there is no lobby for players to wait in")
+    return {"LOBBY_TOP": rows[0] * tile, "LOBBY_BOT": (rows[-1] + 1) * tile - 1,
+            "LOBBY_ROWS": (rows[0], rows[-1])}
 
 
 def validate(grid: list[str], g: dict[str, object]) -> None:
@@ -468,6 +503,7 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
     pit = pit_box(grid, g["TILE"])
     gate = gate_box(grid, g["TILE"])
     spawn = lobby_spawn_extent(g)
+    lobby = lobby_band(grid, g["TILE"], gate)
     ptop, pbot = pit["PIT_ROWS"]
     gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
     pit_floor = sum(sum(1 for c in row if c != WALL) for row in grid[ptop:pbot + 1])
@@ -593,6 +629,19 @@ pub const LOBBY_SPAWN_MIN_X: i16 = {spawn["LOBBY_SPAWN_MIN_X"]};
 pub const LOBBY_SPAWN_MAX_X: i16 = {spawn["LOBBY_SPAWN_MAX_X"]};
 pub const LOBBY_SPAWN_Y: i16 = {spawn["LOBBY_SPAWN_Y"]};
 
+/// The lobby floor band: the drawn floor rows below the gate ({lobby["LOBBY_ROWS"][0]}..{lobby["LOBBY_ROWS"][1]}), in world
+/// units, `LOBBY_BOT` inclusive of the last row's last unit exactly as [`PIT_BOT`] is.
+///
+/// A *drawing* fact, not a movement rule -- `player::zone_box` holds a `ZONE_LOBBY` seat
+/// in `PIT_BOT + 1 ..= MAP_MAX_XY`, which is wider: it also covers the gate rows and the
+/// border ring. Emitted because the renderer frames on the floor, not on the box:
+/// `docs/architecture/17-fullscreen-spec.md` 1.1 builds `VIEW_LOBBY` as this band plus 208
+/// units of masonry above and 80 below, and its self-check asserts the frame still lands
+/// on `LOBBY_BOT + 1`. Retyping 640/1008 in the browser beside a map that owns them is the
+/// drift this generator exists to prevent.
+pub const LOBBY_TOP: i16 = {lobby["LOBBY_TOP"]}; // tile row {lobby["LOBBY_ROWS"][0]}
+pub const LOBBY_BOT: i16 = {lobby["LOBBY_BOT"]}; // tile row {lobby["LOBBY_ROWS"][1]}, last unit
+
 /// Every entrance stands on floor in the table above.
 ///
 /// The generator proves the same thing plus reachability, but only when someone runs it.
@@ -651,6 +700,38 @@ const _: () = {{
         GATE_MIN_Y == PIT_BOT + 1,
         "the gate does not adjoin the pit -- a player who flips zone on it would have \\
          no legal destination inside PIT_TOP..=PIT_BOT and would freeze",
+    );
+
+    // The waiting room the browser frames on is the floor immediately under the gate,
+    // and every seat it fans out stands on that floor.
+    //
+    // These four constants exist only for the renderer -- `VIEW_LOBBY` is
+    // `LOBBY_TOP..=LOBBY_BOT` plus masonry, and `LOBBY_SPAWN_MIN_X..MAX_X` is what has to
+    // be inside it -- so nothing on the chain would ever notice them drifting. That is
+    // exactly why the check is here: a hand-edit of this generated file, which the banner
+    // at the top forbids and someone will do anyway, shows up as a knight standing
+    // outside its own frame with no error anywhere.
+    assert!(
+        LOBBY_TOP == GATE_MAX_Y + 1
+            && LOBBY_TOP < LOBBY_BOT
+            && LOBBY_BOT < (MAP_TILES as i16) * TILE,
+        "the lobby floor band does not start where the gate ends -- re-run tools/gen_map.py",
+    );
+    assert!(
+        LOBBY_SPAWN_MIN_X <= LOBBY_SPAWN_MAX_X
+            && LOBBY_SPAWN_Y >= LOBBY_TOP
+            && LOBBY_SPAWN_Y <= LOBBY_BOT,
+        "the lobby spawn row is outside the lobby floor band -- the browser would frame \\
+         the waiting room on floor the seats do not stand on",
+    );
+    // The two seats at the ends of the fan -- the only two this file names, and the pair
+    // the frame is built out of. The other eighteen are swept by the generator.
+    assert!(
+        WALLS[(LOBBY_SPAWN_Y / TILE) as usize]
+            & ((1u64 << (LOBBY_SPAWN_MIN_X / TILE)) | (1u64 << (LOBBY_SPAWN_MAX_X / TILE)))
+            == 0,
+        "an outermost lobby spawn stands in a wall -- redraw assets/map/arena.json and \\
+         re-run tools/gen_map.py",
     );
 }};
 
@@ -810,6 +891,7 @@ def emit_ts(grid: list[str], g: dict[str, object]) -> str:
     pit = pit_box(grid, g["TILE"])
     gate = gate_box(grid, g["TILE"])
     spawn = lobby_spawn_extent(g)
+    lobby = lobby_band(grid, g["TILE"], gate)
     ptop, pbot = pit["PIT_ROWS"]
     gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
     return f'''/**
@@ -901,6 +983,20 @@ export const GATE_MAX_Y = {gate["GATE_MAX_Y"]};
 export const LOBBY_SPAWN_MIN_X = {spawn["LOBBY_SPAWN_MIN_X"]};
 export const LOBBY_SPAWN_MAX_X = {spawn["LOBBY_SPAWN_MAX_X"]};
 export const LOBBY_SPAWN_Y = {spawn["LOBBY_SPAWN_Y"]};
+
+/**
+ * The lobby floor band: the drawn floor rows below the gate (tile rows {lobby["LOBBY_ROWS"][0]}..{lobby["LOBBY_ROWS"][1]}), in
+ * arena-space units, `LOBBY_BOT` inclusive of the last row's last unit exactly as
+ * {{@link PIT_BOT}} is.
+ *
+ * A drawing fact, not a movement rule -- a `ZONE_LOBBY` seat is held in
+ * `PIT_BOT + 1 ..= MAP_MAX_XY`, which also covers the gate rows and the border ring. This
+ * is what the waiting room is framed on: `VIEW_LOBBY` is this band plus 208 units of
+ * masonry above and 80 below (spec 1.1), so the frame moves when the map is redrawn
+ * instead of drifting off a hardcoded 640/1008.
+ */
+export const LOBBY_TOP = {lobby["LOBBY_TOP"]};
+export const LOBBY_BOT = {lobby["LOBBY_BOT"]};
 
 /** Is this arena-space point inside the gate block? `handlers::player::on_gate`. */
 export function onGate(x: number, y: number): boolean {{

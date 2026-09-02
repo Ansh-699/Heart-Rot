@@ -164,6 +164,79 @@ export function mayMoveTo(zone: number, y: number, ny: number): boolean {
   return over(y) > 0 || over(ny) === 0;
 }
 
+// ---------------------------------------------------------------------------
+// Classes — the mirror of `state.rs`'s class block
+//
+// The whole class feature is one byte, `PlayerSlot.class_aim`, reinterpreted out of what
+// was `_pad0`. Nothing here is new wire: every seat already on chain reads 0 in it, which
+// is the knight it already was, which is why there is no migration.
+// ---------------------------------------------------------------------------
+
+/** Bit 7 of `class_aim`. One bit is the budget: the other seven are the aim. */
+export const CLASS_MASK = 0b1000_0000;
+/** Must stay 0 — it is what every live seat's byte already says. */
+export const CLASS_KNIGHT = 0;
+/** Slower and heavier, never faster: shot rate is notification rate. */
+export const CLASS_ARCHER = 1;
+export const N_CLASSES = 2;
+
+/** Milliseconds between accepted shots, per class. Ticks below are derived, never typed. */
+export const CLASS_PERIOD_MS: readonly number[] = [800, 1_400];
+
+/**
+ * Damage per landed shot, per class — DPS-neutral with {@link CLASS_PERIOD_MS} by
+ * construction (`40 x 14 == 70 x 8`), so the boss's HP curve does not move with the class
+ * a raid picks. The equality is asserted in {@link layoutSelfCheck}.
+ */
+export const CLASS_DAMAGE: readonly number[] = [40, 70];
+
+/**
+ * Shot cooldown in ticks, per class. The chain compares
+ * `arena.tick > last_shot_tick + cooldown`, so this is one *less* than the period in ticks.
+ *
+ * This is the **only** copy the client may read. `Hud.tsx` hard-coding a 1 here is how the
+ * SHOT READY pill went green 600 ms before the client's own gate would send.
+ */
+export const CLASS_COOLDOWN_TICKS: readonly number[] = CLASS_PERIOD_MS.map(
+  (ms) => ticksFor(ms) - 1,
+);
+
+/** `class_aim >> 7` — total, so the tables above are always indexable. */
+export function classOf(slot: Pick<PlayerSlot, 'classAim'>): number {
+  return slot.classAim >> 7;
+}
+
+export function shotDamage(slot: Pick<PlayerSlot, 'classAim'>): number {
+  return CLASS_DAMAGE[classOf(slot)]!;
+}
+
+export function cooldownTicks(slot: Pick<PlayerSlot, 'classAim'>): number {
+  return CLASS_COOLDOWN_TICKS[classOf(slot)]!;
+}
+
+/**
+ * The direction a seat last fired, as a vector whose **major axis is 1** — the exact
+ * inverse of `PlayerSlot::set_aim`, and the thing a drawn arrow points along.
+ *
+ * Not normalised: the caller wants a direction, and the one division it would cost buys
+ * nothing a `hypot` at the draw site does not already have to do. Signs come from the
+ * sector bits, so a component the encoder quantised to 0 has no sign — that is the
+ * encoding, not a bug here.
+ *
+ * **Only meaningful once `lastShotTick !== 0`.** Before the first shot the byte is 0,
+ * which decodes to due +x, and a client must fall back to {@link PlayerSlot.facing}
+ * instead (`FACING_UNIT` lives with the sprites, so that fallback is the renderer's).
+ * `(x, y)`, `classAim` and `lastShotTick` are between them enough to reconstruct any
+ * seat's arrow from account bytes alone — there is no event stream and no projectile on
+ * chain.
+ */
+export function decodeAim(classAim: number): readonly [number, number] {
+  const ratio = (classAim & 0x0f) / 15;
+  const sector = (classAim >> 4) & 0x07;
+  const [x, y] = (sector & 1) !== 0 ? [ratio, 1] : [1, ratio];
+  return [(sector & 4) !== 0 ? -x : x, (sector & 2) !== 0 ? -y : y];
+}
+
 /** `Boss.target_seat` when nobody is alive in the arena. */
 export const NO_TARGET = 0xff;
 
@@ -245,6 +318,8 @@ export const PLAYER_SLOT = {
     zone: 0,
     facing: 1,
     skin_id: 2,
+    // Was `_pad0`. No field moved and the slot is still 96 bytes; see `classAim`.
+    class_aim: 3,
     x: 4,
     y: 6,
     hp: 8,
@@ -347,9 +422,25 @@ export type ArenaAccount = {
   nextAffixSeed: Uint8Array;
 };
 
+/**
+ * `handlers::shoot::VENT_OPEN`. The core is damageable on this value and on NO other — the
+ * program's own comparison is `boss.vent_open != VENT_OPEN => 0`, an equality against this
+ * byte rather than a truthiness test, so `!== 0` is a different rule that happens to agree
+ * while the crank only ever writes 0 or 1.
+ *
+ * Exported because it had four spellings: the constant in `shoot.rs`, a private mirror in
+ * `Shot.tsx`, and a bare `ventOpen === 1` in `Hud` and `Boss`. One fact stored four times is
+ * this repo's signature defect, and every copy of it fails silently.
+ *
+ * {@link slamLane} is NOT one of them and must not be converted: it mirrors
+ * `tick.rs::slam_lane`, whose own test is `vent_open != 0`. Two chain functions, two rules,
+ * agreeing only because the crank never writes a byte outside 0..=1.
+ */
+export const VENT_OPEN = 1;
+
 export type BossAccount = {
   bump: number;
-  /** 0 sealed, 1 open. The core is only damageable while open. */
+  /** Sealed, or {@link VENT_OPEN}. The core is only damageable while open. */
   ventOpen: number;
   attackTimer: number;
   /** Seat index, or `NO_TARGET`. */
@@ -371,6 +462,13 @@ export type PlayerSlot = {
   zone: number;
   facing: number;
   skinId: number;
+  /**
+   * Class and last aim, packed — bit 7 class, bits 6..4 aim sector, bits 3..0 aim ratio.
+   * Read it through {@link classOf}, {@link shotDamage}, {@link cooldownTicks} and
+   * {@link decodeAim} rather than masking it at the call site; 0 is a knight who has not
+   * fired, which is every seat that predates the byte.
+   */
+  classAim: number;
   x: number;
   y: number;
   hp: number;
@@ -526,6 +624,7 @@ export function decodePlayers(data: Uint8Array): PlayersAccount {
       zone: v.getUint8(s + p.zone),
       facing: v.getUint8(s + p.facing),
       skinId: v.getUint8(s + p.skin_id),
+      classAim: v.getUint8(s + p.class_aim),
       x: v.getInt16(s + p.x, true),
       y: v.getInt16(s + p.y, true),
       hp: v.getUint16(s + p.hp, true),
@@ -699,6 +798,11 @@ function le64(bytes: Uint8Array): bigint {
  */
 export function slamLane(affixSeed: Uint8Array, tick: number, boss: BossAccount): number | null {
   if (tick % SLAM_PERIOD_TICKS !== 0) return null;
+  // `!== 0` and NOT `=== VENT_OPEN`, deliberately: this line mirrors `tick.rs:470`, which is
+  // `boss.vent_open != 0`, while {@link VENT_OPEN} is `shoot.rs`'s equality and belongs to
+  // the damage rule. The two agree for every byte the crank writes (`u8::from(bool)`), so
+  // swapping them is invisible today — which is exactly why it would be a mirror that no
+  // longer says what the function it mirrors says.
   if (boss.ventOpen !== 0) return SLAM_VENT_LANE;
 
   const r = mix64(le64(affixSeed) ^ mix64(BigInt(Math.floor(tick / SLAM_PERIOD_TICKS))));
@@ -833,7 +937,9 @@ export function layoutSelfCheck(): void {
     ok(slamTelegraph({ ...arena, tick: windUp - 1 }, b) === null, 'nothing is drawn before it');
   }
 
-  // PlayerSlot — unchanged this slice, and checked anyway because the 96-byte stride is
+  // PlayerSlot — `class_aim` is the one field added this slice, and it is the reinterpreted
+  // `_pad0` at offset 3, so a decoder that missed it reads `skin_id` or the low byte of `x`
+  // and both are plausible-looking numbers. The 96-byte stride is checked anyway: it is
   // what makes every seat past 0 correct or garbage.
   {
     const { data, v } = blank(PLAYERS.size, DISC_PLAYERS);
@@ -841,6 +947,7 @@ export function layoutSelfCheck(): void {
     v.setUint8(s + PLAYER_SLOT.offsets.zone, ZONE_ARENA);
     v.setUint8(s + PLAYER_SLOT.offsets.facing, 3);
     v.setUint8(s + PLAYER_SLOT.offsets.skin_id, 2);
+    v.setUint8(s + PLAYER_SLOT.offsets.class_aim, CLASS_MASK | 0x38); // archer, aiming (1, -2)
     v.setInt16(s + PLAYER_SLOT.offsets.x, 512, true);
     v.setInt16(s + PLAYER_SLOT.offsets.y, 500, true);
     v.setUint32(s + PLAYER_SLOT.offsets.respawn_at_tick, 77, true);
@@ -852,6 +959,63 @@ export function layoutSelfCheck(): void {
     ok(last.x === 512 && last.y === 500 && last.respawnAtTick === 77, 'seat 19 fields');
     ok(!p.slots[18]!.occupied, 'the stride did not smear into seat 18');
     ok(PLAYERS.offsets.slots + MAX_SEATS * PLAYER_SLOT.size <= PLAYERS.size, 'slots fit');
+
+    // The class byte, read back off the wire rather than out of a second copy of itself.
+    ok(last.classAim === (CLASS_MASK | 0x38), 'class_aim reads offset 3, not skin_id or x');
+    ok(last.skinId === 2, 'and class_aim did not eat skin_id');
+    ok(last.x === 512, 'nor the low byte of x');
+    ok(classOf(last) === CLASS_ARCHER, 'bit 7 is the class');
+    ok(shotDamage(last) === 70 && cooldownTicks(last) === ticksFor(1_400) - 1, "the archer's numbers");
+    const zeroed = p.slots[0]!;
+    ok(zeroed.classAim === 0 && classOf(zeroed) === CLASS_KNIGHT, 'a zeroed seat is the knight');
+    ok(shotDamage(zeroed) === 40 && cooldownTicks(zeroed) === ticksFor(800) - 1,
+      'and fires exactly as it does on devnet today');
+  }
+
+  // `decodeAim` — the inverse of `PlayerSlot::set_aim`, and the direction every drawn arrow
+  // points along. Pinned against codes computed by hand from the encoder's own arithmetic
+  // (`sector = neg_x << 2 | neg_y << 1 | steep`, `ratio = round(min * 15 / max)`) rather
+  // than against a fourth copy of the encoder: an encoder here would agree with itself.
+  {
+    const cases: readonly [number, readonly [number, number], string][] = [
+      [0x00, [1, 0], 'a zeroed byte aims due +x — which is why the fallback is `facing`'],
+      [0x0f, [1, 1], '(+x, +y) at 45 degrees'],
+      [0x10, [0, 1], 'due +y is steep with a zero minor axis'],
+      [0x30, [0, -1], 'due -y'],
+      [0x40, [-1, 0], 'due -x'],
+      [0x6f, [-1, -1], '(-x, -y) at 45 degrees'],
+      [0x38, [8 / 15, -1], 'steep, y negative, minor axis quantised to 8/15'],
+      [0x48, [-1, 8 / 15], 'shallow, x negative — the same ratio on the other axis'],
+    ];
+    for (const [code, want, what] of cases) {
+      const got = decodeAim(code);
+      ok(got[0] === want[0] && got[1] === want[1], `decodeAim(0x${code.toString(16)}): ${what}`);
+      // Bit 7 is the class and must not reach the aim. Dropping the mask in either
+      // direction is the feature's one silent failure.
+      const armed = decodeAim(code | CLASS_MASK);
+      ok(armed[0] === got[0] && armed[1] === got[1], 'the class bit is not part of the aim');
+    }
+    for (let code = 0; code < 256; code++) {
+      const [x, y] = decodeAim(code);
+      ok(Math.max(Math.abs(x), Math.abs(y)) === 1, `code ${code}: the major axis is exactly 1`);
+      ok(Math.min(Math.abs(x), Math.abs(y)) <= 1, `code ${code}: the minor axis is a ratio`);
+    }
+  }
+
+  // The class table. `controls.ts` and `Hud.tsx` derive their cooldowns from here and may
+  // never retype one — a HUD that says READY 600 ms before the gate will send is the second
+  // half of "the space bar doesn't work".
+  {
+    ok(CLASS_KNIGHT === 0, 'class 0 is the knight every live seat already is');
+    ok(CLASS_PERIOD_MS.length === N_CLASSES && CLASS_DAMAGE.length === N_CLASSES, 'one row per class');
+    ok(CLASS_COOLDOWN_TICKS.length === N_CLASSES, 'and one cooldown per class');
+    for (let c = 0; c < N_CLASSES; c++) {
+      ok((CLASS_COOLDOWN_TICKS[c]! + 1) * TICK_MS === CLASS_PERIOD_MS[c]!,
+        `class ${c}: the cooldown is the period, in ticks, minus one`);
+    }
+    ok(CLASS_DAMAGE[0]! * (CLASS_COOLDOWN_TICKS[1]! + 1) === CLASS_DAMAGE[1]! * (CLASS_COOLDOWN_TICKS[0]! + 1),
+      'the two classes are DPS-neutral, so the boss needs no rescaling');
+    ok(CLASS_COOLDOWN_TICKS[0] === 7 && CLASS_COOLDOWN_TICKS[1] === 13, 'ticksFor(800) - 1, ticksFor(1400) - 1');
   }
 
   // `mayMoveTo` — the movement rule, not a layout offset, and checked here because it is
@@ -876,7 +1040,12 @@ export function layoutSelfCheck(): void {
     ok(mayMoveTo(LOBBY_, 16, 32), 'an out-of-box seat may step back toward its box');
     ok(mayMoveTo(LOBBY_, 16, 5), 'a stranded seat is refused nothing by the box');
     ok(!mayMoveTo(LOBBY_, PIT_BOT + 17, 16), 'but once home it can never step back out');
-    ok(!mayMoveTo(LOBBY_, 16, 16), 'nor sideways, which keeps the same illegal y');
+    // Sideways too, which keeps the same illegal `y`. This assertion used to read `!` and
+    // was the last survivor of the strictly-decreasing-overshoot rule `may_move_to` replaced
+    // — the one that froze 4,620 stale lobby seats. `mayMoveTo` and `player.rs` have both
+    // said "walls alone until you are home" since; only this line still said otherwise, and
+    // it contradicted the assertion directly above it.
+    ok(mayMoveTo(LOBBY_, 16, 16), 'a stranded seat may step sideways as well');
     let y = 16;
     for (let n = 0; n < 64 && y <= PIT_BOT; n += 1) {
       const ny = y + 16;

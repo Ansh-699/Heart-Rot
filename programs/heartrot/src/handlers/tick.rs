@@ -478,9 +478,15 @@ fn slam_lane(affix_seed: &[u8; 32], tick: u32, boss: &Boss) -> Option<i32> {
     // One bit picks the hand, the rest picks its lane — so the two choices cannot
     // correlate into a hand that only ever slams one column.
     let (limb, lane) = if r & 1 == 0 {
-        (PART_MACE, MACE_LANE_FIRST + ((r >> 1) % MACE_LANE_COUNT) as i32)
+        (
+            PART_MACE,
+            MACE_LANE_FIRST + ((r >> 1) % MACE_LANE_COUNT) as i32,
+        )
     } else {
-        (PART_CLAWS, CLAWS_LANE_FIRST + ((r >> 1) % CLAWS_LANE_COUNT) as i32)
+        (
+            PART_CLAWS,
+            CLAWS_LANE_FIRST + ((r >> 1) % CLAWS_LANE_COUNT) as i32,
+        )
     };
     if boss.parts[limb] == 0 {
         return None;
@@ -555,7 +561,11 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // two. The only behavioural difference is that a player who respawns on tick T is
     // exposed to tick T's bullets — and they respawn at the entrance, roughly half the
     // arena from the boss, so in practice there are none to be exposed to.
-    let mut live = [Target { seat: 0, x: 0, y: 0 }; MAX_SEATS];
+    let mut live = [Target {
+        seat: 0,
+        x: 0,
+        y: 0,
+    }; MAX_SEATS];
     let mut live_n = 0usize;
     // Seats standing in the arena at all, alive or dead. An unclaimed seat is
     // all-zero, so `zone` alone separates "nobody has entered yet" from "everybody
@@ -881,8 +891,16 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
 #[inline]
 const fn fans_along_x(ex: i16, ey: i16) -> bool {
     let (x, y) = (ex as i32, ey as i32);
-    let to_x_edge = if x < ARENA_SIZE - x { x } else { ARENA_SIZE - x };
-    let to_y_edge = if y < ARENA_SIZE - y { y } else { ARENA_SIZE - y };
+    let to_x_edge = if x < ARENA_SIZE - x {
+        x
+    } else {
+        ARENA_SIZE - x
+    };
+    let to_y_edge = if y < ARENA_SIZE - y {
+        y
+    } else {
+        ARENA_SIZE - y
+    };
     to_y_edge <= to_x_edge
 }
 
@@ -1163,8 +1181,13 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView]) -> ProgramRes
     //
     // `is_err()` absorbed into `Ok(())` like every other rejection in this file: a crank
     // that returns `Err` ten times is deleted.
-    if assert_pda_at_bump(&boss_key, &[SEED_BOSS, arena_key.as_ref()], program_id, boss.bump)
-        .is_err()
+    if assert_pda_at_bump(
+        &boss_key,
+        &[SEED_BOSS, arena_key.as_ref()],
+        program_id,
+        boss.bump,
+    )
+    .is_err()
         || assert_pda_at_bump(
             &players_key,
             &[SEED_PLAYERS, arena_key.as_ref()],
@@ -1238,10 +1261,25 @@ mod tests {
     #[test]
     fn fast_bullets_do_not_tunnel_through_players() {
         // Player sits dead centre of the step the bullet takes this tick.
-        assert!(bullet_hits((100, 100), (100 + BULLET_SPEED, 100), 100 + BULLET_SPEED / 2, 100));
+        assert!(bullet_hits(
+            (100, 100),
+            (100 + BULLET_SPEED, 100),
+            100 + BULLET_SPEED / 2,
+            100
+        ));
         // Grazing at exactly the radius still counts; one unit further does not.
-        assert!(bullet_hits((100, 100), (148, 100), 124, 100 + PLAYER_HIT_RADIUS));
-        assert!(!bullet_hits((100, 100), (148, 100), 124, 100 + PLAYER_HIT_RADIUS + 1));
+        assert!(bullet_hits(
+            (100, 100),
+            (148, 100),
+            124,
+            100 + PLAYER_HIT_RADIUS
+        ));
+        assert!(!bullet_hits(
+            (100, 100),
+            (148, 100),
+            124,
+            100 + PLAYER_HIT_RADIUS + 1
+        ));
         // Behind the segment's start is a miss, not a hit on an infinite line.
         assert!(!bullet_hits((100, 100), (148, 100), 40, 100));
     }
@@ -1279,7 +1317,14 @@ mod tests {
     fn open_shot() -> (Bullet, i16, i16) {
         let (x, y, dx, dy) = find_step(|mid, end| !mid && !end).expect("the map has open floor");
         (
-            Bullet { x, y, dx, dy, active: BULLET_ACTIVE, _pad0: 0 },
+            Bullet {
+                x,
+                y,
+                dx,
+                dy,
+                active: BULLET_ACTIVE,
+                _pad0: 0,
+            },
             x + dx as i16,
             y + dy as i16,
         )
@@ -1296,7 +1341,14 @@ mod tests {
             let (mut arena, mut boss, mut players) = fight();
             // No thorns, so nothing else can spawn into the pool and confuse the count.
             boss.parts = [0; N_PARTS];
-            arena.bullets[0] = Bullet { x, y, dx, dy, active: BULLET_ACTIVE, _pad0: 0 };
+            arena.bullets[0] = Bullet {
+                x,
+                y,
+                dx,
+                dy,
+                active: BULLET_ACTIVE,
+                _pad0: 0,
+            };
             tick_once(&mut arena, &mut boss, &mut players);
             arena.bullets[0].active == BULLET_ACTIVE
         };
@@ -1346,7 +1398,11 @@ mod tests {
         // 300 units clear of the shot, which the swept test only widens by the 12-unit
         // hit radius. In range 0..1023 either way, whichever half of the map the shot
         // came out of.
-        let far_y = if py < (ARENA_SIZE / 2) as i16 { py + 300 } else { py - 300 };
+        let far_y = if py < (ARENA_SIZE / 2) as i16 {
+            py + 300
+        } else {
+            py - 300
+        };
 
         // Nobody in the arena: the boss ticks, but an empty arena is not a wipe.
         tick_once(&mut arena, &mut boss, &mut players);
@@ -1362,7 +1418,10 @@ mod tests {
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(players.slots[3].hp, 100 - BULLET_DAMAGE);
         assert_eq!(players.slots[7].hp, 100, "one bullet, one hit");
-        assert_eq!(arena.bullets[0].active, BULLET_FREE, "a spent bullet is freed");
+        assert_eq!(
+            arena.bullets[0].active, BULLET_FREE,
+            "a spent bullet is freed"
+        );
         assert_eq!(arena.alive_count, 2);
 
         // Kill seat 3 outright. One seat down is not a wipe while seat 7 is standing, so
@@ -1374,7 +1433,10 @@ mod tests {
         assert_eq!(players.slots[3].hp, 0);
         assert_eq!(players.slots[3].respawn_at_tick, died_on + RESPAWN_TICKS);
         assert_eq!(arena.alive_count, 1);
-        assert_eq!(players.slots[3].deaths, 1, "a death is counted where it is stamped");
+        assert_eq!(
+            players.slots[3].deaths, 1,
+            "a death is counted where it is stamped"
+        );
         assert_eq!(arena.phase, PHASE_FIGHTING, "one seat down is not a wipe");
         assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
 
@@ -1385,7 +1447,10 @@ mod tests {
         assert_eq!(players.slots[3].hp, 100);
         assert_eq!(players.slots[3].respawn_at_tick, 0);
         assert_eq!((players.slots[3].x, players.slots[3].y), entrance_for(3));
-        assert_eq!(players.slots[3].deaths, 1, "coming back is not a second death");
+        assert_eq!(
+            players.slots[3].deaths, 1,
+            "coming back is not a second death"
+        );
 
         // Now everyone in the arena is down with nothing scheduled. That, and only that,
         // is a wipe — and it is a loss, distinguishable from a win forever after. (Set
@@ -1396,7 +1461,10 @@ mod tests {
         players.slots[7].hp = 0;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.alive_count, 0);
-        assert_eq!(arena.phase, PHASE_SETTLING, "every arena occupant dead is a wipe");
+        assert_eq!(
+            arena.phase, PHASE_SETTLING,
+            "every arena occupant dead is a wipe"
+        );
         assert_eq!(arena.outcome, OUTCOME_WIPE, "and a wipe is not a win");
 
         // The crank keeps firing after the fight, and must change nothing but the clock.
@@ -1424,15 +1492,24 @@ mod tests {
         assert_eq!(players.slots[0].hp, 0);
         assert_eq!(players.slots[0].respawn_at_tick, died_on + RESPAWN_TICKS);
         assert_eq!(arena.alive_count, 0);
-        assert_eq!(arena.phase, PHASE_FIGHTING, "a pending respawn is not a wipe");
+        assert_eq!(
+            arena.phase, PHASE_FIGHTING,
+            "a pending respawn is not a wipe"
+        );
         assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
 
         // And the deadline is actually reached, which it never was before.
         while arena.tick < died_on + RESPAWN_TICKS {
             tick_once(&mut arena, &mut boss, &mut players);
-            assert_eq!(arena.phase, PHASE_FIGHTING, "the lone raider is still coming back");
+            assert_eq!(
+                arena.phase, PHASE_FIGHTING,
+                "the lone raider is still coming back"
+            );
         }
-        assert_eq!(players.slots[0].hp, 100, "one player alone respawns like anyone else");
+        assert_eq!(
+            players.slots[0].hp, 100,
+            "one player alone respawns like anyone else"
+        );
         assert_eq!(players.slots[0].respawn_at_tick, 0);
         assert_eq!((players.slots[0].x, players.slots[0].y), entrance_for(0));
         assert_eq!(arena.alive_count, 1);
@@ -1441,7 +1518,10 @@ mod tests {
         players.slots[0].hp = 0;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.phase, PHASE_SETTLING);
-        assert_eq!(arena.outcome, OUTCOME_WIPE, "nobody coming back is still a loss");
+        assert_eq!(
+            arena.outcome, OUTCOME_WIPE,
+            "nobody coming back is still a loss"
+        );
 
         // And enrage still ends a fight that would otherwise respawn forever.
         let (mut arena, mut boss, mut players) = fight();
@@ -1451,7 +1531,10 @@ mod tests {
         players.slots[0].respawn_at_tick = u32::MAX;
         arena.tick = 899;
         tick_once(&mut arena, &mut boss, &mut players);
-        assert_eq!(arena.outcome, OUTCOME_ENRAGE, "the clock still ends the match");
+        assert_eq!(
+            arena.outcome, OUTCOME_ENRAGE,
+            "the clock still ends the match"
+        );
     }
 
     /// A bullet whose step ends inside a wall used to be deleted before anything asked
@@ -1476,7 +1559,14 @@ mod tests {
             let (mut arena, mut boss, mut players) = fight();
             boss.parts = [0; N_PARTS];
             seat_in_arena(&mut players, 0, px, py);
-            arena.bullets[0] = Bullet { x: bx, y: by, dx, dy, active: BULLET_ACTIVE, _pad0: 0 };
+            arena.bullets[0] = Bullet {
+                x: bx,
+                y: by,
+                dx,
+                dy,
+                active: BULLET_ACTIVE,
+                _pad0: 0,
+            };
             tick_once(&mut arena, &mut boss, &mut players);
             (players.slots[0].hp, arena.bullets[0].active)
         };
@@ -1532,10 +1622,18 @@ mod tests {
         for _ in 0..=VOLLEY_INTERVAL_TICKS {
             tick_once(&mut arena, &mut boss, &mut players);
         }
-        let fired = arena.bullets.iter().filter(|b| b.active == BULLET_ACTIVE).count();
+        let fired = arena
+            .bullets
+            .iter()
+            .filter(|b| b.active == BULLET_ACTIVE)
+            .count();
         assert_eq!(fired, BASE_VOLLEY_BULLETS + 4, "3 + alive_players");
         assert!(
-            arena.bullets.iter().filter(|b| b.active == BULLET_ACTIVE).all(|b| b.dx != 0 || b.dy != 0),
+            arena
+                .bullets
+                .iter()
+                .filter(|b| b.active == BULLET_ACTIVE)
+                .all(|b| b.dx != 0 || b.dy != 0),
             "every spawned bullet has somewhere to go"
         );
 
@@ -1583,7 +1681,11 @@ mod tests {
 
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(
-            arena.bullets.iter().filter(|b| b.active == BULLET_ACTIVE).count(),
+            arena
+                .bullets
+                .iter()
+                .filter(|b| b.active == BULLET_ACTIVE)
+                .count(),
             BASE_VOLLEY_BULLETS + 1,
             "the volley lands on the tick the wind-up ends"
         );
@@ -1633,7 +1735,10 @@ mod tests {
         arena.tick = 899;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.phase, PHASE_SETTLING);
-        assert_eq!(arena.outcome, OUTCOME_ENRAGE, "running out of time is not a wipe");
+        assert_eq!(
+            arena.outcome, OUTCOME_ENRAGE,
+            "running out of time is not a wipe"
+        );
 
         // The killing blow that also kills the last player is a win, not a wipe — the
         // check order is the tie-break, and this is the case it decides.
@@ -1652,7 +1757,10 @@ mod tests {
         assert!(arena.end_fight(OUTCOME_WIN), "the killer got there first");
         arena.tick = 899;
         tick_once(&mut arena, &mut boss, &mut players);
-        assert_eq!(arena.outcome, OUTCOME_WIN, "the first outcome is the true one");
+        assert_eq!(
+            arena.outcome, OUTCOME_WIN,
+            "the first outcome is the true one"
+        );
         assert_eq!(arena.phase, PHASE_SETTLING);
         assert_eq!(arena.tick, 900, "the clock runs in every phase");
 
@@ -1700,8 +1808,14 @@ mod tests {
         // One tick past it, the roll is abandoned — and no seed is invented in its place.
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(arena.phase, PHASE_SETTLING);
-        assert_eq!(arena.next_affix_seed, [0u8; 32], "a fallback seed is not randomness");
-        assert_eq!(arena.outcome, OUTCOME_WIN, "the win survives the failed roll");
+        assert_eq!(
+            arena.next_affix_seed, [0u8; 32],
+            "a fallback seed is not randomness"
+        );
+        assert_eq!(
+            arena.outcome, OUTCOME_WIN,
+            "the win survives the failed roll"
+        );
     }
 
     /// The same seed and tick must produce the same volley on the chain and in the
@@ -1739,13 +1853,19 @@ mod tests {
     fn the_hand_slam_keeps_its_beat_and_its_own_lanes() {
         let (arena, mut boss, _) = hands_only();
         let seed = arena.affix_seed;
-        let in_mace = |lane: i32| (MACE_LANE_FIRST..MACE_LANE_FIRST + MACE_LANE_COUNT as i32).contains(&lane);
-        let in_claws =
-            |lane: i32| (CLAWS_LANE_FIRST..CLAWS_LANE_FIRST + CLAWS_LANE_COUNT as i32).contains(&lane);
+        let in_mace =
+            |lane: i32| (MACE_LANE_FIRST..MACE_LANE_FIRST + MACE_LANE_COUNT as i32).contains(&lane);
+        let in_claws = |lane: i32| {
+            (CLAWS_LANE_FIRST..CLAWS_LANE_FIRST + CLAWS_LANE_COUNT as i32).contains(&lane)
+        };
 
         // Nothing lands off the beat, ever.
         for tick in 1..SLAM_PERIOD_TICKS {
-            assert_eq!(slam_lane(&seed, tick, &boss), None, "tick {tick} is not a beat");
+            assert_eq!(
+                slam_lane(&seed, tick, &boss),
+                None,
+                "tick {tick} is not a beat"
+            );
         }
 
         // Every beat of a full-length fight lands, always inside one hand's own lanes,
@@ -1755,14 +1875,20 @@ mod tests {
         let (mut mace, mut claws) = (0u32, 0u32);
         for beat in 1..=beats {
             let lane = slam_lane(&seed, beat * SLAM_PERIOD_TICKS, &boss).expect("both hands stand");
-            assert!(in_mace(lane) || in_claws(lane), "beat {beat} slammed lane {lane}");
+            assert!(
+                in_mace(lane) || in_claws(lane),
+                "beat {beat} slammed lane {lane}"
+            );
             if in_mace(lane) {
                 mace += 1;
             } else {
                 claws += 1;
             }
         }
-        assert!(mace > 0 && claws > 0, "one bit picks the hand; both must come up");
+        assert!(
+            mace > 0 && claws > 0,
+            "one bit picks the hand; both must come up"
+        );
 
         // Shoot the mace off: its beats go quiet and the claws keep theirs.
         boss.parts[PART_MACE] = 0;
@@ -1811,7 +1937,11 @@ mod tests {
                 // The window predicate the client gates its animation on, and the beat,
                 // must describe the same ticks.
                 assert!(t % SLAM_PERIOD_TICKS >= SLAM_PERIOD_TICKS - SLAM_TELEGRAPH_TICKS);
-                assert_eq!(slam_lane(&seed, t, &boss), None, "a wind-up tick lands nothing");
+                assert_eq!(
+                    slam_lane(&seed, t, &boss),
+                    None,
+                    "a wind-up tick lands nothing"
+                );
                 let next_beat = (t / SLAM_PERIOD_TICKS + 1) * SLAM_PERIOD_TICKS;
                 assert_eq!(next_beat, lands_at);
                 assert_eq!(
@@ -1833,7 +1963,8 @@ mod tests {
         let hit_x = (lane * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
         // Four lanes over: inside the arena by construction, outside the slam by
         // construction.
-        let safe_x = (((lane + SLAM_LANES / 2) % SLAM_LANES) * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
+        let safe_x =
+            (((lane + SLAM_LANES / 2) % SLAM_LANES) * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
 
         seat_in_arena(&mut players, 2, hit_x, 512);
         seat_in_arena(&mut players, 5, hit_x, 512);
@@ -1844,7 +1975,11 @@ mod tests {
             tick_once(&mut arena, &mut boss, &mut players);
         }
 
-        assert_eq!(players.slots[2].hp, 100 - SLAM_DAMAGE, "the hand lands on its lane");
+        assert_eq!(
+            players.slots[2].hp,
+            100 - SLAM_DAMAGE,
+            "the hand lands on its lane"
+        );
         assert_eq!(players.slots[9].hp, 100, "and on no other");
         assert_eq!(players.slots[5].hp, 0);
         assert_eq!(
@@ -1854,14 +1989,20 @@ mod tests {
         );
         assert_eq!(players.slots[5].deaths, 1, "and it is counted");
         assert_eq!(arena.alive_count, 2, "and the corpse left the live list");
-        assert_eq!(arena.phase, PHASE_FIGHTING, "a scheduled comeback is not a wipe");
+        assert_eq!(
+            arena.phase, PHASE_FIGHTING,
+            "a scheduled comeback is not a wipe"
+        );
 
         // Two slams do not quite kill a full-health raider; that is the whole point of
         // the number. It is a mechanic check, not a damage check.
         while arena.tick < 2 * SLAM_PERIOD_TICKS {
             tick_once(&mut arena, &mut boss, &mut players);
         }
-        assert!(players.slots[2].hp > 0, "two slams must not be a kill on their own");
+        assert!(
+            players.slots[2].hp > 0,
+            "two slams must not be a kill on their own"
+        );
     }
 
     /// More players must mean a harder fight, and one player must still be able to win
@@ -1880,10 +2021,17 @@ mod tests {
 
         let solo = BOSS_CORE_HP;
         let full = BOSS_CORE_HP + CORE_HP_PER_RAIDER * (MAX_SEATS as u16 - 1);
-        assert_eq!(core_after(0), (solo, solo), "an empty arena still fights the floor");
+        assert_eq!(
+            core_after(0),
+            (solo, solo),
+            "an empty arena still fights the floor"
+        );
         assert_eq!(core_after(1), (solo, solo), "solo stays winnable");
         assert_eq!(core_after(MAX_SEATS), (full, full));
-        assert!(full > solo, "twenty raiders must be a longer fight than one");
+        assert!(
+            full > solo,
+            "twenty raiders must be a longer fight than one"
+        );
 
         // Monotone: the high-water record does not fall when the raid does.
         let (mut arena, mut boss, mut players) = hands_only();
@@ -1902,7 +2050,10 @@ mod tests {
         boss.core_hp = 0;
         seat_in_arena(&mut players, 0, 400, 512);
         tick_once(&mut arena, &mut boss, &mut players);
-        assert_eq!(boss.core_hp, 0, "the difficulty curve does not resurrect the boss");
+        assert_eq!(
+            boss.core_hp, 0,
+            "the difficulty curve does not resurrect the boss"
+        );
         assert_eq!(arena.outcome, OUTCOME_WIN);
     }
 

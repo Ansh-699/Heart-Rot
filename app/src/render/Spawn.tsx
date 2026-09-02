@@ -110,26 +110,54 @@ export interface SpawnProps {
    * §7.6 asks for one resolver, and `Arena.tsx` already has it for the frame loop.
    */
   reduced: boolean;
+  /**
+   * `state.feedEpoch`, bumped whenever the world feed leaves `'live'`
+   * (`docs/architecture/15-gate-transition.md` §4.2).
+   *
+   * Without it this beat replays on every reconnect. The renderer does not unmount when
+   * the socket drops — `App.tsx:159` mounts `<World>` as a sibling of the screen switch —
+   * so `prev` survives the outage, and the measured outage is 1,681 ms, four crank ticks.
+   * A player who drops during `PHASE_MUSTERING` and returns during `PHASE_FIGHTING` gets
+   * the opening cinematic replayed over a fight already in progress.
+   *
+   * Do NOT substitute `state.status`: `store.ts:415` forces it to `'live'` on every
+   * account update, so the payload that needs suppressing is the same payload that repairs
+   * the status — the gate would race the thing it gates.
+   *
+   * Optional only so this file does not break a caller that has not been rewired yet; the
+   * default is a constant, which means no gate. `Passage.tsx` implements the identical
+   * rule against `zone` and the two must stay in step.
+   */
+  feedEpoch?: number;
 }
 
 /**
  * Mount as the LAST child of `#camera`, so the light sits over the boss, the raiders and
  * the bullets, and pans with them. It draws nothing at all except during the beat.
  */
-export function Spawn({ phase, bossX, bossY, reduced }: SpawnProps) {
+export function Spawn({ phase, bossX, bossY, reduced, feedEpoch = 0 }: SpawnProps) {
   const prev = useRef<number | null>(null);
+  const epoch = useRef(feedEpoch);
   const [playing, setPlaying] = useState(false);
   const veil = useRef<SVGRectElement | null>(null);
   const eyes = useRef<SVGGElement | null>(null);
   const rim = useRef<SVGEllipseElement | null>(null);
 
   useEffect(() => {
+    if (epoch.current !== feedEpoch) {
+      // The feed dropped: this payload is a resync, not a diff. Seeding `prev` with the
+      // current phase rather than `null` re-arms on the NEXT payload rather than
+      // suppressing two — §4.4 asks for exactly one.
+      epoch.current = feedEpoch;
+      prev.current = phase;
+      return;
+    }
     const was = prev.current;
     prev.current = phase;
     // Under reduced motion `prev` is still tracked, so turning the setting off mid-session
     // does not make the next duplicate payload look like a fresh transition.
     if (!reduced && spawnFires(was, phase)) setPlaying(true);
-  }, [phase, reduced]);
+  }, [phase, reduced, feedEpoch]);
 
   // Layout, not passive: the nodes mount opaque-at-zero and must be animating before the
   // browser paints them, or the first frame is a black rectangle over the arena.

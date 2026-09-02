@@ -48,10 +48,8 @@ use ephemeral_rollups_pinocchio::{
     instruction::commit_and_undelegate_accounts,
 };
 use pinocchio::{
-    error::ProgramError,
-    instruction::InstructionAccount,
-    sysvars::slot_hashes,
-    AccountView, Address, ProgramResult,
+    error::ProgramError, instruction::InstructionAccount, sysvars::slot_hashes, AccountView,
+    Address, ProgramResult,
 };
 
 use crate::error::HeartrotError;

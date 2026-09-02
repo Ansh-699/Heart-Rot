@@ -65,7 +65,7 @@
 //! | 1 | `InitArena` | `init::init_arena` | base | 74 B | 5 | `init::TREASURY` |
 //! | 2 | `Delegate` | `delegation::process_delegate` | base | 0 B | 16 exact | `Arena.crank_authority` |
 //! | 3 | `BeginMuster` | `settle::begin_muster` | ER | 0 B | 5 | `Arena.crank_authority` |
-//! | 4 | `ClaimSeat` | `player::join` | ER | 66 B | 3 | `Arena.crank_authority` |
+//! | 4 | `ClaimSeat` | `player::join` | ER | 67 B | 3 | `Arena.crank_authority` |
 //! | 5 | `EnterGate` | `player::enter_gate` | ER | 1 B | 3 | `slots[seat].session_pubkey` |
 //! | 6 | `Move` | `player::move_player` | ER | 5 B | 3 | `slots[seat].session_pubkey` |
 //! | 7 | `Shoot` | `shoot::process` | ER | 3 B | 4 | `slots[seat].session_pubkey` |
@@ -180,7 +180,13 @@
 //!
 //! # Tag 4 — `ClaimSeat`, ER
 //!
-//! Args, 66 bytes exactly (`player::JOIN_DATA_LEN`):
+//! Args, 67 bytes exactly (`player::JOIN_DATA_LEN`). **This block grew from 66 bytes and
+//! is not backward compatible** — the same property tag 7 already has, and it is
+//! deliberate: `class` is *appended*, so no existing offset moves and both 32-byte slices
+//! are untouched, and an old client's 66-byte block is refused as a clean
+//! `InvalidInstructionData` instead of being read one byte short. The program, the app and
+//! the Worker therefore ship together; a partial deploy fails every join rather than
+//! seating anybody with a misread byte.
 //!
 //! | Offset | Width | Field | |
 //! |---|---|---|---|
@@ -188,6 +194,7 @@
 //! | `[1]` | 1 | `skin_id` | u8 |
 //! | `[2..34]` | 32 | `session_pubkey` | the browser session key; **must be non-zero** (all-zero is the "unclaimed" sentinel) |
 //! | `[34..66]` | 32 | `identity` | Privy identity; **must be non-zero** |
+//! | `[66]` | 1 | `class` | u8; 0 knight, 1 archer. **Must be `< state::N_CLASSES`; never clamped** |
 //!
 //! | # | Account | Flags | |
 //! |---|---|---|---|
@@ -197,8 +204,22 @@
 //!
 //! Seats are administered, not self-served: a session key that could claim its own seat
 //! would take all twenty for free, since ER fees are zero. If `identity` already holds a
-//! seat, that seat is kept whatever `seat` asks for and only the key and skin rotate —
+//! seat, that seat is kept whatever `seat` asks for and only the key and the skin rotate —
 //! which is what makes the Worker's `/session/init` safe to retry.
+//!
+//! **`class` is not among the fields a returning identity rotates**, and `skin_id` is. The
+//! asymmetry is the point: a skin is a render hint, while a class is the cooldown and the
+//! damage `shoot` reads, and `last_shot_tick` survives a rotation — so a re-`join` mid-fight
+//! would swap a knight's 800 ms cooldown for an archer's 70 damage and break the
+//! DPS-neutrality the two classes are built to. The class a seat carries is therefore fixed
+//! for the incarnation, and `/session/init` stays idempotent because the byte it would
+//! rewrite is the byte it already wrote.
+//!
+//! `class` lands in `PlayerSlot.class_aim` bit 7 and nowhere else. The low seven bits of
+//! that byte are live aim state owned by `shoot::fire`; a fresh claim writes the whole byte
+//! because the slot is zeroed first, and any *later* writer must preserve the aim (that is
+//! what `PlayerSlot::set_class` is for). Nothing changes shape — `class_aim` is the old
+//! `_pad0`, so `size_of::<PlayerSlot>()` stays 96 and `LAYOUT_VERSION` stays 1.
 //!
 //! # Tag 5 — `EnterGate`, ER
 //!
@@ -462,6 +483,19 @@
 //!
 //! - `seat` is checked `< state::MAX_SEATS` before it indexes `Players.slots`. A fallible
 //!   `slots.get_mut(seat)` satisfies this; a bare `slots[seat]` does not.
+//! - `class` (tag 4) is checked `< state::N_CLASSES` and **rejected, never clamped**.
+//!   `player::parse_join`'s `class >= N_CLASSES` refusal satisfies this, the way
+//!   `slots.get_mut` satisfies the seat bound, and it is what lets `claim_seat` write
+//!   `class * CLASS_MASK` with no bounds check and no panic path in the BPF — a class of 2
+//!   would otherwise overflow the byte and alias onto the knight. Clamping is the failure
+//!   mode worth naming, more than the overflow: it turns client/program version skew — the
+//!   one thing an appended wire byte makes likely — into a player who silently gets a class
+//!   they did not pick and a damage number that does not match their own UI, with nothing
+//!   anywhere reporting a fault. The refusal is `InvalidInstructionData`, the same code
+//!   the length check uses, and deliberately not a `HeartrotError`: see `error.rs`'s
+//!   "Why the class byte gets no code". It is not a `guards.rs` check either — that
+//!   module owns what a `&mut [u8]` cannot see (owner, signer, PDA, session key), and a
+//!   byte's own range is not that.
 //! - `dx`/`dy` (tag 7) are attacker-chosen and carry **no** bound worth checking: the pair
 //!   is normalised on chain to a fixed step length, so magnitude cannot be inflated, and
 //!   every direction is legal. `(0, 0)` is the one rejection — it is not a direction — and

@@ -3,14 +3,9 @@
  * redesign, plus the one block `many-seats.md` says it could not do: a real FIGHT with
  * twenty raiders inside the pit.
  *
- * Two differences from `perf_seats.ts`, and nothing else:
+ * One difference from `perf_seats.ts`, and nothing else:
  *
- *  1. **The map comes out of the deployed binary, not `@heartrot/client`.** The client
- *     mirrors the map this repo builds; the program answering these transactions is the
- *     one on devnet. `DEPLOYED_GRID` below was lifted from the wall bitboard in
- *     `solana program dump`'s output, so the walkability this harness plans against is
- *     the authority's, not a mirror's.
- *  2. **`--mode fight`** walks every seat to the gate, sends `enter_gate`, and only then
+ *  1. **`--mode fight`** walks every seat to the gate, sends `enter_gate`, and only then
  *     starts the match, so the whole sweep runs with twenty seats in `ZONE_ARENA` being
  *     shot at. `perf_seats.ts` measured twenty seats standing in the lobby, which its own
  *     "what would invalidate it" names as the gap.
@@ -106,10 +101,14 @@ import {
   delegate,
   getDelegationStatus,
   getRoutes,
+  isWall,
+  isWallTile,
+  onGate,
   initArena,
   enterGate,
   matchPdas,
   movePlayer,
+  shoot,
   sendInstructions,
   settle,
   startMatch,
@@ -119,7 +118,15 @@ import {
   type Session,
 } from '@heartrot/client';
 
-const PROGRAM_ID = 'JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5' as Address;
+/**
+ * `HR_PROGRAM_ID` lets the AFTER run of `er_guard.sh` point this same instrument at a
+ * candidate build deployed to a fresh id, so BEFORE and AFTER differ only in the program.
+ * The walk below plans against `@heartrot/client`'s generated map, which is only the
+ * chain's map while the deployed binary is this tree's build — so a candidate id must be
+ * a build of THIS tree, not an older one.
+ */
+const PROGRAM_ID = (process.env.HR_PROGRAM_ID ??
+  'JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5') as Address;
 const BASE_URL = 'https://api.devnet.solana.com';
 const COMPUTE_BUDGET_ID = 'ComputeBudget111111111111111111111111111111' as Address;
 const SYSTEM_ID = '11111111111111111111111111111111' as Address;
@@ -130,101 +137,23 @@ const MAP_MAX_XY = 63 * 16 + 15;
 const TILES = 64;
 
 /**
- * The wall bitboard of the program at `PROGRAM_ID`, read out of the deployed ELF.
+ * The map and the gate box come from `@heartrot/client`, which `tools/gen_map.py`
+ * generates from `assets/map/arena.json` — the same source `programs/heartrot/src/map.rs`
+ * is generated from. This used to be a 64-line ASCII grid hand-extracted from the wall
+ * bitboard of the deployed ELF, because the deployed program was not this tree's build.
+ * It is now: `solana program dump` of `JCfWB9…` on 2026-09-02 is this tree's
+ * `target/deploy/heartrot.so` byte for byte (sha256 417bcec7…, the dump's remaining
+ * 7,280 bytes are zero padding), so the copy had no reason to exist and every reason not
+ * to — it went stale the moment the map was redrawn, and a stale copy does not fail, it
+ * plans every step into a wall and reports "20 seats never reached the gate".
  *
- * `solana program dump JCfWB9… onchain.so`, then scan for 64 consecutive little-endian
- * u64 whose first and last are all ones and whose every row has both border bits set —
- * exactly one region in the binary matches. Bit `b` of row `y` is tile `(b, y)`.
- *
- * This is here rather than `isWall` from `@heartrot/client` because the client's map was
- * redrawn by the immortals work and the deployed program's was not. Planning a walk
- * against the wrong one is how a seat silently stops moving: `BlockedByWall` is a
- * transaction error, and every send in this harness is `skipPreflight`, so a refused move
- * looks exactly like an accepted one from the sender's side.
+ * `er_guard.sh` records the .so hash beside every run. If it ever stops matching the
+ * deployed id, this import is a lie again and the grid has to come from the chain.
  */
-const DEPLOYED_GRID: readonly string[] = [
-  '################################################################',
-  '#..............................................................#',
-  '#.##....##....##....##....##....##....##....##....##....##.....#',
-  '#.##....##....##....##....##....##....##....##....##....##.....#',
-  '#..............................................................#',
-  '#....######..........................................######....#',
-  '#....######..........................................######....#',
-  '#....######..........................................######....#',
-  '#.##.######...##....##....##....##....##....##....##.######....#',
-  '#.##.######...##....##....##....##....##....##....##.######....#',
-  '#....######..........................................######....#',
-  '#..............................................................#',
-  '#..............................................................#',
-  '#..............................................................#',
-  '#.##....##........................................##....##.....#',
-  '#.##....##.....################..################.##....##.....#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#.##....##.....################..################.##....##.....#',
-  '#.##....##.....################..################.##....##.....#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#..............#########................#########..............#',
-  '#..............#########................#########..............#',
-  '#.##....##.....#########................#########.##....##.....#',
-  '#.##....##.....#########................#########.##....##.....#',
-  '#..............#########................#########..............#',
-  '#..............#########................#########..............#',
-  '#..............#########................#########..............#',
-  '#..............................................................#',
-  '#.##....##........................................##....##.....#',
-  '#.##....##.....#########................#########.##....##.....#',
-  '#..............#########................#########..............#',
-  '#..............#########................#########..............#',
-  '#..............#########................#########..............#',
-  '#..............#########................#########..............#',
-  '#.##....##.....#########................#########.##....##.....#',
-  '#.##....##.....#########................#########.##....##.....#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#.##....##.....################..################.##....##.....#',
-  '#.##....##.....################..################.##....##.....#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#..............################..################..............#',
-  '#..............................................................#',
-  '#.##....##....##....##....##....##....##....##....##....##.....#',
-  '#.##....##....##....##....##....##....##....##....##....##.....#',
-  '#..............................................................#',
-  '#....######..........................................######....#',
-  '#....######..........................................######....#',
-  '#....######..........................................######....#',
-  '#.##.######...##....##....##....##....##....##....##.######....#',
-  '#.##.######...##....##....##....##....##....##....##.######....#',
-  '#....######..........................................######....#',
-  '#..............................................................#',
-  '#..............................................................#',
-  '#..............................................................#',
-  '#..............................................................#',
-  '################################################################',
-];
+const wallTile = (tx: number, ty: number): boolean =>
+  tx < 0 || ty < 0 || tx >= TILES || ty >= TILES || isWallTile(tx, ty);
 
-/** Gate box in world units — tiles 30..33 on both axes (`player.rs` GATE_MIN/MAX). */
-const GATE_MIN = 30 * STEP;
-const GATE_MAX = 33 * STEP + (STEP - 1);
-
-function wallTile(tx: number, ty: number): boolean {
-  if (tx < 0 || ty < 0 || tx >= TILES || ty >= TILES) return true;
-  return (DEPLOYED_GRID[ty] as string)[tx] === '#';
-}
-
-function wallAt(x: number, y: number): boolean {
-  return wallTile(Math.floor(x / STEP), Math.floor(y / STEP));
-}
-
-function onGate(x: number, y: number): boolean {
-  return x >= GATE_MIN && x <= GATE_MAX && y >= GATE_MIN && y <= GATE_MAX;
-}
+const wallAt = (x: number, y: number): boolean => isWall(x, y);
 
 /**
  * The first cardinal step of a shortest 4-connected tile path to the gate box, or null
@@ -277,6 +206,23 @@ const QUIET_MS = Number(process.env.PS_QUIET_MS ?? 20_000);
 const SEND_MS = Number(process.env.PS_SEND_MS ?? 100);
 /** The spam block's period. 25 ms is half a slot, so ~50 % must be refused by design. */
 const SPAM_MS = Number(process.env.PS_SPAM_MS ?? 25);
+/**
+ * Per-seat `shoot` period, or 0 for none. 0 is the default because every number banked
+ * before 2026-09-02 was measured with a harness that fires nothing, and a default that
+ * changed the load would silently invalidate them.
+ *
+ * `shoot` is the transaction that matters most and has never been under load: it names
+ * `Arena`, `Boss` and `Players` all WRITABLE (`instructions.ts` §shoot), where `move`
+ * names only `Players` writable and `Arena` read-only. Twenty seats holding fire is
+ * ~24 fully-serialising writes/s arriving alongside the crank's 10 `boss_tick`/s, and
+ * `shoot.rs`'s cooldown means that load only appears once the spacebar works at all.
+ *
+ * 850 ms, not 800: the guard is `arena.tick <= last_shot_tick + SHOT_COOLDOWN_TICKS`
+ * with `SHOT_COOLDOWN_TICKS = ticks_for(800) - 1 = 7`, so the first accepted retry is
+ * 800 ms after the last and a period of exactly 800 would sit on the boundary and be
+ * refused about half the time. That would measure the limiter, not the load.
+ */
+const SHOOT_MS = Number(process.env.PS_SHOOT_MS ?? 0);
 const MAX_SEATS = 20;
 
 /**
@@ -522,21 +468,39 @@ function openFeed(cfg: {
     const kind = subKind.get(sub);
     if (kind === undefined) return;
 
-    // base64 -> bytes -> the shipped decoder, timed together, because that whole path is
-    // what the browser runs per notification.
-    const t0 = process.hrtime.bigint();
-    const bytes = Uint8Array.from(Buffer.from(encoded, 'base64'));
-    let decoded: ReturnType<typeof decodePlayers> | null = null;
-    if (kind === 'players') decoded = decodePlayers(bytes);
-    else if (kind === 'arena') {
-      const a = decodeArena(bytes);
-      cfg.chain.phase = a.phase;
-      cfg.chain.tick = a.tick;
-    } else decodeBoss(bytes);
-    const decodeUs = Number(process.hrtime.bigint() - t0) / 1000;
-
+    // THE DEDUPE COMES FIRST, because it comes first in the browser: `deliverEncoded`
+    // (app/src/net/subscribe.ts) returns on a byte-identical payload BEFORE `fromBase64`
+    // and before the decoder, so a duplicate costs a map lookup and nothing else. This used
+    // to decode every frame and compute `duplicate` afterwards, which charged the client for
+    // work it does not do — at twenty seats 390 of 769 notifications/s are byte-identical,
+    // so the row was roughly double what a browser pays.
+    //
+    // Skipping the decode cannot lose an arrival: a byte-identical `Players` payload carries
+    // the same `lastMoveSeq` for every seat, so the loop below would take `seq <= last` on
+    // all twenty and record nothing. The shipped client does not decode these bytes either.
     const duplicate = lastPayload.get(kind) === encoded;
     lastPayload.set(kind, encoded);
+
+    // base64 -> bytes -> the shipped decoder, timed TOGETHER and deliberately: the browser's
+    // per-notification path is `deliver(kind, fromBase64(encoded))`, so the hop is part of
+    // what a notification costs, not an artefact of this harness. It is the larger half —
+    // measured 2,956 ns for a 1,924-byte Players payload against 1,655 ns for the decoder —
+    // so the row is named for its smaller term. The JSON key stays `decodeUs` because every
+    // run under docs/perf/er-guard is keyed on it and renaming it would orphan them; the
+    // printed label in er_guard_cmp.mjs says "parse+decode".
+    let decodeUs = 0;
+    let decoded: ReturnType<typeof decodePlayers> | null = null;
+    if (!duplicate) {
+      const t0 = process.hrtime.bigint();
+      const bytes = Uint8Array.from(Buffer.from(encoded, 'base64'));
+      if (kind === 'players') decoded = decodePlayers(bytes);
+      else if (kind === 'arena') {
+        const a = decodeArena(bytes);
+        cfg.chain.phase = a.phase;
+        cfg.chain.tick = a.tick;
+      } else decodeBoss(bytes);
+      decodeUs = Number(process.hrtime.bigint() - t0) / 1000;
+    }
     cfg.frames.push({ at, kind, wire: raw.length, payload: encoded.length, decodeUs, duplicate });
 
     if (decoded === null) return;
@@ -593,6 +557,9 @@ interface Seat {
   seq: number;
   sent: number;
   failed: number;
+  /** `shoot` sends and their POST failures. Zero unless `PS_SHOOT_MS` is set. */
+  shots: number;
+  shotsFailed: number;
   /** seq -> the moment the send was decided. */
   readonly sendAt: Map<number, number>;
   /** seq -> the block it belongs to. */
@@ -641,6 +608,7 @@ async function main(): Promise<void> {
     quietMs: QUIET_MS,
     sendMs: SEND_MS,
     spamMs: SPAM_MS,
+    shootMs: SHOOT_MS,
   });
 
   const base = createRpc(BASE_URL);
@@ -716,18 +684,27 @@ async function main(): Promise<void> {
     const keyPair = await generateKeyPair();
     const session = await getAddressFromPublicKey(keyPair.publicKey);
     const signer = createSessionSigner({ address: session, keyPair } as unknown as Session);
-    const sig = await sendInstructions(match.er, treasury, [
-      claimSeat({
-        programId: PROGRAM_ID,
-        arena,
-        players,
-        treasury: treasury.address,
-        seat,
-        skinId: seat % 3,
-        sessionPubkey: session,
-        identity: Uint8Array.from(randomBytes(32)),
-      }),
-    ]);
+    const ix = claimSeat({
+      programId: PROGRAM_ID,
+      arena,
+      players,
+      treasury: treasury.address,
+      seat,
+      skinId: seat % 3,
+      // CLASS_KNIGHT. Every number banked in docs/perf/ was measured with the behaviour
+      // class 0 names — 40 damage on an 800 ms period — because that is the only
+      // behaviour the program had. Firing as the archer is a different experiment.
+      class: 0,
+      sessionPubkey: session,
+      identity: Uint8Array.from(randomBytes(32)),
+    });
+    // The legacy program at JCfWB9… predates the class byte and length-checks the block:
+    // `JOIN_DATA_LEN` is 66 there and 67 here, so this trims the appended byte back off.
+    // Set HR_JOIN66=1 to measure the BEFORE arm against the deployed build without
+    // reverting the client. Only `claim_seat` differs; `move`, the thing this harness
+    // times, is byte-identical on both wires.
+    if (process.env.HR_JOIN66 === '1') ix.data = ix.data.slice(0, ix.data.length - 1);
+    const sig = await sendInstructions(match.er, treasury, [ix]);
     await confirmEr(match.er, sig, `claim_seat ${seat}`);
     claimed.push({ index: seat, session, signer });
   }
@@ -751,6 +728,8 @@ async function main(): Promise<void> {
     seq: 0,
     sent: 0,
     failed: 0,
+    shots: 0,
+    shotsFailed: 0,
     sendAt: new Map(),
     blockOf: new Map(),
   }));
@@ -927,6 +906,48 @@ async function main(): Promise<void> {
   ) {
     const block: Block = { label, seats: count, periodMs, arenaWritable, from: now(), to: 0 };
     const stopAt = block.from + ms;
+    // One independent fire loop per active seat, started with the block and stopped with
+    // it. Separate from the move loop rather than folded into it: the periods are 50 ms
+    // and 850 ms, and interleaving them by counter would make every 17th move late.
+    const gunners =
+      SHOOT_MS === 0
+        ? []
+        : seats.slice(0, count).map(async (seat) => {
+            while (now() < stopAt) {
+              const t0 = now();
+              seat.shots += 1;
+              void sendInstructions(match.er, seat.signer, [
+                shoot({
+                  programId: PROGRAM_ID,
+                  arena,
+                  boss,
+                  players,
+                  session: seat.session,
+                  seat: seat.index,
+                  // Due SOUTH — away from the boss, which sits north of the pit at
+                  // BOSS_SPAWN. Every shot therefore misses by construction, and that is
+                  // deliberate: 160 seconds of sweep at ~24 accepted shots/s is ~3,800
+                  // shots, and at SHOT_DAMAGE 40 a hitting arm would strip the boss and
+                  // flip the phase to SETTLING part-way through, which would end the
+                  // measurement rather than load it.
+                  //
+                  // What a miss still costs is everything this is here to measure: the
+                  // same transaction, the same WRITABLE locks on Arena, Boss and Players,
+                  // the same `octant`, the same `raycast` walk (a miss walks FURTHER than
+                  // a hit, so the CU is if anything conservative), and the same
+                  // `last_shot_tick` write into Players. What it does not cost is the
+                  // Boss part write, so Boss notifications are understated by up to
+                  // ~24/s × 356 B = 8.5 KB/s against a 1.76 MB/s total — 0.5 %.
+                  dx: 0,
+                  dy: 1,
+                }),
+              ]).catch(() => {
+                seat.shotsFailed += 1;
+              });
+              const spent = now() - t0;
+              if (spent < SHOOT_MS) await sleep(SHOOT_MS - spent);
+            }
+          });
     const drivers = seats.slice(0, count).map(async (seat) => {
       let i = 0;
       while (now() < stopAt) {
@@ -964,7 +985,7 @@ async function main(): Promise<void> {
         if (elapsed < periodMs) await sleep(periodMs - elapsed);
       }
     });
-    await Promise.all(drivers);
+    await Promise.all([...drivers, ...gunners]);
     block.to = now();
     blocks.push(block);
     // One roster read, in the gap and never inside the block. In `fight` this is the only
@@ -1129,6 +1150,9 @@ async function main(): Promise<void> {
     frames: frames.length,
     sends: seats.reduce((a, s) => a + s.sent, 0),
     sendFailures: seats.reduce((a, s) => a + s.failed, 0),
+    shootMs: SHOOT_MS,
+    shots: seats.reduce((a, s) => a + s.shots, 0),
+    shotFailures: seats.reduce((a, s) => a + s.shotsFailed, 0),
   });
 
   const settleSig = await sendInstructions(match.er, treasury, [

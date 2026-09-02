@@ -1,0 +1,215 @@
+[
+ {
+  "name": "k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 20
+  }
+ },
+ {
+  "name": "k10-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 10
+  }
+ },
+ {
+  "name": "k5-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 5
+  }
+ },
+ {
+  "name": "k1-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 1
+  }
+ },
+ {
+  "name": "k20-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 20
+  }
+ },
+ {
+  "name": "k10-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 10
+  }
+ },
+ {
+  "name": "k5-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 5
+  }
+ },
+ {
+  "name": "k1-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 1
+  }
+ },
+ {
+  "name": "lobby-k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "lobby",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 20
+  }
+ },
+ {
+  "name": "lobby-k20-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "lobby",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 20
+  }
+ },
+ {
+  "name": "passage-k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "passage",
+   "feedHz": 714,
+   "frames": 600,
+   "bullets": 14,
+   "knights": 20
+  }
+ },
+ {
+  "name": "passage-k20-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "passage",
+   "feedHz": 714,
+   "frames": 600,
+   "bullets": 14,
+   "knights": 20
+  }
+ },
+ {
+  "name": "nohud-k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 20,
+   "hud": false
+  }
+ },
+ {
+  "name": "nochrome-k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "knights": 20,
+   "hud": false,
+   "dev": false
+  }
+ }
+]

@@ -218,8 +218,19 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
    * repeats** — `Arena` 97.4% of them, because the Magic Router delivers every notification
    * twice and 68.4% of `Players` writes during a fight change no position. Dropping them
    * halves the store updates that reach React, and comparing the *string* rather than the
-   * decoded account also saves the 6.87 µs decode. It saves no bandwidth; the bytes have
-   * already arrived.
+   * decoded account skips the whole per-notification path below it. It saves no bandwidth;
+   * the bytes have already arrived.
+   *
+   * What that path costs, re-measured 2026-09-02 on a 20-seat-shaped `Players` payload
+   * (node 24.10.0, median of 9 reps x 20k calls): `JSON.parse` of the whole notification
+   * 1,334 ns, {@link fromBase64} 2,956 ns, `decodePlayers` 1,652 ns — 5,942 ns, of which
+   * the DECODER is 28%. The "6.87 µs decode" this note used to claim was the whole path
+   * under the decoder's name, and `er_guard.sh`'s `client decode` row inherits the same
+   * misattribution: it times `Buffer.from(b64)` inside its `decodeUs` and decodes the
+   * duplicates this gate drops. All three shipped decoders together are 1.0 ms/s at the
+   * 20-seat frame rate and that row has never read under 3.8, so a move in it is not
+   * evidence about a decoder — the two identical-code baseline runs banked the same day
+   * (`pair-base-1` vs `pair-base-2`) move it 3.8 -> 6.6 on their own.
    *
    * Cleared on every `open`, which is the load-bearing half: the snapshot-on-open must
    * never be suppressed by a payload cached from before a disconnect, because a reconnect

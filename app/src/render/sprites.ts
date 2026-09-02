@@ -156,6 +156,27 @@ export const MAP_RIM_PATH = tilePath((tx, ty) => tileAt(tx, ty) === '#' && tileA
 /** The four edge entrances — walkable, so a floor tint and not a wall. */
 export const MAP_ENTRANCE_PATH = tilePath((tx, ty) => tileAt(tx, ty) === 'E');
 
+/**
+ * How many projectile nodes the whole scene may draw — boss ordnance plus arrows, one
+ * budget shared across both layers.
+ *
+ * It lives here because it is ONE number and it used to be two: `Arena.tsx` typed it as
+ * `VISIBLE_BULLETS` and `Shot.tsx` as `VISIBLE_PROJECTILES`, joined only by
+ * `budget={shownBullets.length}` and `cap = VISIBLE_PROJECTILES - budget`. Nothing
+ * cross-checked them, so halving `Arena`'s copy to buy frame budget back left `Shot`
+ * drawing `32 - 16 = 16` arrows on top of 16 bullets and the scene at 32 nodes again — the
+ * measured win silently spent, with no error anywhere. Neither file could own it: `Arena`
+ * already imports `Shot`, so exporting it from either would be a cycle.
+ *
+ * Measured (`docs/perf/frame-budget.md`), 20 knights + full art + the real 714 notif/s feed
+ * at 6x CPU throttle: 128 drawn is 11.46 ms p50 / 16.96 p95 with 7.2 % of frames over
+ * budget; 32 drawn is 9.38 / 14.92 with 4.6 % over, and the client services 72
+ * notifications a second instead of 61. `MAX_BULLETS` is 128 and stays 128 — that is a
+ * chain fact and so is `bullets_per_volley`; this caps the PICTURE and never the
+ * simulation.
+ */
+export const VISIBLE_PROJECTILES = 32;
+
 // ---------------------------------------------------------------------------
 // Boot check
 // ---------------------------------------------------------------------------

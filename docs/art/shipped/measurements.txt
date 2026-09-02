@@ -1,0 +1,97 @@
+== 1. framing: what actually reaches the screen ==
+   lobby-1920   stage 1920.0x1032.6  1.5740 px/unit  knight  66.1 px  room fills 83.9% of frame width, off-room 16.1%
+   arena-1920   stage 1920.0x1032.6  1.5740 px/unit  knight  66.1 px  room fills 83.9% of frame width, off-room 16.1%
+   lobby-1366   stage 1366.7x 720.2  1.0978 px/unit  knight  46.1 px  room fills 82.3% of frame width, off-room 17.7%
+   arena-1366   stage 1366.7x 720.2  1.0978 px/unit  knight  46.1 px  room fills 82.3% of frame width, off-room 17.7%
+   room edges on screen: x 154..1766 of 0..1920
+   lobby off-room strip at mid-height: 309 px (16.1% of width), Y p50 0.0056  p95 0.0104  in-room floor Y p50 0.0211
+   arena off-room strip at mid-height: 309 px (16.1% of width), Y p50 0.0060  p95 0.0060  in-room floor Y p50 0.0181
+
+== 2. floor: shipped vs reference (percentiles p5 p25 p50 p75 p95) ==
+   ref A   Y [0.0106 0.0176 0.0231 0.0335 0.0468]  mean sRGB ( 48.5, 39.9, 56.6)  R-B   -8.1  G-B  -16.7
+   ship A  Y [0.0072 0.0096 0.016  0.0227 0.0272]  mean sRGB ( 39.1, 30.9, 42.6)  R-B   -3.6  G-B  -11.7
+   ref B   Y [0.0048 0.0127 0.0218 0.0386 0.0767]  mean sRGB ( 40.1, 42.8, 53.1)  R-B  -13.0  G-B  -10.3
+   ship B  Y [0.0063 0.0093 0.0125 0.0187 0.0615]  mean sRGB ( 28.7, 33.7, 42.7)  R-B  -14.1  G-B   -9.1
+
+   the two rooms' own wall-vs-floor separation (reference A's signature):
+   ref A   wall Y 0.0108  floor Y 0.0231  wall/floor contrast 1.20:1
+   ship A  wall Y 0.0253  floor Y 0.0160  wall/floor contrast 1.14:1
+
+== 3. knights: body and boundary against the floor they stand on ==
+   body mask = |20-seat frame - 1-seat plate| per seat box; floor = the plate under it.
+   -- room A waiting: 19 seats measured --
+      knight n= 9  body Y 0.1140 vs floor Y 0.0188 = 2.39:1 (worst seat 2.15:1)
+             boundary ring Y p50 0.0496 = 1.45:1  p90 0.2057 = 3.72:1   <- the outline the eye actually reads
+      archer n=10  body Y 0.1724 vs floor Y 0.0189 = 3.23:1 (worst seat 2.76:1)
+             boundary ring Y p50 0.0392 = 1.29:1  p90 0.2210 = 3.93:1   <- the outline the eye actually reads
+      Cobalt    body 0.1561 vs floor 0.0154 = 3.15:1
+      Nocturne  body 0.1487 vs floor 0.0178 = 2.93:1
+      Argent    body 0.1369 vs floor 0.0199 = 2.67:1
+   -- room B arena: 19 seats measured --
+      knight n= 9  body Y 0.1031 vs floor Y 0.0170 = 2.29:1 (worst seat 1.50:1)
+             boundary ring Y p50 0.0469 = 1.45:1  p90 0.1360 = 2.78:1   <- the outline the eye actually reads
+      archer n=10  body Y 0.1262 vs floor Y 0.0136 = 2.77:1 (worst seat 1.51:1)
+             boundary ring Y p50 0.0354 = 1.34:1  p90 0.1683 = 3.43:1   <- the outline the eye actually reads
+      Cobalt    body 0.1378 vs floor 0.0173 = 2.79:1
+      Nocturne  body 0.1071 vs floor 0.0144 = 2.44:1
+      Argent    body 0.1236 vs floor 0.0151 = 2.67:1
+
+== 4. rim light: is it there, and how thick in CSS px ==
+   knights.gen.ts carries the dilated halo groups: False
+   ids present: ['', 'k0-contactL', 'k0-contactR', 'k0-fallen', 'k0-rest', 'k0-sil']
+   Knight.tsx HAS_HALO branch -> rimPose = 'sil' offset ONE unit up-left (the fallback)
+   lobby-1920   1 unit = 1.574 css px   ->  shipped rim is 1.57 px thick; the spec's 2-unit halo would be 3.15 px
+   arena-1920   1 unit = 1.574 css px   ->  shipped rim is 1.57 px thick; the spec's 2-unit halo would be 3.15 px
+   lobby-1366   1 unit = 1.098 css px   ->  shipped rim is 1.10 px thick; the spec's 2-unit halo would be 2.20 px
+   arena-1366   1 unit = 1.098 css px   ->  shipped rim is 1.10 px thick; the spec's 2-unit halo would be 2.20 px
+
+== 5. the boss: silhouette against what is behind it ==
+   boss mask 372,880 px, bbox x 590..1494 (904 px) y 141..1030 (889 px)
+   as a fraction of the stage: width 47.1%  height 86.1%  area 18.8%
+   orb + spill excluded: 161,726 px of the mask
+   boss body    Y p5 0.0001  p50 0.0579  p90 0.1231  p99 0.1984  (p50->p99 spread 3.4x)
+   backdrop it covers Y p50 0.0121
+   silhouette contrast, body p50 vs its own backdrop p50: 1.74:1
+      fraction of the creature's pixels clearing 1.5:1 against what it covers: 0.558
+      fraction of the creature's pixels clearing 2:1 against what it covers: 0.341
+      fraction of the creature's pixels clearing 3:1 against what it covers: 0.072
+      fraction of the creature's pixels clearing 4.5:1 against what it covers: 0.004
+   reference B creature Y p5 0.0031  p50 0.0127  p90 0.0634  p99 0.1909  (spread 15.1x)
+   reference B wall beside it Y p50 0.0089
+   reference B creature box 250x290 px of a 1122x612 plate = 22.3% of frame width, 47.4% of frame height
+
+   >> THE INVERSION: reference creature p50 / its floor p50 = 0.58x  (the creature is DARKER than the floor)
+   >>                shipped   creature p50 / its floor p50 = 4.62x  (the creature is the BRIGHTEST large mass)
+
+   knights that overlap the creature (the worst background in the room):
+      6 of 19 seats  body 0.1236 vs backdrop 0.0357 = 2.03:1  boundary p90 0.1958 = 2.87:1
+
+== 6. decoration over walkable floor (room A) ==
+   walkable lobby tiles on screen: 1322
+   touched by any prop pixel (>2 % of the tile): 93 (7.0%)
+   more than half covered:                       38 (2.9%)
+   prop pixels, any change  : 76,753 = 3.87% of the stage
+   prop pixels, OPAQUE mass : 15,081 = 0.76% (the rest is torch light, which is paint, not an object)
+   walkable tiles with OPAQUE mass over a quarter of them: 15 (1.1%)
+   of those, 48.5% sits over non-wall tiles (light pools count here, and they are paint, not mass)
+
+== 7. the local marker in a crowd of twenty ==
+   room A waiting: marker box peak Y 0.9538   stage p99.9 0.6476  stage max 0.9538
+      pixels in the whole stage at or above the marker peak: 160 (0.008%)
+      marker-bright pixels inside its own box: 204 px (3.2% of a 69x91 box), chevron is 25x19 px
+   room B arena: marker box peak Y 0.9538   stage p99.9 0.6342  stage max 0.9538
+      pixels in the whole stage at or above the marker peak: 160 (0.008%)
+      marker-bright pixels inside its own box: 179 px (2.9% of a 69x91 box), chevron is 25x19 px
+
+== 8. room B: are the floor rings and medallions actually visible ==
+   ring k=0.22  rx 109 ry 25   on-ring L8  42.5  6 u inside L8  47.9   delta  5.4 L8  contrast 1.07:1
+   ring k=0.44  rx 218 ry 49   on-ring L8  40.0  6 u inside L8  42.2   delta  2.3 L8  contrast 1.04:1
+   ring k=0.65  rx 322 ry 73   on-ring L8  41.0  6 u inside L8  42.2   delta  1.2 L8  contrast 1.00:1
+   ring k=0.87  rx 432 ry 97   on-ring L8  39.8  6 u inside L8  42.8   delta  3.0 L8  contrast 1.03:1
+   ring k=1.00  rx 496 ry 112   on-ring L8  37.2  6 u inside L8  40.1   delta  2.8 L8  contrast 1.03:1
+   (spec section 2.2 predicted 4.9-13.1 L8 of mortar separation at wash 0.70;
+    under ~1 L8 is what that section calls invisible)
+
+== 9. how full the frame is: local contrast, shipped B vs reference B ==
+   ship B left third    Y p50 0.0110 p95 0.0414  local 9x9 luminance range p50 0.0032 p95 0.1466  fraction of px in a window with range < 0.005: 61.9%
+   ref B left third     Y p50 0.0082 p95 0.0319  local 9x9 luminance range p50 0.0134 p95 0.0592  fraction of px in a window with range < 0.005: 13.3%

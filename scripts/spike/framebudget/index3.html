@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>fb3</title>
+<style>
+  html,body{margin:0;background:#05070c;width:100%;height:100%;overflow:hidden}
+  #root{width:100%;height:100%}
+  /* App.tsx's own shell: 48 px header, stage takes the rest. */
+  .shell{display:grid;grid-template-rows:48px 1fr;width:100%;height:100%}
+  .header{height:48px;display:flex;align-items:center;padding:0 16px}
+  .wordmark{margin:0;font:600 14px/1 system-ui,sans-serif;letter-spacing:.18em;color:#8ea0b8}
+  .main{position:relative;min-height:0;display:grid}
+  body.no-vignette .stage::after{display:none}
+</style>
+</head><body><div id="root"></div><script type="module" src="./main3.tsx"></script></body></html>

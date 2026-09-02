@@ -81,6 +81,37 @@
 //! A variant guarding a condition its own writers make unreachable is a false failure
 //! mode, and a caller who saw `Custom(16)` would go looking for a bug that cannot exist.
 //!
+//! ## Why the class byte gets no code
+//!
+//! Tag 4 grew a `class` byte at `[66]` (`instruction.rs`, and `17-fullscreen-spec.md` §5.4).
+//! An out-of-range value is refused with the runtime's `InvalidInstructionData`, and that
+//! is the whole of it — no variant here, and `HIGHEST_ISSUED` does not move.
+//!
+//! It reads like a candidate, so the reason it is not one is recorded rather than left to
+//! be re-litigated. The test this file applies is "does a code carry information the caller
+//! does not already hold, and does it change what the caller does next?" A bad `class` fails
+//! both halves. It is unreachable from a correct client — `CharacterSelect` offers two
+//! options and the Worker range-checks the byte before it ever builds a transaction — so
+//! the only three ways to produce one are a 66-byte block from an app older than the
+//! program, a 67-byte block sent to a program older than the app, and a hand-built
+//! transaction. The first two are *already* `InvalidInstructionData` from the length check,
+//! and all three have the same remedy: ship the matching build. One condition, "this join
+//! payload is not one this program understands", and the header's rule is that exactly one
+//! variant — here, one runtime builtin — owns each condition.
+//!
+//! A second code would also be the expensive kind of wrong. Discriminants are wire ABI and
+//! permanent (16 is retired and still spent), so a code is only worth issuing for something
+//! a client can *act* on differently, and the thing a player can act on here is a
+//! human-readable refusal from the Worker, which happens a full round trip before the chain
+//! is involved. Nothing about the dead-spacebar report argues otherwise: that was the client
+//! declining to build a transaction at all (`17-fullscreen-spec.md` §0.1, Correction A), so
+//! no program code — new or old — was ever available to show. A code cannot fix a refusal
+//! the program was never asked to make.
+//!
+//! The same reasoning covers `class_aim` in general. `shoot::fire` writes it under
+//! `& CLASS_MASK` and reads the class back with `>> 7` on a `u8`, which is total: there is
+//! no out-of-range class *after* join, so there is nothing left to refuse.
+//!
 //! ## The client half
 //!
 //! A code the browser renders as a bare number is only half a diagnosis, and a

@@ -1,0 +1,322 @@
+[
+ {
+  "variant": "shipped",
+  "layer": "boss",
+  "rep": 0,
+  "p50": 2.6,
+  "p95": 4.2,
+  "max": 7.2,
+  "busy": 38.1,
+  "over": 0
+ },
+ {
+  "variant": "prop",
+  "layer": "boss",
+  "rep": 0,
+  "p50": 2.6,
+  "p95": 4.7,
+  "max": 7.4,
+  "busy": 38.9,
+  "over": 0
+ },
+ {
+  "variant": "shipped",
+  "layer": "full",
+  "rep": 0,
+  "p50": 9.2,
+  "p95": 16.2,
+  "max": 31.6,
+  "busy": 71.1,
+  "over": 4.5
+ },
+ {
+  "variant": "prop",
+  "layer": "full",
+  "rep": 0,
+  "p50": 8.7,
+  "p95": 14,
+  "max": 26.2,
+  "busy": 71.9,
+  "over": 1
+ },
+ {
+  "variant": "prop",
+  "layer": "boss",
+  "rep": 1,
+  "p50": 2.7,
+  "p95": 4.4,
+  "max": 7.2,
+  "busy": 39.6,
+  "over": 0
+ },
+ {
+  "variant": "shipped",
+  "layer": "boss",
+  "rep": 1,
+  "p50": 2.8,
+  "p95": 5.5,
+  "max": 33,
+  "busy": 22.1,
+  "over": 0.8
+ },
+ {
+  "variant": "prop",
+  "layer": "full",
+  "rep": 1,
+  "p50": 8.3,
+  "p95": 17.4,
+  "max": 38.1,
+  "busy": 62.6,
+  "over": 6.3
+ },
+ {
+  "variant": "shipped",
+  "layer": "full",
+  "rep": 1,
+  "p50": 8.9,
+  "p95": 14.3,
+  "max": 30.5,
+  "busy": 71.4,
+  "over": 1.8
+ },
+ {
+  "variant": "shipped",
+  "layer": "boss",
+  "rep": 2,
+  "p50": 2.5,
+  "p95": 4,
+  "max": 5.8,
+  "busy": 37.3,
+  "over": 0
+ },
+ {
+  "variant": "prop",
+  "layer": "boss",
+  "rep": 2,
+  "p50": 2.7,
+  "p95": 4.2,
+  "max": 6,
+  "busy": 39.7,
+  "over": 0
+ },
+ {
+  "variant": "shipped",
+  "layer": "full",
+  "rep": 2,
+  "p50": 8.8,
+  "p95": 15.2,
+  "max": 30.2,
+  "busy": 72.7,
+  "over": 2.3
+ },
+ {
+  "variant": "prop",
+  "layer": "full",
+  "rep": 2,
+  "p50": 8.9,
+  "p95": 14.2,
+  "max": 25.7,
+  "busy": 72.4,
+  "over": 1.8
+ },
+ {
+  "variant": "prop",
+  "layer": "boss",
+  "rep": 3,
+  "p50": 2.7,
+  "p95": 4.6,
+  "max": 8.4,
+  "busy": 40.5,
+  "over": 0
+ },
+ {
+  "variant": "shipped",
+  "layer": "boss",
+  "rep": 3,
+  "p50": 2.5,
+  "p95": 4.3,
+  "max": 5.5,
+  "busy": 36.9,
+  "over": 0
+ },
+ {
+  "variant": "prop",
+  "layer": "full",
+  "rep": 3,
+  "p50": 8.6,
+  "p95": 13.3,
+  "max": 27.5,
+  "busy": 72.1,
+  "over": 1.5
+ },
+ {
+  "variant": "shipped",
+  "layer": "full",
+  "rep": 3,
+  "p50": 8.5,
+  "p95": 14.8,
+  "max": 31.4,
+  "busy": 73.3,
+  "over": 2
+ },
+ {
+  "variant": "shipped",
+  "layer": "boss",
+  "rep": 4,
+  "p50": 2.8,
+  "p95": 4.7,
+  "max": 13.6,
+  "busy": 42.6,
+  "over": 0
+ },
+ {
+  "variant": "prop",
+  "layer": "boss",
+  "rep": 4,
+  "p50": 2.7,
+  "p95": 4.6,
+  "max": 10.7,
+  "busy": 40.8,
+  "over": 0
+ },
+ {
+  "variant": "shipped",
+  "layer": "full",
+  "rep": 4,
+  "p50": 8.5,
+  "p95": 15.4,
+  "max": 24.8,
+  "busy": 88.8,
+  "over": 3.3
+ },
+ {
+  "variant": "prop",
+  "layer": "full",
+  "rep": 4,
+  "p50": 8.8,
+  "p95": 14.3,
+  "max": 27.6,
+  "busy": 72.6,
+  "over": 2
+ },
+ {
+  "variant": "prop",
+  "layer": "boss",
+  "rep": 5,
+  "p50": 2.7,
+  "p95": 4.2,
+  "max": 8.9,
+  "busy": 39.1,
+  "over": 0
+ },
+ {
+  "variant": "shipped",
+  "layer": "boss",
+  "rep": 5,
+  "p50": 2.7,
+  "p95": 4,
+  "max": 10.4,
+  "busy": 39.4,
+  "over": 0
+ },
+ {
+  "variant": "prop",
+  "layer": "full",
+  "rep": 5,
+  "p50": 7.3,
+  "p95": 12.3,
+  "max": 37.7,
+  "busy": 73.2,
+  "over": 0.8
+ },
+ {
+  "variant": "shipped",
+  "layer": "full",
+  "rep": 5,
+  "p50": 6.5,
+  "p95": 10.1,
+  "max": 19.9,
+  "busy": 74.5,
+  "over": 0.5
+ },
+ {
+  "variant": "shipped",
+  "layer": "boss",
+  "rep": 6,
+  "p50": 2,
+  "p95": 3.1,
+  "max": 18.6,
+  "busy": 29.5,
+  "over": 0.3
+ },
+ {
+  "variant": "prop",
+  "layer": "boss",
+  "rep": 6,
+  "p50": 2.3,
+  "p95": 3.6,
+  "max": 6.2,
+  "busy": 33.5,
+  "over": 0
+ },
+ {
+  "variant": "shipped",
+  "layer": "full",
+  "rep": 6,
+  "p50": 7,
+  "p95": 11.5,
+  "max": 27.4,
+  "busy": 73.6,
+  "over": 0.8
+ },
+ {
+  "variant": "prop",
+  "layer": "full",
+  "rep": 6,
+  "p50": 6.2,
+  "p95": 10.7,
+  "max": 21.7,
+  "busy": 75.2,
+  "over": 0.3
+ },
+ {
+  "variant": "prop",
+  "layer": "boss",
+  "rep": 7,
+  "p50": 2.3,
+  "p95": 3.4,
+  "max": 9.8,
+  "busy": 33.5,
+  "over": 0
+ },
+ {
+  "variant": "shipped",
+  "layer": "boss",
+  "rep": 7,
+  "p50": 2.4,
+  "p95": 3.7,
+  "max": 5.9,
+  "busy": 34,
+  "over": 0
+ },
+ {
+  "variant": "prop",
+  "layer": "full",
+  "rep": 7,
+  "p50": 7.1,
+  "p95": 13.1,
+  "max": 21.8,
+  "busy": 89.2,
+  "over": 2.3
+ },
+ {
+  "variant": "shipped",
+  "layer": "full",
+  "rep": 7,
+  "p50": 6.7,
+  "p95": 10.8,
+  "max": 19.9,
+  "busy": 73.2,
+  "over": 0.3
+ }
+]

@@ -1,0 +1,336 @@
+# cu-archer raw output
+
+LAYOUT PlayerSlot 96 B, Players 1924 B, Arena 1200 B, Boss 50 B, LAYOUT_VERSION 1
+ARENA 4uQeVoH3NPX9vLdodsUJjXTNFnQptkqWRitPSaBspzr boss_bump 255 players_bump 255
+
+## TREE (archer slice, working tree)  (target/deploy/heartrot.so, 116360 bytes)
+
+| case | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| move accepted, 1 seats | 200 | 2065 | 2069 | 2070 | 2070 | 0.52% |
+| shoot knight point blank 40u, 1 seats | 64 | 5252 | 5252 | 5252 | 5252 | 1.31% |
+| _knight point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 120u hit, 1 seats | 64 | 7572 | 7572 | 7572 | 7572 | 1.89% |
+| _knight 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 200u hit, 1 seats | 64 | 9907 | 9907 | 9907 | 9907 | 2.48% |
+| _knight 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight full miss (64-step ray), 1 seats | 64 | 14080 | 14080 | 14080 | 14080 | 3.52% |
+| _knight full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot archer point blank 40u, 1 seats | 64 | 5252 | 5252 | 5252 | 5252 | 1.31% |
+| _archer point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 120u hit, 1 seats | 64 | 7572 | 7572 | 7572 | 7572 | 1.89% |
+| _archer 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 200u hit, 1 seats | 64 | 9907 | 9907 | 9907 | 9907 | 2.48% |
+| _archer 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer full miss (64-step ray), 1 seats | 64 | 14080 | 14080 | 14080 | 14080 | 3.52% |
+| _archer full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot REFUSED (rate limit), 1 seats | 1 | 796 | 796 | 796 | 796 | 0.20% |
+| _refusal: Err(Custom(7))_ | | | | | | |
+| join 66-byte args, class -, 1 seats occupied | 1 | 126 | 126 | 126 | 126 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| join 67-byte args, class knight, 1 seats occupied | 1 | 2314 | 2314 | 2314 | 2314 | 0.58% |
+| _Ok(())_ | | | | | | |
+| join 67-byte args, class archer, 1 seats occupied | 1 | 2314 | 2314 | 2314 | 2314 | 0.58% |
+| _Ok(())_ | | | | | | |
+| boss_tick natural, 1 seats | 1200 | 3414 | 4139 | 5655 | 5836 | 1.46% |
+| _boss_tick natural 1 seats: peak live bullets 4_ | | | | | | |
+| boss_tick PINNED all alive, 1 seats | 1200 | 3450 | 4544 | 5739 | 5839 | 1.46% |
+| _boss_tick PINNED all alive 1 seats: peak live bullets 4_ | | | | | | |
+| move accepted, 20 seats | 156 | 2063 | 2065 | 2071 | 2071 | 0.52% |
+| move REJECTED, 20 seats | 44 | 2051 | 2051 | 2077 | 2077 | 0.52% |
+| shoot knight point blank 40u, 20 seats | 64 | 5252 | 5252 | 5252 | 5252 | 1.31% |
+| _knight point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 120u hit, 20 seats | 64 | 7572 | 7572 | 7572 | 7572 | 1.89% |
+| _knight 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 200u hit, 20 seats | 64 | 9907 | 9907 | 9907 | 9907 | 2.48% |
+| _knight 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight full miss (64-step ray), 20 seats | 64 | 14080 | 14080 | 14080 | 14080 | 3.52% |
+| _knight full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot archer point blank 40u, 20 seats | 64 | 5252 | 5252 | 5252 | 5252 | 1.31% |
+| _archer point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 120u hit, 20 seats | 64 | 7572 | 7572 | 7572 | 7572 | 1.89% |
+| _archer 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 200u hit, 20 seats | 64 | 9907 | 9907 | 9907 | 9907 | 2.48% |
+| _archer 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer full miss (64-step ray), 20 seats | 64 | 14080 | 14080 | 14080 | 14080 | 3.52% |
+| _archer full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot REFUSED (rate limit), 20 seats | 1 | 796 | 796 | 796 | 796 | 0.20% |
+| _refusal: Err(Custom(7))_ | | | | | | |
+| join 66-byte args, class -, 20 seats occupied | 1 | 126 | 126 | 126 | 126 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| join 67-byte args, class knight, 20 seats occupied | 1 | 2198 | 2198 | 2198 | 2198 | 0.55% |
+| _Err(Custom(3))_ | | | | | | |
+| join 67-byte args, class archer, 20 seats occupied | 1 | 2198 | 2198 | 2198 | 2198 | 0.55% |
+| _Err(Custom(3))_ | | | | | | |
+| boss_tick natural, 20 seats | 1200 | 4384 | 9191 | 20583 | 22038 | 5.51% |
+| _boss_tick natural 20 seats: peak live bullets 23_ | | | | | | |
+| boss_tick PINNED all alive, 20 seats | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| _boss_tick PINNED all alive 20 seats: peak live bullets 23_ | | | | | | |
+| FIGHT MIX boss_tick, 20 knights firing | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| FIGHT MIX shoot accepted, 20 knights | 3000 | 1923 | 1963 | 10060 | 10060 | 2.52% |
+| FIGHT MIX shoot refused (cooldown), 20 knights | 21000 | 788 | 797 | 798 | 798 | 0.20% |
+| _fight mix, 20 knights: 3000 shots accepted over 1200 ticks, 3000 damaged the shell, peak live bullets 23_ | | | | | | |
+| FIGHT MIX boss_tick, 20 archers firing | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| FIGHT MIX shoot accepted, 20 archers | 1700 | 1923 | 1963 | 10060 | 10060 | 2.52% |
+| FIGHT MIX shoot refused (cooldown), 20 archers | 22300 | 788 | 797 | 798 | 798 | 0.20% |
+| _fight mix, 20 archers: 1700 shots accepted over 1200 ticks, 1700 damaged the shell, peak live bullets 23_ | | | | | | |
+
+### TREE (archer slice, working tree) — boss_tick vs pinned live bullets, 20 seats
+
+| live bullets pinned | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| 0 pinned | 120 | 4560 | 4560 | 4808 | 16996 | 4.25% |
+| 8 pinned | 120 | 10290 | 10290 | 10538 | 22726 | 5.69% |
+| _slope 0 -> 8: 716.2 CU per live bullet per tick (p50)_ | | | | | | |
+| 23 pinned | 120 | 21095 | 21095 | 21343 | 33614 | 8.41% |
+| _slope 8 -> 23: 720.3 CU per live bullet per tick (p50)_ | | | | | | |
+| 32 pinned | 120 | 27540 | 27540 | 27788 | 40185 | 10.05% |
+| _slope 23 -> 32: 716.1 CU per live bullet per tick (p50)_ | | | | | | |
+| 64 pinned | 120 | 52089 | 52089 | 52337 | 65153 | 16.30% |
+| _slope 32 -> 64: 767.2 CU per live bullet per tick (p50)_ | | | | | | |
+| 128 pinned | 120 | 105782 | 105782 | 106030 | 118846 | 29.73% |
+| _slope 64 -> 128: 839.0 CU per live bullet per tick (p50)_ | | | | | | |
+
+## DEVNET (live JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5, pre-archer)  (/tmp/claude-1000/-home-anshtyagi/0170737a-3afb-4aa1-86f7-94a879050eb1/scratchpad/devnet_now.so, 122720 bytes)
+
+| case | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| move accepted, 1 seats | 200 | 2065 | 2069 | 2070 | 2070 | 0.52% |
+| shoot knight point blank 40u, 1 seats | 64 | 5201 | 5201 | 5201 | 5201 | 1.30% |
+| _knight point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 120u hit, 1 seats | 64 | 7521 | 7521 | 7521 | 7521 | 1.88% |
+| _knight 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 200u hit, 1 seats | 64 | 9856 | 9856 | 9856 | 9856 | 2.47% |
+| _knight 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight full miss (64-step ray), 1 seats | 64 | 14028 | 14028 | 14028 | 14028 | 3.51% |
+| _knight full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot archer point blank 40u, 1 seats | 64 | 5201 | 5201 | 5201 | 5201 | 1.30% |
+| _archer point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 120u hit, 1 seats | 64 | 7521 | 7521 | 7521 | 7521 | 1.88% |
+| _archer 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 200u hit, 1 seats | 64 | 9856 | 9856 | 9856 | 9856 | 2.47% |
+| _archer 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer full miss (64-step ray), 1 seats | 64 | 14028 | 14028 | 14028 | 14028 | 3.51% |
+| _archer full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot REFUSED (rate limit), 1 seats | 1 | 781 | 781 | 781 | 781 | 0.20% |
+| _refusal: Err(Custom(7))_ | | | | | | |
+| join 66-byte args, class -, 1 seats occupied | 1 | 2266 | 2266 | 2266 | 2266 | 0.57% |
+| _Ok(())_ | | | | | | |
+| join 67-byte args, class knight, 1 seats occupied | 1 | 124 | 124 | 124 | 124 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| join 67-byte args, class archer, 1 seats occupied | 1 | 124 | 124 | 124 | 124 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| boss_tick natural, 1 seats | 1200 | 3414 | 4139 | 5655 | 5836 | 1.46% |
+| _boss_tick natural 1 seats: peak live bullets 4_ | | | | | | |
+| boss_tick PINNED all alive, 1 seats | 1200 | 3450 | 4544 | 5739 | 5839 | 1.46% |
+| _boss_tick PINNED all alive 1 seats: peak live bullets 4_ | | | | | | |
+| move accepted, 20 seats | 156 | 2063 | 2065 | 2071 | 2071 | 0.52% |
+| move REJECTED, 20 seats | 44 | 2051 | 2051 | 2077 | 2077 | 0.52% |
+| shoot knight point blank 40u, 20 seats | 64 | 5201 | 5201 | 5201 | 5201 | 1.30% |
+| _knight point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 120u hit, 20 seats | 64 | 7521 | 7521 | 7521 | 7521 | 1.88% |
+| _knight 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 200u hit, 20 seats | 64 | 9856 | 9856 | 9856 | 9856 | 2.47% |
+| _knight 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight full miss (64-step ray), 20 seats | 64 | 14028 | 14028 | 14028 | 14028 | 3.51% |
+| _knight full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot archer point blank 40u, 20 seats | 64 | 5201 | 5201 | 5201 | 5201 | 1.30% |
+| _archer point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 120u hit, 20 seats | 64 | 7521 | 7521 | 7521 | 7521 | 1.88% |
+| _archer 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 200u hit, 20 seats | 64 | 9856 | 9856 | 9856 | 9856 | 2.47% |
+| _archer 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer full miss (64-step ray), 20 seats | 64 | 14028 | 14028 | 14028 | 14028 | 3.51% |
+| _archer full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot REFUSED (rate limit), 20 seats | 1 | 781 | 781 | 781 | 781 | 0.20% |
+| _refusal: Err(Custom(7))_ | | | | | | |
+| join 66-byte args, class -, 20 seats occupied | 1 | 2179 | 2179 | 2179 | 2179 | 0.55% |
+| _Err(Custom(3))_ | | | | | | |
+| join 67-byte args, class knight, 20 seats occupied | 1 | 124 | 124 | 124 | 124 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| join 67-byte args, class archer, 20 seats occupied | 1 | 124 | 124 | 124 | 124 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| boss_tick natural, 20 seats | 1200 | 4384 | 9191 | 20583 | 22038 | 5.51% |
+| _boss_tick natural 20 seats: peak live bullets 23_ | | | | | | |
+| boss_tick PINNED all alive, 20 seats | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| _boss_tick PINNED all alive 20 seats: peak live bullets 23_ | | | | | | |
+| FIGHT MIX boss_tick, 20 knights firing | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| FIGHT MIX shoot accepted, 20 knights | 3000 | 1873 | 1911 | 10008 | 10008 | 2.50% |
+| FIGHT MIX shoot refused (cooldown), 20 knights | 21000 | 775 | 782 | 783 | 783 | 0.20% |
+| _fight mix, 20 knights: 3000 shots accepted over 1200 ticks, 3000 damaged the shell, peak live bullets 23_ | | | | | | |
+| FIGHT MIX boss_tick, 20 archers firing | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| FIGHT MIX shoot accepted, 20 archers | 3000 | 1873 | 1911 | 10008 | 10008 | 2.50% |
+| FIGHT MIX shoot refused (cooldown), 20 archers | 21000 | 775 | 782 | 783 | 783 | 0.20% |
+| _fight mix, 20 archers: 3000 shots accepted over 1200 ticks, 3000 damaged the shell, peak live bullets 23_ | | | | | | |
+
+### DEVNET (live JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5, pre-archer) — boss_tick vs pinned live bullets, 20 seats
+
+| live bullets pinned | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| 0 pinned | 120 | 4560 | 4560 | 4808 | 16996 | 4.25% |
+| 8 pinned | 120 | 10290 | 10290 | 10538 | 22726 | 5.69% |
+| _slope 0 -> 8: 716.2 CU per live bullet per tick (p50)_ | | | | | | |
+| 23 pinned | 120 | 21095 | 21095 | 21343 | 33614 | 8.41% |
+| _slope 8 -> 23: 720.3 CU per live bullet per tick (p50)_ | | | | | | |
+| 32 pinned | 120 | 27540 | 27540 | 27788 | 40185 | 10.05% |
+| _slope 23 -> 32: 716.1 CU per live bullet per tick (p50)_ | | | | | | |
+| 64 pinned | 120 | 52089 | 52089 | 52337 | 65153 | 16.30% |
+| _slope 32 -> 64: 767.2 CU per live bullet per tick (p50)_ | | | | | | |
+| 128 pinned | 120 | 105782 | 105782 | 106030 | 118846 | 29.73% |
+| _slope 64 -> 128: 839.0 CU per live bullet per tick (p50)_ | | | | | | |
+RENT Arena: 1200 bytes, exempt minimum 9242880 lamports
+RENT Boss: 50 bytes, exempt minimum 1238880 lamports
+RENT Players: 1924 bytes, exempt minimum 14281920 lamports
+
+# ---- second run, ARENA_SEED=0 (boss bump 251 / players bump 254) ----
+# cu-archer raw output
+
+LAYOUT PlayerSlot 96 B, Players 1924 B, Arena 1200 B, Boss 50 B, LAYOUT_VERSION 1
+ARENA 11115C9XtokEDfJ8c2QonE7FDe7wevvZQztFGCA2LW boss_bump 251 players_bump 254
+
+## TREE badbump  (target/deploy/heartrot.so, 116360 bytes)
+
+| case | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| move accepted, 1 seats | 200 | 3565 | 3569 | 3570 | 3570 | 0.89% |
+| shoot knight point blank 40u, 1 seats | 64 | 5252 | 5252 | 5252 | 5252 | 1.31% |
+| _knight point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 120u hit, 1 seats | 64 | 7572 | 7572 | 7572 | 7572 | 1.89% |
+| _knight 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 200u hit, 1 seats | 64 | 9907 | 9907 | 9907 | 9907 | 2.48% |
+| _knight 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight full miss (64-step ray), 1 seats | 64 | 14080 | 14080 | 14080 | 14080 | 3.52% |
+| _knight full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot archer point blank 40u, 1 seats | 64 | 5252 | 5252 | 5252 | 5252 | 1.31% |
+| _archer point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 120u hit, 1 seats | 64 | 7572 | 7572 | 7572 | 7572 | 1.89% |
+| _archer 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 200u hit, 1 seats | 64 | 9907 | 9907 | 9907 | 9907 | 2.48% |
+| _archer 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer full miss (64-step ray), 1 seats | 64 | 14080 | 14080 | 14080 | 14080 | 3.52% |
+| _archer full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot REFUSED (rate limit), 1 seats | 1 | 796 | 796 | 796 | 796 | 0.20% |
+| _refusal: Err(Custom(7))_ | | | | | | |
+| join 66-byte args, class -, 1 seats occupied | 1 | 126 | 126 | 126 | 126 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| join 67-byte args, class knight, 1 seats occupied | 1 | 3814 | 3814 | 3814 | 3814 | 0.95% |
+| _Ok(())_ | | | | | | |
+| join 67-byte args, class archer, 1 seats occupied | 1 | 3814 | 3814 | 3814 | 3814 | 0.95% |
+| _Ok(())_ | | | | | | |
+| boss_tick natural, 1 seats | 1200 | 3414 | 4139 | 5655 | 5836 | 1.46% |
+| _boss_tick natural 1 seats: peak live bullets 4_ | | | | | | |
+| boss_tick PINNED all alive, 1 seats | 1200 | 3450 | 4544 | 5739 | 5839 | 1.46% |
+| _boss_tick PINNED all alive 1 seats: peak live bullets 4_ | | | | | | |
+| move accepted, 20 seats | 156 | 3563 | 3565 | 3571 | 3571 | 0.89% |
+| move REJECTED, 20 seats | 44 | 3551 | 3551 | 3577 | 3577 | 0.89% |
+| shoot knight point blank 40u, 20 seats | 64 | 5252 | 5252 | 5252 | 5252 | 1.31% |
+| _knight point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 120u hit, 20 seats | 64 | 7572 | 7572 | 7572 | 7572 | 1.89% |
+| _knight 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 200u hit, 20 seats | 64 | 9907 | 9907 | 9907 | 9907 | 2.48% |
+| _knight 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight full miss (64-step ray), 20 seats | 64 | 14080 | 14080 | 14080 | 14080 | 3.52% |
+| _knight full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot archer point blank 40u, 20 seats | 64 | 5252 | 5252 | 5252 | 5252 | 1.31% |
+| _archer point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 120u hit, 20 seats | 64 | 7572 | 7572 | 7572 | 7572 | 1.89% |
+| _archer 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 200u hit, 20 seats | 64 | 9907 | 9907 | 9907 | 9907 | 2.48% |
+| _archer 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer full miss (64-step ray), 20 seats | 64 | 14080 | 14080 | 14080 | 14080 | 3.52% |
+| _archer full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot REFUSED (rate limit), 20 seats | 1 | 796 | 796 | 796 | 796 | 0.20% |
+| _refusal: Err(Custom(7))_ | | | | | | |
+| join 66-byte args, class -, 20 seats occupied | 1 | 126 | 126 | 126 | 126 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| join 67-byte args, class knight, 20 seats occupied | 1 | 3698 | 3698 | 3698 | 3698 | 0.93% |
+| _Err(Custom(3))_ | | | | | | |
+| join 67-byte args, class archer, 20 seats occupied | 1 | 3698 | 3698 | 3698 | 3698 | 0.93% |
+| _Err(Custom(3))_ | | | | | | |
+| boss_tick natural, 20 seats | 1200 | 4384 | 9191 | 20583 | 22038 | 5.51% |
+| _boss_tick natural 20 seats: peak live bullets 23_ | | | | | | |
+| boss_tick PINNED all alive, 20 seats | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| _boss_tick PINNED all alive 20 seats: peak live bullets 23_ | | | | | | |
+| FIGHT MIX boss_tick, 20 knights firing | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| FIGHT MIX shoot accepted, 20 knights | 3000 | 1923 | 1963 | 10060 | 10060 | 2.52% |
+| FIGHT MIX shoot refused (cooldown), 20 knights | 21000 | 788 | 797 | 798 | 798 | 0.20% |
+| _fight mix, 20 knights: 3000 shots accepted over 1200 ticks, 3000 damaged the shell, peak live bullets 23_ | | | | | | |
+| FIGHT MIX boss_tick, 20 archers firing | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| FIGHT MIX shoot accepted, 20 archers | 1700 | 1923 | 1963 | 10060 | 10060 | 2.52% |
+| FIGHT MIX shoot refused (cooldown), 20 archers | 22300 | 788 | 797 | 798 | 798 | 0.20% |
+| _fight mix, 20 archers: 1700 shots accepted over 1200 ticks, 1700 damaged the shell, peak live bullets 23_ | | | | | | |
+
+## DEVNET badbump  (/tmp/claude-1000/-home-anshtyagi/0170737a-3afb-4aa1-86f7-94a879050eb1/scratchpad/devnet_now.so, 122720 bytes)
+
+| case | n | min | p50 | p95 | max | max % of 399,700 |
+|---|---|---|---|---|---|---|
+| move accepted, 1 seats | 200 | 3565 | 3569 | 3570 | 3570 | 0.89% |
+| shoot knight point blank 40u, 1 seats | 64 | 5201 | 5201 | 5201 | 5201 | 1.30% |
+| _knight point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 120u hit, 1 seats | 64 | 7521 | 7521 | 7521 | 7521 | 1.88% |
+| _knight 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 200u hit, 1 seats | 64 | 9856 | 9856 | 9856 | 9856 | 2.47% |
+| _knight 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight full miss (64-step ray), 1 seats | 64 | 14028 | 14028 | 14028 | 14028 | 3.51% |
+| _knight full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot archer point blank 40u, 1 seats | 64 | 5201 | 5201 | 5201 | 5201 | 1.30% |
+| _archer point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 120u hit, 1 seats | 64 | 7521 | 7521 | 7521 | 7521 | 1.88% |
+| _archer 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 200u hit, 1 seats | 64 | 9856 | 9856 | 9856 | 9856 | 2.47% |
+| _archer 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer full miss (64-step ray), 1 seats | 64 | 14028 | 14028 | 14028 | 14028 | 3.51% |
+| _archer full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot REFUSED (rate limit), 1 seats | 1 | 781 | 781 | 781 | 781 | 0.20% |
+| _refusal: Err(Custom(7))_ | | | | | | |
+| join 66-byte args, class -, 1 seats occupied | 1 | 3766 | 3766 | 3766 | 3766 | 0.94% |
+| _Ok(())_ | | | | | | |
+| join 67-byte args, class knight, 1 seats occupied | 1 | 124 | 124 | 124 | 124 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| join 67-byte args, class archer, 1 seats occupied | 1 | 124 | 124 | 124 | 124 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| boss_tick natural, 1 seats | 1200 | 3414 | 4139 | 5655 | 5836 | 1.46% |
+| _boss_tick natural 1 seats: peak live bullets 4_ | | | | | | |
+| boss_tick PINNED all alive, 1 seats | 1200 | 3450 | 4544 | 5739 | 5839 | 1.46% |
+| _boss_tick PINNED all alive 1 seats: peak live bullets 4_ | | | | | | |
+| move accepted, 20 seats | 156 | 3563 | 3565 | 3571 | 3571 | 0.89% |
+| move REJECTED, 20 seats | 44 | 3551 | 3551 | 3577 | 3577 | 0.89% |
+| shoot knight point blank 40u, 20 seats | 64 | 5201 | 5201 | 5201 | 5201 | 1.30% |
+| _knight point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 120u hit, 20 seats | 64 | 7521 | 7521 | 7521 | 7521 | 1.88% |
+| _knight 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight 200u hit, 20 seats | 64 | 9856 | 9856 | 9856 | 9856 | 2.47% |
+| _knight 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot knight full miss (64-step ray), 20 seats | 64 | 14028 | 14028 | 14028 | 14028 | 3.51% |
+| _knight full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot archer point blank 40u, 20 seats | 64 | 5201 | 5201 | 5201 | 5201 | 1.30% |
+| _archer point blank 40u: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 120u hit, 20 seats | 64 | 7521 | 7521 | 7521 | 7521 | 1.88% |
+| _archer 120u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer 200u hit, 20 seats | 64 | 9856 | 9856 | 9856 | 9856 | 2.47% |
+| _archer 200u hit: 64/64 damaged the shell_ | | | | | | |
+| shoot archer full miss (64-step ray), 20 seats | 64 | 14028 | 14028 | 14028 | 14028 | 3.51% |
+| _archer full miss (64-step ray): 0/64 damaged the shell_ | | | | | | |
+| shoot REFUSED (rate limit), 20 seats | 1 | 781 | 781 | 781 | 781 | 0.20% |
+| _refusal: Err(Custom(7))_ | | | | | | |
+| join 66-byte args, class -, 20 seats occupied | 1 | 3679 | 3679 | 3679 | 3679 | 0.92% |
+| _Err(Custom(3))_ | | | | | | |
+| join 67-byte args, class knight, 20 seats occupied | 1 | 124 | 124 | 124 | 124 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| join 67-byte args, class archer, 20 seats occupied | 1 | 124 | 124 | 124 | 124 | 0.03% |
+| _Err(InvalidInstructionData)_ | | | | | | |
+| boss_tick natural, 20 seats | 1200 | 4384 | 9191 | 20583 | 22038 | 5.51% |
+| _boss_tick natural 20 seats: peak live bullets 23_ | | | | | | |
+| boss_tick PINNED all alive, 20 seats | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| _boss_tick PINNED all alive 20 seats: peak live bullets 23_ | | | | | | |
+| FIGHT MIX boss_tick, 20 knights firing | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| FIGHT MIX shoot accepted, 20 knights | 3000 | 1873 | 1911 | 10008 | 10008 | 2.50% |
+| FIGHT MIX shoot refused (cooldown), 20 knights | 21000 | 775 | 782 | 783 | 783 | 0.20% |
+| _fight mix, 20 knights: 3000 shots accepted over 1200 ticks, 3000 damaged the shell, peak live bullets 23_ | | | | | | |
+| FIGHT MIX boss_tick, 20 archers firing | 1200 | 4560 | 7525 | 21081 | 22192 | 5.55% |
+| FIGHT MIX shoot accepted, 20 archers | 3000 | 1873 | 1911 | 10008 | 10008 | 2.50% |
+| FIGHT MIX shoot refused (cooldown), 20 archers | 21000 | 775 | 782 | 783 | 783 | 0.20% |
+| _fight mix, 20 archers: 3000 shots accepted over 1200 ticks, 3000 damaged the shell, peak live bullets 23_ | | | | | | |
+RENT Arena: 1200 bytes, exempt minimum 9242880 lamports
+RENT Boss: 50 bytes, exempt minimum 1238880 lamports
+RENT Players: 1924 bytes, exempt minimum 14281920 lamports

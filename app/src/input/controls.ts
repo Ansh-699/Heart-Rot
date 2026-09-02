@@ -29,8 +29,26 @@
  * | Action | Chain rule | Mirrored as |
  * |---|---|---|
  * | `move`, any phase | `last_move_tick != clock.slot` (50 ms slots) | one send per 50 ms |
- * | `shoot` | `arena.tick > last_shot_tick + 7` | one send per eight observed ticks |
+ * | `shoot` | `arena.phase == Fighting` -> else `WrongPhase` (6) | `live` below |
+ * | `shoot` | `slot.zone == ZONE_ARENA` -> else `WrongZone` (9) | `live` below |
+ * | `shoot` | `tick > last_shot_tick + CLASS_COOLDOWN_TICKS[class]` | {@link shotAllowed} |
  * | either, dead | `hp == 0` -> `PlayerDead` (Custom 8) | `clock().alive === false` sends nothing |
+ *
+ * **All four shot gates are mirrored now, and that is what makes the trigger honest.**
+ * `shoot.rs`'s zone gate was the one this module did not mirror: a seat that claimed a
+ * place but never walked through the gate sent one doomed `Custom(9)` every 800 ms for the
+ * whole match, invisibly. And a trigger the chain would refuse no longer does *nothing* —
+ * it fires {@link ControlsConfig.onTrigger} and sends nothing, which is the practice shot
+ * of `17-fullscreen-spec.md` §6.1. Three windows had a dead key before this: the waiting
+ * area, the 20 s muster (the worst one — the boss fills the frame and the key is dead),
+ * and any seat still short of the gate during a fight.
+ *
+ * The split between the two callbacks is the whole contract, and it is deliberate that
+ * neither can do the other's job: `onTrigger` draws, `onShoot` sends. A trigger the chain
+ * accepts calls both, in that order; a trigger it would refuse calls only `onTrigger`; a
+ * trigger inside the cooldown calls neither, because the cooldown ring is already on
+ * screen saying so. Prediction owns no number — the arrow is the answer to "is the key
+ * bound", and `damageDealt` off the roster is the answer to "did it hurt anything".
  *
  * The dead gate is prevention, not reaction, and it has to be: gameplay is sent with
  * `skipPreflight` and never confirmed, so `Custom(7)`/`Custom(8)` are not observable on
@@ -65,7 +83,15 @@
  *    exactly one period instead, which measures 19.95/s with zero lost slots.
  */
 
-import { PHASE_FIGHTING, TICK_MS } from '@heartrot/client';
+import {
+  CLASS_ARCHER,
+  CLASS_COOLDOWN_TICKS,
+  CLASS_KNIGHT,
+  CLASS_PERIOD_MS,
+  PHASE_FIGHTING,
+  TICK_MS,
+  ZONE_ARENA,
+} from '@heartrot/client';
 
 /** Pump period. One ER slot — the finest granularity any gate above is expressed in. */
 const PUMP_MS = 50;
@@ -114,19 +140,56 @@ const MOVE_MS = 50;
  *
  * Not taken: suppressing the prediction for the early send. At 45 it is refused 10% of the
  * time, so that trades one pull-back for nine round trips of visible input lag.
+ *
+ * **Re-run against the shipped rule** (same harness, 15 s cells, this box) before touching
+ * the shot path, because the shot work changes the pump's callers and not this gate:
+ *
+ * | floor | 8 keys/s | 16 keys/s | refusals/s | min gap |
+ * |---|---|---|---|---|
+ * | 40 | 19.33 | 19.26 accepted/s | 0.27 / 0.40 | 40.2 ms |
+ * | 45 | 19.60 | 19.53 | **0.07 / 0.13** | 45.2 ms |
+ * | 50 | 14.66 | 15.66 | 0 / 0 | 50.0 ms |
+ *
+ * Same three findings, same decision: 50 costs a fifth of the movement rate because the
+ * floor *is* the slot recovery, and 45 buys the halved refusal rate for nothing measurable.
+ * Keep 45. This is a `move` result and only a `move` result — the shot path shares the pump
+ * but not this gate, and `shoot` has never been measured under load at any seat count.
  */
 const MIN_GAP_MS = 45;
 
 /**
- * `SHOT_COOLDOWN_TICKS` from `handlers/shoot.rs` — `ticks_for(800) - 1`, compared strictly
- * greater, so the next accepted shot is 800 ms after the last. Written as the duration, not
- * as the tick count, because the tick count moved once already when `TICK_MS` went 400 ->
- * 100 and this mirror did not follow: it read `1`, letting a held trigger send one shot
- * every 200 ms of which the chain accepted one in four and dropped three under
- * `skipPreflight`, invisibly. `TICK_MS` itself is now imported rather than restated —
- * a hand copy of a chain constant is what caused that.
+ * The shot gate, per class, and the ONLY copy on the client.
+ *
+ * `shoot.rs` compares `arena.tick > slot.last_shot_tick + CLASS_COOLDOWN_TICKS[class]`, so
+ * the next accepted shot is one full class period after the last: 800 ms for a knight,
+ * 1400 ms for an archer. Both come from `@heartrot/client`, which derives them from
+ * `CLASS_PERIOD_MS` through `ticksFor` exactly as `state.rs` does — no tick count is typed
+ * anywhere on either side.
+ *
+ * This used to be a local `800 / TICK_MS - 1`, and `Hud.tsx` used to hold a third copy that
+ * had gone stale at the 400 ms-era `1`: the pill went green 600 ms early, in a live fight,
+ * while this module's own gate refused to send. That is the second half of "the space bar
+ * doesn't work". `Hud.tsx` now imports this function, so the pill and the pump cannot
+ * disagree again, and the archer's 1400 ms lands in both the day a seat carries one.
+ *
+ * `cls` is `PlayerSlot.class_aim >> 7`, so 0 or 1 — the fallback is totality, not defence,
+ * and it must resolve to the knight because every seat live on devnet reads 0 in that byte.
  */
-const SHOT_COOLDOWN_TICKS = 800 / TICK_MS - 1;
+export function shotAllowed(tick: number, lastShotTick: number, cls: number = CLASS_KNIGHT): boolean {
+  return tick > lastShotTick + cooldownTicksFor(cls);
+}
+
+const cooldownTicksFor = (cls: number): number =>
+  CLASS_COOLDOWN_TICKS[cls] ?? CLASS_COOLDOWN_TICKS[CLASS_KNIGHT]!;
+
+/**
+ * The practice trigger's gate. A trigger the chain would refuse never reaches the chain, so
+ * `arena.tick` cannot pace it — in the waiting area the crank is not running and the tick
+ * is frozen at 0 forever. Wall clock at the same class period is what keeps a held trigger
+ * from emitting a stream of arrows, and it is what keeps `Shot.tsx`'s one-node-per-seat
+ * proof (max flight + stick-and-fade < the class period) true for a practice shot too.
+ */
+const periodMsFor = (cls: number): number => CLASS_PERIOD_MS[cls] ?? CLASS_PERIOD_MS[CLASS_KNIGHT]!;
 
 /**
  * Aim vectors leave here scaled so the larger component is this — the `i8` ceiling, and the
@@ -214,10 +277,6 @@ function nextMoveDeadline(now: number, lastMoveAt: number): number {
   return Math.max(lastMoveAt + MOVE_MS, now - MOVE_MS + MIN_GAP_MS);
 }
 
-function shotAllowed(tick: number, lastShotTick: number): boolean {
-  return tick > lastShotTick + SHOT_COOLDOWN_TICKS;
-}
-
 export interface ControlsConfig {
   /** Element the pointer aims over — the arena viewport. Keyboard binds to `window`. */
   readonly surface: HTMLElement;
@@ -227,8 +286,21 @@ export interface ControlsConfig {
    * `alive` is the local seat's `hp > 0` off the last roster notification. Optional, and
    * omitting it means "assume alive" — a caller that cannot see the roster yet gets the
    * old behaviour rather than a frozen player.
+   *
+   * `zone` is the local seat's `PlayerSlot.zone`, and it is the fourth chain gate: a shot
+   * from `ZONE_LOBBY` is `WrongZone` (Custom 9) however alive and however Fighting the
+   * arena is. `cls` is `class_aim >> 7` and picks the cooldown. Both optional and both
+   * default to what every seat live on devnet already is — in the pit, a knight — so a
+   * caller that has not wired them yet keeps sending real shots in a fight rather than
+   * silently downgrading every one of them to a practice arrow.
    */
-  clock(): { readonly phase: number; readonly tick: number; readonly alive?: boolean };
+  clock(): {
+    readonly phase: number;
+    readonly tick: number;
+    readonly alive?: boolean;
+    readonly zone?: number;
+    readonly cls?: number;
+  };
   /**
    * The local player's position in client pixels, or `null` when it is off screen or not
    * yet known. Pointer aim needs an origin; without one, shots follow the last `facing`.
@@ -236,9 +308,24 @@ export interface ControlsConfig {
   aimOrigin(): { readonly x: number; readonly y: number } | null;
   onMove(dir: number): void;
   /**
-   * Free aim, as the wire carries it: an `i8` pair, never `(0, 0)`. The caller passes it
-   * straight to `shoot({ dx, dy })`; the chain normalises it and stamps `facing` from the
-   * same pair, so nothing out here decides an octant on the shot path.
+   * Every accepted trigger, live or practice, with the exact `i8` pair the shot was aimed
+   * along — draw it here and nowhere else. Called BEFORE {@link onShoot} so the arrow
+   * leaves the bow at 0 ms rather than after a transaction is built.
+   *
+   * Optional so a caller can be wired in either order, but a build that never sets it has
+   * a spacebar that does nothing outside a fight, which is the bug this module was opened
+   * for. `Shot.tsx::fireLocal` is what this is for.
+   */
+  onTrigger?(dx: number, dy: number): void;
+  /**
+   * The subset of {@link onTrigger} that goes on the wire: free aim as an `i8` pair, never
+   * `(0, 0)`. The caller passes it straight to `shoot({ dx, dy })`; the chain normalises it
+   * and stamps `facing` from the same pair, so nothing out here decides an octant on the
+   * shot path.
+   *
+   * Called only when all four chain gates pass. Anything sent from here that the chain
+   * refuses is invisible under `skipPreflight`, which is exactly why the gates are mirrored
+   * rather than the refusals reported.
    */
   onShoot(dx: number, dy: number): void;
 }
@@ -256,8 +343,12 @@ export function attachControls(cfg: ControlsConfig): () => void {
   let facing = 0;
 
   let lastMoveAt = Number.NEGATIVE_INFINITY;
-  // Two below any real tick, so the first shot of a match is never gated.
-  let lastShotTick = -(SHOT_COOLDOWN_TICKS + 1);
+  // Below any real tick by more than any class cooldown, so the first shot of a match is
+  // never gated whatever class the seat is.
+  let lastShotTick = Number.NEGATIVE_INFINITY;
+  // Wall clock of the last trigger of either kind. Paces the practice arrow, which has no
+  // tick to pace it, and stops one following a real shot through the gate inside a period.
+  let lastFireAt = Number.NEGATIVE_INFINITY;
 
   function heldDirection(): number | null {
     let dx = 0;
@@ -285,7 +376,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
   }
 
   function pump(): void {
-    const { phase, tick, alive } = cfg.clock();
+    const { phase, tick, alive, zone, cls } = cfg.clock();
     const now = performance.now();
 
     // Dead. Every move and shot would come back `PlayerDead`, invisibly. Held keys are
@@ -295,9 +386,9 @@ export function attachControls(cfg: ControlsConfig): () => void {
 
     const dir = heldDirection();
     if (dir !== null) {
-      // Fighting gates on the tick itself, which is what the chain compares against;
-      // lobby gates on wall clock, because the chain's lobby clock is the ER slot and the
-      // browser cannot see it.
+      // One rule in every phase, on the wall clock, because the gate it mirrors is the ER
+      // slot and the browser cannot see slots. This comment used to say a fight gates on
+      // `arena.tick`; it has not since the chain moved both phases onto the slot.
       if (moveAllowed(now, lastMoveAt)) {
         lastMoveAt = nextMoveDeadline(now, lastMoveAt);
         facing = dir;
@@ -305,35 +396,50 @@ export function attachControls(cfg: ControlsConfig): () => void {
       }
     }
 
-    // Shooting is Fighting-only on chain (`phase != PHASE_FIGHTING` is a hard reject), so
-    // a lobby trigger-pull is dropped here rather than sent and silently failed.
-    if ((pointerDown || fireKeyDown) && phase === PHASE_FIGHTING) {
-      if (shotAllowed(tick, lastShotTick)) {
-        lastShotTick = tick;
-        const [dx, dy] = aimVector();
-        // The chain stamps `facing = octant(dx, dy)` from the same pair, so tracking it
-        // here keeps the keyboard's next shot aimed where the last one went.
-        facing = dirFromVector(dx, dy);
-        cfg.onShoot(dx, dy);
-      }
-    }
+    if (!pointerDown && !fireKeyDown) return;
+    const klass = cls ?? CLASS_KNIGHT;
+
+    // `shoot` is Fighting-only AND arena-only on chain: outside either, the transaction is
+    // built, signed, sent and refused with nothing to show for it. So it is not sent — the
+    // trigger still fires, and only the send is dropped.
+    const live = phase === PHASE_FIGHTING && (zone ?? ZONE_ARENA) === ZONE_ARENA;
+
+    // The two clocks, each pacing the trigger it can see. Inside a live cooldown nothing is
+    // drawn at all: the ring is already on screen counting it down, and an arrow there
+    // would claim a shot the chain never took.
+    if (live ? !shotAllowed(tick, lastShotTick, klass) : now - lastFireAt < periodMsFor(klass)) return;
+
+    if (live) lastShotTick = tick;
+    lastFireAt = now;
+    const [dx, dy] = aimVector();
+    // The chain stamps `facing = octant(dx, dy)` from the same pair, so tracking it
+    // here keeps the keyboard's next shot aimed where the last one went.
+    facing = dirFromVector(dx, dy);
+    // Draw first, send second: the arrow is client-side either way, and a practice arrow
+    // and a real one are the same arrow.
+    cfg.onTrigger?.(dx, dy);
+    if (live) cfg.onShoot(dx, dy);
   }
 
   const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.code !== FIRE_KEY && KEY_VECTORS[event.code] === undefined) return;
+    // Before the repeat guard, and that ordering is the fix: Space and the arrows scroll
+    // the page, the browser repeats them while they are held, and only the FIRST of those
+    // events used to be cancelled. So holding fire scrolled the arena out from under the
+    // player — which is a spacebar that visibly does the wrong thing rather than nothing,
+    // and there are no text inputs anywhere in this app for the cancel to interfere with.
+    // It is also what keeps Space firing instead of clicking whichever HUD button has
+    // focus: the default activation is cancelled here, at the end of the bubble path.
+    event.preventDefault();
     if (event.repeat) return;
     if (event.code === FIRE_KEY) {
       fireKeyDown = true;
-      event.preventDefault();
-      // Straight to the wire rather than waiting out the pump. `pump` re-reads the clock
-      // and both gates, so this can only send what the next pump would have sent anyway,
-      // one period sooner.
-      pump();
-      return;
+    } else {
+      held.add(event.code);
     }
-    if (KEY_VECTORS[event.code] === undefined) return;
-    held.add(event.code);
-    // Arrow keys scroll the page and would drag the arena out from under the player.
-    event.preventDefault();
+    // Straight to the wire rather than waiting out the pump. `pump` re-reads the clock
+    // and every gate, so this can only send what the next pump would have sent anyway,
+    // one period sooner.
     pump();
   };
 
@@ -431,14 +537,33 @@ if (import.meta.env.DEV) {
   assert(moveAllowed(9999 + MIN_GAP_MS, nextMoveDeadline(9999, 0)), 'and no further apart than that');
   assert(nextMoveDeadline(0, Number.NEGATIVE_INFINITY) === -MOVE_MS + MIN_GAP_MS, 'the first move is finite');
 
-  // Shots: strictly greater, so the next accepted shot is SHOT_COOLDOWN_TICKS + 1 ticks
-  // later — 800 ms, whatever TICK_MS is. Expressed against the constant, never a literal:
+  // Shots: strictly greater, so the next accepted shot is `cooldown + 1` ticks later — one
+  // class period, whatever TICK_MS is. Expressed against the constant, never a literal:
   // this block read `shotAllowed(9, 7)` from the 400 ms era and was passing only because
   // the mirror had gone stale in the same direction.
-  assert(!shotAllowed(7 + SHOT_COOLDOWN_TICKS, 7), 'a shot inside the cooldown must be gated');
-  assert(shotAllowed(8 + SHOT_COOLDOWN_TICKS, 7), 'a shot one tick past it must pass');
-  assert((SHOT_COOLDOWN_TICKS + 1) * TICK_MS === 800, 'the cooldown must stay 800 ms');
-  assert(shotAllowed(0, -(SHOT_COOLDOWN_TICKS + 1)), 'the first shot of a match must pass');
+  for (const cls of [CLASS_KNIGHT, CLASS_ARCHER]) {
+    const cd = cooldownTicksFor(cls);
+    assert(!shotAllowed(7 + cd, 7, cls), 'a shot inside the cooldown must be gated');
+    assert(shotAllowed(8 + cd, 7, cls), 'a shot one tick past it must pass');
+    // The DPS the boss's HP curve assumes only holds while the period the pump paces the
+    // trigger at and the period the cooldown was derived from are the same one.
+    assert((cd + 1) * TICK_MS === periodMsFor(cls), 'the cooldown must be one class period');
+    assert(shotAllowed(0, Number.NEGATIVE_INFINITY, cls), 'the first shot of a match must pass');
+  }
+  assert(periodMsFor(CLASS_KNIGHT) === 800, "the knight's period must stay 800 ms");
+  assert(periodMsFor(CLASS_ARCHER) === 1400, "the archer's period must stay 1400 ms");
+  // Slower and heavier, never faster: the notification budget is the constraint, so a shot
+  // a knight may take at tick t is one an archer may not.
+  assert(
+    shotAllowed(8 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_KNIGHT) &&
+      !shotAllowed(8 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_ARCHER),
+    'the archer must be the slower class',
+  );
+  // Every seat live on devnet reads 0 in `class_aim`, so both the default and any byte this
+  // build does not understand have to resolve to the knight rather than to `undefined`.
+  assert(shotAllowed(9, 0) === shotAllowed(9, 0, CLASS_KNIGHT), 'the default class is the knight');
+  assert(cooldownTicksFor(99) === cooldownTicksFor(CLASS_KNIGHT), 'an unknown class falls back to the knight');
+  assert(periodMsFor(99) === periodMsFor(CLASS_KNIGHT), 'and so does its practice period');
 
   // Free aim. The larger component fills the byte — anything smaller throws away chain-side
   // resolution for nothing — and the pair must never be (0, 0), which the chain rejects.

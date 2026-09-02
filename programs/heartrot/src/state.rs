@@ -212,8 +212,7 @@ pub const CORE_HP_PER_RAIDER: u16 = 3_000;
 const _: () = {
     // The top-up runs to `MAX_SEATS` raiders and must not wrap a `u16`.
     assert!(
-        BOSS_CORE_HP as u32 + CORE_HP_PER_RAIDER as u32 * (MAX_SEATS as u32 - 1)
-            <= u16::MAX as u32
+        BOSS_CORE_HP as u32 + CORE_HP_PER_RAIDER as u32 * (MAX_SEATS as u32 - 1) <= u16::MAX as u32
     );
     // A muster that outlives the fight it precedes is a scheduling bug, not a balance one.
     assert!(MUSTER_TICKS < ENRAGE_TICKS);
@@ -256,7 +255,9 @@ pub trait AccountLayout: Pod {
 /// layout version. A *longer* account is accepted — nothing but our own program can
 /// resize a PDA, and the trailing bytes are unreachable through `&T`.
 pub fn load<T: AccountLayout>(data: &[u8]) -> Result<&T, ProgramError> {
-    let head = data.get(..T::LEN).ok_or(ProgramError::AccountDataTooSmall)?;
+    let head = data
+        .get(..T::LEN)
+        .ok_or(ProgramError::AccountDataTooSmall)?;
     check_header(head, T::DISCRIMINATOR)?;
     bytemuck::try_from_bytes(head).map_err(|_| ProgramError::InvalidAccountData)
 }
@@ -846,6 +847,59 @@ const _: () = {
 // Players — all 20 seats in one account
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Classes — the top bit of `PlayerSlot::class_aim`
+// ---------------------------------------------------------------------------
+
+/// The class half of [`PlayerSlot::class_aim`]. One bit, and that is the budget: the
+/// remaining seven carry the aim, whose quantisation error is 1.90° at 7 bits and 4.05°
+/// at 6. A third class costs a 62-unit p95 miss on every drawn arrow (`17-fullscreen-spec`
+/// §5.3), which is why [`N_CLASSES`] is 2 and not "2 for now".
+pub const CLASS_MASK: u8 = 0b1000_0000;
+
+/// Class 0 **must** stay the knight. Every seat live on devnet carries 0 in this byte
+/// today, so 0 is not a choice — it is what the accounts already say, and it is the whole
+/// reason this feature has no migration.
+pub const CLASS_KNIGHT: u8 = 0;
+/// Slower and heavier, never faster: shot rate is notification rate, and the ER budget the
+/// raid's latency depends on is the constraint that picked these numbers.
+pub const CLASS_ARCHER: u8 = 1;
+pub const N_CLASSES: u8 = 2;
+
+/// Milliseconds between accepted shots, per class. Milliseconds, like every other duration
+/// in this file — the tick counts below are derived, never typed.
+pub const CLASS_PERIOD_MS: [u32; N_CLASSES as usize] = [800, 1_400];
+
+/// Damage per landed shot, per class. Paired with [`CLASS_PERIOD_MS`] to be **DPS-neutral**
+/// — `40 × 14 == 70 × 8` — so the boss's HP curve is untouched by the class a raid picks.
+/// The equality is asserted below, because a balance pass that changes one of the four
+/// numbers and not the others would otherwise rescale every fight silently.
+pub const CLASS_DAMAGE: [u16; N_CLASSES as usize] = [40, 70];
+
+/// Shot cooldown in ticks, per class. The comparison at the call site is
+/// `arena.tick > last_shot_tick + cooldown`, so this is one *less* than the period in
+/// ticks — 0 would mean one shot per tick, the ceiling the tick clock can express.
+pub const CLASS_COOLDOWN_TICKS: [u32; N_CLASSES as usize] = [
+    ticks_for(CLASS_PERIOD_MS[0]) - 1,
+    ticks_for(CLASS_PERIOD_MS[1]) - 1,
+];
+
+const _: () = {
+    // Class 0 is the knight exactly as it plays today. If either of these moves, every
+    // account on devnet silently changes weapon.
+    assert!(CLASS_KNIGHT == 0);
+    assert!(CLASS_DAMAGE[CLASS_KNIGHT as usize] == 40);
+    assert!(CLASS_PERIOD_MS[CLASS_KNIGHT as usize] == 800);
+    // DPS neutrality, in the integers the program actually uses.
+    assert!(
+        CLASS_DAMAGE[0] as u32 * (CLASS_COOLDOWN_TICKS[1] + 1)
+            == CLASS_DAMAGE[1] as u32 * (CLASS_COOLDOWN_TICKS[0] + 1)
+    );
+    // `class_aim >> 7` is 0 or 1 for every u8, which is what makes the table indexes in
+    // `PlayerSlot::shot_damage` and `::cooldown_ticks` total without a bounds check.
+    assert!(N_CLASSES == 2 && CLASS_MASK == 0b1000_0000);
+};
+
 /// One seat. Slot index *is* the seat number, so there is no `seat` field to
 /// disagree with it.
 #[repr(C)]
@@ -856,7 +910,29 @@ pub struct PlayerSlot {
     /// 0..7, eight-way. Hitscan raycasts along it.
     pub facing: u8,
     pub skin_id: u8,
-    pub _pad0: u8,
+    /// Class and last aim, packed:
+    ///
+    /// - bit 7 — class: 0 [`CLASS_KNIGHT`], 1 [`CLASS_ARCHER`]
+    /// - bits 6..4 — aim sector: `neg_x << 2 | neg_y << 1 | steep`
+    /// - bits 3..0 — aim ratio: `min(|dx|,|dy|) / max(|dx|,|dy|)`, scaled 0..15
+    ///
+    /// **Zero means knight, aiming due +x, and nothing has been fired.** Claimed out of
+    /// `_pad0`: no field moved, the slot is still 96 bytes, `LAYOUT_VERSION` did not move,
+    /// and every seat already on chain reads 0 — which is exactly the knight they already
+    /// are. There is no migration, and that is the point.
+    ///
+    /// The aim half is only meaningful once `last_shot_tick != 0`; before the first shot
+    /// there is no arrow to draw, and a client must fall back to [`PlayerSlot::facing`].
+    /// That pairing is the whole contract: `(x, y)`, `class_aim` and `last_shot_tick` are
+    /// enough for **any** client to reconstruct an arrow — its origin, its direction, its
+    /// speed and its damage — from account bytes alone, with no event stream and no
+    /// projectile allocated on chain.
+    ///
+    /// Written only by [`PlayerSlot::set_aim`] and [`PlayerSlot::set_class`], never by
+    /// hand: an aim write that forgets to preserve bit 7 changes the player's class on
+    /// their first shot with no error anywhere, and that is the one silent failure this
+    /// feature has.
+    pub class_aim: u8,
     pub x: i16,
     pub y: i16,
     /// 0 means dead. Aliveness is derived — `hp != 0 && zone == ZONE_ARENA` — rather
@@ -903,12 +979,63 @@ pub struct PlayerSlot {
     pub identity: [u8; 32],
 }
 
+impl PlayerSlot {
+    /// [`CLASS_KNIGHT`] or [`CLASS_ARCHER`]. Total — `>> 7` on a `u8` cannot be anything
+    /// else — which is what lets the two accessors below index the class tables with no
+    /// bounds check and no panic path in the BPF.
+    pub const fn class(&self) -> u8 {
+        self.class_aim >> 7
+    }
+
+    pub const fn shot_damage(&self) -> u16 {
+        CLASS_DAMAGE[self.class() as usize]
+    }
+
+    pub const fn cooldown_ticks(&self) -> u32 {
+        CLASS_COOLDOWN_TICKS[self.class() as usize]
+    }
+
+    /// Set the class, preserving the aim. Refuses an unknown class rather than clamping:
+    /// a clamp turns a version skew into a silently wrong weapon, which is indistinguishable
+    /// from a balance bug from the outside.
+    pub fn set_class(&mut self, class: u8) -> Result<(), ProgramError> {
+        if class >= N_CLASSES {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        self.class_aim = (self.class_aim & !CLASS_MASK) | (class << 7);
+        Ok(())
+    }
+
+    /// Record the direction of a shot, preserving the class.
+    ///
+    /// `& CLASS_MASK` is the only thing keeping a player's class off the aim path, so the
+    /// write lives here and not at the call site — one line to get right, in the file that
+    /// owns the byte, instead of one line to get right in every handler that ever fires.
+    ///
+    /// `unsigned_abs`, not `abs`: `dx` arrives from the wire and `(-128i8).abs()` overflows.
+    pub fn set_aim(&mut self, dx: i8, dy: i8) {
+        let (ax, ay) = (dx.unsigned_abs() as u32, dy.unsigned_abs() as u32);
+        let sector = ((dx < 0) as u8) << 2 | ((dy < 0) as u8) << 1 | ((ay > ax) as u8);
+        let (min, max) = (ax.min(ay), ax.max(ay));
+        // Round to nearest, so the reconstructed ray straddles the real one instead of
+        // leaning one way for the whole quadrant. `max == 0` is unreachable through
+        // `shoot` — `octant` rejects `(0, 0)` — but this is a total function anyway.
+        let ratio = if max == 0 {
+            0
+        } else {
+            ((min * 15 + max / 2) / max) as u8
+        };
+        self.class_aim = (self.class_aim & CLASS_MASK) | (sector << 4) | ratio;
+    }
+}
+
 const _: () = {
     assert!(size_of::<PlayerSlot>() == 96);
     assert!(align_of::<PlayerSlot>() == 4);
     assert!(offset_of!(PlayerSlot, zone) == 0);
     assert!(offset_of!(PlayerSlot, facing) == 1);
     assert!(offset_of!(PlayerSlot, skin_id) == 2);
+    assert!(offset_of!(PlayerSlot, class_aim) == 3);
     assert!(offset_of!(PlayerSlot, x) == 4);
     assert!(offset_of!(PlayerSlot, y) == 6);
     assert!(offset_of!(PlayerSlot, hp) == 8);
@@ -1145,7 +1272,11 @@ mod tests {
                 }
             }
         }
-        assert_eq!(legal, PHASE_EDGES.len(), "an edge is declared twice, or outside PHASES");
+        assert_eq!(
+            legal,
+            PHASE_EDGES.len(),
+            "an edge is declared twice, or outside PHASES"
+        );
 
         // The roll's own escape hatch. `abandon_roll` is measured against `tick`, and only
         // `boss_tick` advances `tick` — so a crank that dies inside the roll window freezes
@@ -1173,20 +1304,31 @@ mod tests {
     #[test]
     fn the_muster_ends_on_its_own_deadline() {
         let mut arena = Arena::zeroed();
-        arena.try_set_phase(PHASE_MUSTERING).expect("the gate opens a muster");
+        arena
+            .try_set_phase(PHASE_MUSTERING)
+            .expect("the gate opens a muster");
         arena.tick = 40;
         arena.fight_at_tick = arena.tick + MUSTER_TICKS;
 
         // One tick short, and every tick before it.
         for tick in 0..arena.fight_at_tick {
             arena.tick = tick;
-            assert!(!arena.begin_fight(), "the muster is still running at tick {tick}");
+            assert!(
+                !arena.begin_fight(),
+                "the muster is still running at tick {tick}"
+            );
             assert_eq!(arena.phase, PHASE_MUSTERING);
-            assert_eq!(arena.enrage_at_tick, 0, "no enrage clock runs during the muster");
+            assert_eq!(
+                arena.enrage_at_tick, 0,
+                "no enrage clock runs during the muster"
+            );
         }
 
         arena.tick = arena.fight_at_tick;
-        assert!(arena.begin_fight(), "the crank flips it exactly on the deadline");
+        assert!(
+            arena.begin_fight(),
+            "the crank flips it exactly on the deadline"
+        );
         assert_eq!(arena.phase, PHASE_FIGHTING);
         assert_eq!(arena.enrage_at_tick, 40 + MUSTER_TICKS + ENRAGE_TICKS);
         assert_eq!(arena.fight_at_tick, 0, "no muster is scheduled any more");
@@ -1266,22 +1408,35 @@ mod tests {
         assert!(!arena.accept_roll(&[8u8; 32], 0));
         assert_eq!(arena.next_affix_seed, [9u8; 32]);
 
-        arena.try_set_phase(PHASE_SETTLED).expect("a rolled match settles");
-        let next = arena.begin_next_incarnation().expect("a verified seed advances");
+        arena
+            .try_set_phase(PHASE_SETTLED)
+            .expect("a rolled match settles");
+        let next = arena
+            .begin_next_incarnation()
+            .expect("a verified seed advances");
 
         assert_eq!(next, 1);
         assert_eq!(arena.phase, PHASE_LOBBY);
-        assert_eq!(arena.affix_seed, [9u8; 32], "the rolled seed becomes this fight's seed");
+        assert_eq!(
+            arena.affix_seed, [9u8; 32],
+            "the rolled seed becomes this fight's seed"
+        );
         assert_eq!(arena.next_affix_seed, [0u8; 32]);
         assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
-        assert_eq!((arena.tick, arena.alive_count, arena.seat_occupied), (0, 0, 0));
+        assert_eq!(
+            (arena.tick, arena.alive_count, arena.seat_occupied),
+            (0, 0, 0)
+        );
         assert_eq!(
             (arena.enrage_at_tick, arena.fight_at_tick),
             (0, 0),
             "both deadlines are match state; a deadline against a zeroed clock is in the past"
         );
         assert!(arena.bullets.iter().all(|b| b.active == BULLET_FREE));
-        assert_eq!(arena.arena_id, 7, "identity carries over; the match does not");
+        assert_eq!(
+            arena.arena_id, 7,
+            "identity carries over; the match does not"
+        );
 
         // Two settlements cannot race the counter: the second call is a rejected
         // transition, not a second advance.
@@ -1336,7 +1491,10 @@ mod tests {
         players.slots[4].deaths = 2;
         players.reset_for_incarnation();
         assert!(players.slots.iter().all(|s| s.session_pubkey == [0u8; 32]));
-        assert!(players.slots.iter().all(|s| s.damage_dealt == 0 && s.deaths == 0));
+        assert!(players
+            .slots
+            .iter()
+            .all(|s| s.damage_dealt == 0 && s.deaths == 0));
 
         let mut boss = Boss::zeroed();
         boss.core_hp = 0;
@@ -1360,13 +1518,136 @@ mod rate_tests {
     #[test]
     fn durations_survive_the_tick_rate() {
         assert_eq!(ticks_for(3_200) * TICK_MS, 3_200, "respawn stays 3.2 s");
-        assert_eq!(ticks_for(10_000) * TICK_MS, 10_000, "roll timeout stays 10 s");
+        assert_eq!(
+            ticks_for(10_000) * TICK_MS,
+            10_000,
+            "roll timeout stays 10 s"
+        );
         assert_eq!(ENRAGE_TICKS * TICK_MS, 360_000, "enrage stays 6 min");
-        assert_eq!(MUSTER_TICKS * TICK_MS, 20_000, "the muster window stays 20 s");
+        assert_eq!(
+            MUSTER_TICKS * TICK_MS,
+            20_000,
+            "the muster window stays 20 s"
+        );
         assert_eq!(ROLL_TIMEOUT_TICKS * TICK_MS, 10_000);
         assert_eq!(ticks_for(800) * TICK_MS, 800, "shot cooldown stays 800 ms");
+        // Every class's shot period, for the same reason: a cooldown is a duration a
+        // player feels, and the tick count is only how the crank spells it.
+        for c in 0..N_CLASSES as usize {
+            assert_eq!(
+                (CLASS_COOLDOWN_TICKS[c] + 1) * TICK_MS,
+                CLASS_PERIOD_MS[c],
+                "class {c}'s shot period must survive the tick rate"
+            );
+        }
         // A duration shorter than one tick must still cost a tick, never zero.
         assert_eq!(ticks_for(1), 1, "a sub-tick cooldown is still a cooldown");
         assert_eq!(ticks_for(0), 1);
+    }
+}
+
+/// The class byte. Three properties, and losing any one of them is silent on chain:
+/// zero still means the knight, an aim write never touches the class, and the aim a
+/// client decodes is the aim that was fired.
+#[cfg(test)]
+mod class_tests {
+    use super::*;
+
+    /// The client-side decoder, written here as the inverse of [`PlayerSlot::set_aim`].
+    /// `shoot`'s encode is the authority; this mirrors it so the round trip is testable,
+    /// and floats are legal only because this never runs on a validator.
+    fn decode_aim(code: u8) -> (f64, f64) {
+        let ratio = (code & 0x0f) as f64 / 15.0;
+        let sector = (code >> 4) & 0x07;
+        let (x, y) = if sector & 1 != 0 {
+            (ratio, 1.0)
+        } else {
+            (1.0, ratio)
+        };
+        let sign = |neg: bool, v: f64| if neg { -v } else { v };
+        (sign(sector & 4 != 0, x), sign(sector & 2 != 0, y))
+    }
+
+    /// Every seat on devnet carries 0 here today. If this test ever fails, a redeploy
+    /// changed the weapon of every player already in the game.
+    #[test]
+    fn a_zeroed_seat_is_the_knight_it_already_was() {
+        let slot = PlayerSlot::zeroed();
+        assert_eq!(slot.class(), CLASS_KNIGHT);
+        assert_eq!(slot.shot_damage(), 40, "the shipped knight's damage");
+        assert_eq!(
+            slot.cooldown_ticks(),
+            ticks_for(800) - 1,
+            "the shipped knight's cooldown"
+        );
+    }
+
+    /// The whole feature's single point of silent failure: an aim write that drops
+    /// `& CLASS_MASK` changes the player's class on their first shot, with no error.
+    #[test]
+    fn an_aim_write_never_changes_the_class() {
+        let mut archer = PlayerSlot::zeroed();
+        archer.set_class(CLASS_ARCHER).unwrap();
+        let mut knight = PlayerSlot::zeroed();
+
+        for i in 0..20i32 {
+            let (dx, dy) = ((i * 13 - 127) as i8, (i * -7 + 61) as i8);
+            archer.set_aim(dx, dy);
+            knight.set_aim(dx, dy);
+            assert_eq!(archer.class_aim >> 7, 1, "shot {i} disarmed the archer");
+            assert_eq!(
+                knight.class(),
+                CLASS_KNIGHT,
+                "shot {i} re-classed the knight"
+            );
+            assert_eq!(archer.shot_damage(), 70);
+            assert_eq!(archer.cooldown_ticks(), ticks_for(1_400) - 1);
+        }
+        // And the class write is the mirror image: it must not disturb the aim.
+        let aim = archer.class_aim & !CLASS_MASK;
+        archer.set_class(CLASS_KNIGHT).unwrap();
+        assert_eq!(archer.class_aim, aim, "changing class threw the aim away");
+    }
+
+    /// An unknown class is refused, never clamped — a clamp turns a version skew into a
+    /// silently wrong weapon.
+    #[test]
+    fn an_unknown_class_is_refused() {
+        let mut slot = PlayerSlot::zeroed();
+        slot.set_aim(3, -9);
+        let before = slot.class_aim;
+        assert!(slot.set_class(N_CLASSES).is_err());
+        assert!(slot.set_class(255).is_err());
+        assert_eq!(slot.class_aim, before, "a refused class must write nothing");
+    }
+
+    /// Seven bits of aim buy 1.90° of worst-case error (`17-fullscreen-spec` §5.3). Every
+    /// legal wire aim, both classes, against the direction actually fired.
+    #[test]
+    fn the_aim_a_client_decodes_is_the_aim_that_was_fired() {
+        let mut worst = 0.0f64;
+        for dx in i8::MIN..=i8::MAX {
+            for dy in i8::MIN..=i8::MAX {
+                if dx == 0 && dy == 0 {
+                    continue; // `octant` refuses this one; there is no shot.
+                }
+                for class in [CLASS_KNIGHT, CLASS_ARCHER] {
+                    let mut slot = PlayerSlot::zeroed();
+                    slot.set_class(class).unwrap();
+                    slot.set_aim(dx, dy);
+                    assert_eq!(slot.class(), class);
+
+                    let (rx, ry) = decode_aim(slot.class_aim);
+                    let fired = (dy as f64).atan2(dx as f64);
+                    let drawn = ry.atan2(rx);
+                    let mut err = (drawn - fired).abs();
+                    if err > core::f64::consts::PI {
+                        err = core::f64::consts::TAU - err;
+                    }
+                    worst = worst.max(err.to_degrees());
+                }
+            }
+        }
+        assert!(worst < 1.92, "worst aim error {worst}° — a bit was dropped");
     }
 }

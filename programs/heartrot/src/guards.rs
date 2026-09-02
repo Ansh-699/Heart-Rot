@@ -56,7 +56,7 @@ use {
     },
     pinocchio::{
         account::AccountView,
-        address::{Address, address_eq},
+        address::{address_eq, Address},
         error::ProgramError,
     },
 };
@@ -324,7 +324,7 @@ mod tests {
         crate::state::{SEED_ARENA, SEED_BOSS},
         bytemuck::Zeroable,
         core::mem::size_of,
-        pinocchio::account::{NOT_BORROWED, RuntimeAccount},
+        pinocchio::account::{RuntimeAccount, NOT_BORROWED},
     };
 
     const PROGRAM: Address = Address::new_from_array([7u8; 32]);
@@ -364,7 +364,9 @@ mod tests {
     /// `Raw` must not be moved after this runs — the view holds a raw pointer into it.
     macro_rules! view {
         ($raw:expr) => {
-            unsafe { AccountView::new_unchecked(core::ptr::addr_of_mut!($raw) as *mut RuntimeAccount) }
+            unsafe {
+                AccountView::new_unchecked(core::ptr::addr_of_mut!($raw) as *mut RuntimeAccount)
+            }
         };
     }
 

@@ -1,10 +1,13 @@
 /**
- * The raid HUD — the side panel on the arena screen.
+ * The raid HUD — edge-anchored clusters over a full-screen scene.
  *
- * The stage draws primitive shapes: a circle per knight, a bigger shape for the boss, dots
- * for bullets. That is deliberately illegible about *numbers*, so this panel carries all of
- * them — your hp, how close the shell is to the vent threshold, which parts are still
- * standing, the core once it is reachable, the tick, and how the fight ended.
+ * The 320 px side panel is gone (`17-fullscreen-spec.md` §9.1: it cost the worst-case
+ * scale 0.6875 px/unit and a 22.7 px knight), so every number it carried is now a
+ * `position: fixed` cluster pinned to a viewport edge. The square world is centred, so an
+ * edge-anchored cluster lands in the letterbox gutter for free wherever the gutter is wide
+ * enough and only overlaps the outermost stone where it is not — which is why there is no
+ * gutter detection, no `ResizeObserver` and no breakpoint here. Translucency covers the
+ * overlap case and `pointer-events: none` keeps aiming reaching the stage underneath.
  *
  * Everything here is read off `Arena`, `Boss` and `Players` and nothing else. `vent_open`,
  * `alive_count` and `outcome` are taken from the chain rather than recomputed, because the
@@ -16,21 +19,26 @@
  * **Transaction feedback comes from the same accounts, not from a catch block.** `move` and
  * `shoot` are sent `skipPreflight` and fire-and-forget, so a `Custom(7) RateLimited` or
  * `Custom(8) PlayerDead` rejection arrives — if at all — long after it mattered. But both
- * codes are pure functions of state this panel already has: `RateLimited` is exactly
- * `last_move_tick == tick` / `tick <= last_shot_tick + 1`, and `PlayerDead` is exactly
- * `hp == 0`. So the cadence row below predicts the rejection instead of reporting it, which
- * is both earlier and never wrong. Neither is an error; both are the normal shape of play.
+ * codes are pure functions of state this HUD already has: `RateLimited` is exactly
+ * `last_move_tick == tick` / `tick <= last_shot_tick + SHOT_COOLDOWN_TICKS`, and
+ * `PlayerDead` is exactly `hp == 0`. So the cadence pills predict the rejection instead of
+ * reporting it, which is both earlier and never wrong. `metrics.refusedRate` cannot do this
+ * job: `recordSend(seq?)` only tracks `move`, so a refused *shot* has never incremented it
+ * and never will. The pills are the instrument — which is why they now mount in the waiting
+ * area too (§0.3 of `16-hud.md`), the one screen the dead spacebar lived on.
  *
- * React owns this panel and never the world. Everything below re-renders on every
+ * React owns these clusters and never the world. Everything below re-renders on every
  * notification; the renderer inside `#stage` must not.
  */
 
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 
 import {
-  BULLET_ACTIVE,
+  CLASS_ARCHER,
+  MAX_SEATS,
   MUZZLES,
   NO_TARGET,
+  N_CLASSES,
   N_PARTS,
   OUTCOME_ENRAGE,
   OUTCOME_UNDECIDED,
@@ -39,10 +47,16 @@ import {
   PHASE_FIGHTING,
   PHASE_LOBBY,
   PHASE_MUSTERING,
+  PHASE_SETTLED,
+  PHASE_SETTLING,
   TICK_MS,
-  type BossAccount,
+  VENT_OPEN,
+  ZONE_ARENA,
+  classOf,
 } from '@heartrot/client';
 
+import { shotAllowed } from '../input/controls';
+import { SKIN_COLORS } from '../screens/CharacterSelect';
 import { Muster } from '../screens/Gate';
 import { mySeatSlot, useSelect } from '../state/store';
 
@@ -87,13 +101,28 @@ const LAST_THORN = 3;
 const VENT_PERCENT = 35;
 
 /**
- * `SHOT_COOLDOWN_TICKS` from `handlers/shoot.rs`, where the test is strictly greater.
+ * The cooldown gate is `controls.ts`'s, not a copy of it.
  *
- * ponytail: third copy of this constant (chain, `input/controls.ts`, here). All three retire
- * together if the client package ever exports the gate values; until then a wrong copy only
- * mislabels a pill, which is why this is the cheap place to keep it.
+ * This file used to hold a third copy of `SHOT_COOLDOWN_TICKS` and it held the 400 ms-era
+ * value `1` against the chain's `ticks_for(800) - 1 = 7`, so SHOT READY went green 600 ms
+ * early — in a live fight — while the client's own (correct) gate refused to send. That is
+ * the second half of "the space bar doesn't work". The predicate now comes from the same
+ * module the send pump gates on, so the pill and the pump can never disagree again.
+ *
+ * `shotAllowed` takes the class itself — `CLASS_COOLDOWN_TICKS[class]`, 7 knight and 13
+ * archer — so the HUD passes `cls` straight through and there is no second class table
+ * here, and no alias in between. (There used to be a cast standing in for that argument;
+ * it retired the day the argument became real.)
  */
-const SHOT_COOLDOWN_TICKS = 1;
+
+/** 0 knight, 1 archer — `PlayerSlot.class_aim` bit 7. Flavour text only; the chain decides. */
+const CLASS_NAMES = ['KNIGHT', 'ARCHER'] as const;
+
+// `classOf` is `layout.ts`'s, imported above. This file used to keep a private second copy
+// reading an OPTIONAL `classAim` behind a comment saying the decoder "does not carry the
+// field yet" — it does, and `App.tsx` already imports the real one. Same answer today, two
+// answers the day the packing changes, which is this repo's named defect in its smallest
+// form. Deleted; the cooldown copy above it went the same way and for the same reason.
 
 /** Ticks to `m:ss`. `tick` is authoritative; wall-clock time never is. */
 function clock(ticks: number, tickMs: number): string {
@@ -106,29 +135,168 @@ function shellPercent(shell: number, shellMax: number): number {
   return shellMax > 0 ? Math.floor((shell * 100) / shellMax) : 0;
 }
 
+const PHASE_NAMES: Readonly<Record<number, string>> = {
+  [PHASE_LOBBY]: 'LOBBY',
+  [PHASE_MUSTERING]: 'MUSTERING',
+  [PHASE_FIGHTING]: 'FIGHTING',
+  [PHASE_SETTLING]: 'SETTLING',
+  [PHASE_SETTLED]: 'SETTLED',
+};
+
 /**
- * The whole arena-side panel: muster before the boss is armed, telemetry after, your own
- * health always, and the verdict once there is one. Render it inside `<aside className="panel">`.
+ * The cluster chrome. `.hud*` only — the `.dev*` rules that used to ride along are in
+ * `styles.css`, where they always also were.
+ *
+ * It lives here rather than in `styles.css` because these class names arrived with this
+ * component and nothing else styles them; a stylesheet rule with the same selector, added
+ * later, wins on order and this block can then be deleted whole. One place either way.
+ *
+ * `pointer-events: none` on the cluster with `auto` on its interactive children is what
+ * lets a cluster overlap the arena at 1280×800 without stealing aim: `controls.ts` binds
+ * `pointerdown` to `#stage`, and an overlay that does not hit-test is not in the way.
+ */
+const HUD_CSS = `
+.hud {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: 0 8px 26px -10px rgb(0 0 0 / 0.75);
+}
+.hud button { pointer-events: auto; }
+.hud h3 {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hud p { margin: 0; }
+.hud-tl { top: 8px; left: 8px; }
+.hud-tc { top: 8px; left: 50%; transform: translateX(-50%); width: min(520px, 46vw); }
+.hud-ml { top: 50%; left: 12px; transform: translateY(-50%); max-width: min(340px, 30vw); }
+.hud-bl { left: 8px; bottom: 8px; min-width: 232px; }
+/* Spec §1.3 puts the parts cluster bottom-right; telemetry's anchor is right 12px /
+   bottom 12px, and open it is ~700px tall, so bottom-right is under it whenever anyone
+   presses backtick. Telemetry is no longer open by DEFAULT, but its cue button rests in
+   that same corner, so bottom-right is still occupied at rest. Top-right is the free one.
+   ponytail: if telemetry ever moves to a true middle-right anchor, move this back to BR. */
+.hud-tr { top: 8px; right: 8px; min-width: 168px; }
+/* One line of instruction, and it is the whole answer to "the space bar doesn't work":
+   until now nothing in the running game named a single key except one line in Gate.tsx
+   that disappears the moment you reach the gate. Not a cluster of its own — it rides in
+   .hud-bl, which is already mounted on both sides of the gate and already carries the
+   trigger's state, so the keys sit beside the pill that reports them and the play area
+   loses nothing. --dim resolves to --muted on this surface (styles.css), so it reads.
+   (No backticks in this block: it is a template literal, and one would end it.) */
+.hud-keys { color: var(--dim); }
+.hud-keys b { font-family: var(--pixel); font-weight: 400; color: var(--ink); }
+.hud-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hud-seats { display: flex; gap: 3px; margin: 2px 0 0; padding: 0; list-style: none; }
+.hud-seat {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+}
+.hud-toggle {
+  font: 10px var(--pixel);
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.hud-toggle:hover { color: var(--ink); }
+`;
+/* The nine `.dev` rules that used to close this block are gone. Every one of them was a
+   third copy: `styles.css` already ships the 88 % backdrop, the grip, and — for the four
+   small-text roles §0.5 measured at 3.45:1 over the boss's orb — the `--dim: var(--muted)`
+   token override on `.hud, .dev, .dev-cue`, which retires the token on the surface instead
+   of rewriting the rules that name it. `DevPanel.tsx` styles `.dev`; this file styles
+   `.hud`. */
+
+/**
+ * Every cluster, mounted once. All five are `position: fixed`, so this renders the same on
+ * either side of the gate and the caller does not have to place anything.
  */
 export function Hud() {
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
   // `PHASE_MUSTERING` has to be tested explicitly. Without it the muster falls into
-  // `BossPanel`, which renders an enrage clock off `enrageAtTick` — and that field is now
+  // `BossBar`, which renders an enrage clock off `enrageAtTick` — and that field is
   // stamped at the MUSTERING → FIGHTING flip, so it reads 0 for the whole window: a 0:00
   // countdown for a fight that has not begun. `Muster` is `screens/Gate`'s, rendered by
   // both sides of the gate so the countdown does not vanish when your seat crosses it.
   const mustering = phase === PHASE_LOBBY || phase === PHASE_MUSTERING;
   return (
     <>
+      <style>{HUD_CSS}</style>
+      <PhaseCluster />
+      <div className="hud hud-tc">{mustering ? <Muster /> : <BossBar />}</div>
       <Verdict />
-      {mustering ? <Muster /> : <BossPanel />}
       <SelfPanel />
+      {!mustering && <Parts />}
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// The verdict
+// TL — phase, tick, socket, roster
+// ---------------------------------------------------------------------------
+
+/**
+ * The four facts the deleted `.header` carried, minus the wordmark. The roster is twenty
+ * dots rather than twenty rows: an empty seat is information during a muster, and the
+ * colour is the same `SKIN_COLORS` entry the knight is drawn in, so a dot and a figure on
+ * the floor are matchable at a glance. Counts a screen reader needs are on each dot's
+ * label and on the telemetry panel's Match group.
+ */
+function PhaseCluster() {
+  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  const tick = useSelect((s) => s.arena?.tick ?? 0);
+  const status = useSelect((s) => s.status);
+  const players = useSelect((s) => s.players);
+  const seat = useSelect((s) => s.match?.seat ?? -1);
+
+  return (
+    <div className="hud hud-tl">
+      <div className="hud-row">
+        <span className="pill">{PHASE_NAMES[phase] ?? `PHASE ${phase}`}</span>
+        <span className="fine tabular">tick {tick}</span>
+        <span className={`dot dot-${status}`} aria-hidden="true" />
+        <span className="fine">{status}</span>
+      </div>
+      <ol className="hud-seats">
+        {Array.from({ length: MAX_SEATS }, (_, i) => {
+          const slot = players?.slots[i];
+          const inPit = slot?.zone === ZONE_ARENA;
+          return (
+            <li
+              key={i}
+              className="hud-seat"
+              aria-current={i === seat ? 'true' : undefined}
+              aria-label={`seat ${i}${slot?.occupied ? (inPit ? ', in the pit' : ', in the lobby') : ', empty'}`}
+              style={{
+                background: slot?.occupied ? (SKIN_COLORS[slot.skinId] ?? 'var(--dim)') : 'none',
+                borderColor: i === seat ? 'var(--ink)' : inPit ? 'var(--lobby-green)' : 'var(--line)',
+              }}
+            />
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ML — the verdict
 // ---------------------------------------------------------------------------
 
 /**
@@ -157,7 +325,7 @@ function Verdict() {
   const row = VERDICTS[outcome];
   if (!row) return null;
   return (
-    <div className={`verdict verdict-${row.label.toLowerCase()}`} role="status">
+    <div className={`hud hud-ml verdict verdict-${row.label.toLowerCase()}`} role="status">
       <span className="verdict-label">{row.label}</span>
       <span className="fine">{row.line}</span>
     </div>
@@ -206,106 +374,44 @@ function Meter({
   );
 }
 
-function BossPanel() {
+// ---------------------------------------------------------------------------
+// TC — the boss bar
+// ---------------------------------------------------------------------------
+
+/**
+ * The genre convention, and every value in it lifts verbatim from the old `Vent` and
+ * `BossPanel`: shell against the threshold `vent_open` actually uses, the core once it is
+ * reachable, and one line of fight state. `Incoming` (the live bullet count) is not here —
+ * it is a debugging number and the bullets are on screen; it moved to the telemetry Feed
+ * group, where the rest of the observed numbers live.
+ */
+function BossBar() {
   const boss = useSelect((s) => s.boss);
   const tick = useSelect((s) => s.arena?.tick ?? 0);
   const enrageAtTick = useSelect((s) => s.arena?.enrageAtTick ?? 0);
   const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
   const alive = useSelect((s) => s.arena?.aliveCount ?? 0);
   const seat = useSelect((s) => s.match?.seat ?? -1);
-  const incoming = useSelect(
-    (s) => s.arena?.bullets.reduce((n, b) => n + (b.active === BULLET_ACTIVE ? 1 : 0), 0) ?? 0,
-  );
 
   if (!boss) return <p className="fine">Waiting for the boss to load…</p>;
 
+  const shell = boss.parts.reduce((a, b) => a + b, 0);
+  const shellMax = boss.partsMax.reduce((a, b) => a + b, 0);
+  // `VENT_OPEN` and not a bare 1: the byte's meaning belongs to `shoot.rs`, which is
+  // the handler that acts on it, and a literal here is a second copy of that rule.
+  const open = boss.ventOpen === VENT_OPEN;
   // `enrage_at_tick` is stamped by `Arena::begin_fight` at the MUSTERING → FIGHTING flip
   // and zeroed by `begin_next_incarnation`, so zero means "no fight is running" and not
   // "the deadline has passed". Without the `!== 0` test a fresh arena reads `tick >= 0`
-  // and the panel says "Enraged / now" before the boss has taken a single shot.
+  // and the bar says "enraged" before the boss has taken a single shot.
   const enraged = enrageAtTick !== 0 && tick >= enrageAtTick;
 
   return (
     <>
-      <h3>The amalgam</h3>
-      <ul className="parts">
-        {boss.parts.map((hp, index) => {
-          const max = boss.partsMax[index] ?? 0;
-          const gone = hp === 0;
-          const silenced = gone && index >= FIRST_THORN && index <= LAST_THORN;
-          const name = PART_NAMES[index] ?? `part ${index}`;
-          return (
-            <li key={name} className={gone ? 'dead' : ''}>
-              <span>
-                <span className="fine tabular">{index + 1}</span> {name}
-              </span>
-              <Meter label={name} value={hp} max={max} />
-              <span className="fine tabular">{gone ? (silenced ? 'silent' : 'gone') : hp}</span>
-            </li>
-          );
-        })}
-      </ul>
-
-      <Vent boss={boss} />
-
-      <dl className="stats">
-        <div>
-          <dt>Tick</dt>
-          <dd className="tabular">{tick}</dd>
-        </div>
-        <div>
-          <dt>{enraged ? 'Enraged' : 'Enrage in'}</dt>
-          <dd className="tabular">
-            {enrageAtTick === 0
-              ? '—'
-              : enraged
-                ? 'now'
-                : clock(Math.max(0, enrageAtTick - tick), tickMs)}
-          </dd>
-        </div>
-        <div>
-          <dt>Alive</dt>
-          <dd className="tabular">{alive}</dd>
-        </div>
-        <div>
-          <dt>Incoming</dt>
-          <dd className="tabular">{incoming}</dd>
-        </div>
-        <div>
-          <dt>Hunting</dt>
-          <dd className="tabular">
-            {boss.targetSeat === NO_TARGET
-              ? '—'
-              : boss.targetSeat === seat
-                ? 'you'
-                : `seat ${boss.targetSeat}`}
-          </dd>
-        </div>
-      </dl>
-    </>
-  );
-}
-
-/**
- * The vent is derived on chain from the parts every tick and cached for us. Showing the
- * shell percentage next to the threshold it has to cross — and the core only once it is
- * reachable — is what makes "strip the shell, then shoot the face" legible without a
- * tutorial. The percentage uses the program's own integer arithmetic so it can never read
- * 35% beside an open vent.
- */
-function Vent({ boss }: { boss: BossAccount }) {
-  const shell = boss.parts.reduce((a, b) => a + b, 0);
-  const shellMax = boss.partsMax.reduce((a, b) => a + b, 0);
-  const open = boss.ventOpen === 1;
-
-  return (
-    <div className="vent">
       <div className="vent-head">
+        <h3>The amalgam</h3>
         <span className={`pill ${open ? 'pill-open' : ''}`}>
           {open ? 'VENT OPEN' : 'VENT SEALED'}
-        </span>
-        <span className="fine">
-          {open ? 'core is killable' : `opens below ${VENT_PERCENT}% shell`}
         </span>
       </div>
       <div className="vent-row">
@@ -317,69 +423,153 @@ function Vent({ boss }: { boss: BossAccount }) {
         <span>Core</span>
         <Meter label="Core" value={boss.coreHp} max={boss.coreHpMax} tone="var(--olive)" />
         <span className="fine tabular">
-          {open ? `${boss.coreHp} / ${boss.coreHpMax}` : 'sealed'}
+          {open ? `${boss.coreHp} / ${boss.coreHpMax}` : `sealed below ${VENT_PERCENT}%`}
         </span>
       </div>
-      <p className="fine">
-        {open
-          ? 'The chest is open. Everything you put into the shell now is wasted.'
-          : 'The core takes no damage until the shell breaks.'}
+      <p className="fine tabular">
+        {enrageAtTick === 0
+          ? '—'
+          : enraged
+            ? 'enraged'
+            : `${clock(Math.max(0, enrageAtTick - tick), tickMs)} to enrage`}{' '}
+        · {alive} alive ·{' '}
+        {boss.targetSeat === NO_TARGET
+          ? 'hunting nobody'
+          : boss.targetSeat === seat
+            ? 'hunting you'
+            : `hunting seat ${boss.targetSeat}`}
       </p>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TR — the nine parts, collapsed
+// ---------------------------------------------------------------------------
+
+/**
+ * Nine rows is the densest thing on screen and it is a fight-long reference, not a
+ * moment-to-moment read, so it opens on a click. Not persisted: it is one click and the
+ * default is right for the common case.
+ */
+function Parts() {
+  const boss = useSelect((s) => s.boss);
+  const [open, setOpen] = useState(false);
+  if (!boss) return null;
+  const standing = boss.parts.reduce((n, hp) => n + (hp > 0 ? 1 : 0), 0);
+
+  return (
+    <div className="hud hud-tr">
+      {/* A real <button>: `controls.ts` preventDefaults Space on `window` before the
+          browser's activation behaviour runs, so Space fires the shot and never this, and
+          Enter activates it. Nothing in the HUD may depend on Space. */}
+      <button
+        className="hud-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? '▾' : '▸'} parts {standing}/{N_PARTS} standing
+      </button>
+      {open && (
+        <ul className="parts">
+          {boss.parts.map((hp, index) => {
+            const max = boss.partsMax[index] ?? 0;
+            const gone = hp === 0;
+            const silenced = gone && index >= FIRST_THORN && index <= LAST_THORN;
+            const name = PART_NAMES[index] ?? `part ${index}`;
+            return (
+              <li key={name} className={gone ? 'dead' : ''}>
+                <span>
+                  <span className="fine tabular">{index + 1}</span> {name}
+                </span>
+                <Meter label={name} value={hp} max={max} />
+                <span className="fine tabular">{gone ? (silenced ? 'silent' : 'gone') : hp}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// You
+// BL — you
 // ---------------------------------------------------------------------------
 
+/**
+ * Health, class and the two cadence pills, **on both sides of the gate**.
+ *
+ * This cluster used to mount only from `ArenaScreen`, so the waiting area had no shot
+ * indicator at all — and the waiting area is exactly where the spacebar does nothing. A
+ * permanently grey pill in an empty room is a legible bug report; a key that does nothing
+ * is not. The SHOT pill therefore says *why* it is grey rather than only that it is:
+ * `shoot.rs` refuses outside `PHASE_FIGHTING` and outside `ZONE_ARENA`, and both refusals
+ * are normal play, not faults.
+ */
 function SelfPanel() {
   const slot = useSelect(mySeatSlot);
   const tick = useSelect((s) => s.arena?.tick ?? 0);
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  const fightAtTick = useSelect((s) => s.arena?.fightAtTick ?? 0);
   const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
   if (!slot) return null;
 
   const dead = slot.hp === 0;
+  const cls = classOf(slot);
   // The two gates verbatim, so the pills go grey on exactly the ticks the chain would
   // answer `Custom(7)`. In the lobby `boss_tick` never advances `tick`, so the move gate
   // there is the ER slot clock, not this — hence the phase test.
   const moveReady = phase !== PHASE_FIGHTING || slot.lastMoveTick !== tick;
-  const shotReady = tick > slot.lastShotTick + SHOT_COOLDOWN_TICKS;
+  const live = phase === PHASE_FIGHTING && slot.zone === ZONE_ARENA;
+  const shotReady = shotAllowed(tick, slot.lastShotTick, cls);
+  const musterLeft = fightAtTick > tick ? clock(fightAtTick - tick, tickMs) : '0:00';
 
   return (
-    <div className="self">
-      <h3>You</h3>
-      <div className="vent-row">
-        <span>Health</span>
-        <Meter
-          label="Your health"
-          value={slot.hp}
-          max={slot.hpMax}
-          tone={dead ? 'var(--gone)' : 'var(--ok)'}
-        />
+    <div className="hud hud-bl">
+      <div className="hud-row">
+        <span className="pill">{CLASS_NAMES[cls] ?? `CLASS ${cls}`}</span>
         <span className="fine tabular">
           {/* `respawn_at_tick` is absolute, so a stale account reads 0 rather than
               counting backwards from a tick that has already passed. */}
-          {dead ? `respawn ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}` : slot.hp}
+          {dead ? `respawn ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}` : `${slot.hp} hp`}
         </span>
       </div>
+      <Meter
+        label="Your health"
+        value={slot.hp}
+        max={slot.hpMax}
+        tone={dead ? 'var(--gone)' : 'var(--ok)'}
+      />
 
       <div className="cadence">
         <span className={`pill ${dead ? 'pill-down' : moveReady ? 'pill-open' : ''}`}>
           {dead ? 'DOWN' : moveReady ? 'MOVE READY' : 'MOVE COOLING'}
         </span>
-        <span className={`pill ${dead ? 'pill-down' : shotReady ? 'pill-open' : ''}`}>
-          {dead ? 'DOWN' : shotReady ? 'SHOT READY' : 'SHOT COOLING'}
+        <span className={`pill ${dead ? 'pill-down' : live && shotReady ? 'pill-open' : ''}`}>
+          {dead ? 'DOWN' : !live ? 'PRACTICE' : shotReady ? 'SHOT READY' : 'SHOT COOLING'}
         </span>
       </div>
-      <p className="fine">
-        {dead
-          ? 'Down. Moves and shots are refused as PlayerDead (Custom 8) until you respawn — that is the rule working, not a fault.'
-          : 'One move per tick, one shot per two. Anything faster comes back RateLimited (Custom 7), so the client paces itself off the tick.'}
+      {/* The dishonesty is ambiguity, not silence: the arrow answers "is the key bound",
+          this line answers "why no damage". */}
+      {!live && !dead && (
+        <p className="fine">
+          {slot.zone === ZONE_ARENA
+            ? `Weapons go live when the muster ends — ${musterLeft}.`
+            : 'Practice shots only. There is no target on this side of the gate.'}
+        </p>
+      )}
+      {/* The keys, in every phase, because every one of them is bound in every phase:
+          `controls.ts::pump` moves on the wall clock everywhere and fires the trigger
+          everywhere, drawing a practice arrow where the chain would refuse the send. Held
+          drag both aims and fires; Space fires along the body's facing. Written out rather
+          than drawn as three key caps — a picture of a keyboard is a second thing to
+          maintain and reads no faster at 11px. */}
+      <p className="fine hud-keys">
+        <b>WASD</b> or arrows move · <b>SPACE</b> fires · hold and drag to aim
       </p>
       <p className="fine tabular">
-        damage dealt {slot.damageDealt} · deaths {slot.deaths}
+        damage {slot.damageDealt} · deaths {slot.deaths}
       </p>
     </div>
   );
@@ -443,5 +633,24 @@ if (import.meta.env.DEV) {
   const labels = new Set(Object.values(VERDICTS).map((v) => v.label));
   if (labels.size !== 3) {
     throw new Error('Hud self-check: WIN, WIPE and ENRAGE must stay three distinct labels');
+  }
+
+  // The pill and the send pump must never disagree: the shipped copy of the cooldown read
+  // 1 against the chain's 7, so SHOT READY went green 600 ms before a shot could be sent.
+  // Asserting the predicate here is what stops a fourth copy appearing.
+  if (shotAllowed(7, 0) || !shotAllowed(8, 0)) {
+    throw new Error('Hud self-check: the shot gate is not controls.ts’s 800 ms cooldown');
+  }
+  // The archer row of the same table. Without this the class argument could be dropped on
+  // the floor here and the pill would go green 600 ms early for an archer exactly the way
+  // the hardcoded `1` did for a knight — the same defect, one class over.
+  if (shotAllowed(13, 0, CLASS_ARCHER) || !shotAllowed(14, 0, CLASS_ARCHER)) {
+    throw new Error('Hud self-check: the shot gate is not controls.ts’s 1400 ms archer cooldown');
+  }
+  // Not asserted here any more: `classOf` is `layout.ts`'s and is checked where it lives.
+  // What this file still owns is the LABEL — a names array shorter than the class table
+  // prints "CLASS 1" at a seat the chain calls an archer, and nothing else would notice.
+  if (CLASS_NAMES.length !== N_CLASSES) {
+    throw new Error(`Hud self-check: ${CLASS_NAMES.length} class names for ${N_CLASSES} classes`);
   }
 }

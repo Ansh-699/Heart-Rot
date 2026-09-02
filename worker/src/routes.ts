@@ -75,6 +75,15 @@ const COMPUTE_BUDGET_PROGRAM = address('ComputeBudget111111111111111111111111111
 const SKIN_COUNT = 3;
 
 /**
+ * Selectable classes: knight (0) and archer (1), the two the class bit can name. Unlike
+ * `skin_id` the program *does* range-check this — `claim_seat` refuses an unknown class with
+ * `InvalidInstructionData` — so this constant exists to turn a version skew into a readable
+ * 400 instead of a chain refusal, and it must never clamp. A clamp silently hands an archer
+ * a knight's weapon, which from the outside is a balance bug with no error attached.
+ */
+const CLASS_COUNT = 2;
+
+/**
  * Non-recoverable burn per match: 3 × 300,000 lamports of undelegation session charge
  * plus base-layer fees. Rent is recoverable on close and deliberately excluded — the
  * gauge answers "how many more matches can the treasury start", not "what is it worth".
@@ -535,6 +544,20 @@ export async function sessionInit(env: Env, body: unknown): Promise<Response> {
     throw new BadRequest('skinId out of range');
   }
 
+  // Defaulted only when absent, which is the pre-class client — and 0 is the knight every
+  // live seat already is, so that default changes nothing. An out-of-range value is
+  // refused, never clamped.
+  const rawClass = (body as Record<string, unknown>).classId;
+  const classId = rawClass === undefined ? 0 : rawClass;
+  if (
+    typeof classId !== 'number' ||
+    !Number.isInteger(classId) ||
+    classId < 0 ||
+    classId >= CLASS_COUNT
+  ) {
+    throw new BadRequest('classId out of range');
+  }
+
   const did = await verifyPrivyToken(token, env.PRIVY_APP_ID);
   const identity = await identityFromDid(did);
 
@@ -582,6 +605,7 @@ export async function sessionInit(env: Env, body: unknown): Promise<Response> {
       treasury: c.treasury.address,
       seat,
       skinId,
+      class: classId,
       sessionPubkey,
       identity,
     });

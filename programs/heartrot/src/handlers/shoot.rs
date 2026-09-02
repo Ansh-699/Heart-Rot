@@ -30,6 +30,24 @@
 //! `tick.rs::unit_velocity` uses on boss ordnance — no table, no generator, no account
 //! byte, 0.2354° worst-case direction error over 200,000 angles.
 //!
+//! **Two classes, one byte, no migration.** The knight (40 damage / 800 ms) and the archer
+//! (70 / 1400 ms) are 50 DPS apiece by construction, so the boss needs no rescale. The
+//! choice rides bit 7 of `PlayerSlot::class_aim` and the aim it fired along rides bits 6..0
+//! of the same byte; nothing grows, nothing moves, and every seat already on chain reads
+//! class 0 — the knight it already was. **No projectile is allocated for either class.**
+//! The arrows the player sees are a client-side tracer over the same generated tables this
+//! file raycasts; putting them in `arena.bullets` was measured at +718 CU per live
+//! projectile per tick and rejected on latency, not cost — a projectile puts 229 ms to
+//! 1.26 s of flight between the key and the damage, on the one axis the design protects
+//! (`17-fullscreen-spec.md` §4.1, §5).
+//!
+//! **What this file is *not* the fix for.** The reported dead spacebar in the waiting area
+//! never reaches this program: `app/src/input/controls.ts` gates the trigger on
+//! `phase === PHASE_FIGHTING` before it builds anything, so no transaction is signed and
+//! no refusal is issued. Every refusal this file *can* issue is already a distinct code —
+//! `WrongPhase`, `WrongZone`, `PlayerDead`, `RateLimited` — and none of them was ever
+//! returned for that key press. See [`phase_takes_fire`].
+//!
 //! **Cost, stated because it is the thing that grew.** `MAX_RAY_STEPS` went 20 → 64 with
 //! the arena, so the loop bound tripled, and at `SCALE = 3` the creature covers a third
 //! of the map — which is what the [`SHELL_AABB`] gate is for.
@@ -64,8 +82,8 @@ use crate::handlers::player::octant;
 use crate::hitboxes::{Rect, CORE_RADIUS_SQ, CORE_X, CORE_Y, PART_HITBOXES};
 use crate::map::{MAP_TILES, TILE, WALLS};
 use crate::state::{
-    load_mut, Arena, Boss, PlayerSlot, Players, OUTCOME_WIN, PHASE_FIGHTING, SEED_BOSS,
-    SEED_PLAYERS, ZONE_ARENA,
+    load_mut, Arena, Boss, PlayerSlot, Players, CLASS_COOLDOWN_TICKS as CLASS_COOLDOWN,
+    CLASS_DAMAGE, OUTCOME_WIN, PHASE_FIGHTING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
@@ -134,16 +152,65 @@ fn is_wall(x: i32, y: i32) -> bool {
 // Balance knobs
 // ---------------------------------------------------------------------------
 
-/// One accepted shot every 800 ms. The comparison is
-/// `arena.tick > last_shot_tick + SHOT_COOLDOWN_TICKS`, so 0 would mean one shot per tick
-/// — the hard ceiling the tick clock can express.
-const SHOT_COOLDOWN_TICKS: u32 = crate::state::ticks_for(800) - 1;
+/// The two classes, and the one byte that carries a seat's choice.
+///
+/// The class lives in **bit 7 of [`PlayerSlot::class_aim`]** (offset 3, between `skin_id`
+/// and `x`, and what used to be `_pad0`). Bits 6..0 of the same byte carry the aim this
+/// file encodes below. Nothing about the account moves: `PlayerSlot` stays 96 bytes,
+/// `LAYOUT_VERSION` stays 1, and every seat already on devnet carries 0 there — which is
+/// why **class 0 must be the knight**, the behaviour those seats have today. There is no
+/// migration, and that is the point (17-fullscreen-spec §5.1).
+/// Index forms of `state::CLASS_KNIGHT` / `CLASS_ARCHER`, which are `u8` because they are
+/// written into the account byte. **Derived, never restated** — the numbers themselves,
+/// and the tables they index, live in `state.rs` beside the byte that carries them.
+const CLASS_KNIGHT: usize = crate::state::CLASS_KNIGHT as usize;
+const CLASS_ARCHER: usize = crate::state::CLASS_ARCHER as usize;
 
-/// Damage per landed shot, to a part or to the core. Balance against whatever
-/// `parts_max` / `core_hp_max` the boss is spawned with; this is the knob to turn
-/// when time-to-kill is wrong, not the hitboxes. (Raid size is answered by the
-/// `core_hp` top-up in `tick.rs`, never by this or by `parts`.)
-const SHOT_DAMAGE: u16 = 40;
+// Checks, not a second copy of the table: every name below is `state.rs`'s. `state.rs`
+// asserts DPS neutrality and that class 0 is the knight; these two are the shape of the
+// class that nothing else states — "slower and heavier" — and a balance edit that inverts
+// it is otherwise silent, because the raid just gets longer or shorter and nothing says why.
+const _: () = {
+    assert!(CLASS_COOLDOWN[CLASS_ARCHER] > CLASS_COOLDOWN[CLASS_KNIGHT]);
+    assert!(CLASS_DAMAGE[CLASS_ARCHER] > CLASS_DAMAGE[CLASS_KNIGHT]);
+};
+
+// There is deliberately **no per-class range**. Measured over 214 pit stands, aimed
+// steps-to-end is p50 6 / p95 11 / max 13 against `MAX_RAY_STEPS` = 64, so a range knob
+// would have to cut below 13 to change anything at all — which makes a class unplayable
+// rather than different (§5.2). Range is bounded by the walls and by the map, and the test
+// `no_shot_at_the_boss_can_die_of_range` holds that.
+
+/// Which class this seat fires as. `PlayerSlot::class` is the one decoder; `>> 7` on a
+/// `u8` is total, so the index is 0 or 1 and the table lookups need no bounds check.
+fn class_of(slot: &PlayerSlot) -> usize {
+    slot.class() as usize
+}
+
+/// Pack `(dx, dy)` into bits 6..0: three bits of 45° sector, four bits of tangent ratio.
+///
+/// This exists so a remote client can draw an arrow along the direction the shot was
+/// *actually* taken in. `facing` is eight-way, so an arrow drawn from it is up to 22.5°
+/// off — 116 units of lateral error at the median 280-unit boss range — and it snaps
+/// mid-flight the moment its shooter takes a step, because `move` rewrites `facing` every
+/// 50 ms. Nineteen of every twenty arrows on screen are somebody else's.
+///
+/// Worst reconstruction error is 1.90°, from the quarter-step of a 16-level ratio; a
+/// second class bit would cost 4.05° and a 62-unit miss, which is why **two classes is
+/// the byte's budget, not a preference** (§5.3).
+///
+/// Widen to `i32` before `abs`: `i8::MIN.abs()` overflows, `overflow-checks = true` on the
+/// release profile turns that into a panic on chain, and `-128` is a legal wire value that
+/// any caller can send. This is the same trap [`unit_q12`] documents one screen up.
+/// Test-only, and deliberately a *delegation*: the sweep below is the specification of
+/// the encoding, so it has to run the encoder that actually ships. A second
+/// implementation here would let the two drift and the test would keep passing.
+#[cfg(test)]
+fn encode_aim(dx: i8, dy: i8) -> u8 {
+    let mut probe = <PlayerSlot as bytemuck::Zeroable>::zeroed();
+    probe.set_aim(dx, dy);
+    probe.class_aim
+}
 
 /// `Boss.vent_open`. 1 open, 0 sealed.
 const VENT_OPEN: u8 = 1;
@@ -337,6 +404,21 @@ fn raycast(from_x: i16, from_y: i16, dx: i8, dy: i8, boss: &Boss) -> Option<Hit>
 // The fight rules
 // ---------------------------------------------------------------------------
 
+/// Only a live match takes fire. A `SETTLING` arena has its `outcome` written and is
+/// waiting to be committed; a shot landing after that would damage a boss whose match is
+/// already scored. `PHASE_MUSTERING` fails this test too, so weapons stay down for the
+/// whole muster window without a second rule.
+///
+/// It is a named function rather than an inline `!=` so the answer for *every* phase is
+/// testable without an `AccountView` fixture — the same reason [`fire`] is split out of
+/// [`process`]. Relaxing it was considered and refused (§6.1): a lobby shot would spend
+/// three write locks and a whole transaction to change no state, at up to 25/s across a
+/// full raid. The waiting-area trigger is answered in the browser with a practice arrow
+/// that sends nothing.
+const fn phase_takes_fire(phase: u8) -> bool {
+    phase == PHASE_FIGHTING
+}
+
 /// Everything a shot does to the world, given state that has already been proved to
 /// belong to this arena and this signer.
 ///
@@ -369,26 +451,37 @@ fn fire(
         return Err(HeartrotError::WrongZone.into());
     }
 
+    // The class picks both knobs, and it is read from the seat rather than sent, so a
+    // client cannot pick the archer's damage on the knight's cooldown.
+    let class = class_of(slot);
+    let damage = CLASS_DAMAGE[class];
+
     // Rate limit, in ticks. `saturating_add` rather than `+`: a `last_shot_tick`
     // close to u32::MAX must fail the comparison, not wrap into "ready".
-    if arena.tick <= slot.last_shot_tick.saturating_add(SHOT_COOLDOWN_TICKS) {
+    if arena.tick <= slot.last_shot_tick.saturating_add(CLASS_COOLDOWN[class]) {
         return Err(HeartrotError::RateLimited.into());
     }
     slot.last_shot_tick = arena.tick;
 
     // Firing turns you: `facing` replicates, so a remote client draws the recoil and the
-    // tracer along the direction the shot was actually taken in.
+    // tracer along the direction the shot was actually taken in. The aim byte beside it
+    // carries the same direction at 1.90° instead of 45°, which is what an arrow is drawn
+    // from. `set_aim` is the only writer of that byte, and its `& CLASS_MASK` is the
+    // single point of silent failure in the whole feature: drop it and a player changes
+    // class on their first shot, with no error anywhere. That is why the write lives in
+    // `state.rs` beside the field and not inlined here.
     slot.facing = facing;
+    slot.set_aim(dx, dy);
 
     let dealt = match raycast(slot.x, slot.y, dx, dy, boss) {
         Some(Hit::Part(index)) => {
             let part = &mut boss.parts[index];
             // Credit only what was actually removed, or a finishing shot on a
-            // 1 HP part would score a full 40 on the leaderboard.
-            let dealt = (*part).min(SHOT_DAMAGE);
+            // 1 HP part would score the full class damage on the leaderboard.
+            let dealt = (*part).min(damage);
             // Reaching 0 *is* being destroyed: `raycast` skips a zeroed part, so the
             // limb detaches and the lane behind it opens with no second flag to set.
-            *part = part.saturating_sub(SHOT_DAMAGE);
+            *part = part.saturating_sub(damage);
             recompute_vent(boss);
             dealt
         }
@@ -399,8 +492,8 @@ fn fire(
         Some(Hit::Core) if boss.vent_open != VENT_OPEN => 0,
 
         Some(Hit::Core) => {
-            let dealt = boss.core_hp.min(SHOT_DAMAGE);
-            boss.core_hp = boss.core_hp.saturating_sub(SHOT_DAMAGE);
+            let dealt = boss.core_hp.min(damage);
+            boss.core_hp = boss.core_hp.saturating_sub(damage);
             if boss.core_hp == 0 {
                 // The raid has won, and the win is *recorded*: `end_fight` writes
                 // `outcome = OUTCOME_WIN` and the phase together, so a settled match can
@@ -514,11 +607,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
         players.bump,
     )?;
 
-    // Only a live match takes fire. A `SETTLING` arena has its `outcome` written and is
-    // waiting to be committed; a shot landing after that would damage a boss whose match
-    // is already scored. `PHASE_MUSTERING` fails this test too, so weapons stay down for
-    // the whole muster window without a second rule.
-    if arena.phase != PHASE_FIGHTING {
+    if !phase_takes_fire(arena.phase) {
         return Err(HeartrotError::WrongPhase.into());
     }
 
@@ -539,7 +628,8 @@ mod tests {
     use super::*;
     use crate::map::BOSS_SPAWN;
     use crate::state::{
-        Bullet, BULLET_ACTIVE, MAX_BULLETS, N_PARTS, OUTCOME_UNDECIDED, PHASE_SETTLING,
+        Bullet, BULLET_ACTIVE, CLASS_MASK, MAX_BULLETS, N_PARTS, OUTCOME_UNDECIDED,
+        PHASE_SETTLING,
     };
     use bytemuck::Zeroable;
 
@@ -659,11 +749,34 @@ mod tests {
         arena
     }
 
-    /// Advance past the cooldown and take one shot along the surveyed lane, which must be
-    /// accepted.
+    /// Advance past *this seat's* cooldown and take one shot along the surveyed lane,
+    /// which must be accepted. The wait is read off the class table, never typed, so the
+    /// archer's tests wait 1400 ms and the knight's 800 without a second helper.
     fn shoot_lane(s: &Survey, arena: &mut Arena, boss: &mut Boss, slot: &mut PlayerSlot) {
-        arena.tick += SHOT_COOLDOWN_TICKS + 1;
+        arena.tick += CLASS_COOLDOWN[class_of(slot)] + 1;
         fire(arena, boss, slot, s.aim.0, s.aim.1).expect("a live seat off cooldown may fire");
+    }
+
+    /// Invert [`encode_aim`]. Test-only, and it is the *specification* the TypeScript
+    /// `decodeAim` mirrors — 17-fullscreen-spec §5.5. Nothing on chain decodes the byte.
+    fn decode_aim(byte: u8) -> (f64, f64) {
+        let (sector, t) = (byte >> 4, (byte & 0x0f) as f64 / 15.0);
+        let (steep, y_neg, x_neg) = (sector & 1 != 0, sector & 2 != 0, sector & 4 != 0);
+        let (mut x, mut y) = if steep { (t, 1.0) } else { (1.0, t) };
+        if x_neg {
+            x = -x;
+        }
+        if y_neg {
+            y = -y;
+        }
+        (x, y)
+    }
+
+    /// A seat that has chosen the archer. Only bit 7 differs from [`shooter`].
+    fn archer(s: &Survey) -> PlayerSlot {
+        let mut slot = shooter(s);
+        slot.class_aim |= CLASS_MASK;
+        slot
     }
 
     /// The whole attack is this function: if it picks the wrong box, or keeps a
@@ -707,7 +820,10 @@ mod tests {
     fn walls_stop_the_ray() {
         assert!(is_wall(-1, 0), "negative x is solid before the divide");
         assert!(is_wall(0, -1), "negative y is solid before the divide");
-        assert!(is_wall(MAP_TILES as i32 * TILE as i32, 0), "off-map is solid");
+        assert!(
+            is_wall(MAP_TILES as i32 * TILE as i32, 0),
+            "off-map is solid"
+        );
         assert!(
             is_wall(0, MAP_TILES as i32 * TILE as i32),
             "past the last row is solid",
@@ -839,7 +955,7 @@ mod tests {
         // cooldown itself, not by a hardcoded 1: the window is a duration (800 ms)
         // divided by TICK_MS, so a literal here would silently stop testing the boundary
         // the moment the tick rate moved — which is exactly what it did.
-        arena.tick += SHOT_COOLDOWN_TICKS + 1;
+        arena.tick += CLASS_COOLDOWN[CLASS_KNIGHT] + 1;
         fire(&mut arena, &mut boss, &mut slot, -s.aim.0, -s.aim.1).expect("off cooldown");
         assert_eq!(slot.last_shot_tick, arena.tick);
         assert_eq!(boss.parts[s.blocker], 60, "the miss dealt nothing");
@@ -871,10 +987,12 @@ mod tests {
 
         shoot_lane(&s, &mut arena, &mut boss, &mut slot);
         assert_eq!(boss.parts[s.blocker], 60, "the shot landed");
-        assert_eq!(slot.damage_dealt, SHOT_DAMAGE as u32);
+        assert_eq!(slot.damage_dealt, CLASS_DAMAGE[CLASS_KNIGHT] as u32);
         assert!(
-            arena.bullets.iter().all(|b| b.active == BULLET_ACTIVE
-                && (b.x, b.y, b.dx, b.dy) == (1, 2, 3, 4)),
+            arena
+                .bullets
+                .iter()
+                .all(|b| b.active == BULLET_ACTIVE && (b.x, b.y, b.dx, b.dy) == (1, 2, 3, 4)),
             "a hitscan shot must not touch the boss's ordnance",
         );
     }
@@ -946,5 +1064,228 @@ mod tests {
         assert_eq!(live.last_shot_tick, 0, "a malformed aim spends nothing");
 
         assert_eq!(boss.parts[s.blocker], 100);
+    }
+
+    /// The single point of silent failure in the class feature (§5.3): `fire` writes the
+    /// aim into the same byte the class lives in, and without the `& CLASS_MASK` a player
+    /// would change class on their first shot with no error anywhere. Twenty shots, and
+    /// the archer is still an archer — with the archer's numbers, not the knight's.
+    #[test]
+    fn the_class_bit_survives_every_shot() {
+        let s = survey();
+        let mut arena = arena_fighting();
+        let mut boss = standing_boss();
+        boss.parts = [u16::MAX; N_PARTS];
+        boss.parts_max = [u16::MAX; N_PARTS];
+        let mut slot = archer(&s);
+
+        for shot in 1..=20u32 {
+            shoot_lane(&s, &mut arena, &mut boss, &mut slot);
+            assert_eq!(
+                slot.class_aim >> 7,
+                1,
+                "shot {shot} overwrote the class bit with the aim",
+            );
+            assert_eq!(class_of(&slot), CLASS_ARCHER);
+            assert_eq!(
+                slot.damage_dealt,
+                shot * CLASS_DAMAGE[CLASS_ARCHER] as u32,
+                "shot {shot} scored the wrong class's damage",
+            );
+        }
+
+        // And a knight stays a knight: the aim occupies bits 6..0 and nothing else.
+        let mut knight = shooter(&s);
+        shoot_lane(&s, &mut arena, &mut boss, &mut knight);
+        assert_eq!(class_of(&knight), CLASS_KNIGHT);
+        assert_eq!(knight.class_aim & CLASS_MASK, 0);
+    }
+
+    /// The whole reason the byte is spent: an arrow drawn from `facing` is eight-way and
+    /// up to 22.5° off, and it snaps mid-flight when its shooter steps. The encoded aim
+    /// must round-trip to within the 1.90° §5.3 measured — this sweep is the contract the
+    /// TypeScript `decodeAim` is written against, over **every** legal wire aim rather
+    /// than a sample of them.
+    #[test]
+    fn the_aim_byte_round_trips_within_two_degrees() {
+        fn degrees_between(a: (f64, f64), b: (f64, f64)) -> f64 {
+            let mut err = (a.1.atan2(a.0) - b.1.atan2(b.0)).abs().to_degrees();
+            if err > 180.0 {
+                err = 360.0 - err;
+            }
+            err
+        }
+
+        // All 65,535 legal `(dx, dy)` pairs. -128 is among them, `i8::MIN.abs()`
+        // overflows, and `overflow-checks` is on for the release profile — so an
+        // un-widened `abs` in `encode_aim` is a panic on chain, not a wrong pixel, and
+        // this loop is where it would fire.
+        let mut worst = 0.0f64;
+        for dx in i8::MIN..=i8::MAX {
+            for dy in i8::MIN..=i8::MAX {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let byte = encode_aim(dx, dy);
+                assert_eq!(byte & CLASS_MASK, 0, "the aim reached the class bit");
+                // A component that quantises to zero has no sign to keep -- the ratio
+                // rounded the minor axis away, which is a sub-degree error and not a
+                // flip. Every component that survives must point the same way it was
+                // fired, and the angle bound below catches anything that does not.
+                let got = decode_aim(byte);
+                if got.0 != 0.0 {
+                    assert_eq!(got.0 < 0.0, dx < 0, "sign of x flipped for ({dx}, {dy})");
+                }
+                if got.1 != 0.0 {
+                    assert_eq!(got.1 < 0.0, dy < 0, "sign of y flipped for ({dx}, {dy})");
+                }
+                worst = worst.max(degrees_between(got, (dx as f64, dy as f64)));
+            }
+        }
+        assert!(
+            worst < 1.91,
+            "aim byte resolution regressed to {worst} degrees over the wire aims",
+        );
+
+        // End to end, from the continuous angle the pointer produced, through the
+        // client's own `as i8` scaling and back out of the byte. The extra ~0.30° over
+        // the number above is that scaling's truncation, which the wire has carried since
+        // free aim shipped and which this byte neither adds to nor fixes.
+        let mut end_to_end = 0.0f64;
+        for step in 0..3_600 {
+            let theta = (step as f64) * std::f64::consts::TAU / 3_600.0;
+            let (fx, fy) = (theta.cos(), theta.sin());
+            let m = fx.abs().max(fy.abs());
+            let (dx, dy) = ((fx / m * 127.0) as i8, (fy / m * 127.0) as i8);
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            end_to_end = end_to_end.max(degrees_between(decode_aim(encode_aim(dx, dy)), (fx, fy)));
+        }
+        assert!(
+            end_to_end < 2.25,
+            "end-to-end aim error regressed to {end_to_end} degrees",
+        );
+    }
+
+    /// The archer is slower and heavier, and the two rows are 50 DPS apiece so the boss
+    /// needs no rescale. The compile-time block up top asserts the arithmetic; this
+    /// asserts the *behaviour*, because a table nothing reads is not a balance change.
+    #[test]
+    fn the_archer_is_slower_and_heavier_at_the_same_dps() {
+        let s = survey();
+        let mut boss = standing_boss();
+        boss.parts = [u16::MAX; N_PARTS];
+        boss.parts_max = [u16::MAX; N_PARTS];
+
+        // One shot each, from a shared clock, then the exact tick each may fire again.
+        let mut ready_at = [0u32; 2];
+        for (class, slot) in [(CLASS_KNIGHT, shooter(&s)), (CLASS_ARCHER, archer(&s))] {
+            let mut slot = slot;
+            let mut arena = arena_fighting();
+            arena.tick = 1_000;
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).expect("first shot is free");
+            assert_eq!(slot.damage_dealt, CLASS_DAMAGE[class] as u32);
+
+            // Every tick up to and including the cooldown is refused...
+            for wait in 0..=CLASS_COOLDOWN[class] {
+                arena.tick = 1_000 + wait;
+                assert_eq!(
+                    fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).unwrap_err(),
+                    HeartrotError::RateLimited.into(),
+                    "class {class} fired {wait} ticks early",
+                );
+            }
+            // ...and the next one is not.
+            arena.tick = 1_000 + CLASS_COOLDOWN[class] + 1;
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1).expect("off cooldown");
+            assert_eq!(slot.damage_dealt, 2 * CLASS_DAMAGE[class] as u32);
+            ready_at[class] = CLASS_COOLDOWN[class] + 1;
+        }
+
+        assert!(
+            ready_at[CLASS_ARCHER] > ready_at[CLASS_KNIGHT],
+            "the archer must be the slower class, not the faster one",
+        );
+        // 40 x 14 == 70 x 8: neither class out-damages the other over the same wall clock.
+        assert_eq!(
+            CLASS_DAMAGE[CLASS_KNIGHT] as u32 * ready_at[CLASS_ARCHER],
+            CLASS_DAMAGE[CLASS_ARCHER] as u32 * ready_at[CLASS_KNIGHT],
+        );
+    }
+
+    /// There is no such thing as an out-of-range shot at this boss, and this is the
+    /// measurement that says so rather than the assumption: the ray's *shortest* possible
+    /// reach — `MAX_RAY_STEPS` steps of 0.894 tile, the alpha-max-plus-beta-min floor —
+    /// covers the distance from every floor tile in the generated map to the core. So a
+    /// `None` from [`raycast`] is always cover or the map edge, never exhaustion, and a
+    /// per-class range knob would have nothing to cut into (§5.2).
+    #[test]
+    fn no_shot_at_the_boss_can_die_of_range() {
+        let boss = standing_boss();
+        let core = (boss.x as i64 + CORE_X as i64, boss.y as i64 + CORE_Y as i64);
+        let reach = MAX_RAY_STEPS as i64 * TILE as i64 * 894 / 1000;
+        let half = TILE as i32 / 2;
+
+        let (mut worst, mut stands) = (0i64, 0usize);
+        for ty in 0..MAP_TILES as i32 {
+            for tx in 0..MAP_TILES as i32 {
+                let (x, y) = (tx * TILE as i32 + half, ty * TILE as i32 + half);
+                if is_wall(x, y) {
+                    continue;
+                }
+                stands += 1;
+                let (dx, dy) = (core.0 - x as i64, core.1 - y as i64);
+                worst = worst.max(dx * dx + dy * dy);
+            }
+        }
+
+        assert!(stands > 0, "the generated map has no floor at all");
+        assert!(
+            worst <= reach * reach,
+            "the farthest floor tile is {} units from the core, past the ray's {reach}-unit \
+             reach -- a shot can now die of range with no error anywhere",
+            (worst as f64).sqrt() as i64,
+        );
+        // And the const the compile-time reach check is written against still bounds the
+        // real map, rather than describing an arena two redraws ago.
+        assert!(
+            worst <= WORST_RANGE as i64 * WORST_RANGE as i64,
+            "WORST_RANGE = {WORST_RANGE} is stale: the map now reaches {}",
+            (worst as f64).sqrt() as i64,
+        );
+    }
+
+    /// Every phase has a defined answer for a trigger pull, and only one of them is yes.
+    ///
+    /// The two that matter to the reported bug are `PHASE_LOBBY` and `PHASE_MUSTERING`:
+    /// both refuse, deliberately, and the refusal is `WrongPhase` and not silence. The
+    /// waiting-area spacebar is dead in the *browser*, which drops the key before a
+    /// transaction exists — no code below can be the fix for it (§0.1 Correction A).
+    #[test]
+    fn every_phase_has_a_defined_answer_for_a_trigger_pull() {
+        use crate::state::{PHASE_LOBBY, PHASE_MUSTERING, PHASE_ROLLED, PHASE_ROLLING, PHASE_SETTLED};
+
+        for phase in [
+            PHASE_LOBBY,
+            PHASE_FIGHTING,
+            PHASE_SETTLING,
+            PHASE_SETTLED,
+            PHASE_ROLLING,
+            PHASE_ROLLED,
+            PHASE_MUSTERING,
+        ] {
+            assert_eq!(
+                phase_takes_fire(phase),
+                phase == PHASE_FIGHTING,
+                "phase {phase} has the wrong answer for a trigger pull",
+            );
+        }
+
+        // Weapons stay down for the whole muster without a second rule, and a settled
+        // match cannot be damaged after its outcome is written.
+        assert!(!phase_takes_fire(PHASE_MUSTERING));
+        assert!(!phase_takes_fire(PHASE_LOBBY));
+        assert!(!phase_takes_fire(PHASE_SETTLING));
     }
 }

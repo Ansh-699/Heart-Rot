@@ -88,6 +88,11 @@ export type State = {
   /** The non-extractable WebCrypto keypair. Holds zero SOL, forever. */
   sessionKey: Session | null;
   skinId: number;
+  /**
+   * `CLASS_KNIGHT` (0) or `CLASS_ARCHER` (1). Chosen before the seat, like `skinId`, because
+   * the class reaches the chain inside `claim_seat` and no route edits a seat afterwards.
+   */
+  classId: number;
   match: MatchInfo | null;
   status: ConnectionStatus;
   /** Player-readable. Rendered; never a stack trace, never a token. */
@@ -111,6 +116,7 @@ export type Store = {
   /** Prove identity. Resolves the session keypair at the same time. */
   signIn(): Promise<void>;
   setSkin(skinId: number): void;
+  setClass(classId: number): void;
   /** `POST /api/session/init` — identity in, a seat and a routing bundle out. */
   join(): Promise<void>;
   /**
@@ -233,6 +239,7 @@ const INITIAL: State = {
   authenticated: false,
   sessionKey: null,
   skinId: 0,
+  classId: 0,
   match: null,
   status: 'idle',
   error: null,
@@ -330,8 +337,12 @@ export function createStore(): Store {
       set({ skinId });
     },
 
+    setClass(classId) {
+      set({ classId });
+    },
+
     async join() {
-      const { sessionKey, skinId } = state;
+      const { sessionKey, skinId, classId } = state;
       set({ status: 'joining', error: null });
       try {
         if (!sessionKey) throw new Error('Sign in before taking a seat.');
@@ -339,6 +350,7 @@ export function createStore(): Store {
           privyToken: await token(),
           sessionPubkey: sessionKey.address,
           skinId,
+          classId,
         });
         // `connecting`, not `live`: a seat is not a subscription. The world stays null
         // until the sync layer has taken its `getMultipleAccounts` snapshot, because

@@ -48,7 +48,7 @@ import {
   type InstructionWithData,
 } from '@solana/kit';
 
-import { MAX_SEATS } from './layout';
+import { MAX_SEATS, N_CLASSES } from './layout';
 import {
   DELEGATION_PROGRAM_ID,
   MAGIC_CONTEXT_ID,
@@ -444,8 +444,13 @@ export const startMatch = beginMuster;
 /**
  * Tag 4 — write a seat's session key and identity. ER, treasury-signed, cold path.
  *
- * Args (66 B, `player::JOIN_DATA_LEN`): seat u8 @0 · skin_id u8 @1 · session_pubkey 32 B
- * @2 · identity 32 B @34.
+ * Args (67 B, `player::JOIN_DATA_LEN`): seat u8 @0 · skin_id u8 @1 · session_pubkey 32 B
+ * @2 · identity 32 B @34 · class u8 @66.
+ *
+ * `class` is **appended**, not packed in beside `skin_id`, so no existing offset moves and
+ * both 32-byte slices are untouched. The handler length-checks, so an app built against the
+ * 66-byte block gets a clean `InvalidInstructionData` rather than a misread byte — which is
+ * also why the program, this package and the Worker ship together.
  *
  * **The caller picks the seat.** The Worker holds the Privy identity map and the
  * `seat_occupied` read that decided the arena had room, so honouring its choice is what
@@ -457,6 +462,11 @@ export const startMatch = beginMuster;
  * gets their seat back under a new key, and `/session/init` is safe to retry. Privy
  * identity is the durable record; the session key is not. Read the seat back off the
  * roster after the write confirms rather than assuming the requested index won.
+ *
+ * A returning identity keeps the **class** its seat already holds, where `skin_id` is
+ * rotated: a skin is a render hint, a class is the damage and cooldown `shoot` reads, and
+ * rotating it mid-match would let a player fire the archer's 70 and take the next shot on
+ * the knight's 800 ms. Render the class off the roster slot, not off what was sent.
  */
 export function claimSeat(p: {
   programId: Address;
@@ -465,15 +475,26 @@ export function claimSeat(p: {
   treasury: Address;
   seat: number;
   skinId: number;
+  /**
+   * `CLASS_KNIGHT` (0) or `CLASS_ARCHER` (1). Required, and refused rather than clamped on
+   * both sides of the wire: a clamp turns a version skew into a silently wrong weapon,
+   * which from the outside is indistinguishable from a balance bug.
+   */
+  class: number;
   sessionPubkey: Address;
   /** `sha256(privy DID)` — raw bytes, not a key. */
   identity: Uint8Array;
 }): HeartrotInstruction {
-  const { data } = alloc(IX_CLAIM_SEAT, 66);
+  req(
+    Number.isInteger(p.class) && p.class >= 0 && p.class < N_CLASSES,
+    `class must be 0..${N_CLASSES - 1}, got ${p.class}`,
+  );
+  const { data } = alloc(IX_CLAIM_SEAT, 67);
   data[1] = seatIndex(p.seat);
   data[2] = u8(p.skinId, 'skinId');
   data.set(addresses.encode(p.sessionPubkey), 3);
   data.set(raw32(p.identity, 'identity'), 35);
+  data[67] = p.class;
   return {
     programAddress: p.programId,
     accounts: [
@@ -589,6 +610,11 @@ export function movePlayer(p: {
  * worst-case direction error.
  *
  * Writes `Boss` because the ray damages parts, and `Arena` for the shot-cooldown clock.
+ *
+ * The wire is unchanged by the archer: the same `(dx, dy)` is what the handler quantises
+ * into `PlayerSlot.class_aim`'s low seven bits, so every client can redraw this shot's
+ * arrow from account bytes alone. Damage and cooldown come off the seat's class byte, not
+ * off anything sent here.
  */
 export function shoot(p: {
   programId: Address;
@@ -836,4 +862,27 @@ export function instructionsSelfCheck(): void {
   const mv = new DataView(step.data.buffer, step.data.byteOffset, step.data.byteLength);
   ok(mv.getUint16(2, true) === 513, 'seq is little-endian');
   ok(mv.getInt8(4) === -1 && mv.getInt8(5) === -1, 'dir 7 is NW, y growing down');
+
+  // `claimSeat` grew by one byte for the class. The append is the whole safety of it: if
+  // either 32-byte slice moved, the handler would read half a session key as an identity
+  // and the seat would be claimed by a player nobody can authenticate as.
+  {
+    const key = 'So11111111111111111111111111111111111111112' as Address;
+    const identity = new Uint8Array(32).fill(0xa5);
+    const join = claimSeat({
+      programId: a, arena: a, players: a, treasury: a,
+      seat: 19, skinId: 2, class: 1, sessionPubkey: key, identity,
+    });
+    ok(join.data.length === 68, 'join is 68 bytes on the wire: tag + JOIN_DATA_LEN 67');
+    ok(join.data[0] === IX_CLAIM_SEAT && join.data[1] === 19 && join.data[2] === 2, 'tag, seat, skin');
+    ok(join.data[67] === 1, 'class is appended at arg offset 66');
+    ok(join.data.slice(35, 67).every((b) => b === 0xa5), 'identity still starts at arg offset 34');
+    ok(join.data.slice(3, 35).some((b) => b !== 0), 'and the session key still starts at 2');
+    ok(claimSeat({ programId: a, arena: a, players: a, treasury: a, seat: 0, skinId: 0,
+      class: 0, sessionPubkey: key, identity }).data[67] === 0, 'the knight is class 0');
+    ok(threw(() => claimSeat({ programId: a, arena: a, players: a, treasury: a, seat: 0,
+      skinId: 0, class: 2, sessionPubkey: key, identity })), 'an unknown class is refused, never clamped');
+    ok(threw(() => claimSeat({ programId: a, arena: a, players: a, treasury: a, seat: 0,
+      skinId: 0, class: -1, sessionPubkey: key, identity })), 'and so is a negative one');
+  }
 }

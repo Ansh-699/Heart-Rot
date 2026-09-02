@@ -155,6 +155,20 @@ export const LOBBY_SPAWN_MIN_X = 208;
 export const LOBBY_SPAWN_MAX_X = 664;
 export const LOBBY_SPAWN_Y = 832;
 
+/**
+ * The lobby floor band: the drawn floor rows below the gate (tile rows 40..62), in
+ * arena-space units, `LOBBY_BOT` inclusive of the last row's last unit exactly as
+ * {@link PIT_BOT} is.
+ *
+ * A drawing fact, not a movement rule -- a `ZONE_LOBBY` seat is held in
+ * `PIT_BOT + 1 ..= MAP_MAX_XY`, which also covers the gate rows and the border ring. This
+ * is what the waiting room is framed on: `VIEW_LOBBY` is this band plus 208 units of
+ * masonry above and 80 below (spec 1.1), so the frame moves when the map is redrawn
+ * instead of drifting off a hardcoded 640/1008.
+ */
+export const LOBBY_TOP = 640;
+export const LOBBY_BOT = 1007;
+
 /** Is this arena-space point inside the gate block? `handlers::player::on_gate`. */
 export function onGate(x: number, y: number): boolean {
   return x >= GATE_MIN_X && x <= GATE_MAX_X && y >= GATE_MIN_Y && y <= GATE_MAX_Y;

@@ -175,7 +175,11 @@ pub fn request_roll(
     // match B's roster and authorizes the roll with a session key from the wrong match.
     // `arena` itself needs no re-derivation: nothing but this program can mint an account
     // this program owns, and the discriminator check inside `load` covers type confusion.
-    assert_pda(players_ai, &[SEED_PLAYERS, arena_ai.address().as_ref()], program_id)?;
+    assert_pda(
+        players_ai,
+        &[SEED_PLAYERS, arena_ai.address().as_ref()],
+        program_id,
+    )?;
 
     // The identity PDA is ours and we sign for it below, so the bump must be the canonical
     // one this guard searches for — a caller-supplied bump would derive an address the VRF
@@ -493,7 +497,10 @@ mod tests {
 
         // And it really does serialize into exactly that many bytes.
         let mut buf = [0u8; REQUEST_BUF_LEN];
-        assert_eq!(request.serialize_into(&mut buf, 10).unwrap(), REQUEST_BUF_LEN);
+        assert_eq!(
+            request.serialize_into(&mut buf, 10).unwrap(),
+            REQUEST_BUF_LEN
+        );
     }
 
     /// Every refusal `try_consume_roll` can produce reaches an operator as a number in a

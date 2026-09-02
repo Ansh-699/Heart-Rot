@@ -187,6 +187,19 @@ pub const LOBBY_SPAWN_MIN_X: i16 = 208;
 pub const LOBBY_SPAWN_MAX_X: i16 = 664;
 pub const LOBBY_SPAWN_Y: i16 = 832;
 
+/// The lobby floor band: the drawn floor rows below the gate (40..62), in world
+/// units, `LOBBY_BOT` inclusive of the last row's last unit exactly as [`PIT_BOT`] is.
+///
+/// A *drawing* fact, not a movement rule -- `player::zone_box` holds a `ZONE_LOBBY` seat
+/// in `PIT_BOT + 1 ..= MAP_MAX_XY`, which is wider: it also covers the gate rows and the
+/// border ring. Emitted because the renderer frames on the floor, not on the box:
+/// `docs/architecture/17-fullscreen-spec.md` 1.1 builds `VIEW_LOBBY` as this band plus 208
+/// units of masonry above and 80 below, and its self-check asserts the frame still lands
+/// on `LOBBY_BOT + 1`. Retyping 640/1008 in the browser beside a map that owns them is the
+/// drift this generator exists to prevent.
+pub const LOBBY_TOP: i16 = 640; // tile row 40
+pub const LOBBY_BOT: i16 = 1007; // tile row 62, last unit
+
 /// Every entrance stands on floor in the table above.
 ///
 /// The generator proves the same thing plus reachability, but only when someone runs it.
@@ -245,6 +258,38 @@ const _: () = {
         GATE_MIN_Y == PIT_BOT + 1,
         "the gate does not adjoin the pit -- a player who flips zone on it would have \
          no legal destination inside PIT_TOP..=PIT_BOT and would freeze",
+    );
+
+    // The waiting room the browser frames on is the floor immediately under the gate,
+    // and every seat it fans out stands on that floor.
+    //
+    // These four constants exist only for the renderer -- `VIEW_LOBBY` is
+    // `LOBBY_TOP..=LOBBY_BOT` plus masonry, and `LOBBY_SPAWN_MIN_X..MAX_X` is what has to
+    // be inside it -- so nothing on the chain would ever notice them drifting. That is
+    // exactly why the check is here: a hand-edit of this generated file, which the banner
+    // at the top forbids and someone will do anyway, shows up as a knight standing
+    // outside its own frame with no error anywhere.
+    assert!(
+        LOBBY_TOP == GATE_MAX_Y + 1
+            && LOBBY_TOP < LOBBY_BOT
+            && LOBBY_BOT < (MAP_TILES as i16) * TILE,
+        "the lobby floor band does not start where the gate ends -- re-run tools/gen_map.py",
+    );
+    assert!(
+        LOBBY_SPAWN_MIN_X <= LOBBY_SPAWN_MAX_X
+            && LOBBY_SPAWN_Y >= LOBBY_TOP
+            && LOBBY_SPAWN_Y <= LOBBY_BOT,
+        "the lobby spawn row is outside the lobby floor band -- the browser would frame \
+         the waiting room on floor the seats do not stand on",
+    );
+    // The two seats at the ends of the fan -- the only two this file names, and the pair
+    // the frame is built out of. The other eighteen are swept by the generator.
+    assert!(
+        WALLS[(LOBBY_SPAWN_Y / TILE) as usize]
+            & ((1u64 << (LOBBY_SPAWN_MIN_X / TILE)) | (1u64 << (LOBBY_SPAWN_MAX_X / TILE)))
+            == 0,
+        "an outermost lobby spawn stands in a wall -- redraw assets/map/arena.json and \
+         re-run tools/gen_map.py",
     );
 };
 

@@ -1,0 +1,369 @@
+[
+  {
+    "name": "lobby-1920",
+    "room": "lobby",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {},
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 432 1219.781796171597 656",
+      "svgNodes": 979,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": -632.15
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "arena-1920",
+    "room": "arena",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {},
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 -48 1219.781796171597 656",
+      "svgNodes": 917,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": 123.4
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "lobby-1366",
+    "room": "lobby",
+    "vw": 1366,
+    "vh": 768,
+    "opts": {},
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1366.7,
+        "h": 720.2
+      },
+      "viewBox": "-110.48834888262093 432 1244.9766977652419 656",
+      "svgNodes": 979,
+      "ctm": {
+        "a": 1.0978,
+        "d": 1.0978,
+        "e": 121.29,
+        "f": -426.41
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "arena-1366",
+    "room": "arena",
+    "vw": 1366,
+    "vh": 768,
+    "opts": {},
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1366.7,
+        "h": 720.2
+      },
+      "viewBox": "-110.48834888262093 -48 1244.9766977652419 656",
+      "svgNodes": 917,
+      "ctm": {
+        "a": 1.0978,
+        "d": 1.0978,
+        "e": 121.29,
+        "f": 100.54
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "arena-1920-empty",
+    "room": "arena",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "seats": 1,
+      "bullets": 0
+    },
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 -48 1219.781796171597 656",
+      "svgNodes": 741,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": 123.4
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "lobby-1920-empty",
+    "room": "lobby",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "seats": 1
+    },
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 432 1219.781796171597 656",
+      "svgNodes": 813,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": -632.15
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "arena-1920-hurt",
+    "room": "arena",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "hurt": true,
+      "bullets": 24
+    },
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 -48 1219.781796171597 656",
+      "svgNodes": 931,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": 123.4
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "plate-arena-noboss",
+    "room": "arena",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "seats": 1,
+      "bullets": 0
+    },
+    "css": ".hud,.dev,.hr-hud,[class*=\"hud\"],[class*=\"dev\"],.errorbar{display:none!important}.hr-boss-breathe{display:none!important}",
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 -48 1219.781796171597 656",
+      "svgNodes": 741,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": 123.4
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "plate-lobby-noprops",
+    "room": "lobby",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "seats": 1
+    },
+    "hideProps": true,
+    "css": ".hud,.dev,.hr-hud,[class*=\"hud\"],[class*=\"dev\"],.errorbar{display:none!important}",
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 432 1219.781796171597 656",
+      "svgNodes": 813,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": -632.15
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "plate-lobby-nohud",
+    "room": "lobby",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "seats": 20
+    },
+    "css": ".hud,.dev,.hr-hud,[class*=\"hud\"],[class*=\"dev\"],.errorbar{display:none!important}",
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 432 1219.781796171597 656",
+      "svgNodes": 979,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": -632.15
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "plate-arena-nohud",
+    "room": "arena",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "seats": 20
+    },
+    "css": ".hud,.dev,.hr-hud,[class*=\"hud\"],[class*=\"dev\"],.errorbar{display:none!important}",
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 -48 1219.781796171597 656",
+      "svgNodes": 917,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": 123.4
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "plate-arena-nohud-empty",
+    "room": "arena",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "seats": 1,
+      "bullets": 0
+    },
+    "css": ".hud,.dev,.hr-hud,[class*=\"hud\"],[class*=\"dev\"],.errorbar{display:none!important}",
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 -48 1219.781796171597 656",
+      "svgNodes": 741,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": 123.4
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  },
+  {
+    "name": "plate-lobby-nohud-empty",
+    "room": "lobby",
+    "vw": 1920,
+    "vh": 1080,
+    "opts": {
+      "seats": 1
+    },
+    "css": ".hud,.dev,.hr-hud,[class*=\"hud\"],[class*=\"dev\"],.errorbar{display:none!important}",
+    "geom": {
+      "stage": {
+        "x": 0,
+        "y": 47.8,
+        "w": 1920,
+        "h": 1032.6
+      },
+      "viewBox": "-97.89089808579854 432 1219.781796171597 656",
+      "svgNodes": 813,
+      "ctm": {
+        "a": 1.57405,
+        "d": 1.57405,
+        "e": 154.09,
+        "f": -632.15
+      },
+      "knightNodes": 0,
+      "camTransform": ""
+    },
+    "pageErrors": []
+  }
+]

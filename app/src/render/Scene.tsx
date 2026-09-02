@@ -236,11 +236,13 @@ const PIT_POOL_ALPHA = 0.1;
  * The core spill's peak opacity, and the same story in one line: it was a lamp with no
  * lamp in it.
  *
- * `art.md` fix 4 measures that `.hr-boss-vent` is `opacity: 0` for the lobby, the muster,
- * the spawn reveal and the first ~65% of the fight, while this layer painted a 330-unit
- * `#6ee1ff` pool at 0.3 centred exactly on the sealed core — the brightest cyan on screen
- * belonging to an object that is not drawn. This layer is static by contract and cannot
- * key off `vent_open`, so it cannot own the lamp; it can only own the room's ambient
+ * `art.md` fix 4 measured this layer painting a 330-unit `#6ee1ff` pool at 0.3 centred
+ * exactly on the core while the orb itself was not drawn — the brightest cyan on screen
+ * belonging to an object that was not there. (That orb now burns from frame one:
+ * 17-fullscreen-spec §2.3 item 3 makes `.hr-boss-vent` `opacity: 1` always and carries the
+ * vent *state* on stroke colour and pulse instead. The pool is still not its lamp.) This
+ * layer is static by contract and cannot key off `vent_open`, so it cannot own the lamp;
+ * it can only own the room's ambient
  * bounce. 0.3 -> 0.1 makes it that, and leaves the hotspot to `Boss.tsx`, which is the one
  * node that knows whether the vent is open.
  */

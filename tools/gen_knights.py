@@ -81,7 +81,13 @@ LEG_BAND_TOP = 0.62
 # detaches the legs from the hips.
 CONTACT_DX = 2
 
-POSES = ("rest", "contactL", "contactR", "fallen", "sil")
+POSES = ("rest", "contactL", "contactR", "fallen", "sil", "halo", "halo-fallen")
+
+# How far the halo grows out of the silhouette, in canvas pixels. TWO, and that is a
+# device-pixel argument rather than a taste one: at the 1.000 px/unit floor of the smallest
+# supported stage (17-fullscreen-spec section 1.3) a one-unit rim is a single device pixel
+# and antialiases to nothing. `docs/art/legibility.md` section 3.2 derives the same 2.
+HALO_PX = 2
 
 # The flat silhouette's fill. `currentColor` so `Knight.tsx` can set the flash colour on
 # the `<use>` and have it reach the path.
@@ -159,6 +165,37 @@ def to_grid(rects):
     return out, pal
 
 
+def halo(grid):
+    """The silhouette grown {HALO_PX} px and hollowed out -- the boundary ring, not the body.
+
+    This is what a knight is separated from the floor by. The shipped key light was `sil`
+    offset one unit up-left, which covers only 11.5-15.8 % of the body and leaves the
+    DOWN-RIGHT side with no boundary at all: there the outermost pixels are the sprite's
+    own keyline, 1.06:1 against room B's p95 floor. A dilation has no side.
+
+    4-neighbour, applied `HALO_PX` times, so the ring is a Manhattan ball -- a chamfered
+    corner rather than a square one, which is what a 45-degree armour edge needs.
+
+    `ponytail:` the ring is clipped by the canvas, which costs 7.8-11.7 % of it per skin
+    (measured). The bottom row is the whole of the loss that matters and it is the feet,
+    where the seat's own contact shadow already carries 7.02-7.04:1 against the floor. The
+    upgrade is a larger canvas, which moves W/H, `poseBox`, the anchor and every offset
+    `Knight.tsx` derives from them -- far more than a rim is worth.
+    """
+    mask = grid >= 0
+    grown = mask.copy()
+    for _ in range(HALO_PX):
+        step = grown.copy()
+        step[1:, :] |= grown[:-1, :]
+        step[:-1, :] |= grown[1:, :]
+        step[:, 1:] |= grown[:, :-1]
+        step[:, :-1] |= grown[:, 1:]
+        grown = step
+    # Hollow: the body is drawn over this by the poses themselves, and a filled halo would
+    # be a solid slab of rim colour with a knight on top of it.
+    return np.where(grown & ~mask, 0, -1).astype(np.int16)
+
+
 def shear(grid, dx):
     """A contact frame: the leg band slid `dx` columns. Same pixels, a different silhouette."""
     lo = int(H * LEG_BAND_TOP)
@@ -202,6 +239,11 @@ def build():
             # lands on a 42x33 canvas, which is what `poseBox('fallen')` returns.
             "fallen": (grid.T, None),
             "sil": (grid, SIL_FILL),
+            # Derived from art already checked in -- never authored, never hand-edited.
+            # `currentColor` exactly as `sil` is, which is what lets `Knight.tsx` set the
+            # per-skin rim colour on the one `<use>` and have it reach the path.
+            "halo": (halo(grid), SIL_FILL),
+            "halo-fallen": (halo(grid.T), SIL_FILL),
         }
         for pose in POSES:
             g, flat = drawn[pose]

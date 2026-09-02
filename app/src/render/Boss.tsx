@@ -36,6 +36,12 @@
  *           <g .hr-boss-grade>       BOSS_GRADE + the rim light. No transform, on purpose
  *             <g> translate(anchor) scale(BOSS_SCALE) <- static, memoised, built once
  *               11 part groups                        <- WAAPI one-shots only
+ *           spill circle             the orb's light, OVER the grade so it is not tinted
+ *           .hr-boss-vent            the orb itself, over its own spill. CSS states only
+ *           .hr-boss-eye x2                                          <- CSS keyframes only
+ *
+ * The three light nodes are siblings of the graded group and never inside it: the grade
+ * exists to darken the creature, and light added under it would be darkened with it.
  */
 import { useEffect, useMemo, useRef } from 'react';
 
@@ -51,6 +57,7 @@ import {
   PHASE_FIGHTING,
   PHASE_LOBBY,
   PHASE_SETTLING,
+  VENT_OPEN,
   VOLLEY_INTERVAL_MS,
   type ArenaAccount,
   type BossAccount,
@@ -144,39 +151,74 @@ const FLINCH_PX = 2;
 const BREAK_PX = 7;
 
 /**
+ * Cosmetic ratios of the generated `CORE_R`. Like `FLINCH_PX` above they match no chain
+ * fact, so they are typed here — but they are ratios and never lengths, because `CORE_R`
+ * is derived from `CORE.radiusSq` and a literal would go stale the moment the chain retunes
+ * the vent. `RING_RATIO` is the stroke width; `SPILL_R` is how far the orb's own light
+ * carries. At `CORE_R` 60 that is a 9-unit ring and a 312-unit pool across a 576-unit
+ * creature — roughly the chest and the inner arms, which is where reference B's teal lands.
+ */
+const RING_RATIO = 0.15;
+const SPILL_R = 2.6;
+
+/**
  * The creature's grade, and the rim light painted back over it.
  *
  * Ungraded, the boss is the brightest, warmest and most saturated object in a cavern that
- * is graded to ~210° blue and tops out at sRGB L 68.7: its dominant fills are `#c9aab0`
- * (L 177.0), `#af8c92` (147.9), `#936975` (114.8) and `#753757` (70.5) — warm pale mauve,
- * a pastel sticker on a cold cave. In the reference the demon is DARK and rim-lit.
+ * is graded to ~210° blue and tops out at sRGB L 68.7: its dominant fills are `#c9aab0`,
+ * `#af8c92`, `#936975` and `#753757` — warm pale mauve, a pastel sticker on a cold cave. In
+ * the reference the demon is DARK and rim-lit. Dark it already was; lit it was not.
  *
- * Evaluated in sRGB the way the browser applies a CSS shorthand chain, these five terms map
- * those four fills to L 64.2 / 53.7 / 41.8 / 26.0 at hue 219/218/215/205° — every dominant
- * value under the environment's own ceiling, and the internal contrast preserved almost
- * exactly (brightest:darkest goes 2.51 → 2.47, so it darkens rather than flattens; the risk
- * `art.md` names for a single filter, a muddy boss, is what that ratio measures). The
- * brightest pixel the creature can now produce is L 80.8 — the two 2x2 near-white blocks in
- * the source art, which the drawn eyes sit on top of anyway. That is also the ceiling the
- * `brightness(2.2)` hit flash below now clips to, since it is applied inside this group: on
- * a graded limb resting near L 40 that is still a doubling, so the flash survives the
- * grade, but nothing above `brightness(2.2)` would buy any more of one.
+ * WHY THIS CHAIN AND NOT THE OLD ONE (`docs/art/boss-light.md` §2, every number a real
+ * Chrome raster of this renderer, not a model). The old chain ended in `brightness(0.32)`,
+ * and `brightness(b)` is `c ↦ b·c` — a straight multiply, so it maps the creature's tonal
+ * distribution onto a scaled copy of itself. Measured, every percentile of the body landed
+ * on the same ~0.13 factor: p50 68.1 → 9.3, p99 149.6 → 22.8. The reference's shape is a
+ * dark bulk with a BRIGHT TAIL (p50 13.0 → p99 72.7, a 5.6× spread); the old chain's spread
+ * was 2.5×. Against the cavern behind it at relL 0.0235 a body pixel needs L255 15.4 just to
+ * reach 1.5:1, so the entire creature above its own 91st percentile was fighting for the
+ * first contrast step: **8.5 % of its pixels cleared 1.5:1 and 0.4 % cleared 2:1**, against
+ * the reference's 53.2 % and 23.2 %. That is what "the boss lighting is wrong" measures as.
  *
- * The rim is the last term: the same silhouette, offset 2 units up-left, flooded cyan at
- * 0.25, drawn behind. That is a `drop-shadow`, not `art.md`'s `<use>` of the silhouette —
- * see the note on `.hr-boss-grade` below for why the `<use>` is the wrong mechanism here.
+ * `contrast(1.6)` is the term that restores the tail: `c ↦ 1.6c − 0.3` clips the darks
+ * toward black while the top of the range survives, so `brightness` can go 0.32 → 0.55
+ * without lifting the bulk. It goes AFTER `brightness` — the pair is `c ↦ k·b·c + (1−k)/2`
+ * and swapping them moves the black point. `saturate` drops 1.6 → 0.5 because `contrast`
+ * amplifies chroma: at 1.6 the graded body measured 52 % saturation against the reference's
+ * 19 %, and 0.5 lands on 19 %. `hue-rotate` 185 → 195deg takes the graded median hue 219 →
+ * 229° (the reference's is 244°).
+ *
+ * Ladder after, as a fraction of the creature's own pixels clearing each step against the
+ * cavern — 1.5 / 2 / 2.5 / 3 / 4:1, with body median L255:
+ *
+ *     reference   0.532 0.232 0.123 0.070 0.025   p50 13.0
+ *     old chain   0.085 0.004 0.003 0.003 0.003   p50  9.3
+ *     this chain  0.486 0.279 0.111 0.073 0.027   p50 13.1
+ *
+ * The `brightness(2.2)` hit flash below is applied INSIDE this group, so it composes with
+ * this chain and not the old one. Re-derived: a dominant fill at ungraded 0.79 clips under
+ * the flash, then grades to sRGB ≈ 148 (relL ≈ 0.29), i.e. **L255 ≈ 74 against a resting
+ * body at 13 — a 5.7× lift**, where the old chain gave about 2×. The flash got stronger for
+ * free; nothing about it needs retuning.
+ *
+ * THE RIM IS NOT THE LIGHT, and this is why it stays a one-line term. It draws the same
+ * silhouette offset 3 units up-left, flooded cyan at 0.30, behind. Measured, thickening it
+ * from 2 units @ α 0.25 to 3 @ 0.30 takes the exposed band 0.88 → 1.40 px and 1.50:1 →
+ * 1.75:1 against the cavern — but isolating it moves the 1.5:1 ladder step by 0.005. The
+ * reference's own lit edge is 2 px at 1.54:1: nobody's rim is doing this work. It is free
+ * and it is kept, and the light itself comes from the orb (`.hr-boss-vent`) and its spill.
  * It is last in the chain on purpose, so the grade cannot touch the light it adds.
  *
  * The grade is on the WRAPPER, not on the art group: filters are applied in the element's
  * own coordinate system, and the art group carries `scale(BOSS_SCALE)`, which would make
- * this 2 into 6 arena units. The wrapper has no transform, so a unit here is an arena unit.
+ * this 3 into 9 arena units. The wrapper has no transform, so a unit here is an arena unit.
  *
- * Core and eyes are siblings of the graded group, never inside it — after this they are the
- * only warm, bright things in the frame, which is the whole point.
+ * Core, spill and eyes are siblings of the graded group, never inside it — after this they
+ * are the only warm, bright things in the frame, which is the whole point.
  */
 const BOSS_GRADE =
-  'grayscale(0.7) sepia(0.6) hue-rotate(185deg) saturate(1.6) brightness(0.32) ' +
-  'drop-shadow(-2px -2px 0 rgb(159 232 255 / 0.25))';
+  'grayscale(0.7) sepia(0.6) hue-rotate(195deg) saturate(0.5) brightness(0.55) ' +
+  'contrast(1.6) drop-shadow(-3px -3px 0 rgb(159 232 255 / 0.30))';
 
 /** Checked at fire time, not held in state: it is always current and costs one line. */
 function reduced(): boolean {
@@ -224,33 +266,63 @@ const CSS = `
    than duplicating it: art.md's <use href="#art"> silhouette would rasterise 32,105 px
    of geometry a second time AND go stale, because a <use> shadow tree mirrors attributes
    but NOT Element.animate() — every flinch, every break-off and the whole death sequence
-   are WAAPI, so the rim would sit still at 0.25 alpha while the limb it outlines flies out
+   are WAAPI, so the rim would sit still at 0.30 alpha while the limb it outlines flies out
    of frame. A drop-shadow is the same image (offset silhouette, flat colour, behind) and
-   is part of the element being animated, so it cannot desynchronise. */
+   is part of the element being animated, so it cannot desynchronise.
+
+   AND IT STAYS ON THE ANCESTOR, but not for the reason people assume. A filter here IS a
+   rasterisation boundary around the eleven part groups that take every WAAPI one-shot, so
+   it was measured rather than argued: 6x CPU throttle, fresh Chrome per case, 400 frames,
+   n=8 (scripts/spike/framebudget/gradeperf_boss.json) gives none 1.90/3.20 ms p50/p95,
+   ancestor 2.00/3.30, per-part 2.05/3.30. The grade costs +0.10 ms at both percentiles
+   against a run-to-run spread of +/-1.5 ms — inside noise, and per-part is not cheaper.
+   That is a negative result and it is the answer: do not move the grade for performance.
+
+   The reason it MUST stay is the cascade. A WAAPI filter keyframe REPLACES a CSS
+   filter on the same node for the animation's whole duration (waapi.mjs: mid-animation
+   the computed style reads brightness(1.09999) and the CSS filter is simply gone). A
+   per-part grade would therefore blink off for 180 ms on every flinch, 520 ms on every
+   break-off, and permanently on every .hr-dead limb. Restating the grade inside all three
+   is one fact stored four times, in the one place a renumbering has already broken a limb. */
 .hr-boss-grade { filter: ${BOSS_GRADE}; }
 
-/* The vent is a state, not a duration: opacity carries it even with motion off. Sealed it
-   is a dull coal, NOT absent — it was opacity: 0 until the vent opens, which is after
-   11,700 of 18,000 shell damage, so the reference's bright chest orb, the focal point of
-   the whole composition, did not exist during the lobby, the muster, the spawn reveal or
-   the first ~65% of the fight, while Scene.tsx painted a 330-unit core spill around it:
-   a glow with no lamp. These are styles.css's own two .core-glow rules, which were
-   written for this and never wired to anything. Colour comes from the shared tokens, so
-   the lamp and the spill cannot drift apart. */
+/* The orb — a WELL RINGED BY A LIGHT, and it burns from the first frame.
+
+   It used to be a flat filled disc at opacity 0.35: measured, mean rgb(34,66,79) = L255
+   12.7 against the body immediately around it at 10.3, i.e. 1.17:1. The brief called it
+   "a hole, not a coal" and the raster agrees. Profiling reference B's own orb radially
+   says the opposite shape: r 0-22 is a NEAR-BLACK well at L255 0.8-4.4 — darker than the
+   wall behind the creature — ringed at r 24-34 by a band peaking at L255 113, decayed back
+   to body level by r ~40. Outer ring radius 34 on a 289 px creature is 0.118x its width;
+   this circle is r 60 on a 576 px creature, 0.104x. The geometry was already right. Only
+   the paint was wrong: it wants a dark fill and a bright ring, and it had a mid fill and a
+   3-unit hairline.
+
+   Sealed is a LIT coal, not a dim one. The reference's orb burns identically whether or not
+   anything has hit it, and the vent's state is carried by the ring going white-hot and
+   starting to pulse — a stronger read than an opacity step, and one that survives
+   reduced-motion, where the pulse is gated below but the white-hot ring is not.
+
+   Lengths: the vent is a direct child of .hr-boss-shell, which carries no scale, so the
+   blur radii here are arena units. Width is a ratio of the generated --core-r published
+   by the element, never a literal — a stroke is centred on its path, so a thick ring's
+   midline is still the exact circle the chain raycasts. */
 .hr-boss-vent {
   transform-box: fill-box;
   transform-origin: center;
-  fill: var(--cyan-dim, #2a7f96);
-  stroke: var(--cyan-dim, #2a7f96);
-  opacity: 0.35;
-  transition: opacity 0.4s ease-out, fill 0.4s ease-out, stroke 0.4s ease-out;
+  fill: #04121a;
+  fill-opacity: 1;
+  stroke: var(--cyan, #6fe3ff);
+  stroke-opacity: 0.75;
+  stroke-width: calc(var(--core-r) * ${RING_RATIO});
+  opacity: 1;
+  filter: drop-shadow(0 0 16px rgb(111 227 255 / 0.35));
+  transition: stroke 0.4s ease-out, stroke-opacity 0.4s ease-out, filter 0.4s ease-out;
 }
 .hr-vent-open .hr-boss-vent {
-  fill: var(--cyan, #6fe3ff);
-  fill-opacity: 0.55;
   stroke: #eafeff;
-  opacity: 1;
-  filter: drop-shadow(0 0 18px var(--cyan, #6fe3ff));
+  stroke-opacity: 1;
+  filter: drop-shadow(0 0 26px var(--cyan, #6fe3ff)) drop-shadow(0 0 9px #eafeff);
   animation: hr-boss-vent 1.1s ease-in-out infinite;
 }
 @keyframes hr-boss-vent { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
@@ -433,7 +505,7 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
 
   return (
     <g
-      className={`hr-boss${boss.ventOpen === 1 ? ' hr-vent-open' : ''}${enraged ? ' hr-enraged' : ''}`}
+      className={`hr-boss${boss.ventOpen === VENT_OPEN ? ' hr-vent-open' : ''}${enraged ? ' hr-enraged' : ''}`}
       style={{ '--shell': shell } as React.CSSProperties}
       transform={`translate(${boss.x} ${boss.y})`}
     >
@@ -441,13 +513,53 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
       <g className="hr-boss-breathe">
         <g ref={shellRef} className="hr-boss-shell">
           <g className="hr-boss-grade">{art}</g>
+          {/* The orb's own light, landing on the creature that carries it. Scene.tsx paints
+              a 330-unit core spill at the same world point, but SCENE is drawn UNDER the
+              boss: the one light in this frame anchored to the creature never touched it —
+              a glow with no lamp lighting nothing. Brightening that layer is not the fix
+              (Scene.tsx:195-232 measured that lifting the pit walks the floor into the
+              knights); a second, small spill here is.
+
+              Placement is the whole trick. OVER `.hr-boss-grade`, so it is light rather
+              than a fill the grade would tint — the grade would push cyan that is already
+              the right colour toward the body's own hue. UNDER the vent, so the ring sits
+              on its own glow. Static: no keyframe, no ref, no snapshot read, so it is one
+              node in the tree and nothing at all in the frame loop. */}
+          <defs>
+            <radialGradient
+              id="heartrot-boss-spill"
+              gradientUnits="userSpaceOnUse"
+              cx={CORE.x}
+              cy={CORE.y}
+              r={CORE_R * SPILL_R}
+            >
+              <stop offset="0" stopColor="#9fe8ff" stopOpacity={0.2} />
+              <stop offset="0.4" stopColor="#6fe3ff" stopOpacity={0.07} />
+              <stop offset="1" stopColor="#6fe3ff" stopOpacity={0} />
+            </radialGradient>
+          </defs>
+          <circle
+            cx={CORE.x}
+            cy={CORE.y}
+            r={CORE_R * SPILL_R}
+            fill="url(#heartrot-boss-spill)"
+            pointerEvents="none"
+          />
           {/* The reference's bright chest orb. There is no glowing orb in the source art —
               the cavity there is the sprite's one dark socket — so it is drawn, at exactly
               the circle the chain raycasts. A literal here would make the drawn vent and
-              the hit vent two different circles. Colour, opacity and glow are the two CSS
-              states above, never attributes here: a presentation attribute loses to the
-              class anyway, so writing one would only be a second place to look. */}
-          <circle className="hr-boss-vent" cx={CORE.x} cy={CORE.y} r={CORE_R} strokeWidth={3} />
+              the hit vent two different circles. Colour, opacity, stroke width and glow are
+              the two CSS states above, never attributes here: a presentation attribute
+              loses to the class anyway, so writing one would only be a second place to
+              look. `--core-r` is published rather than typed for the same reason — it lets
+              the ring be a ratio of the radius the chain owns. */}
+          <circle
+            className="hr-boss-vent"
+            style={{ '--core-r': CORE_R } as React.CSSProperties}
+            cx={CORE.x}
+            cy={CORE.y}
+            r={CORE_R}
+          />
           {EYES.map(([x, y]) => (
             <circle key={x} className="hr-boss-eye" cx={x} cy={y} r={EYE_R} />
           ))}
@@ -485,6 +597,11 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
   for (const name of HIDDEN) {
     if (PART_INDEX.has(name)) throw new Error(`Boss: "${name}" is hit-indexed and may not be hidden`);
   }
+  // The orb is the frame's key light and every part of it is a ratio of the chain's own
+  // radius. A retune that took `CORE.radiusSq` to 0 would silently delete the light rather
+  // than move it, and a spill that does not outrun its ring puts the ring on bare body.
+  if (!(CORE_R > 0)) throw new Error(`Boss: CORE.radiusSq is ${CORE.radiusSq}; the orb has no radius to light from`);
+  if (SPILL_R <= 1) throw new Error(`Boss: SPILL_R ${SPILL_R} does not reach past the ring it lights`);
   if (OUTWARD.length !== N_PARTS) throw new Error('Boss: OUTWARD must cover every part');
   for (const [x, y] of OUTWARD) {
     if (Math.abs(Math.hypot(x, y) - 1) > 0.001) throw new Error(`Boss: [${x},${y}] is not a unit heading`);

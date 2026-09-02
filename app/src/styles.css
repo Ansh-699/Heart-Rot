@@ -3,13 +3,24 @@
  *
  * No framework. The app is four screens and one HUD; a utility framework would ship more
  * bytes of unused classes than there are bytes of layout here, and none of it would help
- * with the only hard part, which is keeping the pixel art crisp.
+ * with the only hard part, which is keeping the game legible at full screen.
  *
- * The load-bearing parts are not the layout: they are the palette (one cold cavern, so
- * depth comes from light and layering rather than from flat fills), `image-rendering:
- * pixelated` so nothing scaled to an integer multiple gets bilinear-smoothed, and the
- * scene section's animation contract — which classes may move, which node owns which
- * transform, and which of them a reduced-motion reader still needs.
+ * WHAT THIS FILE OWNS, after spec 17:
+ *   - the page: full-bleed, no gutters, no scrollbars, no side column (§9.1)
+ *   - `.stage` and its one overlay, the radial vignette (§8 row 17)
+ *   - the card/button/meter chrome the screens and `ui/Hud.tsx` share
+ *   - the telemetry panel: translucency, the drag grip, the retired `--dim` (§9.3)
+ *   - one reduced-motion block, as a second net over the injected `hr-` keyframes
+ *
+ * WHAT IT DELIBERATELY DOES NOT OWN. Every scene animation is now WAAPI, created and
+ * cancelled by the component that owns the node (`Boss.tsx`, `Knight.tsx`, `Shot.tsx`,
+ * `Passage.tsx`, `Spawn.tsx`), with `prefers-reduced-motion` resolved once in JS and
+ * passed down. A CSS class here for any of them would be a second writer for one
+ * transform, which is `07-animation.md` §3.1's silent failure: the node keeps the
+ * animation and discards the inline write. Room grades, the void rect and every scene
+ * gradient live in the room components, in world units, where the geometry is.
+ * `will-change` likewise: the four nodes that earn promotion set it inline, on themselves,
+ * next to the measurement that justified it.
  */
 
 @import url('https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
@@ -76,16 +87,51 @@
   color-scheme: dark;
 }
 
+/*
+ * The one palette change spec 17 forces, and it is a scope, not a value.
+ *
+ * Every surface that used to be an opaque panel beside the scene is now a translucent
+ * overlay ON the scene (§9.1, §9.2, §9.3). `--dim` was chosen against `--panel` at full
+ * opacity, where it is 4.76:1; against the worst realistic backdrop the overlay now sits
+ * on — the boss's orb, `rgb(161 252 243)`, read through `--panel` at α 0.88 — it measures
+ * **3.45:1 and fails**, and it fails at every alpha a user would still call transparent.
+ * `--muted` measures 4.54:1 there.
+ *
+ * So `--dim` is retired inside the translucent surfaces by REDEFINING THE TOKEN, once,
+ * rather than by editing the eight rules that reference it. Those rules are correct — the
+ * roles they name really are the quiet ones — and they keep working on the opaque
+ * surfaces (the card eyebrows, a disabled button, an empty seat) where `--dim` is still
+ * right. A per-rule rewrite would have to be repeated by every rule added later; this
+ * cannot be forgotten, because the surface carries the decision, not the author.
+ *
+ * `.hud` is `ui/Hud.tsx`'s class and `.dev`/`.dev-cue` are this file's. The rule is here
+ * rather than in either because it is a statement about translucency, which they share.
+ */
+.hud,
+.dev,
+.dev-cue {
+  --dim: var(--muted);
+}
+
 *,
 *::before,
 *::after {
   box-sizing: border-box;
 }
 
+/*
+ * The play area is the window now, so the window may not scroll. `overflow: hidden` is
+ * the guarantee, not a symptom fix: `.stage` is a `1fr` grid row with `min-height: 0`,
+ * and one overflowing HUD cluster at a small window would otherwise put a scrollbar
+ * beside a full-bleed scene and shrink the stage by 15 px on the next resize.
+ * `overscroll-behavior` stops the touch rubber-band, which reads as the room sliding.
+ */
 html,
 body,
 #root {
   height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
@@ -96,25 +142,28 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Every sprite in this game is pixel art scaled to an integer multiple. This is what
-   stops the browser smoothing a raster one on the way up. */
+/*
+ * Raster only, and `svg` is deliberately NOT in this list any more.
+ *
+ * `image-rendering` INHERITS. With `svg` in the selector every descendant of the scene
+ * inherited `pixelated`, including the boss's `.hr-boss-grade` — a `filter` rasterises
+ * its subtree and the result is sampled at the current scale, which at spec §1.3's
+ * 1.573–2.122 px/unit is an upscale. Nearest-neighbour on a filtered raster is where the
+ * grade's drop-shadow rim went chunky. The scene is vector; its sharpness is
+ * `shape-rendering="geometricPrecision"`, set unconditionally on the root `<svg>` in
+ * `Arena.tsx` and inherited from there (spec §1.4). There is no raster art in the tree
+ * today — this rule is here for `<img>`, `<canvas>` and any SVG `<image>` that arrives
+ * later, all of which would be pixel art and must not be bilinear-smoothed.
+ *
+ * `shape-rendering` deliberately does not live here either: a CSS rule outranks the
+ * presentation attribute of the same name, so a blanket rule here would silently win
+ * over the root attribute and no component could ever override it for one layer.
+ */
 img,
-svg,
-canvas {
+canvas,
+image {
   image-rendering: pixelated;
 }
-
-/*
- * `shape-rendering` deliberately does NOT live here any more.
- *
- * It used to be `svg { shape-rendering: crispEdges }`, and a CSS rule outranks the
- * presentation attribute of the same name — so the moment `Arena.tsx` starts switching
- * that attribute between `crispEdges` and `geometricPrecision` on the fit scale (spec
- * §1.5: below 1:1 the art is 19% dark keyline and crisp snapping becomes outline
- * flicker as a sprite translates), a rule here would have silently won and the switch
- * would have done nothing. The root `<svg>`'s attribute inherits to every child, which
- * is all the blanket rule ever bought.
- */
 
 h1,
 h2,
@@ -154,23 +203,8 @@ h3 {
   color: var(--flesh);
 }
 
-/* A cluster reads as one value at a glance; the wide gap between clusters is what
-   separates "which match" from "how it is running". */
-.header-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .spacer {
   flex: 1;
-}
-
-.tag {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--dim);
 }
 
 /* Connection state is a colour, because it is glanced at and never read. */
@@ -205,9 +239,35 @@ h3 {
   overflow: hidden;
 }
 
-/* Lobby and arena are stage + panel; onboarding and select are one centred card. */
+/*
+ * The stage is the whole main row. The 320 px side column is deleted, and that is not
+ * cosmetic: spec §1.3 measures it costing the worst-case fit 0.6875 px/unit and a 22.7 px
+ * knight against 1.000 and 33.0 px without it. Everything it held is now a fixed HUD
+ * cluster over the scene (§9.2).
+ *
+ * The row track is explicit — `minmax(0, 1fr)` — so the stage gets the full height even
+ * though it has no intrinsic one. A leftover sibling (a screen that still renders a panel
+ * beside the stage) lands in an implicit `auto` row below it and is clipped by
+ * `overflow: hidden` rather than squeezing the scene: the room stays full-bleed while the
+ * screens finish migrating.
+ */
 .main:has(> .stage) {
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+
+/*
+ * One cell, and every child in it. Measured, because the first version of this rule was
+ * wrong: with the stage in row 1 and a leftover sibling flowing into an implicit `auto`
+ * row, the `1fr` track only gets the space the auto rows leave — a 400 px leftover panel
+ * took the stage to **0 px tall** and the scene disappeared entirely. Stacking cannot do
+ * that: the stage always gets the whole cell, and anything a screen has not finished
+ * migrating draws over it instead of squeezing it. The HUD clusters and the result
+ * overlay are `position: fixed` and out of flow, so they are unaffected either way.
+ */
+.main:has(> .stage) > * {
+  grid-area: 1 / 1;
+  min-height: 0;
+  min-width: 0;
 }
 
 .main:has(> .card) {
@@ -232,323 +292,127 @@ h3 {
   position: relative;
   min-height: 0;
   overflow: hidden;
-  /* The cavern behind the letterbox: one cold source high and centre, where the
-     creature stands, falling off to the unlit back wall. */
-  background:
-    radial-gradient(90% 60% at 50% 6%, #23384f 0%, rgb(35 56 79 / 0) 70%),
-    radial-gradient(120% 100% at 50% 30%, var(--deep) 0%, var(--ground) 78%);
+  /*
+   * `touch-action: none` because `controls.ts` binds `pointerdown` here for aim: without
+   * it a drag to aim on a touch screen is a page pan, and the pan wins — the pointer
+   * stream is cancelled mid-shot. It is scoped to the stage, so the cards and anything
+   * else with a scroller of its own still scroll normally.
+   */
+  touch-action: none;
+  /*
+   * The one thing in the app that says "this surface is aimed". `docs/review/ux.md`'s
+   * headline is that nothing ever tells the player click-drag aims; a crosshair over the
+   * play surface and nowhere else is the cheapest half of that answer, and it is the half
+   * that is true before the copy is read. It is scoped to `.stage`, so every card, HUD
+   * button and the telemetry panel keep the default arrow — a crosshair on a `<button>`
+   * says the button is a target.
+   *
+   * NOT a reticle. §6.4's shape-only reticle is drawn off the same raycast `Shot.tsx`
+   * already runs and belongs in the scene, in world units, where the ray is.
+   */
+  cursor: crosshair;
+  /*
+   * Only ever visible before the renderer attaches — once `Arena.tsx` mounts, its void
+   * rect (spec §8 row 1) covers the frame in world space and this is behind it. Kept as
+   * the load colour so the first paint is the cavern rather than a white flash, and
+   * deliberately neutral-dark: it must not commit to room A's warm torchlight or room B's
+   * cold teal, because it does not know which room is coming.
+   */
+  background: radial-gradient(120% 100% at 50% 30%, var(--deep) 0%, var(--ground) 78%);
 }
 
 /*
- * The depth ramp (§8.1's "five-stop gradient overlay") and the vignette, as ONE
- * pseudo-element on a node the frame loop never touches. It is not an SVG layer on
- * purpose: as a child of the scene it would need a rect sized in arena units and a
- * z-order argument with every other layer, and as `<g>` content it would be inside the
- * camera transform, so it would pan with the world instead of staying on the lens.
+ * The vignette, and NOTHING ELSE — spec §11 deletes the five-stop linear ramp that used
+ * to sit on top of it.
  *
- * Alpha compositing only — no `mix-blend-mode`. A blended full-viewport layer forces
- * the compositor to read the backdrop back on every frame the scene changes, and the
- * scene changes every frame.
+ * That ramp was tuned for the deleted 2x lobby camera, where the bottom of the screen was
+ * a metre of foreground stone. Under the full-room framing the same stops land on the
+ * play surface: measured 7.65:1 -> 3.79:1 on the knight rim at the spawn row and 1.59:1
+ * at the bottom edge, i.e. it dims exactly the band the player stands in. Room-scale
+ * depth is now the room components' job, in world units, where it can be aimed at the
+ * wall instead of at the floor.
+ *
+ * The radial stays. It is a lens effect, not a world one, so it belongs on the lens: at
+ * the spawn row it costs 0.046 alpha, and as a pseudo-element on a node the frame loop
+ * never touches it repaints only on resize.
+ *
+ * Alpha compositing only — no `mix-blend-mode`. A blended full-viewport layer forces the
+ * compositor to read the backdrop back on every frame the scene changes, and the scene
+ * changes every frame. That was already true at 1.07 Mpx; spec §10.4 puts the full-screen
+ * frame at ~1.65 Mpx, so it is 55 % more true now.
  */
 .stage::after {
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background:
-    /* far -> near: cold sky glow, clear air, haze over the pit, the shadowed rim the
-       camera is looking over, and black at the very bottom edge. */
-    linear-gradient(
-      to bottom,
-      rgb(159 199 232 / 0.1) 0%,
-      rgb(159 199 232 / 0) 26%,
-      rgb(13 22 34 / 0.14) 56%,
-      rgb(8 13 20 / 0.42) 88%,
-      rgb(8 13 20 / 0.7) 100%
-    ),
-    radial-gradient(115% 85% at 50% 34%, rgb(8 13 20 / 0) 52%, rgb(8 13 20 / 0.62) 100%);
+  background: radial-gradient(115% 85% at 50% 34%, rgb(8 13 20 / 0) 52%, rgb(8 13 20 / 0.62) 100%);
 }
 
-/* The renderer may draw with either tag; App.tsx's `aimOrigin` accepts both too. */
-.stage > svg,
-.stage > canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
+/*
+ * The `.stage > svg, .stage > canvas` size rule is deleted (spec §1.8, §11). It matched
+ * nothing — `World` portals a positioned `<div>` into the stage and the `<svg>` is that
+ * div's child, not the stage's — and `Arena.tsx` now carries `width: 100%; height: 100%`
+ * on the element itself. Two sources for one size is this repo's named defect, and a
+ * dead selector is the copy people read.
+ */
 
 /* --------------------------------------------------------------------------
-   The scene — the CSS half of the animation contract (spec §7)
+   The scene — what is left of the CSS half of the animation contract
 
-   Three classes of motion, and only two of them are CSS:
+   Almost nothing, and that is the change. Spec 17 moved every scene animation to
+   `Element.animate()` inside the component that owns the node, with
+   `prefers-reduced-motion` resolved once in JS and passed down as a prop. A WAAPI
+   animation auto-promotes for its own duration, self-cleans, and stacks instead of
+   fighting a sibling over one `style.transform` — and a WAAPI `filter` keyframe
+   REPLACES a CSS `filter` on the same node (`17-fullscreen-spec.md` §2.3 item 2 proved
+   it: mid-flinch the computed style reads `brightness(1.09999)` and the boss's grade is
+   simply gone). So a CSS rule here for any animated scene node is not a second opinion,
+   it is a second writer, and one of the two is discarded silently.
 
-   SEEKED  — a chain field counting to a deadline. ONE animation built at its true
-             duration, permanently `paused`, and the renderer writes
-             `el.getAnimations()[0].currentTime` from the chain value on each
-             notification. It composites at 60fps between notifications and
-             self-corrects on every one, with no rAF callback.
-             The duration comes in as `--dur`, set from the MIRRORED CHAIN CONSTANT.
-             No keyframe here may contain a game duration: a hand-typed 3200 stops
-             matching the volley the first time anyone tunes balance. `--dur` defaults
-             to 0s, so a forgotten variable freezes at the start state rather than
-             animating something wrong.
-   COSMETIC — breathing, gait, idle, gate glow. Free-running, matched to no chain fact,
-             so a literal duration here is honest.
-   ONE-SHOT — recoil, hit flash, death fall, part destruction. NOT here. Those go
-             through `Element.animate()` so they auto-promote, self-clean and stack
-             instead of fighting over one `style.transform` (§7.4).
+   DELETED here, all of them dead selectors against the shipped tree, verified by grep
+   before removal:
+     #camera            — the camera is deleted (spec §1.5). It rests at identity and is
+                          written in exactly one place, `Passage.tsx`'s 640 ms gate move,
+                          which promotes itself for that duration. A permanent
+                          `will-change: transform` on the group that contains the whole
+                          room is a full-frame compositor layer held for the length of the
+                          match, and spec §10.4 already flags the +55 % rasterised area as
+                          this change's one unmeasured number. Promotion the frame loop
+                          does not need is the first thing to give back.
+     #boss-breathe, .boss-part, .boss-eye and their keyframes — spec §2.3 item 5. Nothing
+                          renders them; every live boss class is `hr-`-prefixed and
+                          defined in `Boss.tsx`'s own injected block. In particular
+                          `.boss-part { will-change: transform }` was promoting a class
+                          that does not exist, so its removal is NOT a de-promotion.
+     .seat, .seat-body, .self-mark and their keyframes — `Knight.tsx` owns the seat node,
+                          sets `will-change` inline beside the measurement, and runs idle,
+                          recoil, fall and the local marker's breathe through WAAPI.
+     .slam-lane, .volley-line, .countdown-fill, .enrage-wash — the seeked telegraphs.
+                          `Arena.tsx` now draws them with an explicit `reduced` branch
+                          (the same shape FILLS by height instead of scaling) which a
+                          `--dur` keyframe cannot express.
+     .gate-glow          — `WaitingRoom.tsx` paints the gate's arm state as a world-space
+                          gradient, in the room, where the gate is.
 
-   Two mechanical rules, both measured, both easy to violate silently:
-   - Every node an animation or the frame loop WRITES must be composited (§9.2.4): the
-     spread between promoted and unpromoted is 30-85x, which dwarfs the <2x spread
-     between animation techniques. Hence `will-change` below — and nowhere else. It is
-     a layer allocation, not a speed switch.
+   Two mechanical rules survive them, because the next person to add a scene rule needs
+   both:
+   - Promote only what is WRITTEN every frame, and promote it on the node itself. The
+     spread between promoted and unpromoted is 30-85x on software raster and ~0 on a real
+     GPU; it is a layer allocation, not a speed switch, and a layer costs the fill rate
+     this change has the least of.
    - SVG `transform-box` defaults to `view-box` with origin 0 0. A part group rotated
      without `fill-box` + `center` lands 195 units away, off canvas. Any node that
      rotates or scales about itself sets both.
 
-   Not used, on purpose: CSS containment. Measured at 0.00 ms on this scene (§9.3).
+   Not used, on purpose: CSS containment. Measured at 0.00 ms on this scene.
    -------------------------------------------------------------------------- */
 
-/* The camera is one `<g>` carrying `scale(k) translate(-cx,-cy)`, and the lobby->pit
-   pan is a WAAPI animation on that transform and nothing else. Never the viewBox
-   attribute: 9.6 ms/frame against ~1.7, a 5.3x regression (§1.4). */
-#camera {
-  will-change: transform;
-}
-
-/* Cold light spilling down the near face of the pit rim, which is the foreground
-   plane the whole composition reads depth from. */
+/* Cold light spilling down the near face of the pit rim, which is the foreground plane
+   the whole composition reads depth from. Static — a `filter` on a node nothing animates
+   rasterises once — so it is the one scene rule that cannot be a second writer. */
 .pit-rim {
   filter: drop-shadow(0 -2px 0 rgb(159 199 232 / 0.22));
-}
-
-/* --- The boss ------------------------------------------------------------ */
-
-/* One writer per node: `#boss-pos` is a React attribute, `#boss-breathe` is this
-   keyframe, `#boss-shell` is a React attribute per snapshot, the 13 part groups are
-   WAAPI one-shots. A node carrying an inline transform AND a WAAPI animation silently
-   discards the inline write. */
-#boss-breathe {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-  animation: boss-breathe 4200ms ease-in-out infinite;
-}
-
-@keyframes boss-breathe {
-  from {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.012, 0.988);
-  }
-  to {
-    transform: scale(1);
-  }
-}
-
-/* Every destructible limb. Promoted because it covers ~95% of frame area at SCALE=3
-   and takes WAAPI flinch and destruction one-shots. */
-.boss-part {
-  transform-box: fill-box;
-  transform-origin: center;
-  will-change: transform;
-}
-
-/* The chest orb lived here as `.core-glow` / `.core-glow.is-open` and does not any more.
-   `art.md` fix 4 asked for that two-state design — `--cyan-dim` at 0.35 sealed, `--cyan`
-   plus a pulse when open — to be ported into the boss, and `Boss.tsx` now carries it
-   verbatim as `.hr-boss-vent` / `.hr-vent-open .hr-boss-vent` against the node that
-   actually renders. Keeping a second copy here would be the defect this project keeps
-   hitting: one fact stored twice, with only one of the two reachable, so the dead copy is
-   the one people read and edit. */
-
-/* Two near-white 2px blocks in the source art, drawn here as ember light. */
-.boss-eye {
-  fill: var(--ember);
-  filter: drop-shadow(0 0 6px var(--ember));
-  animation: eye-flicker 2600ms steps(1, end) infinite;
-}
-
-@keyframes eye-flicker {
-  0%,
-  86%,
-  100% {
-    opacity: 1;
-  }
-  90% {
-    opacity: 0.55;
-  }
-}
-
-/* --- Seats --------------------------------------------------------------- */
-
-/*
- * The local seat renders from PREDICTION, every remote seat from INTERPOLATION, and
- * both write this node's transform from the rAF loop. That split is what took the
- * fight-time stutter from 200 static frames to 52; nothing here may merge them.
- *
- * `will-change` on the seat group measured as a no-op on a real GPU (7.10 vs 7.20 ms)
- * and 36-85x on software raster. Recorded so nobody chases it again: it is one free
- * line for the weak devices neither harness tested.
- */
-.seat {
-  will-change: transform;
-}
-
-/* The child `<use>`, which owns flip / bob / recoil. It must be a SEPARATE node from
-   `.seat`, because two writers on one transform means one of them is discarded. */
-.seat-body {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-}
-
-/* Idle only. The WALK frame is a pose swap driven off distance stepped (one frame per
-   tile), not a keyframe — that way it retimes itself if movement speed is tuned and a
-   standing knight freezes by construction. */
-.seat-body.is-idle {
-  animation: knight-idle 2400ms ease-in-out infinite;
-}
-
-@keyframes knight-idle {
-  from {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-0.6px);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
-/* Find yourself when twenty knights stack in one column: must read while fully
-   occluded, so it is a chevron above the crowd, not a tint on the sprite. */
-.self-mark {
-  fill: var(--rim);
-  animation: self-mark 1800ms ease-in-out infinite;
-}
-
-@keyframes self-mark {
-  from,
-  to {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* --- Telegraphs (SEEKED) -------------------------------------------------- */
-
-/*
- * The wind-up on the hand slam. Derived on every client from
- * mix64(affix_seed ^ mix64(tick / SLAM_PERIOD_TICKS)) with ZERO stored bytes, so this
- * fills over `--dur` = SLAM_TELEGRAPH_TICKS * TICK_MS, imported, never typed.
- * Fills DOWNWARD from the boss so the lane reads as something arriving from above.
- */
-.slam-lane {
-  fill: var(--ember);
-  transform-box: fill-box;
-  transform-origin: center top;
-  animation: lane-fill var(--dur, 0s) linear paused both;
-}
-
-@keyframes lane-fill {
-  from {
-    transform: scaleY(0);
-    opacity: 0.1;
-  }
-  to {
-    transform: scaleY(1);
-    opacity: 0.34;
-  }
-}
-
-/* The incoming volley. `spawn_volley` is a pure function of published state, so these
-   are the exact bullet lines, not a hint. `--dur` = the reload window. */
-.volley-line {
-  stroke: var(--ember);
-  stroke-width: 1;
-  fill: none;
-  animation: volley-line var(--dur, 0s) linear paused both;
-}
-
-@keyframes volley-line {
-  from {
-    opacity: 0;
-  }
-  70% {
-    opacity: 0.5;
-  }
-  to {
-    opacity: 0.85;
-  }
-}
-
-/*
- * One class for every countdown that is a chain field walking to a deadline: the
- * muster window (`fight_at_tick - tick`), a respawn (`respawn_at_tick - tick`), the
- * enrage clock (`enrage_at_tick - tick`). Drains left to right. scaleX, not width —
- * a transform composites, a width relayouts.
- */
-.countdown-fill {
-  transform-origin: left center;
-  animation: countdown var(--dur, 0s) linear paused both;
-}
-
-@keyframes countdown {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
-  }
-}
-
-/* The clock running out, as light rather than as a number: a wash over the whole
-   arena, seeked on `tick` vs `enrage_at_tick`. Opacity only, so it survives
-   reduced motion unchanged. */
-.enrage-wash {
-  fill: var(--ember);
-  animation: enrage-wash var(--dur, 0s) linear paused both;
-}
-
-@keyframes enrage-wash {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 0.16;
-  }
-}
-
-/* --- The gate ------------------------------------------------------------- */
-
-/*
- * The lobby's entire interaction. This keys off `predictor.self`, never off the
- * chain — 127 ms of write-to-visible would read as input lag on the one thing the
- * lobby is built around — while the `enter_gate` transaction stays on the
- * authoritative poll. The two must not be merged.
- */
-.gate-glow {
-  fill: var(--lobby-tan);
-  opacity: 0.18;
-}
-
-.gate-glow.is-armed {
-  fill: var(--cyan);
-  animation: gate-glow 900ms ease-in-out infinite;
-}
-
-@keyframes gate-glow {
-  from,
-  to {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 0.7;
-  }
 }
 
 /* --------------------------------------------------------------------------
@@ -649,77 +513,28 @@ h3 {
   border-color: var(--olive);
 }
 
-/* --------------------------------------------------------------------------
-   Side panel — roster and boss telemetry
-   -------------------------------------------------------------------------- */
-
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px;
-  border-left: 1px solid var(--line);
-  background: var(--panel);
-  overflow-y: auto;
-}
-
-.panel h3 {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--dim);
-}
-
-.stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 12px;
-  margin: 0;
-}
-
-.stats dt {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--dim);
-}
-
-.stats dd {
-  margin: 0;
-  font-size: 14px;
-  color: var(--ink);
-}
-
-.roster {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.roster li {
-  display: grid;
-  grid-template-columns: 2ch 1fr auto;
-  gap: 8px;
-  padding: 2px 4px;
-  font-size: 11.5px;
-  color: var(--ink);
-  border: 1px solid transparent;
-}
-
-.roster li.empty {
-  color: var(--dim);
-}
-
-/* Standing on the gate is the entire matchmaking UI, so it gets the one warm colour. */
-.roster li.in-gate {
-  color: var(--lobby-tan);
-  border-color: var(--lobby-green);
+/* The swatch is the only thing on the card that says which knight this is, so it has to
+   have a size of its own — it is an empty `<span>`, and an empty inline box is 0x0.
+   Square and 2px-bordered so it reads as a sample rather than as a status dot. */
+.skin-chip {
+  width: 100%;
+  height: 22px;
+  border: 2px solid var(--line);
 }
 
 /* --------------------------------------------------------------------------
-   Meters — the boss shell, the core, your health
+   Meters and pills — the boss shell, the core, your health
+
+   These were the side panel's vocabulary and are now the HUD's: the panel is deleted
+   (spec §9.1) and `ui/Hud.tsx` and `screens/Gate.tsx` mount the same markup inside fixed
+   `.hud` clusters over the scene. The chrome — translucency, border, `pointer-events:
+   none` — belongs to `.hud` and is NOT repeated here; only the internal layout is.
+
+   Deleted with the panel, because none of them matched a rendered node any more:
+   `.header-group` and `.tag` (the header is the wordmark alone; phase, tick and socket
+   are the `.hud-tl` cluster), `.stats` and `.roster` (the seat roster is `.hud-seats`),
+   and `.self` (`margin-top: auto` against a flex column height a fixed cluster does not
+   have). Dead CSS is not free: it is the copy the next person reads and edits.
    -------------------------------------------------------------------------- */
 
 .parts {
@@ -779,15 +594,6 @@ h3 {
   padding: 10px;
   border: 1px solid var(--line);
   background: var(--panel-2);
-}
-
-.self {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
 }
 
 .vent-head {
@@ -881,6 +687,15 @@ h3 {
 .overlay {
   position: fixed;
   inset: 0;
+  /*
+   * Above the HUD clusters (z-index 30). The verdict card used to sit inside the deleted
+   * 320 px panel, which had its own column; now the HUD is fixed over the same
+   * full-screen stage, so the card has to out-rank it or the parts list reads through the
+   * verdict. It deliberately *ties* with `.dev` (40) rather than beating it: the telemetry
+   * panel is row 19 of spec section 8, "top of everything", and being later in this file is
+   * what keeps it there.
+   */
+  z-index: 40;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -890,56 +705,51 @@ h3 {
 /* --------------------------------------------------------------------------
    Reduced motion
 
-   Governing rule: NO INFORMATION MAY EXIST ONLY IN MOTION. So this block is not
-   "turn the animations off" — it is a list of which ones carry meaning.
+   Governing rule: NO INFORMATION MAY EXIST ONLY IN MOTION. So this block is not "turn
+   the animations off" — it is a list of which ones carry meaning.
 
-   CANCELLED, because they are atmosphere: breathing, gait, idle, ambient pulses,
-   flicker. Cancelled by NOT STARTING (`animation-name: none`), never by
-   `animation-duration: 0.01ms`, which still runs a frame and still allocates.
+   Almost all of that list has moved into JS, and moved for a reason. Every one-shot and
+   every telegraph is WAAPI now, and a reduced-motion telegraph is not the same animation
+   slowed down — `Arena.tsx` draws the slam lane as a shape that FILLS BY HEIGHT instead
+   of one that scales, `Spawn.tsx` renders nothing at all rather than a shortened flare,
+   and `Passage.tsx` replaces a 1100 ms beat with a 150 ms opacity cross-fade while KEEPING
+   the hold (a hold is not motion; a knight chasing 387 units across a room is). A media
+   query can cancel an animation but it cannot swap one design for another, so the query
+   is resolved once per tree by `usePrefersReducedMotion` and passed down as a prop.
 
-   KEPT, because they are the only warning a player gets: the slam lane and the volley
-   lines. They already satisfy the constraint that a telegraph be a FILLING SHAPE
-   rather than an approaching object — a lane that grows in place, not a hand that
-   flies at you — so they survive verbatim.
-
-   KEPT because they are values: the countdown drain, the enrage wash, the meter
-   easing, the vent's colour. A reduced-motion reader still needs a truthful clock.
-
-   The camera pan becoming a cut, and the rAF loop's own easing, are JS decisions —
-   `Arena.tsx` resolves the same query with `usePrefersReducedMotion`.
+   What is left here is the CSS half: the `hr-` keyframes `Boss.tsx` injects, and the
+   three transitions this file itself starts.
    -------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
-  /* The rebuild's own classes. Every CSS animation the 33-Immortals rig introduced is
-     `hr-`-prefixed and defined in `Boss.tsx`'s injected `<style>`; the rest of the
-     rebuild's motion is WAAPI and is gated in JS (`Arena.tsx` `usePrefersReducedMotion`,
-     `Knight.tsx` `reduced`, `Spawn.tsx` renders nothing at all). Boss.tsx carries its own
-     copy of these three, and this is deliberately a second net rather than a moved fact:
-     that block only exists while the boss is mounted, and `animation-name: none` is a
-     cancellation, not a value — two cancellations cannot disagree into a wrong picture,
-     which is the only reason storing something twice is banned here. If a NEW `hr-`
-     animation is added, it belongs in both. */
+  /*
+   * A second net over `Boss.tsx`'s own copy, deliberately not a moved fact: that block
+   * only exists while the boss is mounted, and `animation-name: none` is a cancellation,
+   * not a value — two cancellations cannot disagree into a wrong picture, which is the
+   * only reason storing something twice is banned here. If a NEW `hr-` animation is
+   * added, it belongs in both.
+   *
+   * The pre-rebuild names that used to be listed alongside these (`#boss-breathe`,
+   * `.boss-eye`, `.seat-body.is-idle`, `.self-mark`, `.gate-glow.is-armed`) are gone with
+   * the rules that defined them. Cancelling an animation that does not exist costs
+   * nothing, but it advertises a contract this file no longer keeps, and the next person
+   * to add seat motion would look here for the hook instead of at `Knight.tsx`.
+   */
   .hr-boss-breathe,
   .hr-boss-eye,
-  .hr-vent-open .hr-boss-vent,
-  /* The pre-rebuild names below. They currently match no rendered node — `art.md` fix 5
-     is the audit — but the gate and the core are both named there as things a sibling
-     layer is expected to wire back on. Cancelling an animation that is not running costs
-     nothing; forgetting one when it is wired back on costs a reduced-motion reader a
-     pulsing screen. */
-  #boss-breathe,
-  .boss-eye,
-  .seat-body.is-idle,
-  .self-mark,
-  .gate-glow.is-armed {
+  .hr-vent-open .hr-boss-vent {
     animation-name: none;
   }
 
-  /* Cancelling the pulse must not cancel the fact it was announcing. */
-  .gate-glow.is-armed {
-    opacity: 0.55;
-  }
-
+  /*
+   * Every transition this file starts, cancelled. The meter's 160 ms drain is the only
+   * one that carries anything, and what it carries is the VALUE, which lives in the
+   * final `scaleX` and not in the sweep — a reduced-motion reader gets the same number,
+   * as a step. The other two are hover tints and say nothing at all.
+   *
+   * The telemetry drag is deliberately NOT here: it has no transition to cancel (an eased
+   * panel lags the pointer), and reduced motion does not mean the panel may not be moved.
+   */
   .meter-fill,
   .dev-cue,
   .dev-close {
@@ -1016,8 +826,8 @@ h3 {
 }
 
 .dev-cue:hover {
-  color: var(--muted);
-  border-color: var(--dim);
+  color: var(--ink);
+  border-color: var(--muted);
 }
 
 .dev-cue-key {
@@ -1028,6 +838,22 @@ h3 {
   border-radius: 2px;
 }
 
+/*
+ * "A bit transparent and draggable", and 88 % is the floor rather than the taste.
+ *
+ * The worst realistic backdrop is the boss's own orb, `rgb(161 252 243)` — the
+ * max-luminance feature of the whole game, and the panel's default anchor is over the
+ * pit. Through `--panel` at α 0.88 the four text roles measure `--muted` 4.54:1,
+ * `--ink` 10.04, `--ok` 5.85, `--torch` 5.95 and `--ember` 4.07 (AA-large only, which is
+ * why `--ember` may not migrate onto small text). At α 0.86 `--muted` falls to 4.27 and
+ * fails. So this is the most transparent the panel gets while still being a readable
+ * instrument, and `--dim` — 3.45:1 there — is retired on this surface by the token
+ * override at the top of the file, not by rewriting the rules that reference it.
+ *
+ * Deliberately NOT `backdrop-filter: blur()`: the pixels behind change every frame, which
+ * turns a 268 px panel into a per-frame backdrop readback on the same main thread
+ * `controls.ts` pumps sends from. The shadow does the separating instead.
+ */
 .dev {
   position: fixed;
   right: 12px;
@@ -1036,25 +862,79 @@ h3 {
   width: 268px;
   max-height: calc(100vh - 24px);
   overflow-y: auto;
+  /*
+   * The panel does not hit-test. `docs/review/ux.md`'s first HIGH: `.dev` is a fixed
+   * 268 px column, `controls.ts::attachControls` binds `pointerdown` to `#stage`, and
+   * `.dev` is a SIBLING of the stage rather than a descendant — so every click inside it
+   * was swallowed before the aim path saw it. At 1920x1080 that is 14.6 % of the width
+   * and ~65 % of the height of a game whose only pointer verb is "click here to shoot",
+   * and it failed the way the user reported it: nothing happens, no error anywhere.
+   *
+   * `DevPanel` no longer opens by default, and that is the OTHER half rather than this
+   * one. Default-closed fixes who sees the dead column; this fixes the column, for the
+   * player who presses backtick, reads a number and goes back to the fight — which is the
+   * whole point of an instrument you leave open.
+   *
+   * Same discipline `.hud` already ships (`ui/Hud.tsx`'s block): `none` on the surface,
+   * `auto` on the things that are actually controls. It is a READOUT — the numbers are
+   * glanced at, never clicked — so the only interactive parts are the drag grip and its
+   * two buttons, and everything else is a window onto the arena behind it.
+   *
+   * Two costs, both taken deliberately. Wheel-scrolling the panel body is gone with the
+   * hit-testing (the wheel now lands on the stage, which does not scroll), so on a window
+   * short enough for `max-height` to bite, rows below the fold are unreachable; the panel
+   * is ~700 px and the clip only starts under a ~724 px viewport. Selecting a value to
+   * copy is gone too. Neither is worth a quarter of the play area.
+   */
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 12px 13px 11px;
-  /* The scene under this panel is darker and more contrasty than it was — the boss's
-     rim light and the enrage wash both bleed to the edges — so the backdrop goes a few
-     points more opaque and the shadow does the separating. Deliberately NOT
-     `backdrop-filter: blur()`: the pixels behind it change every frame, which turns a
-     268px panel into a per-frame backdrop readback. Structure is untouched. */
-  background: color-mix(in srgb, var(--panel) 97%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
   border: 1px solid var(--line);
   border-radius: 3px;
   box-shadow: 0 10px 34px -8px rgb(0 0 0 / 0.75);
+  /*
+   * The drag offset is written here as a `transform` by `DevPanel`'s pointer handlers —
+   * a transform, not `left`/`top`, because the same drag costs 1 forced layout on
+   * `transform` against 299 on `left`/`top`. No `will-change`: promoting a ~700 px panel
+   * permanently, over a scene whose fill rate is spec §10.4's one unmeasured number, to
+   * save a layout the user asks for once a session is the wrong trade. The transform is
+   * composited for the duration of the drag either way.
+   *
+   * No `transition` on purpose. An eased panel lags the pointer, and a grip that does not
+   * stay under the finger reads as a broken drag rather than as a smooth one.
+   */
 }
 
+/*
+ * The grip. `touch-action: none` is what makes the drag work on a touch screen at all —
+ * without it the browser claims the gesture for a scroll and the pointer stream is
+ * cancelled after the first move. `user-select: none` stops a drag from selecting the
+ * "Telemetry" heading and leaving it highlighted.
+ *
+ * It stays a `<div>`. A `<button>` grip would put a focus target on the fire key's path:
+ * measured, Space with a button focused fires the shot and not the click (`controls.ts`
+ * preventDefaults first) but Enter fires the click and no shot — so a focused grip is a
+ * trap that swallows one of the two keys with no way to tell which.
+ */
 .dev-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  gap: 6px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  /* The only part of the panel that opts back in to hit-testing, against the
+     `pointer-events: none` on `.dev`. `pointer-events` INHERITS, so the reset button and
+     the close button — both children of the head — come back with it and `.dev button` is
+     not a second rule. The head is ~20px of the panel's ~700. */
+  pointer-events: auto;
+}
+
+.dev-head:active {
+  cursor: grabbing;
 }
 
 .dev-head h2 {

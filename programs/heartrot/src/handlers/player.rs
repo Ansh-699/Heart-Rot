@@ -55,8 +55,8 @@ use crate::guards::{
 };
 use crate::map::{GATE_MAX_X, GATE_MAX_Y, GATE_MIN_X, GATE_MIN_Y, PIT_BOT, PIT_TOP, WALLS};
 use crate::state::{
-    self, Arena, PlayerSlot, Players, MAX_SEATS, PHASE_FIGHTING, PHASE_LOBBY, PHASE_MUSTERING,
-    SEED_PLAYERS, ZONE_ARENA, ZONE_LOBBY,
+    self, Arena, PlayerSlot, Players, MAX_SEATS, N_CLASSES, PHASE_FIGHTING, PHASE_LOBBY,
+    PHASE_MUSTERING, SEED_PLAYERS, ZONE_ARENA, ZONE_LOBBY,
 };
 
 // ---------------------------------------------------------------------------
@@ -128,10 +128,16 @@ const MOVE_STEP: [(i16, i16); 8] = [
 const UNCLAIMED: [u8; 32] = [0u8; 32];
 
 /// Tag 4 argument block: `seat` u8 `[0]`, `skin_id` u8 `[1]`, `session_pubkey` `[2..34]`,
-/// `identity` `[34..66]`. This slicing *is* the frozen ABI — `instruction.rs` and
-/// `docs/architecture/05-wire-abi.md` describe it, and TypeScript conforms to it. When
-/// a client disagrees, the client is what changes.
-const JOIN_DATA_LEN: usize = 1 + 1 + 32 + 32;
+/// `identity` `[34..66]`, `class` u8 `[66]`. This slicing *is* the frozen ABI —
+/// `instruction.rs` and `docs/architecture/05-wire-abi.md` describe it, and TypeScript
+/// conforms to it. When a client disagrees, the client is what changes.
+///
+/// `class` is **appended**, not packed beside `skin_id`, so no existing offset moves and
+/// both 32-byte slices are untouched (`17-fullscreen-spec.md` §5.4). The only thing a
+/// client built against the 66-byte block gets wrong is the length, which is a clean
+/// `InvalidInstructionData` here rather than a misread byte somewhere downstream. That
+/// makes the program, the app and the Worker one indivisible deploy, deliberately.
+const JOIN_DATA_LEN: usize = 1 + 1 + 32 + 32 + 1;
 
 // ---------------------------------------------------------------------------
 // Pure geometry helpers
@@ -171,9 +177,10 @@ fn claim_seat(
     slot: &mut PlayerSlot,
     seat: u8,
     skin_id: u8,
+    class: u8,
     session_pubkey: [u8; 32],
     identity: [u8; 32],
-) {
+) -> Result<(), ProgramError> {
     let (x, y) = lobby_spawn(seat);
     *slot = PlayerSlot {
         zone: ZONE_LOBBY,
@@ -186,6 +193,12 @@ fn claim_seat(
         identity,
         ..PlayerSlot::zeroed()
     };
+    // The class is written through `PlayerSlot::set_class` rather than by masking the byte
+    // here, because that byte is shared with the aim `shoot::fire` writes and one encoder
+    // is the only way the two halves cannot be typed differently in two files. On a slot
+    // that was just zeroed the aim it preserves is 0, which is what a seat that has fired
+    // no shot should carry.
+    slot.set_class(class)
 }
 
 /// Is the tile containing this point solid? Anything off the map counts as wall, so
@@ -497,26 +510,31 @@ fn assert_playable(phase: u8) -> Result<(), ProgramError> {
 // join
 // ---------------------------------------------------------------------------
 
-/// `join(seat, skin_id, session_pubkey, identity)` — accounts
-/// `[arena (w), players (w), treasury (signer)]`.
+/// Tag 4's argument block, parsed and validated as bytes.
 ///
-/// Claims the Worker's chosen seat for a browser session key, or rotates the key on the
-/// seat this identity already holds. Rejects an occupied seat and rejects a session key
-/// that is already seated elsewhere.
-pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
-    let [arena_ai, players_ai, treasury_ai, ..] = accounts else {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    };
-
+/// Pure, so the frozen ABI is testable without the three `AccountView`s `join` needs — and
+/// the ABI is the half of `join` most worth a test, since every refusal here is one a
+/// client can trip on its own.
+///
+/// **`class` is range-checked and never clamped.** A clamp turns client/program skew into
+/// a player silently holding a weapon the chain disagrees about — a cooldown that reads
+/// wrong and damage that reads wrong, with no error anywhere to name the cause. An unknown
+/// class is a client bug, and a client bug has to be loud.
+///
+/// The check is here and not left to [`PlayerSlot::set_class`] (which repeats it, because
+/// it is the encoder and must fail closed on its own) for one reason: a *returning*
+/// identity never reaches `set_class` — it keeps the class its seat already holds — so a
+/// client sending a class the program has never heard of would be answered `Ok` and go on
+/// rendering a weapon nobody else can see. Refusing at the wire is what makes the two
+/// paths agree.
+fn parse_join(data: &[u8]) -> Result<(u8, u8, u8, [u8; 32], [u8; 32]), ProgramError> {
     if data.len() != JOIN_DATA_LEN {
         return Err(ProgramError::InvalidInstructionData);
     }
-    // The Worker picks the seat — it is the thing holding the Privy identity map and the
-    // `seat_occupied` read that decided the arena had room. Honouring its choice is what
-    // makes the seat it reported to the browser the seat the browser actually gets;
-    // picking a different free slot here would hand the client a stale index.
-    let seat = data[0];
-    let skin_id = data[1];
+    let class = data[66];
+    if class >= N_CLASSES {
+        return Err(ProgramError::InvalidInstructionData);
+    }
     let mut session_pubkey = [0u8; 32];
     session_pubkey.copy_from_slice(&data[2..34]);
     let mut identity = [0u8; 32];
@@ -527,6 +545,25 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
     if session_pubkey == UNCLAIMED || identity == [0u8; 32] {
         return Err(ProgramError::InvalidInstructionData);
     }
+    // The Worker picks the seat — it is the thing holding the Privy identity map and the
+    // `seat_occupied` read that decided the arena had room. Honouring its choice is what
+    // makes the seat it reported to the browser the seat the browser actually gets;
+    // picking a different free slot here would hand the client a stale index.
+    Ok((data[0], data[1], class, session_pubkey, identity))
+}
+
+/// `join(seat, skin_id, session_pubkey, identity, class)` — accounts
+/// `[arena (w), players (w), treasury (signer)]`.
+///
+/// Claims the Worker's chosen seat for a browser session key, or rotates the key on the
+/// seat this identity already holds. Rejects an occupied seat and rejects a session key
+/// that is already seated elsewhere.
+pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
+    let [arena_ai, players_ai, treasury_ai, ..] = accounts else {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    };
+
+    let (seat, skin_id, class, session_pubkey, identity) = parse_join(data)?;
 
     validate_pair(program_id, arena_ai, players_ai, treasury_ai, true)?;
     let treasury_key = *treasury_ai.address();
@@ -571,6 +608,17 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
         // walks back into the fight where they left it, not to the lobby with a
         // cleared score. Writing the same key twice is therefore a no-op, which is
         // what makes `/session/init` safe to retry.
+        //
+        // `class` is deliberately NOT among them, where `skin_id` is. A skin is a render
+        // hint; a class is the cooldown and the damage `shoot` reads out of this byte, and
+        // `last_shot_tick` stays behind across a rotation. Rotating the class would let a
+        // player fire the archer's 70, re-join as the knight, and take the next shot on the
+        // knight's 800 ms — archer damage at knight cadence, ~87 DPS against the 50 both
+        // classes are built to. Nothing is stored twice by refusing: the client renders the
+        // class off this slot, so the seat's byte is what the player sees.
+        //
+        // ponytail: a class is therefore fixed for the incarnation. Switching costs a
+        // wipe; if switching mid-match is ever wanted, gate it on `last_shot_tick == 0`.
         slot.session_pubkey = session_pubkey;
         slot.skin_id = skin_id;
         return Ok(());
@@ -590,7 +638,7 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
     if slot.session_pubkey != UNCLAIMED {
         return Err(HeartrotError::SeatOccupied.into());
     }
-    claim_seat(slot, seat, skin_id, session_pubkey, identity);
+    claim_seat(slot, seat, skin_id, class, session_pubkey, identity)?;
 
     // The bitmask is the Worker's cheap read of occupancy; `session_pubkey` above is
     // the authority. They are written together so they cannot drift.
@@ -764,7 +812,7 @@ pub fn enter_gate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{PHASE_ROLLED, PHASE_ROLLING, PHASE_SETTLED, PHASE_SETTLING};
+    use crate::state::{CLASS_MASK, PHASE_ROLLED, PHASE_ROLLING, PHASE_SETTLED, PHASE_SETTLING};
 
     /// A seat index is re-used forever — twenty of them serve every incarnation of an arena
     /// — so a claim that leaves one field of the previous occupant behind is a scoreboard
@@ -783,12 +831,19 @@ mod tests {
         used.last_move_tick = 700;
         used.last_shot_tick = 699;
         used.last_move_seq = 4_000;
+        // The previous occupant's class AND their last aim, in the one byte that carries
+        // both. A claim that kept either would hand a new player the old one's weapon.
+        used.class_aim = 0xFF;
 
-        claim_seat(&mut used, 3, 7, [1u8; 32], [2u8; 32]);
+        claim_seat(&mut used, 3, 7, 1, [1u8; 32], [2u8; 32]).unwrap();
 
         assert_eq!(used.session_pubkey, [1u8; 32]);
         assert_eq!(used.identity, [2u8; 32]);
         assert_eq!(used.skin_id, 7);
+        assert_eq!(
+            used.class_aim, CLASS_MASK,
+            "the archer bit, and no inherited aim"
+        );
         assert_eq!(used.zone, ZONE_LOBBY);
         assert_eq!((used.hp, used.hp_max), (PLAYER_HP_MAX, PLAYER_HP_MAX));
         assert_eq!((used.x, used.y), lobby_spawn(3));
@@ -798,10 +853,87 @@ mod tests {
         // forgotten here fails this line — a per-field assertion would not, since it would
         // be the same forgotten list a second time.
         let mut fresh = PlayerSlot::zeroed();
-        claim_seat(&mut fresh, 3, 7, [1u8; 32], [2u8; 32]);
+        claim_seat(&mut fresh, 3, 7, 1, [1u8; 32], [2u8; 32]).unwrap();
         assert_eq!(bytemuck::bytes_of(&used), bytemuck::bytes_of(&fresh));
-        assert_eq!((used.deaths, used.damage_dealt, used.respawn_at_tick), (0, 0, 0));
+        assert_eq!(
+            (used.deaths, used.damage_dealt, used.respawn_at_tick),
+            (0, 0, 0)
+        );
         assert_eq!((used.last_move_tick, used.last_shot_tick), (0, 0));
+    }
+
+    /// Tag 4's wire block, both classes through it, and every byte-level refusal it owes.
+    ///
+    /// The class is the one argument a player picks that the chain then reads back as
+    /// *rules* rather than as decoration, so the two failure modes worth a test are the
+    /// ones with no error message: a class that was clamped instead of refused, and a
+    /// class that landed anywhere but bit 7 (where it would corrupt the aim `shoot::fire`
+    /// shares the byte with, and vice versa).
+    #[test]
+    fn a_join_carries_a_class_and_refuses_an_unknown_one() {
+        let mut data = [0u8; JOIN_DATA_LEN];
+        data[0] = 3;
+        data[1] = 2;
+        data[2..34].copy_from_slice(&[7u8; 32]);
+        data[34..66].copy_from_slice(&[9u8; 32]);
+
+        for class in 0..N_CLASSES {
+            data[66] = class;
+            let (seat, skin_id, parsed, key, identity) =
+                parse_join(&data).expect("a legal class is accepted");
+            assert_eq!((seat, skin_id, parsed), (3, 2, class));
+            assert_eq!((key, identity), ([7u8; 32], [9u8; 32]));
+
+            let mut slot = PlayerSlot::zeroed();
+            claim_seat(&mut slot, seat, skin_id, class, key, identity).unwrap();
+            assert_eq!(slot.class_aim >> 7, class, "the class must land in bit 7");
+            assert_eq!(
+                slot.class_aim & !CLASS_MASK,
+                0,
+                "a seat that has fired no shot has no aim to carry",
+            );
+        }
+
+        // Refused, never clamped — including the values that would alias onto a legal
+        // class if the byte were masked instead of range-checked.
+        for bad in [
+            N_CLASSES,
+            N_CLASSES + 1,
+            CLASS_MASK,
+            CLASS_MASK | 1,
+            u8::MAX,
+        ] {
+            data[66] = bad;
+            assert_eq!(
+                parse_join(&data).unwrap_err(),
+                ProgramError::InvalidInstructionData,
+                "class {bad} was accepted",
+            );
+        }
+
+        // A client built against the 66-byte block is refused on length, which is the
+        // whole reason `class` was appended rather than packed in beside `skin_id`: the
+        // skew is one clean error and not a misread key.
+        data[66] = 0;
+        assert!(
+            parse_join(&data[..JOIN_DATA_LEN - 1]).is_err(),
+            "the old block still parses"
+        );
+        assert!(parse_join(&[]).is_err());
+
+        // And both sentinels still refuse, from inside the extracted parser.
+        let mut zero_key = data;
+        zero_key[2..34].fill(0);
+        assert!(
+            parse_join(&zero_key).is_err(),
+            "the unclaimed sentinel was accepted as a key"
+        );
+        let mut zero_identity = data;
+        zero_identity[34..66].fill(0);
+        assert!(
+            parse_join(&zero_identity).is_err(),
+            "an unwritten identity was accepted"
+        );
     }
 
     /// The phase gate, over the whole 6-value phase byte and past the end of it.
@@ -812,11 +944,17 @@ mod tests {
     #[test]
     fn only_a_live_match_accepts_player_input() {
         assert!(assert_playable(PHASE_LOBBY).is_ok());
-        assert!(assert_playable(PHASE_FIGHTING).is_ok(), "late entry is the matchmaker");
+        assert!(
+            assert_playable(PHASE_FIGHTING).is_ok(),
+            "late entry is the matchmaker"
+        );
         // The muster is a walking phase: joining, moving and entering the gate all stay
         // legal while the countdown runs, or the twenty seconds the window exists for
         // would be twenty seconds nobody could use.
-        assert!(assert_playable(PHASE_MUSTERING).is_ok(), "the muster is walkable");
+        assert!(
+            assert_playable(PHASE_MUSTERING).is_ok(),
+            "the muster is walkable"
+        );
 
         for phase in [
             PHASE_SETTLING,
@@ -866,7 +1004,7 @@ mod tests {
         for seat in 0..MAX_SEATS as u8 {
             let key = [seat.wrapping_add(1); 32];
             let slot = players.slots.get_mut(seat as usize).expect("seat in range");
-            claim_seat(slot, seat, 0, key, key);
+            claim_seat(slot, seat, 0, 0, key, key).unwrap();
             slot.deaths = 3;
             slot.damage_dealt = 500;
         }
@@ -915,8 +1053,8 @@ mod tests {
         // exactly the property a drift guard must not have. If `crate::map::WALLS` ever
         // regresses to a bare border ring, this fires.
         assert!(
-            (1..MAP_TILES as i16 - 1).any(|ty| (1..MAP_TILES as i16 - 1)
-                .any(|tx| is_wall(tx * TILE, ty * TILE))),
+            (1..MAP_TILES as i16 - 1)
+                .any(|ty| (1..MAP_TILES as i16 - 1).any(|tx| is_wall(tx * TILE, ty * TILE))),
             "interior has no walls",
         );
         // The boss stands on floor. `map.rs` const-asserts the same thing at compile time
@@ -954,7 +1092,10 @@ mod tests {
         for (dir, (dx, dy)) in MOVE_STEP.iter().enumerate() {
             assert_eq!(octant(dx.signum() as i8, dy.signum() as i8), Ok(dir as u8));
             // Any vector in the same sign quadrant resolves to the same step.
-            let scaled = octant((*dx as i32 * 7).signum() as i8, (*dy as i32 * 7).signum() as i8);
+            let scaled = octant(
+                (*dx as i32 * 7).signum() as i8,
+                (*dy as i32 * 7).signum() as i8,
+            );
             assert_eq!(scaled, Ok(dir as u8), "magnitude changed the direction");
         }
         // The `atan2` mapping in app/src/input/controls.ts, spot-checked: north is 0
@@ -976,7 +1117,10 @@ mod tests {
         while gx <= GATE_MAX_X {
             let mut gy = GATE_MIN_Y;
             while gy <= GATE_MAX_Y {
-                assert!(on_gate(gx, gy) && !is_wall(gx, gy), "gate unit ({gx}, {gy}) is wall");
+                assert!(
+                    on_gate(gx, gy) && !is_wall(gx, gy),
+                    "gate unit ({gx}, {gy}) is wall"
+                );
                 gy += TILE;
             }
             gx += TILE;
@@ -1009,7 +1153,10 @@ mod tests {
             if !is_wall(x, PIT_TOP) {
                 columns += 1;
                 // Both northward steps — cardinal and diagonal — are refused...
-                assert!(!may_move_to(ZONE_ARENA, PIT_TOP, PIT_TOP - STEP), "north out of the pit");
+                assert!(
+                    !may_move_to(ZONE_ARENA, PIT_TOP, PIT_TOP - STEP),
+                    "north out of the pit"
+                );
                 assert!(
                     !may_move_to(ZONE_ARENA, PIT_TOP, PIT_TOP - STEP_DIAG),
                     "NE/NW out of the pit",
@@ -1029,10 +1176,22 @@ mod tests {
 
         // The two boxes meet at the rim with no gap and no overlap — the seam is what
         // makes `enter_gate`'s flip safe, since it crosses zones and y in one write.
-        assert!(!may_move_to(ZONE_ARENA, PIT_BOT, PIT_BOT + 1), "the pit floor leaks");
-        assert!(!may_move_to(ZONE_LOBBY, PIT_BOT + 1, PIT_BOT), "the lobby ceiling leaks");
-        assert!(may_move_to(ZONE_ARENA, PIT_TOP, PIT_BOT) && may_move_to(ZONE_ARENA, PIT_BOT, PIT_TOP));
-        assert_eq!(zone_box(ZONE_ARENA).1 + 1, zone_box(ZONE_LOBBY).0, "the boxes do not tile");
+        assert!(
+            !may_move_to(ZONE_ARENA, PIT_BOT, PIT_BOT + 1),
+            "the pit floor leaks"
+        );
+        assert!(
+            !may_move_to(ZONE_LOBBY, PIT_BOT + 1, PIT_BOT),
+            "the lobby ceiling leaks"
+        );
+        assert!(
+            may_move_to(ZONE_ARENA, PIT_TOP, PIT_BOT) && may_move_to(ZONE_ARENA, PIT_BOT, PIT_TOP)
+        );
+        assert_eq!(
+            zone_box(ZONE_ARENA).1 + 1,
+            zone_box(ZONE_LOBBY).0,
+            "the boxes do not tile"
+        );
         // ...and the gate the flip is triggered from is inside the lobby box, all of it.
         assert!(
             may_move_to(ZONE_LOBBY, GATE_MIN_Y, GATE_MIN_Y)
@@ -1113,11 +1272,17 @@ mod tests {
         // is loose on purpose — the exact number is a property of the generated map and
         // would have to be re-measured every time `arena.json` is redrawn — but a lobby
         // that has collapsed to a corridor is a different bug wearing this one's clothes.
-        assert!(count > 10_000, "only {count} positions reachable — the lobby is a closet");
+        assert!(
+            count > 10_000,
+            "only {count} positions reachable — the lobby is a closet"
+        );
 
         // The other half of the property, and the one a too-tight box breaks: the gate is
         // still there to be walked onto, from every seat's spawn.
-        assert!(gate_units > 0, "no unit of the gate block is reachable from a lobby spawn");
+        assert!(
+            gate_units > 0,
+            "no unit of the gate block is reachable from a lobby spawn"
+        );
         for seat in 0..MAX_SEATS as u8 {
             let (x, y) = lobby_spawn(seat);
             assert!(
@@ -1190,13 +1355,25 @@ mod tests {
     fn a_stranded_seat_is_never_frozen_by_the_box() {
         // Deep in the boss's air, where the BFS above says the old program allowed.
         let stranded = 16i16;
-        assert!(box_overshoot(ZONE_LOBBY, stranded) > 0, "the worst case really is stranded");
+        assert!(
+            box_overshoot(ZONE_LOBBY, stranded) > 0,
+            "the worst case really is stranded"
+        );
 
         // The box refuses NOTHING while stranded, in any direction. This is the property
         // that makes a freeze unrepresentable: whatever `is_wall` permits, the box permits
         // too, so the box can never be the reason a seat has no move.
-        for ny in [stranded, stranded + STEP, stranded + STEP_DIAG, stranded - STEP, stranded - STEP_DIAG] {
-            assert!(may_move_to(ZONE_LOBBY, stranded, ny), "the box must refuse nothing at {ny}");
+        for ny in [
+            stranded,
+            stranded + STEP,
+            stranded + STEP_DIAG,
+            stranded - STEP,
+            stranded - STEP_DIAG,
+        ] {
+            assert!(
+                may_move_to(ZONE_LOBBY, stranded, ny),
+                "the box must refuse nothing at {ny}"
+            );
         }
 
         // Walking home still terminates, and terminates inside the box rather than one
@@ -1235,9 +1412,7 @@ mod tests {
                 let mut x = 0i16;
                 while x <= MAP_MAX_XY {
                     if !is_wall(x, y) {
-                        let walls_allow = MOVE_STEP
-                            .iter()
-                            .any(|(dx, dy)| !is_wall(x + dx, y + dy));
+                        let walls_allow = MOVE_STEP.iter().any(|(dx, dy)| !is_wall(x + dx, y + dy));
                         let both_allow = MOVE_STEP.iter().any(|(dx, dy)| {
                             !is_wall(x + dx, y + dy) && may_move_to(zone, y, y + dy)
                         });
@@ -1262,15 +1437,21 @@ mod tests {
     #[test]
     fn the_gate_is_one_way_and_only_from_the_gate() {
         let mut slot = PlayerSlot::zeroed();
-        claim_seat(&mut slot, 0, 0, [1u8; 32], [2u8; 32]);
+        claim_seat(&mut slot, 0, 0, 0, [1u8; 32], [2u8; 32]).unwrap();
 
         // Walking up to it is not standing on it. The client retries this instruction the
         // whole way in, so the refusal has to be its own code or "not there yet" is
         // indistinguishable from "already through".
-        assert_eq!(gate_refusal(&slot).unwrap_err(), HeartrotError::NotOnGate.into());
+        assert_eq!(
+            gate_refusal(&slot).unwrap_err(),
+            HeartrotError::NotOnGate.into()
+        );
         slot.x = GATE_MIN_X;
         slot.y = GATE_MAX_Y;
-        assert!(gate_refusal(&slot).is_ok(), "a lobby seat on the gate may pass");
+        assert!(
+            gate_refusal(&slot).is_ok(),
+            "a lobby seat on the gate may pass"
+        );
 
         // Every unit just outside the block is refused, on all four sides.
         for (x, y) in [
@@ -1282,7 +1463,10 @@ mod tests {
             let mut off = slot;
             off.x = x;
             off.y = y;
-            assert_eq!(gate_refusal(&off).unwrap_err(), HeartrotError::NotOnGate.into());
+            assert_eq!(
+                gate_refusal(&off).unwrap_err(),
+                HeartrotError::NotOnGate.into()
+            );
         }
 
         // One way. This refusal is simultaneously the `alive_count` bound and the whole
@@ -1290,7 +1474,10 @@ mod tests {
         // even standing on the tile it succeeded from.
         let mut through = slot;
         through.zone = ZONE_ARENA;
-        assert_eq!(gate_refusal(&through).unwrap_err(), HeartrotError::WrongZone.into());
+        assert_eq!(
+            gate_refusal(&through).unwrap_err(),
+            HeartrotError::WrongZone.into()
+        );
         through.x = GATE_MIN_X;
         through.y = GATE_MIN_Y;
         assert_eq!(

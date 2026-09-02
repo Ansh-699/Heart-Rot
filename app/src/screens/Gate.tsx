@@ -10,9 +10,14 @@
  *
  * But the muster window straddles the split. `docs/architecture/08-gate.md` §5.3: the knight
  * who opened the window is already on the arena screen while everyone still walking watches
- * the same countdown from the lobby. So the countdown, the roster and the auto-arm live
- * here, in one module both screens import — `screens/Lobby.tsx` renders all three, and
- * `ui/Hud.tsx` should render `<Muster />` where its deleted "Wake it up" button was.
+ * the same countdown from the lobby. So the countdown and the approach prompt live here,
+ * in one module and two callers: `ui/Hud.tsx` renders `<Muster />` in its top-centre
+ * cluster, which is on screen on **both** sides of the gate, and `screens/Lobby.tsx`
+ * renders `<GatePrompt />` as the one line of instruction anchored bottom-centre over the
+ * waiting room.
+ *
+ * The twenty-row roster and the seat counts that used to live here went with the 320 px
+ * panel (`17-fullscreen-spec.md` §9.1); `Hud`'s top-left cluster is the one roster now.
  *
  * Three rules from the spec that are load-bearing and easy to undo by accident:
  *
@@ -38,7 +43,6 @@ import {
   GATE_MIN_X,
   GATE_MIN_Y,
   MAP_TILE,
-  MAX_SEATS,
   MUSTER_TICKS,
   PHASE_LOBBY,
   PHASE_MUSTERING,
@@ -48,7 +52,6 @@ import {
 } from '@heartrot/client';
 
 import { mySeatSlot, useSelect, type State } from '../state/store';
-import { SKIN_COLORS } from './CharacterSelect';
 
 // ---------------------------------------------------------------------------
 // Selectors — all primitives, per rule 2 above
@@ -189,84 +192,14 @@ export function Muster() {
 
 // ---------------------------------------------------------------------------
 // Who else is here
+//
+// Nowhere, any more. The twenty-row `<Roster>`, the `Seated / In the pit` counts and the
+// skin dot that went with them were the 320 px panel's, and the panel is deleted
+// (`17-fullscreen-spec.md` §9.1). `ui/Hud.tsx`'s top-left cluster carries the same fact as
+// twenty dots — same `SKIN_COLORS` entry, same `zone` test, a screen-reader label per seat
+// — in a cluster that is on screen on BOTH sides of the gate, which the roster never was.
+// One list, one place; a second copy here would be the drift this file's header warns about.
 // ---------------------------------------------------------------------------
-
-/**
- * Twenty rows, always — an empty seat is information during a muster, because it is a seat
- * somebody can still walk into. `slots` is the decoded array straight off the last
- * notification, so this re-renders at notification rate and not per frame.
- */
-export function Roster() {
-  const players = useSelect((s) => s.players);
-  const seat = useSelect((s) => s.match?.seat ?? -1);
-
-  if (!players) return <p className="fine">Waiting for the first roster update…</p>;
-
-  return (
-    <ol className="roster">
-      {players.slots.map((slot) => {
-        const inPit = slot.occupied && slot.zone === ZONE_ARENA;
-        return (
-          <li
-            key={slot.seat}
-            className={slot.occupied ? (inPit ? 'in-gate' : '') : 'empty'}
-            aria-current={slot.seat === seat ? 'true' : undefined}
-          >
-            <span className="tabular">{String(slot.seat).padStart(2, '0')}</span>
-            <span>
-              {slot.occupied && <Dot skinId={slot.skinId} />}
-              {slot.occupied ? (slot.seat === seat ? 'you' : 'knight') : '—'}
-            </span>
-            <span className="fine">{inPit ? 'pit' : ''}</span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-/** How many are seated and how many are through, as one block both screens can show. */
-export function MusterCounts() {
-  const seated = useSelect((s) => (s.players?.slots ?? []).filter((slot) => slot.occupied).length);
-  const raiders = useSelect(raiderCount);
-
-  return (
-    <dl className="stats">
-      <div>
-        <dt>Seated</dt>
-        <dd className="tabular">
-          {seated} / {MAX_SEATS}
-        </dd>
-      </div>
-      <div>
-        <dt>In the pit</dt>
-        <dd className="tabular">{raiders}</dd>
-      </div>
-    </dl>
-  );
-}
-
-/**
- * The seat's colour, the same one the renderer fills its knight with, so a name in the list
- * and a figure on the floor are matchable at a glance. An out-of-range `skinId` is drawn
- * grey rather than dropped: the program never range-checks the byte it stores, so a client
- * one release behind the skin table must still render the roster.
- */
-function Dot({ skinId }: { skinId: number }) {
-  return (
-    <span
-      role="presentation"
-      style={{
-        display: 'inline-block',
-        width: 8,
-        height: 8,
-        marginRight: 6,
-        borderRadius: '50%',
-        background: SKIN_COLORS[skinId] ?? 'var(--dim)',
-      }}
-    />
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Self-check

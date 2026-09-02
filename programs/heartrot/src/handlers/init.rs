@@ -34,6 +34,7 @@
 //!    carry boss HP. Incarnation scaling is applied here, on chain, because it is a rule
 //!    rather than a tuning knob.
 
+use pinocchio::sysvars::{rent::Rent, Sysvar};
 use pinocchio::{
     address::address_eq,
     cpi::{Seed, Signer},
@@ -41,7 +42,6 @@ use pinocchio::{
     AccountView, Address, ProgramResult,
 };
 use pinocchio_system::instructions::CreateAccount;
-use pinocchio::sysvars::{rent::Rent, Sysvar};
 
 use crate::error::HeartrotError;
 use crate::guards::{assert_owned_by, assert_pda, assert_signer, assert_writable};
@@ -180,7 +180,6 @@ const fn decode_base58_address(text: &str) -> [u8; 32] {
     }
     out
 }
-
 
 // The enrage timeout lives in `state.rs` as `ENRAGE_TICKS` and is stamped by
 // `Arena::begin_fight()` at the MUSTERING → FIGHTING flip, not here. It moved because it
@@ -455,7 +454,11 @@ fn scaled_parts(incarnation: u16) -> [u16; N_PARTS] {
 /// an index panic, one byte long is version skew, and neither is worth accepting quietly.
 /// `crank_authority` must be [`TREASURY`] — [`HeartrotError::NotTreasury`] otherwise — and
 /// `arena_id` must be non-zero.
-pub fn init_arena(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
+pub fn init_arena(
+    program_id: &Address,
+    accounts: &mut [AccountView],
+    data: &[u8],
+) -> ProgramResult {
     let [payer, arena, boss, players, system_program, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
@@ -736,7 +739,11 @@ pub fn next_incarnation(program_id: &Address, accounts: &mut [AccountView]) -> P
         let state = load::<Arena>(&arena_data)?;
         (state.arena_id, state.incarnation)
     };
-    assert_pda(arena, &[SEED_ARENA, &arena_id.to_le_bytes()[..]], program_id)?;
+    assert_pda(
+        arena,
+        &[SEED_ARENA, &arena_id.to_le_bytes()[..]],
+        program_id,
+    )?;
 
     // Only trustworthy now. `Boss` and `Players` hang off this key, which is what ties
     // all three to the same match — ownership alone would accept another raid's boss.
@@ -845,7 +852,10 @@ mod tests {
         );
         // The all-'1' address is the System Program, and it is also the unset-treasury
         // placeholder the BPF-target assertion refuses.
-        assert_eq!(decode_base58_address("11111111111111111111111111111111"), [0u8; 32]);
+        assert_eq!(
+            decode_base58_address("11111111111111111111111111111111"),
+            [0u8; 32]
+        );
         // A 32-byte value with a high leading byte — the case that overflows if the carry
         // is dropped, and the one a naive base-256 shift gets wrong.
         assert_eq!(
