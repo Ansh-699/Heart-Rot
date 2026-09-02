@@ -21,7 +21,11 @@
 
 import { strict as assert } from 'node:assert';
 
-import { decodeTransactionError, HEARTROT_ERROR_HIGHEST } from '../../packages/client/src/index';
+import {
+  decodeTransactionError,
+  HEARTROT_ERROR_HIGHEST,
+  refusalOf,
+} from '../../packages/client/src/index';
 
 // The ER: every member a JSON string.
 const er = decodeTransactionError({ InstructionError: ['0', { Custom: '8' }] });
@@ -55,5 +59,18 @@ assert.match(
   decodeTransactionError({ InstructionError: [0, { Custom: HEARTROT_ERROR_HIGHEST + 1 }] }).message,
   /not a heartrot code/,
 );
+
+// `refusalOf`: the reader a `catch` uses, over BOTH shapes a throw reaches it in.
+//
+// The second one is the defect it exists for. `confirmSignature` throws
+// `new Error(…, { cause: decoded })`, and re-decoding that decode used to return
+// `{ message: <the JSON of the decode> }` with **`code` gone** — so `App.tsx`'s
+// `if (decoded.code === undefined) return` swallowed every confirm-time refusal, which is
+// the entire reason that confirm is on the wire. Asserted here rather than in a comment.
+const raw = decodeTransactionError({ InstructionError: ['0', { Custom: '8' }] });
+assert.equal(refusalOf(new Error(`transaction … failed: ${raw.message}`, { cause: raw })).code, 8);
+assert.equal(refusalOf({ InstructionError: [0, { Custom: 14 }] }).code, 14);
+// A confirm timeout: an `Error` with no `cause`, no code, and nothing to report.
+assert.equal(refusalOf(new Error('transaction … not confirmed within the timeout')).code, undefined);
 
 console.log('sp_error_decode: ok');

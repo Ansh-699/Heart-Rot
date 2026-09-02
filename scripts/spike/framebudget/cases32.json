@@ -1,0 +1,272 @@
+[
+ {
+  "name": "N-arena-k1-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 1,
+   "movesPerSec": 16
+  }
+ },
+ {
+  "name": "N-arena-k5-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 5,
+   "movesPerSec": 80
+  }
+ },
+ {
+  "name": "N-arena-k10-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 10,
+   "movesPerSec": 160
+  }
+ },
+ {
+  "name": "N-arena-k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320
+  }
+ },
+ {
+  "name": "N-arena-k1-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 1,
+   "movesPerSec": 16
+  }
+ },
+ {
+  "name": "N-arena-k5-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 5,
+   "movesPerSec": 80
+  }
+ },
+ {
+  "name": "N-arena-k10-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 10,
+   "movesPerSec": 160
+  }
+ },
+ {
+  "name": "N-arena-k20-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320
+  }
+ },
+ {
+  "name": "N-lobby-k1-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "lobby",
+   "knights": 1,
+   "movesPerSec": 16
+  }
+ },
+ {
+  "name": "N-lobby-k5-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "lobby",
+   "knights": 5,
+   "movesPerSec": 80
+  }
+ },
+ {
+  "name": "N-lobby-k10-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "lobby",
+   "knights": 10,
+   "movesPerSec": 160
+  }
+ },
+ {
+  "name": "N-lobby-k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "lobby",
+   "knights": 20,
+   "movesPerSec": 320
+  }
+ },
+ {
+  "name": "N-lobby-k20-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "lobby",
+   "knights": 20,
+   "movesPerSec": 320
+  }
+ },
+ {
+  "name": "N-passage-k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 600,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "passage",
+   "knights": 20,
+   "movesPerSec": 320
+  }
+ },
+ {
+  "name": "N-arena-k20-cpu6-2560",
+  "cpu": 6,
+  "viewport": {
+   "width": 2560,
+   "height": 1440
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320
+  }
+ }
+]

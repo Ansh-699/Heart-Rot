@@ -468,6 +468,39 @@ of the floor beside them — invisible. **The floor's median level, not the ring
 what makes the concentric structure visible**, and that is the argument that picks the row in
 §5.4 rather than the darkest one that passes contrast.
 
+#### Restated for the build that ships — read this row, not the one above
+
+**The `4.9 .. 13.1` L8 band above is measured at `g = 0.46` and does not describe this
+build.** `GAIN` is 0.92, `MORTAR_ALPHA` went 0.60 → 0.92, the `18-open-arena` bitboard gave
+the pit a different `RING_N` and `k` set, and `arena.py`'s model of the course was itself
+wrong until this run (it drew the lit crest *outside* the joint on the same ellipse; the file
+draws it on a concentric ellipse `KERB = 2.5` units inside). An **absolute** L8 delta is not
+portable across any of those. **The scale-free floor:trough ratio is**, and it is what a
+future run should gate on:
+
+```
+C0 shipped, pit 384..655, RING_N 5, k = 0.20 0.40 0.60 0.80 1.00
+  ring     mortar L8   floor out   floor:trough      same ring at g 0.46
+  k=0.20      32.3        42.0        2.39:1              2.49:1
+  k=0.40      26.6        35.1        2.41:1              2.52:1
+  k=0.60      39.9        50.7        1.84:1  (medallion contaminated, as above)
+  k=0.80      12.3        25.0        4.05:1              3.38:1
+  k=1.00       —           —           —      (not measurable — see below)
+```
+
+Doubling the gain moved every absolute level and left the ratio inside ±0.1 on the two clean
+courses: that is the whole argument for gating on the ratio. Re-run with
+`docs/art/arena.py`'s `composite(pit, 0.70, 0.92)` and this same +x probe line.
+
+**`k=1.00` cannot be measured by the radial method at all, and that is geometry, not a
+miss.** `RING_K`'s outermost course is exactly the ellipse inscribed in the pit rectangle, so
+it touches the pit boundary at all four vertices and no radial ray through it lies entirely
+inside the pit — the "floor 10 units out" sample lands on the rim wall. It is drawn and
+clipped, and the pit's real kerb is `Arena.tsx`'s `MAP_RIM_PATH` immediately outside it. If
+that course ever has to be *provably* visible, `RING_K` has to stop short of 1 (e.g.
+`(i + 1) / (RING_N + 0.5)`), which changes the derived course count and needs this whole
+table re-run.
+
 Stepping the pool gradient at the ring radii instead of painting mortar — same light, banded —
 was measured as an alternative and fails on the outer rings whatever the wash:
 

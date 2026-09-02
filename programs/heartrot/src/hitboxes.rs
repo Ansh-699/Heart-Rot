@@ -11,6 +11,14 @@
 //! constant here). `Boss.x`/`Boss.y` is the centre of that scaled canvas, so the two
 //! spaces differ by `local = sprite * 3 + (-345, -405)` and nothing else -- no
 //! flip, no shear. See the tool's docstring for the derivation.
+//!
+//! **Why the `rustfmt::skip`s below.** This file is emitted, and `--check` compares it
+//! byte for byte against a fresh emission. Let rustfmt reflow it and a perfectly synced
+//! tree reports STALE -- 94 lines of pure reformatting with not one number changed. A
+//! check that cries wolf on every run is a check everyone learns to ignore, and then a
+//! real drift is ignored too. The generator owns the formatting of its own output.
+//! (A single `#![rustfmt::skip]` on the file would say this once, but an inner attribute
+//! outside the crate root is `custom_inner_attributes` and does not compile on stable.)
 
 /// A boss-local axis-aligned box, in arena units relative to `Boss.x` / `Boss.y`.
 #[derive(Clone, Copy)]
@@ -35,61 +43,17 @@ impl Rect {
 /// Every box is at least `TILE` (16) units on both axes -- the generator refuses to
 /// emit one that is not, because the ray samples one point per tile and would step
 /// straight over anything thinner.
+#[rustfmt::skip]
 pub const PART_HITBOXES: [Rect; crate::state::N_PARTS] = [
-    Rect {
-        x: -48,
-        y: -321,
-        w: 63,
-        h: 108,
-    }, // 0 thorn0
-    Rect {
-        x: 195,
-        y: -294,
-        w: 144,
-        h: 195,
-    }, // 1 thorn1
-    Rect {
-        x: -90,
-        y: -111,
-        w: 60,
-        h: 69,
-    }, // 2 thorn2
-    Rect {
-        x: 264,
-        y: -24,
-        w: 72,
-        h: 51,
-    }, // 3 thorn3
-    Rect {
-        x: 21,
-        y: -384,
-        w: 201,
-        h: 177,
-    }, // 4 crown
-    Rect {
-        x: -141,
-        y: -258,
-        w: 150,
-        h: 159,
-    }, // 5 wolf_l
-    Rect {
-        x: 171,
-        y: -249,
-        w: 138,
-        h: 156,
-    }, // 6 beast_r
-    Rect {
-        x: -342,
-        y: -99,
-        w: 333,
-        h: 411,
-    }, // 7 mace
-    Rect {
-        x: 165,
-        y: -114,
-        w: 156,
-        h: 330,
-    }, // 8 claws
+    Rect { x:  -48, y: -321, w:  63, h: 108 }, // 0 thorn0
+    Rect { x:  195, y: -294, w: 144, h: 195 }, // 1 thorn1
+    Rect { x:  -90, y: -111, w:  60, h:  69 }, // 2 thorn2
+    Rect { x:  264, y:  -24, w:  72, h:  51 }, // 3 thorn3
+    Rect { x:   21, y: -384, w: 201, h: 177 }, // 4 crown
+    Rect { x: -141, y: -258, w: 150, h: 159 }, // 5 wolf_l
+    Rect { x:  171, y: -249, w: 138, h: 156 }, // 6 beast_r
+    Rect { x: -342, y:  -99, w: 333, h: 411 }, // 7 mace
+    Rect { x:  165, y: -114, w: 156, h: 330 }, // 8 claws
 ];
 
 /// The vent: centre offset from `Boss.x`/`Boss.y` and a *squared* radius, compared
@@ -127,27 +91,12 @@ pub const N_MUZZLES: usize = 4;
 /// the four volleys used to spawn in mid-air beside the creature, and thorn1's spawned
 /// inside `beast_r`'s box. That is invisible while the boss is a circle and glaring the
 /// moment the art is on screen.
+#[rustfmt::skip]
 pub const MUZZLES: [Muzzle; N_MUZZLES] = [
-    Muzzle {
-        part: 0,
-        x: -18,
-        y: -273,
-    }, // thorn0
-    Muzzle {
-        part: 1,
-        x: 270,
-        y: -216,
-    }, // thorn1
-    Muzzle {
-        part: 2,
-        x: -63,
-        y: -75,
-    }, // thorn2
-    Muzzle {
-        part: 3,
-        x: 288,
-        y: 0,
-    }, // thorn3
+    Muzzle { part: 0, x:  -18, y: -273 }, // thorn0
+    Muzzle { part: 1, x:  270, y: -216 }, // thorn1
+    Muzzle { part: 2, x:  -63, y:  -75 }, // thorn2
+    Muzzle { part: 3, x:  288, y:    0 }, // thorn3
 ];
 
 const _: () = {
@@ -167,6 +116,7 @@ const _: () = {
 };
 
 #[cfg(test)]
+#[rustfmt::skip]
 mod tests {
     use super::*;
     use crate::map::TILE;
@@ -187,12 +137,7 @@ mod tests {
         for r in PART_HITBOXES.iter() {
             let (x0, y0) = (u.x.min(r.x), u.y.min(r.y));
             let (x1, y1) = ((u.x + u.w).max(r.x + r.w), (u.y + u.h).max(r.y + r.h));
-            u = Rect {
-                x: x0,
-                y: y0,
-                w: x1 - x0,
-                h: y1 - y0,
-            };
+            u = Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
         }
         u
     }
@@ -205,12 +150,7 @@ mod tests {
         assert_eq!(PART_HITBOXES.len(), N_PARTS);
         assert_eq!(MUZZLES.len(), N_MUZZLES);
         for m in MUZZLES.iter() {
-            assert!(
-                m.part < N_PARTS,
-                "muzzle names part {} of {}",
-                m.part,
-                N_PARTS
-            );
+            assert!(m.part < N_PARTS, "muzzle names part {} of {}", m.part, N_PARTS);
             assert!(
                 PART_HITBOXES[m.part].contains(m.x, m.y),
                 "muzzle for part {} is outside its own box",
@@ -297,14 +237,8 @@ mod tests {
             r += 1;
         }
         let u = parts_union();
-        assert!(
-            CORE_X - r >= u.x && CORE_X + r <= u.x + u.w,
-            "the vent hangs off the boss"
-        );
-        assert!(
-            CORE_Y - r >= u.y && CORE_Y + r <= u.y + u.h,
-            "the vent hangs off the boss"
-        );
+        assert!(CORE_X - r >= u.x && CORE_X + r <= u.x + u.w, "the vent hangs off the boss");
+        assert!(CORE_Y - r >= u.y && CORE_Y + r <= u.y + u.h, "the vent hangs off the boss");
         // High on the body, as the reference composition needs.
         assert!(CORE_Y < u.y + u.h / 2, "the vent is in the lower body");
         // NOT centred on the union, and deliberately not asserted to be: the mace arm

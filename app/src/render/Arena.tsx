@@ -5,8 +5,10 @@
  * ONE ROOM IS ON SCREEN AND IT FILLS THE STAGE (spec 17 §1). `./viewport`'s `useViewport`
  * owns the `viewBox` attribute and is its only writer; `#camera` rests at IDENTITY in both
  * rooms and is written in exactly one place — `./Passage`, during the gate move. Nothing
- * pans, nothing follows anybody, nothing is cropped. The follow camera, its dead zone and
- * its fourteen constants are deleted rather than disabled: they were the reported bug (a
+ * pans, nothing follows anybody, and nothing a player can stand on is ever cropped: the
+ * fit covers the stage with the room and gives up only the fiction outside `viewport.ts`'s
+ * `KEEP` (the tower shaft, the void under the bottom wall). The follow camera, its dead
+ * zone and its fourteen constants are deleted rather than disabled: they were the reported bug (a
  * lobby that panned to half a doorway on the first notification, spec §1.6), and their
  * self-checks moved to `./viewport` where the framing now lives.
  *
@@ -33,7 +35,7 @@
  *               and props (rows 1-6). Room A or room B, never both.
  *   boss        rows 7-9, room B only, clipped at the rim.
  *   telegraphs  row 10, over the boss and UNDER the knights.
- *   bullets     row 11, boss ordnance, capped at 32 drawn.
+ *   bullets     row 11, boss ordnance, capped at 32 drawn, ROOM B ONLY.
  *   knights     row 12. THE PLAYER IS ON TOP: nothing in the scene is drawn over a body.
  *   arrows      row 13, above the knights — an arrow under twenty bodies is the "I cannot
  *               see anything" report.
@@ -65,6 +67,12 @@
  *      transform on `#camera` and why the fit hook writes the attribute only on a resize or
  *      a room change.
  *   4. The 32-bullet visible cap: 11.46/16.96 ms → 9.38/14.92 at 20 knights and 6x throttle.
+ *   5. `Knight` is memoised on the seat's own VALUES (`Knight.tsx`'s `sameSeat`), so one
+ *      accepted `move` — one `Players` write, ~322 of them a second at twenty seats —
+ *      re-renders the one seat it moved and not all twenty. This file still renders per
+ *      notification and must: it owns the draw order, the bullet ranking and the
+ *      telegraphs. What it must NOT do is hand a seat a value that churns without being
+ *      drawn — `predictedSlot` below is the one place that could, and does not.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -197,6 +205,9 @@ function bulletRisk(b: Bullet, slots: readonly PlayerSlot[]): number {
  *
  * Pure, so the cap and the ranking are both checkable without a renderer.
  */
+/** Room A's bullet list. A module constant, so it is not a fresh array every render. */
+const NO_BULLETS: readonly number[] = [];
+
 function visibleBullets(bullets: readonly Bullet[], slots: readonly PlayerSlot[]): number[] {
   const live: number[] = [];
   for (let slot = 0; slot < bullets.length; slot++) {
@@ -335,8 +346,29 @@ const BOSS_HIT_BOT = Math.max(
 // Telegraph geometry
 // ---------------------------------------------------------------------------
 
+/**
+ * The seat `<g>`'s only style, hoisted so the twenty of them share one object.
+ *
+ * `will-change` measured as a no-op on a real GPU and 36-85x on software raster: one free
+ * line for the devices nobody tested. Module scope rather than an inline literal because
+ * this file renders at notification rate and twenty fresh objects a render is twenty style
+ * diffs React can otherwise skip on reference alone.
+ */
+const SEAT_STYLE = { willChange: 'transform' } as const;
+
 /** The lane a slam claims, floor to ceiling of the raider box. */
 const LANE_H = PIT_BOT - PIT_TOP + 1;
+
+/**
+ * First unit of the rim band — the two tile rows the rim occluder (row 14) is clipped to.
+ *
+ * Named because it was typed twice: once in the clip rect and once, as the literal 576, in
+ * the check that was supposed to guard it. The literal only ever held while `PIT_BOT` was
+ * 607, so the guard stopped being a guard the moment spec 18 moved the pit's last row, and
+ * it would have thrown in DEV and passed silently in a production build — the failure mode
+ * this file spends its comments on.
+ */
+const RIM_TOP = PIT_BOT + 1 - 2 * MAP_TILE;
 
 /**
  * The volley currently being wound up: which live muzzle fires at whom, and how long is
@@ -706,10 +738,16 @@ export function Arena({
   );
 
   // Which pool slots get a node, decided once per render rather than in the JSX: `Shot`
-  // needs the COUNT to know what is left of the 32, and boss ordnance ranks first. Rooms
-  // do not enter it — the pool is empty outside a fight, and `arena.bullets` is the chain's
-  // answer either way.
-  const shownBullets = visibleBullets(arena.bullets, players.slots);
+  // needs the COUNT to know what is left of the 32, and boss ordnance ranks first.
+  //
+  // Room B only, and gated HERE rather than on row 11's `<g>` so that the count `Shot`
+  // budgets against is the count actually drawn — one fact, one place. Rows 7, 10 and the
+  // volley telegraph were already gated; row 11 was not, and spec §7.1's own table has a
+  // reachable `FIGHTING / ZONE_LOBBY` state (a seat that never crossed the gate) in which
+  // the boss's ordnance was painted across the waiting room. Same R3 violation a pit arrow
+  // drawn in room A would be, and it is why room A carried a bullet layer it had no
+  // business paying for (`docs/perf/frame-budget-17.md` §5.2).
+  const shownBullets = shown === 'arena' ? visibleBullets(arena.bullets, players.slots) : NO_BULLETS;
 
   // One cached slot for the predicted seat, see `predictedSlot`. A ref and not a memo: it
   // is keyed on a mutable position no dependency array can watch.
@@ -742,7 +780,7 @@ export function Arena({
       >
         <defs>
           <clipPath id="heartrot-rim-clip">
-            <rect x={0} y={PIT_BOT + 1 - 2 * MAP_TILE} width={ARENA_UNITS} height={2 * MAP_TILE} />
+            <rect x={0} y={RIM_TOP} width={ARENA_UNITS} height={2 * MAP_TILE} />
           </clipPath>
           {/* The boss ends where the boss ENDS. At SCALE=3 the sprite is 810 units tall and
               reaches world y 805 — 200 units below the pit — so the legs and the lower claw
@@ -923,13 +961,8 @@ export function Arena({
                 // The frame loop (local seat) or `useSeatInterpolation` (everyone else) owns
                 // this node's transform outright — nothing else may put a transform
                 // attribute on it, which is why `Knight` renders the CHILDREN of this node
-                // and never the node. `will-change` measured as a no-op on a real GPU and
-                // 36–85× on software raster: one free line for the devices nobody tested.
-                <g
-                  key={slot.seat}
-                  ref={predicted ? selfRef : seats.ref(slot.seat)}
-                  style={{ willChange: 'transform' }}
-                >
+                // and never the node. The style is {@link SEAT_STYLE}, shared by all twenty.
+                <g key={slot.seat} ref={predicted ? selfRef : seats.ref(slot.seat)} style={SEAT_STYLE}>
                   <Knight slot={posed} tick={arena.tick} mine={mine} reduced={reduced} />
                 </g>
               );
@@ -1150,9 +1183,12 @@ if (import.meta.env.DEV) {
   ok(roomSeats(both, 'lobby', inPit.seat).length === 2, 'the hold adds one seat and removes none');
   ok(seatShown(inLobby, 'lobby') && !seatShown(inLobby, 'arena'), 'R3 answers from the room on screen');
 
-  // The rim occluder must cover the rim rows and nothing the raider box needs to see: a
-  // clip one tile out paints a wall over the bottom rows of the pit the knights stand in.
-  ok(PIT_BOT + 1 - 2 * MAP_TILE === 576, 'the rim clip starts at the first rim row');
+  // The rim occluder must sit ON the rim and nowhere else: a clip one tile out paints a
+  // wall over rows of the pit the knights stand in. Stated as the RELATIONSHIP, because the
+  // literal that used to stand here (`=== 576`) was only ever true at one value of
+  // `PIT_BOT` and said nothing at all about the rect it was guarding.
+  ok(RIM_TOP + 2 * MAP_TILE === PIT_BOT + 1, 'the rim clip ends on the pit rim');
+  ok(RIM_TOP >= PIT_TOP, 'the rim clip stays inside the raider box');
 
   // THE DRAWN RIG AND THE HITTABLE RIG ARE THE SAME RIG. `#heartrot-boss-clip` cuts the
   // art; `PART_HITBOXES` and `CORE` are what `shoot.rs` and `raycastShot` resolve against.

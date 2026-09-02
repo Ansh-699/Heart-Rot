@@ -46,6 +46,17 @@ const ALL = [
     css: '.hud,.dev,.hr-hud,[class*="hud"],[class*="dev"],.errorbar{display:none!important}' },
   { name: 'plate-lobby-nohud-empty', room: 'lobby', vw: 1920, vh: 1080, opts: { seats: 1 },
     css: '.hud,.dev,.hr-hud,[class*="hud"],[class*="dev"],.errorbar{display:none!important}' },
+  // The fullscreen fit (spec 17) at the three stage shapes viewport.ts's bleed table covers.
+  // No HUD and one seat, so the fit and the paint are judged on their own; the -hud pair
+  // is the same frame with the shipped HUD over it.
+  ...[[1920, 1080], [1440, 900], [1024, 768]].flatMap(([vw, vh]) => [
+    { name: `fullscreen-lobby-${vw}x${vh}`, room: 'lobby', vw, vh, opts: { seats: 1 },
+      css: '.hud,.dev,.hr-hud,[class*="hud"],[class*="dev"],.errorbar{display:none!important}' },
+    { name: `fullscreen-arena-${vw}x${vh}`, room: 'arena', vw, vh, opts: { seats: 1, bullets: 0 },
+      css: '.hud,.dev,.hr-hud,[class*="hud"],[class*="dev"],.errorbar{display:none!important}' },
+  ]),
+  { name: 'fullscreen-lobby-1920x1080-hud', room: 'lobby', vw: 1920, vh: 1080, opts: { seats: 20 } },
+  { name: 'fullscreen-arena-1920x1080-hud', room: 'arena', vw: 1920, vh: 1080, opts: { seats: 20 } },
 ];
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const CASES = ONLY.length ? ALL.filter((c) => ONLY.includes(c.name)) : ALL;

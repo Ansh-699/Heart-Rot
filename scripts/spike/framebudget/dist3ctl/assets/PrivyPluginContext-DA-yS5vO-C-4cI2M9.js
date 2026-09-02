@@ -1,0 +1,1 @@
+import{o as e}from"./rolldown-runtime-C_s2cVnS.js";import{n as t,t as n}from"./jsx-runtime-CMaQg7dW.js";import{rn as r}from"./ModalFooter-FDXOM0ZR-dLPfJ137.js";n();var i=e(t(),1),a=r((()=>({}))),o=e=>a.getState()[e],s=()=>(0,i.useCallback)((e=>o(e)),[]);export{o as n,s as t};

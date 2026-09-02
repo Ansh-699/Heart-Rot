@@ -7,9 +7,15 @@
  * props. It is the room-B half of `17-fullscreen-spec.md` §2.2 and the implementation of
  * `docs/art/boss-arena.md`: a circular tiered floor of concentric stone courses with
  * cardinal medallions, the boss's dais at top centre, steps at the doorway the gate lets
- * players in through, twelve cyan brazier flames, and a dark backdrop of pillars, chains,
- * purple banners and demon statues above the pit rim. Cold teal light on blue-grey stone;
- * the creature (drawn by `Boss.tsx`, not here) is the only bright thing in the frame.
+ * players in through, cyan brazier flames around the perimeter, and a dark backdrop of
+ * pillars, chains, purple banners and demon statues above the pit rim. Cold teal light on
+ * blue-grey stone; the creature (drawn by `Boss.tsx`, not here) is the only bright thing.
+ *
+ * `docs/art/arena.md` is the delta that made every one of its dimensions a function of the
+ * generated `PIT_TOP`/`PIT_BOT`/`MAP_GRID`: the course count, the medallion ring, the flame
+ * ring, the backdrop's heights, the pool, the ceiling and the rim band were all world
+ * coordinates fitted to a 224-unit pit band, and the pit is 272 units tall now. Nothing in
+ * this file may be a typed world coordinate again — a size or a fraction, never a position.
  *
  * Mount it as the FIRST child of `#camera` in place of `Scene.tsx`'s `SCENE` whenever the
  * room on screen is the arena. `Arena.tsx` keeps painting `MAP_WALL_PATH` / `MAP_RIM_PATH`
@@ -62,11 +68,23 @@ import { ARENA_UNITS } from './sprites';
 // The temple asset — the masonry this room is cut into
 // ---------------------------------------------------------------------------
 //
-// Duplicated from `Scene.tsx` because that file exports only its finished `SCENE` element.
-// Both reads go to the same asset, so this is duplicated CODE and not a duplicated FACT —
-// but it is still two copies of one regex. When `Scene.tsx` is retired in favour of the two
-// room files, hoist these four constants into a shared module and delete both copies.
-// ponytail: one extra regex. Ceiling: a re-conversion of temple.svg has to be checked twice.
+// `Scene.tsx` is gone — it was the single-room predecessor of this file and `WaitingRoom`,
+// and it sat unimported for a whole redraw while still carrying a second copy of
+// `TEMPLE_GRADE` and a third parse of this asset. The remaining duplicate is `WaitingRoom`,
+// which reads the same asset for the lobby under its own `LOBBY_GRADE`. Both reads go to
+// the same file and derive the same four constants, so this is duplicated CODE and not a
+// duplicated FACT.
+// ponytail: one extra regex. Ceiling: a re-conversion of temple.svg has to be checked in
+// two files. Upgrade path if a third room ever appears: hoist these four constants into a
+// shared module — not worth a new file for two callers.
+
+/**
+ * Two decimals. Almost nothing in this file is an integer any more — every dimension is a
+ * fraction of a generated span — and `289.34000000000003` in a `d` attribute is seventeen
+ * characters of float noise repeated on every subpath. Rounding is presentational only:
+ * nothing here is compared against a chain coordinate.
+ */
+const u = (n: number): number => Math.round(n * 100) / 100;
 
 const TEMPLE_W = 210;
 const TEMPLE_H = 238;
@@ -145,29 +163,70 @@ const RING_RX = (PIT_X1 - PIT_X0) / 2;
 const RING_RY = (PIT_BOT + 1 - PIT_TOP) / 2;
 
 /**
- * Course boundaries as a fraction of the radius. Read off image B by elliptical binning with
- * the pool's falloff subtracted (`boss-arena.md` §1.5): heavy mortar lines at r 0.44, 0.65,
- * 0.87 with 0.21 spacing, finer courses inside the dais, and the lit kerb outside the last.
+ * Image B's own mortar spacing, expressed at this arena's scale: `0.21 * sqrt(418 * 120)`
+ * pixels of reference floor times `496 / 418`, the width ratio the shipped pit was fitted at
+ * (`arena.md` §3.2). One course is 56 arena units, and that is the only number here read off
+ * the reference.
+ */
+const REF_COURSE = 56;
+
+/**
+ * How many courses the floor carries. **A count, not a coordinate.**
+ *
+ * The five typed fractions this replaces were scale-free individually but their *count* was
+ * fitted to a 112-unit semi-minor axis. Keep them and a pit half again as tall reads as four
+ * huge lens shapes instead of concentric stone courses. Deriving the count from the pit's own
+ * geometric-mean radius keeps the course spacing at the reference's while the floor grows.
  *
  * Orthographic and NOT perspective-corrected. The floor plane IS the coordinate space, so
  * `PlayerSlot.x`/`.y` land in the SVG unmodified. A perspective floor would draw the rings
  * somewhere the chain's positions are not, and this project has twice misdiagnosed exactly
  * that class of disagreement as lag.
  */
-const RING_K = [0.22, 0.44, 0.65, 0.87, 1.0] as const;
+const RING_N = Math.max(4, Math.round(Math.sqrt(RING_RX * RING_RY) / REF_COURSE));
+
+/** Course boundaries as a fraction of the radius, evenly spaced out to the kerb. */
+const RING_K: readonly number[] = Array.from({ length: RING_N }, (_, i) => (i + 1) / RING_N);
 
 /** The dais is the innermost ring, filled one step lighter — paving plus light, no platform. */
-const DAIS_K = RING_K[0];
+const DAIS_K = RING_K[0]!;
 
-/** The ring the four cardinal medallions sit on. */
-const MEDALLION_K = RING_K[2];
+/**
+ * The ring the four cardinal medallions sit on: two courses in from the kerb at every count.
+ *
+ * 0.66 is image B's own — of the five medallions `boss-arena.md` §1.6 located, the east–west
+ * pair sits at `286 / 418 = 0.684` of the semi-major axis. Rounding it into the derived course
+ * count is what keeps the medallions ON a course line rather than floating between two.
+ */
+const MEDALLION_K = RING_K[Math.max(0, Math.round(0.66 * RING_N) - 1)]!;
 
-/** Foreshortened like everything else in the pit: 26 x 12 units, 2.2:1. */
+/** A mark size, not a coordinate: 26 x 12 units, foreshortened 2.2:1 like the floor. */
 const MEDALLION_W = 26;
 const MEDALLION_H = 12;
 
 /**
- * Four diamonds at the cardinal points of ring k = 0.65, as one path of four subpaths.
+ * How far INSIDE its own mortar joint the lit top face of a course sits. A width, not a
+ * position: the kerb ellipse is `RING_R{X,Y} * k - KERB` on both axes, so the highlight is
+ * offset along the ring's normal everywhere on the ring.
+ *
+ * The 2-unit `cy` translate this replaces was the whole reason the rings did not read.
+ * Translating the highlight down by 2 units is a RADIAL offset only where the ring line runs
+ * horizontally; on the left and right flanks — where the line is vertical — it moves the
+ * highlight ALONG the line, so a 2-unit `#a8d6f0` band landed inside the 3-unit mortar band
+ * and the two cancelled. Measured on the +x axis of the shipped build: the mortar's 3 drawn
+ * units left ONE unit of visible dark line (L8 31 at x 705) with its neighbours at 41 and 39,
+ * one of them the highlight showing THROUGH the mortar painted over it. The sign also flipped
+ * between the top of the ellipse (highlight outside) and the bottom (inside).
+ *
+ * Inside rather than outside is image B's own arrangement at its two strongest rings — the
+ * aligned radial profile puts the crest at -2 units on both k = 0.29 and k = 0.34 — and it is
+ * the only sign that keeps the OUTERMOST kerb inside `ba-pit-clip`: at k = 1 the ring is the
+ * ellipse inscribed in the pit, so a highlight one unit outside it is clipped away entirely.
+ */
+const KERB = 2.5;
+
+/**
+ * Four diamonds at the cardinal points of {@link MEDALLION_K}, as one path of four subpaths.
  *
  * N sits inside the creature's silhouette and only appears as limbs break; W, E and S are the
  * three that are always visible. All four are drawn so the composition stays symmetric.
@@ -193,8 +252,10 @@ const MEDALLION_PATH = (
 
 /**
  * Four treads across the doorway, the single entrance from the gate. Span and depth are both
- * generated: x is the gate block, and four 8-unit treads fill the two pit rows above it
- * exactly. Darkest at the bottom, in the same value pair as the ring mortar and highlight.
+ * generated: x is the gate block, and four 8-unit treads fill the last two pit rows above it.
+ * Darkest at the bottom, in the same value pair as the ring mortar and highlight. They are
+ * clipped to `PIT_PATH` like everything else, so on a deeper throat they simply start lower
+ * down it — the treads can never spill sideways out of the slot the grid cut.
  */
 const STEP_COUNT = 4;
 const STEP_H = 8;
@@ -208,8 +269,15 @@ const STEP_W = GATE_MAX_X - GATE_MIN_X + 1;
 const ellipsePath = (cx: number, cy: number, rx: number, ry: number): string =>
   `M${cx - rx} ${cy}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0`;
 
+/** How far inside a row's own walkable span a flame stands. A size, not a position. */
+const FLAME_INSET = 12;
+
+/** ~ image B's wall-brazier pitch at our scale. A pit taller than this gains a side pair. */
+const FLAME_GAP = 160;
+
 /**
- * Twelve flames, mirrored about the arena's centre line.
+ * The perimeter flames, mirrored about the arena's centre line. Twelve on a pit under two
+ * flame-pitches tall, which is this one; two more per pitch above that.
  *
  * A brazier here is a flame and a few units of bloom, and **nothing else**. `boss-arena.md`
  * §1.3 measured image B's braziers on rings of increasing radius: the stone around a flame is
@@ -229,19 +297,43 @@ const ellipsePath = (cx: number, cy: number, rx: number, ry: number): string =>
  */
 const BRAZIERS: readonly (readonly [number, number])[] = (() => {
   const out: Array<readonly [number, number]> = [];
-  // Far rim: image B's four symmetric wall pairs, scaled to our width (§1.2).
-  for (const dx of [136, 282, 391, 478]) {
-    out.push([RING_CX - dx, PIT_TOP - 4], [RING_CX + dx, PIT_TOP - 4]);
+  const pair = (x: number, y: number): void => {
+    out.push([x, y], [2 * RING_CX - x, y]);
+  };
+
+  // Far rim: image B's four symmetric wall pairs, as fractions of our own semi-major axis
+  // rather than as the four world offsets they were fitted to on a 992-unit pit.
+  for (const k of [0.27, 0.57, 0.79, 0.96]) pair(u(RING_CX - RING_RX * k), PIT_TOP - 4);
+
+  // The chamfer pair, on the first chamfered row's own floor edge — found by asking the grid
+  // which row is the first one narrower than the pit, not by counting rows up from the bottom.
+  const [cy, [cx0]] = ((): [number, readonly [number, number]] => {
+    for (let ty = PIT_TOP / MAP_TILE; ty <= PIT_BOT / MAP_TILE; ty++) {
+      const span = pitSpan(ty);
+      if (span[1] - span[0] < PIT_X1 - PIT_X0) return [ty * MAP_TILE + MAP_TILE / 2, span];
+    }
+    return [PIT_TOP + MAP_TILE / 2, [PIT_X0, PIT_X1]];
+  })();
+  pair(cx0 + FLAME_INSET, cy);
+
+  // The doorway pair, flanking the steps on the lowest pit row still wider than the throat.
+  // Inside the throat the row IS the gate slot, and a flame there would sit on the treads.
+  let doorRow = Math.floor(PIT_BOT / MAP_TILE);
+  while (doorRow > PIT_TOP / MAP_TILE) {
+    const [x0, x1] = pitSpan(doorRow);
+    if (x1 - x0 > STEP_W) break;
+    doorRow--;
   }
-  // The chamfer pair, on the first chamfered row's own floor edge.
-  const chamferRow = Math.floor(PIT_BOT / MAP_TILE) - 4;
-  const [cx0, cx1] = pitSpan(chamferRow);
-  const cy = chamferRow * MAP_TILE + MAP_TILE / 2;
-  out.push([cx0 + 12, cy], [cx1 - 12, cy]);
-  // The doorway pair, flanking the steps on the lowest full-width pit row.
-  const doorRow = Math.floor(STEP_TOP / MAP_TILE) - 1;
-  const dy = doorRow * MAP_TILE + MAP_TILE / 2;
-  out.push([GATE_MIN_X - 24, dy], [GATE_MAX_X + 1 + 24, dy]);
+  pair(GATE_MIN_X - 24, doorRow * MAP_TILE + MAP_TILE / 2);
+
+  // Side pairs, so a tall pit does not leave its long sides dark for hundreds of units. Zero
+  // of them on a pit under two flame-pitches tall, which is the shipped case and this one.
+  const sideRows = Math.max(0, Math.floor((PIT_BOT + 1 - PIT_TOP) / FLAME_GAP) - 1);
+  for (let i = 0; i < sideRows; i++) {
+    const ty = Math.round((PIT_TOP + ((i + 1) * (PIT_BOT + 1 - PIT_TOP)) / (sideRows + 1)) / MAP_TILE);
+    const [x0] = pitSpan(ty);
+    pair(x0 + FLAME_INSET, ty * MAP_TILE + MAP_TILE / 2);
+  }
   return out;
 })();
 
@@ -281,12 +373,27 @@ const PILLAR_PATH = [96, 272, 448]
   .map((x) => `M${x - 20} ${BACKDROP_TOP}h40v${BACKDROP_BOT - 12 - BACKDROP_TOP}h-40z`)
   .join('');
 
+/**
+ * The band every backdrop height is a fraction of. The three shapes below carried typed
+ * heights fitted to this band at 346 units; `arena.md` §2.3 measured what happens when
+ * `PIT_TOP` moves — the statue's horns cross the map border and the chains hang into the strip
+ * a knight's sprite covers, both silently. The fractions reproduce the shipped drawing exactly
+ * at 346 and scale with the band instead of running off the top of it.
+ */
+const BACKDROP_H = BACKDROP_BOT - BACKDROP_TOP;
+
+
 const CHAIN_XS = [228, 472].flatMap((dx) => [RING_CX - dx, RING_CX + dx]);
-const CHAIN_PATH = CHAIN_XS.map((x) => `M${x} ${BACKDROP_TOP}V${BACKDROP_TOP + 274}`).join('');
+const CHAIN_BOT = u(BACKDROP_TOP + 0.79 * BACKDROP_H); // 274.3 on the shipped band
+const CHAIN_PATH = CHAIN_XS.map((x) => `M${x} ${BACKDROP_TOP}V${CHAIN_BOT}`).join('');
 
 const BANNER_XS = [184, 360].flatMap((dx) => [RING_CX - dx, RING_CX + dx]);
+const BANNER_TOP = BACKDROP_TOP + 8;
+const BANNER_H = u(0.54 * BACKDROP_H); // 186.8
+const BANNER_POINT = u(0.06 * BACKDROP_H); // 20.8
 const BANNER_PATH = BANNER_XS.map(
-  (x) => `M${x - 30} ${BACKDROP_TOP + 8}h60v186l-30 20l-30 -20z`,
+  (x) =>
+    `M${x - 30} ${BANNER_TOP}h60v${BANNER_H}l-30 ${BANNER_POINT}l-30 -${BANNER_POINT}z`,
 ).join('');
 
 /**
@@ -299,6 +406,12 @@ const STATUE_D =
   'M-46,260L-38,140L-52,100L-44,92L-30,118L-26,54L-44,14L-56,-12L-40,0L-24,28' +
   'L-8,8L0,0L8,8L24,28L40,0L56,-12L44,14L26,54L30,118L44,92L52,100L38,140L46,260Z';
 
+/** Local y −12..260 = 272 units of silhouette plus 16 of clearance. Never enlarged, only shrunk. */
+const STATUE_SPAN = 288;
+const STATUE_K = Math.min(1, BACKDROP_H / STATUE_SPAN);
+const STATUE_TOP = u(BACKDROP_BOT - 260 * STATUE_K);
+const STATUE_XS = [RING_CX - 316, RING_CX + 316];
+
 // ---------------------------------------------------------------------------
 // Light — `boss-arena.md` §4, solved in §5.4 rather than chosen
 // ---------------------------------------------------------------------------
@@ -306,25 +419,73 @@ const STATUE_D =
 /**
  * The pit wash, and it is the single most important number in this file.
  *
- * `boss-arena.md` §5.4 binary-searches one gain over every added-light layer at each wash
- * opacity, taking the largest gain that still holds the darkest skin at 3.00:1 worst case.
- * Wash 0.70 / gain 0.46 is the last row whose median floor is still bright enough to show
- * drawn stone detail (§5.5: at wash 0.88 three of the four ring courses are inside 1 L8 of
- * the floor beside them — invisible), and it is the row that fixes the shipped legibility
- * hole: Nocturne worst case 2.05:1 -> 3.00:1, and its failing area 41.9 % of the pit -> zero.
+ * `arena.md` §4.3 re-runs `boss-arena.md` §5.4's search — binary-search one gain over every
+ * added-light layer, take the largest that still holds the darkest skin at a 3.00:1 SOLVE
+ * TARGET worst case — over FOUR pit sizes at once and takes the minimum, so the answer is not
+ * fitted to one pit.
+ * The solved gain barely moves with pit size: 0.94 to 1.00 at wash 0.70 across a pit that more
+ * than doubles in height with the course count moving 4 -> 7 underneath it. {@link GAIN} 0.92
+ * is one notch under the tightest solve, so every candidate clears the target with margin
+ * rather than one candidate clearing it exactly.
  *
- * Every alpha below is that gain applied to a measured base. Raising the wash washes the
- * rings out; lowering it walks the floor into the knights standing on it. Both directions
- * have been shipped in this project already.
+ * The dark layers are NOT gained. They are the floor the light is spent against, and gaining
+ * both ends is a contrast knob that cancels. Raising the wash washes the rings out; lowering
+ * it walks the floor into the knights standing on it. Both have shipped in this project.
+ *
+ * ## What 3.00:1 is, and what it is not — re-measured on THIS pit and THIS floor
+ *
+ * 3.00:1 is a target the solve above was run against, in ONE metric: the figure's mean
+ * relative luminance (body plus halo rim) against the MEAN of the 33x42 sprite box behind it,
+ * over every walkable unit of the pit the creature does not cover (173,876 of them). In that
+ * metric the shipped floor holds, and the mortar change below does not move it:
+ *
+ * ```
+ *                 worst        p50        under 3:1        median SPRITE PIXEL
+ *   Cobalt      3.31:1      4.87:1          0.0 %                 1.90:1
+ *   Nocturne    3.04:1      4.46:1          0.0 %                 1.45:1
+ *   Argent      3.20:1      4.71:1          0.0 %                 1.49:1
+ * ```
+ *
+ * The right-hand column is the OTHER metric and it is the one the art review reported at
+ * 1.75:1: every drawn pixel of the rest pose against the exact background pixel behind it,
+ * median over 24,840 sampled feet positions. It is far lower than 3.00:1 because a knight is
+ * not one flat value — 37-52 % of its pixels are its own dark outline and shadowed plate,
+ * which are SUPPOSED to sit near the floor, and the p95 is 8.1-12.4:1 where the lit faces are.
+ * Neither number is wrong; quoting one for the other is. Both are unchanged to two decimals by
+ * `MORTAR_ALPHA` 0.60 -> 0.92 (floor L8 p50 27.1 -> 27.0).
  */
+const GAIN = 0.92;
 const WASH_ALPHA = 0.7;
-const DAIS_ALPHA = 0.046;
-const MORTAR_ALPHA = 0.6;
-const COURSE_LIT_ALPHA = 0.074;
-const MEDALLION_ALPHA = 0.06;
+const DAIS_ALPHA = 0.1 * GAIN;
+
+/**
+ * The mortar joint, and it is a DARK layer: not gained, and free to move without touching the
+ * solve above.
+ *
+ * 0.60 was the value `boss-arena.md` §5.5 measured a ring at, on a floor whose pool was still
+ * at `g = 0.46`. At `GAIN` 0.92 the floor is roughly twice as bright and the same 0.60 no
+ * longer reaches image B's joint. Measured on the composite (radial profile aligned per ray
+ * over 70 rays, detrended against the pool, floor : trough):
+ *
+ * ```
+ *   ring        k=0.20  k=0.40  k=0.60  k=0.80        image B, same method
+ *   0.60         1.35    1.27    1.25    1.33         k=0.29 2.41   k=0.34 2.23
+ *   0.92         1.56    1.52    1.44    1.96         k=0.52 1.94   k=0.71 1.50
+ *                                                     k=0.93 1.61
+ * ```
+ *
+ * Every measurable ring now lands inside image B's own 1.50 .. 2.41 band. It cannot go much
+ * further: `C_MORTAR` at alpha 1.0 is the washed floor's own floor, which caps the darkest
+ * ring this room can draw at about 1.8:1 once the pool, the core spill and the vignette are
+ * painted back over it. The joints cover 7.1 % of the pit and the knights are unmoved by the
+ * change — see the contrast table under {@link GAIN}.
+ */
+const MORTAR_ALPHA = 0.92;
+const COURSE_LIT_ALPHA = 0.16 * GAIN;
+const MEDALLION_ALPHA = 0.13 * GAIN;
 const MEDALLION_LINE_ALPHA = 0.5;
-const POOL_ALPHA = 0.064;
-const CORE_SPILL_ALPHA = 0.046;
+const POOL_ALPHA = 0.14 * GAIN;
+const CORE_SPILL_ALPHA = 0.1 * GAIN;
 
 /** Colours, sampled from image B (§1.7) or already in `Scene.tsx`'s stack. */
 const C_WASH = '#03070f';
@@ -343,14 +504,25 @@ const C_VOID = '#060a13';
  * measured image B's one real light centred on the creature and ours stands at the top of the
  * band. The semi-axes overshoot the pit deliberately: the falloff should still be dropping
  * where the floor ends, so the rim reads as unlit rather than as the end of a gradient.
+ *
+ * Typed, it was (512, 452, 520, 150) — a 150-unit semi-minor axis covering 100 % of a 224-unit
+ * band but only 79 % of a 544-unit one (`arena.md` §4.1). The far rows would fall to the bare
+ * wash and the outermost courses, already the dimmest, would go invisible out there. Derived,
+ * it is (512, 466, 504, 182) on this pit and still the same light on the shipped one.
  */
-const POOL_CY = 452;
-const POOL_RX = 520;
-const POOL_RY = 150;
+const POOL_CX = BOSS_SPAWN[0];
+const POOL_CY = u(PIT_TOP + 0.3 * (PIT_BOT + 1 - PIT_TOP));
+const POOL_RX = u(1.05 * RING_RX);
+const POOL_RY = u(0.67 * (PIT_BOT + 1 - PIT_TOP));
 
-/** Unchanged from `Scene.tsx`: the ceiling the creature emerges from, the near-rim band, the vignette. */
-const CEILING_END = 330;
-const RIM_SHADOW = [520, 600, 700] as const;
+/**
+ * The ceiling the creature emerges from and the near-rim shadow band, both derived off the
+ * edge they describe. `CEILING_END` means "just past the pit's top edge" and `RIM_SHADOW`
+ * peaks on the rim wall; typed as 330 and [520, 600, 700] they meant that only on the pit they
+ * were fitted to. Both reproduce their shipped values exactly at the shipped `PIT_TOP`/`PIT_BOT`.
+ */
+const CEILING_END = Math.max(BACKDROP_TOP, PIT_TOP - 54);
+const RIM_SHADOW = [PIT_BOT - 87, PIT_BOT - 7, PIT_BOT + 93] as const;
 
 /**
  * Where the creature's chest orb throws its ambient bounce, in world units. Both terms are
@@ -388,7 +560,29 @@ const CORE_WORLD = { x: BOSS_SPAWN[0] + CORE.x, y: BOSS_SPAWN[1] + CORE.y };
       `BossArena: WASH_ABOVE_PIT is SPRITE_H - Knight.tsx FEET_Y; SPRITE_H is now ${SPRITE_H}`,
     );
   }
-  if (BACKDROP_BOT <= BACKDROP_TOP) throw new Error('BossArena: no room above the pit for a backdrop');
+  // The backdrop must FIT its band, not merely have one. `arena.md` §2.3: all three of these
+  // overrun invisibly — the chains hang into the strip a knight's sprite covers and the
+  // statue's horns cross the map's border row — and nothing downstream reports either.
+  const backdropBot = Math.max(CHAIN_BOT, BANNER_TOP + BANNER_H + BANNER_POINT, STATUE_TOP + 260 * STATUE_K);
+  // +1 of slack so `u`'s two-decimal rounding cannot make a shape that lands exactly on the
+  // band's floor line read as an overrun. A real overrun is tens of units, not hundredths.
+  if (BACKDROP_BOT <= BACKDROP_TOP || backdropBot > BACKDROP_BOT + 1) {
+    throw new Error(`BossArena: the backdrop does not fit its band (ends at ${backdropBot})`);
+  }
+  if (STATUE_TOP - 12 * STATUE_K < BACKDROP_TOP) {
+    throw new Error('BossArena: the statue crosses the map border row');
+  }
+  // Every course inside the pit, and no two closer together than the mortar is wide. The
+  // second clause is the innermost kerb: `RING_RY * RING_K[0] - KERB` is an `<ellipse>` `ry`,
+  // and a negative one is an SVG error — the element is dropped and NOTHING is reported.
+  if (RING_N < 4 || RING_RY / RING_N < 12 || RING_RY * RING_K[0]! <= KERB) {
+    throw new Error(`BossArena: ${RING_N} courses over a ${RING_RY}-unit semi-minor axis`);
+  }
+  // The pool has to reach the floor's far rows, or they fall to the bare wash and the
+  // outermost course — the dimmest one — goes invisible out there with no error.
+  if (POOL_RY < (PIT_BOT + 1 - PIT_TOP) / 2 || POOL_RX < RING_RX) {
+    throw new Error('BossArena: the pool does not cover the pit');
+  }
   if (STEP_TOP < PIT_TOP || STEP_TOP % MAP_TILE !== 0) {
     throw new Error(`BossArena: the steps do not land on a pit tile row (top ${STEP_TOP})`);
   }
@@ -398,7 +592,9 @@ const CORE_WORLD = { x: BOSS_SPAWN[0] + CORE.x, y: BOSS_SPAWN[1] + CORE.y };
     const tile = MAP_GRID[Math.floor(y / MAP_TILE)]?.[Math.floor(x / MAP_TILE)] ?? '#';
     if (tile === '#') throw new Error(`BossArena: brazier at ${x},${y} is on a wall tile`);
   }
-  if (BRAZIERS.length !== 12) throw new Error(`BossArena: expected 12 braziers, built ${BRAZIERS.length}`);
+  // No count test: `arena.md` §7.1 — the count is now derived from the pit's height, and the
+  // tests that matter are on-floor (above) and mirrored (below).
+  if (BRAZIERS.length < 12) throw new Error(`BossArena: only ${BRAZIERS.length} braziers`);
   // Mirrored about the centre line, which is what makes the composition read as a circle.
   const mirrored = BRAZIERS.every(([x, y]) =>
     BRAZIERS.some(([mx, my]) => my === y && Math.abs(2 * RING_CX - mx - x) < 1),
@@ -432,7 +628,7 @@ const LIGHTING = (
       r={1}
       cx={0}
       cy={0}
-      gradientTransform={`translate(${RING_CX} ${POOL_CY}) scale(${POOL_RX} ${POOL_RY})`}
+      gradientTransform={`translate(${POOL_CX} ${POOL_CY}) scale(${POOL_RX} ${POOL_RY})`}
     >
       <stop offset="0" stopColor={C_POOL} stopOpacity={POOL_ALPHA} />
       <stop offset="1" stopColor={C_POOL} stopOpacity={0} />
@@ -533,13 +729,18 @@ export const BOSS_ARENA: ReactElement = (
         <path
           key={x}
           d={SKULL_D}
-          transform={`translate(${x} ${BACKDROP_TOP + 78})`}
+          transform={`translate(${x} ${u(BANNER_TOP + 0.2 * BACKDROP_H)})`}
           fill="#8b7f86"
           opacity={0.45}
         />
       ))}
-      {[RING_CX - 316, RING_CX + 316].map((x) => (
-        <path key={x} d={STATUE_D} transform={`translate(${x} ${BACKDROP_BOT - 260})`} fill="#10131d" />
+      {STATUE_XS.map((x) => (
+        <path
+          key={x}
+          d={STATUE_D}
+          transform={`translate(${x} ${STATUE_TOP}) scale(${STATUE_K})`}
+          fill="#10131d"
+        />
       ))}
     </g>
 
@@ -574,16 +775,21 @@ export const BOSS_ARENA: ReactElement = (
         fillOpacity={DAIS_ALPHA}
       />
 
-      {/* The courses. Each is a dark mortar line with the lit top face of its kerb showing
-          above it — the same cue `MAP_RIM_PATH` draws on every wall in this game, and the
-          bright band image B carries immediately outside its darkest ring. */}
+      {/* The courses. Each is a dark mortar joint with the lit top face of its kerb showing
+          just inside it — the same cue `MAP_RIM_PATH` draws on every wall in this game, and
+          the light/dark pair image B carries at every one of its rings.
+
+          The two ellipses are concentric and separated by {@link KERB}, NOT by a translate:
+          a 2-unit kerb band at radius `k*R - 2.5` and a 3-unit joint at `k*R` touch at 1.5
+          units and never overlap, at every angle. The drawn widths are image B's own — its
+          aligned radial profile puts the joint at 3 units and the crest 2 units off it. */}
       {RING_K.map((k) => (
         <g key={k}>
           <ellipse
             cx={RING_CX}
-            cy={RING_CY - 2}
-            rx={RING_RX * k}
-            ry={RING_RY * k}
+            cy={RING_CY}
+            rx={RING_RX * k - KERB}
+            ry={RING_RY * k - KERB}
             fill="none"
             stroke={C_LIT}
             strokeOpacity={COURSE_LIT_ALPHA}

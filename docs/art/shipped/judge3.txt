@@ -1,0 +1,54 @@
+== A. TILE PITCH -- is the edge-density comparison fair? ==
+   ref A floor   dominant period: 12 px across, 37 px down  (autocorrelation peak 0.41 / 0.48 of lag-0)
+   ship A floor  dominant period: 8 px across, 7 px down  (autocorrelation peak 0.44 / 0.48 of lag-0)
+   ref B floor   dominant period: 6 px across, 6 px down  (autocorrelation peak 0.66 / 0.78 of lag-0)
+   -> the shipped lobby is 1.574 px/unit, so a 16-unit tile is 25.2 px; reference A's
+      floor tiles measure the period printed above. Scales are within a factor of ~1.
+
+== B. DOES THE FLOOR CARRY TILE COURSING? ==
+   method: mean |dL| along each axis over an interior floor patch, and the fraction of
+   pixels whose neighbour differs by more than 1/255 in sRGB terms (dL ~ 0.0008 at these
+   luminances). A stone floor with grout lines has periodic ridges; a wash has none.
+   ref A  floor: mean|dL| x 0.00465 y 0.00556  p99 0.03655  ridge px (|dL|>0.004) 57.8%
+   ship A floor: mean|dL| x 0.00042 y 0.00076  p99 0.00540  ridge px (|dL|>0.004) 1.9%
+   ref B  floor: mean|dL| x 0.00615 y 0.00891  p99 0.07356  ridge px (|dL|>0.004) 59.8%
+   ship B floor: mean|dL| x 0.00068 y 0.00114  p99 0.01555  ridge px (|dL|>0.004) 5.8%
+
+== C. FLOOR MARKINGS -- medallions, cracks, worn patches ==
+   WaitingRoom MARKINGS draws 5 medallions, 5 cracks, 6 worn patches at alpha 0.08-0.10.
+   centre medallion     on-marking Y p95 0.02873  floor beside it Y p95 0.02167  contrast 1.192:1
+   corner medallion tl  on-marking Y p95 0.01270  floor beside it Y p95 0.50535  contrast 1.182:1
+   ref A medallion      on-marking Y p95 0.03288  floor beside it Y p95 0.01862  contrast 1.315:1
+
+== D. THE GATE ==
+   world y 600: wall p10 Y 0.00561; run darker than that through the centre = 110 world units  (walkable slot 128, spec cap 144)
+   world y 620: wall p10 Y 0.02159; run darker than that through the centre = 0 world units  (walkable slot 128, spec cap 144)
+   world y 640: wall p10 Y 0.00435; run darker than that through the centre = 0 world units  (walkable slot 128, spec cap 144)
+   world y 656: wall p10 Y 0.00435; run darker than that through the centre = 0 world units  (walkable slot 128, spec cap 144)
+   world y 672: wall p10 Y 0.00435; run darker than that through the centre = 0 world units  (walkable slot 128, spec cap 144)
+   threshold block (G rows) Y median 0.02167; wall beside it 0.02414; ratio 0.90x
+
+   the value hierarchy of the gate head -- who is the brightest thing in the room?
+   skull crest   Y p95 0.3356  median 0.0241
+   BOSS FIGHT    Y p95 0.3342  median 0.0241
+   whole lobby   Y p99 0.0493  p99.9 0.4416
+   crest is 1.00x the sign at p95
+   ref A crest   Y p95 0.1188; ref A sign Y p95 0.1608; crest/sign 0.74x
+
+== E. HOW MUCH FLOOR DOES THE CREATURE COVER? ==
+   ref B: pixels inside the floor ellipse departing >0.02 L from a radial model: 15.6%
+   shipped B: boss changed-pixel bbox x 574..1497 (923 px = 586 world units wide), y 13..1031 (1018 px)
+   shipped B: that bbox is 48.1% of frame width and 98.6% of frame height
+   ref B creature-ish mask bbox x 96..1021 (82.4% of frame width), y 201..399 (32.4% of frame height)
+
+== F. TORCH LIGHT ON THE FLOOR ==
+   ref A: floor strip just inside the left wall, at a torch's height vs between torches.
+   ref A: at torch Y median 0.00806; between torches 0.01738; ratio 0.46x
+   ship A: left-wall floor strip, row-median Y min 0.00539 max 0.02364 ratio 4.38x
+   ref A : the same strip, row-median Y min 0.00668 max 0.02561 ratio 3.83x
+
+== G. WALL SURFACE: per-block variation ==
+   ref A  left wall  Y median 0.0105  sd 0.0634  p95-p5 0.0870  sd/median 6.01
+   ship A left wall  Y median 0.0241  sd 0.0506  p95-p5 0.0305  sd/median 2.10
+   ref A  top wall   Y median 0.0067  sd 0.0279  p95-p5 0.0546  sd/median 4.13
+   ship A top wall   Y median 0.0210  sd 0.0151  p95-p5 0.0261  sd/median 0.72

@@ -1,0 +1,154 @@
+[
+ {
+  "name": "k1-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "knights": 1
+  }
+ },
+ {
+  "name": "k5-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "knights": 5
+  }
+ },
+ {
+  "name": "k10-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "knights": 10
+  }
+ },
+ {
+  "name": "k20-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "knights": 20
+  }
+ },
+ {
+  "name": "k1-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "knights": 1
+  }
+ },
+ {
+  "name": "k5-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "knights": 5
+  }
+ },
+ {
+  "name": "k10-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "knights": 10
+  }
+ },
+ {
+  "name": "k20-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "knights": 20
+  }
+ }
+]

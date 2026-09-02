@@ -16,8 +16,10 @@
  *      {@link VIEW_ARENA} are both 1024 x 656 -- that equality is load-bearing, because it
  *      makes the gate passage a pure composited translate (spec section 7.3).
  *   2. The viewBox aspect always equals the stage aspect, so `meet` never letterboxes, and
- *      exactly one axis ever grows, so the room is always entirely inside it. Never bars,
- *      never crop.
+ *      the box COVERS the stage with the room wherever {@link KEEP} allows: the fit crops
+ *      only fiction -- the tower shaft above the gate's crest, the void under the bottom
+ *      wall -- and grows past the room only when the keep forces it. Never bars, never a
+ *      cropped stand.
  *   3. This module is the ONLY writer of the `viewBox` attribute. React writes it nowhere;
  *      neither does `#camera`'s transform, which now rests at identity except during the
  *      passage.
@@ -39,11 +41,14 @@
 import { useEffect, type RefObject } from 'react';
 
 import {
+  BOSS_SPAWN,
+  CORE,
   LOBBY_BOT,
   LOBBY_TOP,
   MAP_MAX_XY,
   MAP_TILE,
   MAP_TILES,
+  PART_HITBOXES,
   PIT_BOT,
   PIT_TOP,
   isWallTile,
@@ -70,11 +75,19 @@ export type Room = 'lobby' | 'arena';
  * Masonry above the drawn lobby floor and floor below it, in units.
  *
  * Reference A (1122x785) puts the floor interior at y 250..690 -- 250 px above and 95 px
- * below a 440 px band, so 0.568 and 0.216 of it. Over the map's own 368-unit floor band
- * that is 209 -> 208 (13 tiles) and 79.5 -> 80 (5 tiles). Tile multiples so the compiled
- * wall geometry lands on the frame edge instead of half a tile inside it.
+ * below a 440 px band, so 0.568 and 0.216 of it. Tile multiples so the compiled wall
+ * geometry lands on the frame edge instead of half a tile inside it.
+ *
+ * `LOBBY_HEAD` is 16 tiles, not the 13 that matched reference A's ratio against the old
+ * 368-unit floor band, and it is LOAD-BEARING rather than a taste: the open-arena map
+ * (spec 18) gave the pit three rows and took them off the lobby, so the band is 320 units
+ * and 13 tiles would silently take {@link ROOM_H} to 608. Both rooms would still be equal
+ * -- they share the constant -- so the equal-size check below would not fire. What fires
+ * instead is the crown check at the bottom of this file: a 608-tall arena frame starts at
+ * y = 48 and cuts the boss's own hittable extent, which tops out at y = 16. 16 tiles holds
+ * `ROOM_H` at 656 and keeps `VIEW_LOBBY` byte-identical to the pre-spec-18 rect.
  */
-const LOBBY_HEAD = 13 * MAP_TILE;
+const LOBBY_HEAD = 16 * MAP_TILE;
 const LOBBY_FOOT = 5 * MAP_TILE;
 
 /**
@@ -104,8 +117,11 @@ export const VIEW_LOBBY: ViewRect = {
  * nowhere. `Arena.tsx` now derives that clip from the hitbox table (`boss.y +
  * BOSS_HIT_BOT`), which is below this line — so below aspect ~1.561, where the fitted box
  * grows on y, some of the creature legitimately renders under the rim against the void.
- * The top runs 48 units off the map, which is void, and which is what puts the crown near
- * the top of frame the way reference B does.
+ * Under spec 18's map the top lands on y = 0, the map's own edge, rather than 48 units of
+ * void above it: the pit's last row moved from 37 to 40, so the rim it hangs from moved
+ * down 48 units and took the frame with it. The crown then clears the frame edge by a
+ * single tile, and nothing but the check at the bottom of this file says so — the pit
+ * cannot take a fourth row without cutting the creature. See {@link LOBBY_HEAD}.
  */
 export const VIEW_ARENA: ViewRect = {
   x: 0,
@@ -120,13 +136,53 @@ export const VIEWS: Readonly<Record<Room, ViewRect>> = {
 };
 
 /**
+ * Tower above the floor line the fit must keep, in units.
+ *
+ * `WaitingRoom.tsx` hangs the gate's crest -- the hero of room A -- 12.5 tiles above
+ * `LOBBY_TOP` (its `CREST_CY` less the skull's radius; read off the render at 488 units,
+ * 200 above the floor). 14 tiles keeps it with a course and a half of tower above it, the
+ * way reference A shows it, and gives the fit the other 2 tiles of shaft to crop. Not
+ * imported from the room, because the room imports {@link VIEW_LOBBY} from here -- a
+ * cycle at module load -- so `WaitingRoom.tsx` asserts its crest lies inside
+ * {@link KEEP} instead.
+ */
+const LOBBY_HERO = 14 * MAP_TILE;
+
+/** One course of masonry under the bottom wall the fit must keep, so the wall has depth. */
+const LOBBY_SILL = MAP_TILE;
+
+/**
+ * What the fit may NEVER crop, per room: the frame every stand and the hero art must land
+ * inside at every stage aspect. Everything in the room outside it is fiction the fit is
+ * free to trade for a bigger picture.
+ *
+ * Room A keeps its whole width -- the side walls are two tiles and a wall cropped in half
+ * reads as a hole -- and, in y, the crest down through one course under the bottom wall:
+ * 576 units, so a 16:9 stage is exactly covered with nothing cropped but shaft and void.
+ * Room B keeps all of itself: the crown clears its frame by one tile ({@link VIEW_ARENA})
+ * and the frame already sits on the rim, so there is no fiction there to give.
+ */
+export const KEEP: Readonly<Record<Room, ViewRect>> = {
+  lobby: {
+    x: 0,
+    y: LOBBY_TOP - LOBBY_HERO,
+    w: ARENA_UNITS,
+    h: ARENA_UNITS + LOBBY_SILL - (LOBBY_TOP - LOBBY_HERO),
+  },
+  arena: VIEW_ARENA,
+};
+
+/**
  * How far outside the room to author scenery, per side.
  *
- * The fitted box grows on one axis to match the stage aspect, and the surplus is world
- * space the room does not fill. For a room of 1024 x 656 the surplus per side is
- * `(656a - 1024) / 2` in x above aspect 1.561 and `(1024/a - 656) / 2` in y below it, so
- * 256 covers **aspect 0.88..2.34** -- 1024x768 (1.42), 1440x900 (1.69), 1920x1080 (1.86)
- * and 1366x768 (1.90) with room to spare.
+ * The fitted box grows past the room only where {@link KEEP} forces it, and the surplus
+ * is world space the room does not fill. Narrower than the keep's own aspect the box grows
+ * on y, all of it ABOVE the room (the fit is bottom-anchored, so the surplus lands beside
+ * the tower and over the boss's masonry rather than under the bottom wall): `1024/a - 656`,
+ * inside 256 for **aspect >= 1.12**. Wider than 16:9 it grows on x, `(576a - 1024) / 2`
+ * per side for room A and `(656a - 1024) / 2` for room B, inside 256 up to **aspect
+ * 2.34**. 1024x768 (1.33), 1440x900 (1.60), 1920x1080 (1.78) and 1366x768 (1.78) are all
+ * covered, and the three 16:9 and 16:10 shapes show no surplus at all.
  *
  * Wider than that it does not: a 3440x1392 ultrawide consumes 299 units in x. That is not
  * a hole, because {@link useViewport} sizes every `.vp-void` rect from the LIVE box rather
@@ -139,24 +195,42 @@ export const VIEW_BLEED = 256;
 // The fit
 // ---------------------------------------------------------------------------
 
-/** A fitted viewBox: the room, centred, grown on one axis to the stage's aspect. */
+/** A fitted viewBox: the room covering the stage, cropped to its keep, grown past it only when forced. */
 export interface Fit extends ViewRect {
   /** CSS pixels per arena unit. Uniform -- the fitted box never stretches. */
   readonly scale: number;
 }
 
+/** `v` clamped into `[lo, hi]`, which is what a box edge does against its keep. */
+const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
+
 /**
- * Fit `v` to a stage of `stageW` x `stageH` CSS pixels.
+ * Fit `room` to a stage of `stageW` x `stageH` CSS pixels.
  *
  * Pure, so the self-check can sweep it and callers can size a stroke without a DOM read.
- * Exactly one of `w`/`h` grows: a stage wider than the room's 1.561 grows x, a narrower
- * one grows y. The result is centred on `v` and never clamped to the map.
+ * Two boxes at the stage's aspect are candidates and the taller wins: the tallest that
+ * fits INSIDE the room (cover -- no void), and the shortest that holds the room's
+ * {@link KEEP} (containment). So a 16:9 stage shows room A edge to edge with 80 units of
+ * shaft and void cropped, and a 4:3 one grows past the room only by what the keep forces.
+ *
+ * Bottom-anchored: the box rests on the room's bottom edge and any surplus lands above,
+ * where the gate tower and the boss's masonry are authored to leave the frame -- then
+ * clamped so the keep is inside it, which on a wide stage is what places the crop.
+ * Centred in x, so a wide stage's surplus is symmetric.
  */
-export function fitViewBox(v: ViewRect, stageW: number, stageH: number): Fit {
+export function fitViewBox(room: Room, stageW: number, stageH: number): Fit {
+  const v = VIEWS[room];
+  const k = KEEP[room];
   const a = stageW / stageH;
-  const w = Math.max(v.w, v.h * a);
-  const h = Math.max(v.h, v.w / a);
-  return { x: v.x + v.w / 2 - w / 2, y: v.y + v.h / 2 - h / 2, w, h, scale: stageW / w };
+  const h = Math.max(Math.min(v.h, v.w / a), k.h, k.w / a);
+  const w = h * a;
+  return {
+    x: clamp(v.x + v.w / 2 - w / 2, k.x + k.w - w, k.x),
+    y: clamp(v.y + v.h - h, k.y + k.h - h, k.y),
+    w,
+    h,
+    scale: stageW / w,
+  };
 }
 
 /**
@@ -182,7 +256,6 @@ export function useViewport(
     const box = stage.current;
     const el = svg.current;
     if (!box || !el) return;
-    const v = VIEWS[room];
 
     if (import.meta.env.DEV) {
       if (el.getAttribute('preserveAspectRatio') === 'none') {
@@ -205,7 +278,7 @@ export function useViewport(
       // Zero happens: a hidden stage, and the frame before first layout. A viewBox of NaN
       // blanks the scene and reports nothing.
       if (!(width >= 1) || !(height >= 1)) return;
-      const b = fitViewBox(v, width, height);
+      const b = fitViewBox(room, width, height);
       el.setAttribute('viewBox', `${b.x} ${b.y} ${b.w} ${b.h}`);
       el.style.setProperty('--vp-scale', String(b.scale));
       for (const node of el.querySelectorAll('.vp-void')) {
@@ -233,8 +306,10 @@ export function useViewport(
 // Self-check
 //
 // One property, and it is the reason the camera is gone: for every position the chain can
-// put a player in, the room that player is in contains that position -- so the fitted box
-// contains it too, at every stage shape, because the fit only ever grows.
+// put a player in, the KEEP of the room that player is in contains that position -- and
+// the fitted box contains the keep at every stage shape, so it contains the player too.
+// The fit is allowed to crop, which is exactly why the keep, and not the room, is what
+// the stands are swept against.
 //
 // It replaces the deleted camera checks, which asserted that the window framed the gate
 // and that *some* window existed for any point, and could not catch the shipped defect
@@ -253,6 +328,38 @@ if (import.meta.env.DEV) {
   ok(VIEW_ARENA.y + VIEW_ARENA.h === PIT_BOT + 1, 'the arena frame sits on the pit rim');
   ok(VIEW_LOBBY.y + VIEW_LOBBY.h === LOBBY_BOT + 1 + LOBBY_FOOT, 'the lobby frame sits below the floor band');
 
+  // THE BOSS IS INSIDE ITS OWN FRAME. The sweep below walks PLAYER stands, and the boss is
+  // not one, so nothing anywhere proved the creature fits — `gen_map.validate()` cannot see
+  // it either, and passes maps that cut the crown off. The pit can only grow downward, and
+  // every row it gains raises this frame's top edge 16 units toward a crown that does not
+  // move, so this is the entire ceiling on pit depth and it is checked here or nowhere.
+  //
+  // Derived from the chain's own hitbox table the way `Arena.tsx` derives `BOSS_HIT_BOT`
+  // from the other end of it: the top of the drawn rig is not the thing that matters, the
+  // top of the HITTABLE rig is, because a crown above the frame is a target the player
+  // cannot see and can still be killed by.
+  const BOSS_HIT_TOP = Math.min(
+    CORE.y - Math.sqrt(CORE.radiusSq),
+    ...PART_HITBOXES.map((r) => r.y),
+  );
+  ok(BOSS_SPAWN[1] + BOSS_HIT_TOP >= VIEW_ARENA.y, 'the arena frame contains the boss crown');
+
+  // The lobby frame's head is painted fiction over pit floor — the gate tower, the skyline.
+  // That is legal only while a `ZONE_LOBBY` seat is clamped below all of it; the moment the
+  // lobby's movement box starts above the pit's last row, the fiction is being painted over
+  // floor somebody is standing on, in a room that does not draw them (R3).
+  ok(PIT_BOT + 1 <= LOBBY_TOP, 'the lobby movement box starts below the pit, so its head is fiction');
+
+  // The keep is inside the room it is cut from, or the fit could be forced past the art.
+  for (const room of ['lobby', 'arena'] as const) {
+    const v = VIEWS[room];
+    const k = KEEP[room];
+    ok(
+      k.x >= v.x && k.y >= v.y && k.x + k.w <= v.x + v.w && k.y + k.h <= v.y + v.h,
+      `${room}'s keep lies inside its room`,
+    );
+  }
+
   // The movement box the chain clamps into, from `player.rs::zone_bounds`: a raider is
   // held in PIT_TOP..=PIT_BOT, everyone else in PIT_BOT + 1..=MAP_MAX_XY. Anything else is
   // unreachable, so framing it would be framing empty stone.
@@ -266,7 +373,7 @@ if (import.meta.env.DEV) {
   const HEAD = 48;
 
   for (const room of ['lobby', 'arena'] as const) {
-    const v = VIEWS[room];
+    const v = KEEP[room];
     const [top, bot] = ROOM_Y[room];
     let stands = 0;
     for (let ty = 0; ty < MAP_TILES; ty++) {
@@ -283,30 +390,38 @@ if (import.meta.env.DEV) {
         stands++;
         ok(
           x0 >= v.x && x1 < v.x + v.w,
-          `${room} frames tile column ${tx} -- a player there would be off screen`,
+          `${room}'s keep frames tile column ${tx} -- a player there would be off screen`,
         );
         ok(
           y0 - HEAD >= v.y && y1 < v.y + v.h,
-          `${room} frames tile row ${ty} with headroom -- a player there would be cut off`,
+          `${room}'s keep frames tile row ${ty} with headroom -- a player there would be cut off`,
         );
       }
     }
     ok(stands > 0, `${room} has walkable tiles to frame`);
   }
 
-  // The fit itself, over every stage shape including the absurd ones. Containment is the
-  // property the rooms rely on; equal aspect is what stops `meet` letterboxing.
+  // The fit itself, over every stage shape including the absurd ones. Containment of the
+  // keep is the property the rooms rely on; equal aspect is what stops `meet`
+  // letterboxing; and the box may not grow past the room on an axis the keep did not
+  // force, or "cover" is a comment and the flat margins are back.
   for (let a = 0.05; a <= 6.0001; a += 0.05) {
-    for (const v of [VIEW_LOBBY, VIEW_ARENA]) {
+    for (const room of ['lobby', 'arena'] as const) {
+      const v = VIEWS[room];
+      const k = KEEP[room];
       // 1000 x (1000 / a) is a stage of aspect `a`; the fit reads only the ratio.
-      const b = fitViewBox(v, 1000, 1000 / a);
+      const b = fitViewBox(room, 1000, 1000 / a);
       const e = 1e-9;
       ok(
-        b.x <= v.x + e &&
-          b.y <= v.y + e &&
-          b.x + b.w >= v.x + v.w - e &&
-          b.y + b.h >= v.y + v.h - e,
-        `the fitted box contains the room at aspect ${a.toFixed(2)}`,
+        b.x <= k.x + e &&
+          b.y <= k.y + e &&
+          b.x + b.w >= k.x + k.w - e &&
+          b.y + b.h >= k.y + k.h - e,
+        `the fitted box contains ${room}'s keep at aspect ${a.toFixed(2)}`,
+      );
+      ok(
+        b.h <= Math.max(v.h, k.w / a) + e && b.w <= Math.max(v.w, k.h * a) + e,
+        `the fitted box shows no void ${room}'s keep did not force at aspect ${a.toFixed(2)}`,
       );
       ok(Math.abs(b.w / b.h - a) < 1e-9, `the fitted box matches the stage aspect ${a.toFixed(2)}`);
       ok(b.scale > 0 && Math.abs(b.scale - 1000 / a / b.h) < 1e-9, `the fit is uniform at aspect ${a.toFixed(2)}`);
@@ -314,17 +429,25 @@ if (import.meta.env.DEV) {
   }
 
   // Authored scenery is finite, so say which stage shapes it actually reaches. These are
-  // the spec's own table, minus the ultrawide the void rect covers instead.
+  // the spec's own table, minus the ultrawide the void rect covers instead. Per side,
+  // because the fit is bottom-anchored and the whole y surplus lands on one edge.
   for (const [w, h] of [
     [1024, 720],
     [1366, 720],
     [1440, 852],
     [1920, 1032],
+    [1920, 1080],
   ] as const) {
-    const b = fitViewBox(VIEW_LOBBY, w, h);
-    ok(
-      (b.w - VIEW_LOBBY.w) / 2 <= VIEW_BLEED && (b.h - VIEW_LOBBY.h) / 2 <= VIEW_BLEED,
-      `authored bleed reaches the frame edge at ${w}x${h}`,
-    );
+    for (const room of ['lobby', 'arena'] as const) {
+      const v = VIEWS[room];
+      const b = fitViewBox(room, w, h);
+      ok(
+        v.x - b.x <= VIEW_BLEED &&
+          b.x + b.w - (v.x + v.w) <= VIEW_BLEED &&
+          v.y - b.y <= VIEW_BLEED &&
+          b.y + b.h - (v.y + v.h) <= VIEW_BLEED,
+        `authored bleed reaches the frame edge for ${room} at ${w}x${h}`,
+      );
+    }
   }
 }

@@ -1,0 +1,147 @@
+[
+ {
+  "name": "F-wire-cpu6",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10
+  }
+ },
+ {
+  "name": "F-wire-cpu1",
+  "cpu": 1,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 1
+  }
+ },
+ {
+  "name": "F-wire-cpu6-k10",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 10,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 5
+  }
+ },
+ {
+  "name": "F-wire-cpu6-k5",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 5,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 3
+  }
+ },
+ {
+  "name": "F-wire-cpu6-k1",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 1,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 1
+  }
+ },
+ {
+  "name": "F-wire-cpu6-lobby",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "lobby",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10
+  }
+ },
+ {
+  "name": "F-wire-cpu6-pass",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "passage",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 600,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10
+  }
+ },
+ {
+  "name": "F-wire-cpu6-nograde",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10,
+   "css": "g.hr-boss-grade{filter:none!important}"
+  }
+ }
+]

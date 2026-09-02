@@ -37,9 +37,7 @@ import { useEffect, useReducer, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
-  PHASE_FIGHTING,
   PHASE_LOBBY,
-  PHASE_MUSTERING,
   PHASE_SETTLED,
   PHASE_SETTLING,
   ZONE_ARENA,
@@ -48,10 +46,10 @@ import {
   confirmSignature,
   connectMatch,
   createSessionSigner,
-  decodeTransactionError,
   enterGate,
   movePlayer,
   onGate,
+  refusalOf,
   sendInstructions,
   shoot,
   type HeartrotRpc,
@@ -66,6 +64,7 @@ import { subscribeMatch, type MatchSubscription } from './net/subscribe';
 import { Passage } from './render/Passage';
 import { fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
+import { gateOpen } from './screens/Gate';
 import { Lobby } from './screens/Lobby';
 import { Onboarding } from './screens/Onboarding';
 import { mySeatSlot, screenOf, useSelect, useStore } from './state/store';
@@ -88,6 +87,36 @@ const GATE_RETRY_MS = 500;
 
 /** How long a refused-instruction line stays in the error bar. */
 const NOTICE_MS = 2_500;
+
+/**
+ * A transient line in the error bar, for a refusal nothing else will ever report.
+ *
+ * `setStatus(currentStatus, message)` writes the message WITHOUT moving the status, so the
+ * connection dot stays honest and the world feed keeps clearing it. Never
+ * `setStatus('error')`: that status is HELD (`store.ts`'s `HELD`) and the feed cannot clear
+ * it, so one refused datagram out of the ten a second this app sends would brick the
+ * session for the life of the tab.
+ *
+ * Module scope with two callers — `useGameplay` and `useGateEntry` — because both need the
+ * same closure AND the same `clear` on unmount, and the second copy of eight lines is how
+ * the two drift. Not a hook: it is called inside an effect, once per link.
+ */
+function transientNotice(store: ReturnType<typeof useStore>): {
+  post: (message: string) => void;
+  clear: () => void;
+} {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    post: (message: string): void => {
+      store.setStatus(store.getState().status, message);
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (store.getState().error === message) store.setStatus(store.getState().status);
+      }, NOTICE_MS);
+    },
+    clear: (): void => clearTimeout(timer),
+  };
+}
 
 export default function App() {
   const screen = useSelect(screenOf);
@@ -168,6 +197,10 @@ export default function App() {
           `leaveMatch` has no other caller in the app. The card is the way out for both
           sides of the gate. */}
       {hasStage && phase === PHASE_SETTLED && <Result />}
+      {/* Mutually exclusive with the verdict, which is the only other `.overlay` and would
+          otherwise stack with it in the window where `Arena` says SETTLED and `Boss` has
+          not landed yet. */}
+      {hasStage && phase !== PHASE_SETTLED && <WorldPending />}
       <ErrorBar />
       <DevPanel />
     </div>
@@ -279,6 +312,88 @@ function Result() {
   );
 }
 
+/**
+ * The gap between "seated" and "drawable" — the void.
+ *
+ * `join()` resolves the moment `/api/session/init` hands back a seat, `screenOf` flips to
+ * `'lobby'` on the same tick, and `Hud`'s dot reads the world feed as live. But `World`
+ * below returns `null` until `arena` **and** `boss` **and** `players` have all arrived,
+ * and those are three separate snapshots taken by `connectMatch` over a devnet round trip.
+ * So the player was seated, told "live", and shown an empty black stage with no indication
+ * that anything was happening. Every new player passed through it; the UX walk ranked it
+ * first.
+ *
+ * The honest thing to show is the actual gate: which of the three accounts are here. That
+ * is the whole progress indicator, and it cannot lie — it is read off the same three
+ * fields `World` tests, so this card is on screen for exactly the frames the stage is
+ * empty and not one more. No spinner, no percentage, no fake "almost there".
+ *
+ * `arrived` is a **bitmask**, not the three accounts: a primitive selector, so this
+ * subscribes to the three notifications that flip a bit and to none of the ~714/s that do
+ * not — the hot path stays as narrow as it was, which matters because it is the same path
+ * a concurrent re-render fix is measuring.
+ */
+const PENDING_CSS = `
+.pending-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+.pending-list li { display: flex; justify-content: space-between; gap: 16px; }
+.pending-list .waiting { color: var(--dim); }
+.pending-list .here { color: var(--flesh-lit); }
+`;
+
+function WorldPending() {
+  const store = useStore();
+  const seat = useSelect((s) => s.match?.seat ?? -1);
+  const failed = useSelect((s) => s.status === 'error');
+  // The error bar is a `.shell` grid row and this overlay is fixed over it at z-index 40,
+  // so on the failure branch the card has to carry the reason itself or it is not readable
+  // anywhere.
+  const error = useSelect((s) => s.error);
+  const arrived = useSelect((s) => (s.arena ? 1 : 0) | (s.boss ? 2 : 0) | (s.players ? 4 : 0));
+
+  if (arrived === 7) return null;
+
+  const rows: readonly (readonly [string, boolean])[] = [
+    ['the room', (arrived & 1) !== 0],
+    ['the boss', (arrived & 2) !== 0],
+    ['the roster', (arrived & 4) !== 0],
+  ];
+
+  return (
+    <div className="overlay">
+      <style>{PENDING_CSS}</style>
+      <div className="card" role="status" aria-live="polite">
+        <p className="eyebrow">Seat {seat} is yours</p>
+        <h2>{failed ? 'The arena did not open.' : 'Opening the arena'}</h2>
+        <ul className="pending-list lede">
+          {rows.map(([name, here]) => (
+            <li key={name}>
+              <span>{name}</span>
+              <span className={here ? 'here' : 'waiting'}>{here ? 'here' : 'waiting'}</span>
+            </li>
+          ))}
+        </ul>
+        {failed ? (
+          <>
+            <p className="fine">{error}</p>
+            {/* Otherwise this is a second dead end: `useMatchLink` treats a failed
+                `connectMatch` as fatal for the match on purpose, and without a way out the
+                player sits on this card for the life of the tab. `leaveMatch` drops the
+                seat and the next join takes a fresh one — the same exit `Result` uses. */}
+            <button className="btn btn-primary" onClick={() => store.leaveMatch()}>
+              Back to the lobby
+            </button>
+          </>
+        ) : (
+          <p className="fine">
+            The rollup delivers each of the three as its own snapshot, and the room is drawn
+            when all three are in. This normally takes well under a second.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The world, and the way out of it
 // ---------------------------------------------------------------------------
@@ -367,18 +482,7 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
     const session = signer.address;
     const common = { programId: match.programId, arena: match.arena, players: match.players };
 
-    // A transient line in the error bar. `setStatus(currentStatus, message)` writes the
-    // message without moving the status, so the connection dot stays honest and the world
-    // feed keeps clearing it — an unclearable 'error' status over a rejected datagram is
-    // exactly the brick this avoids.
-    let noticeTimer: ReturnType<typeof setTimeout> | undefined;
-    const notice = (message: string): void => {
-      store.setStatus(store.getState().status, message);
-      clearTimeout(noticeTimer);
-      noticeTimer = setTimeout(() => {
-        if (store.getState().error === message) store.setStatus(store.getState().status);
-      }, NOTICE_MS);
-    };
+    const { post: notice, clear: clearNotice } = transientNotice(store);
 
     // `sendInstructions` runs `skipPreflight`, so a refused instruction returns a
     // signature and then fails in silence — a player who is rate-limited or dead sees
@@ -402,12 +506,13 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           }
         })
         .catch((error: unknown) => {
-          // `decodeTransactionError`, never a hand-rolled parse: the ER writes
-          // `InstructionError` members as JSON strings where base devnet writes numbers
-          // and kit hands back bigints, and only this decoder reads all three.
-          const decoded = decodeTransactionError(
-            error instanceof Error && error.cause !== undefined ? error.cause : error,
-          );
+          // `refusalOf`, never a hand-rolled parse and never `decodeTransactionError`
+          // directly: the ER writes `InstructionError` members as JSON strings where base
+          // devnet writes numbers and kit hands back bigints, and `confirmSignature`
+          // throws with the decode already on `cause` — decoding that a second time
+          // returns `code: undefined` and silently drops every refusal this confirm
+          // exists to sample.
+          const decoded = refusalOf(error);
           // `BlockedByWall` is expected traffic — one per tick from anyone holding a
           // direction into a wall — and a timeout is the ER being slow, not a refusal.
           if (decoded.code === 14 || decoded.code === undefined) return;
@@ -496,7 +601,7 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
     });
 
     return () => {
-      clearTimeout(noticeTimer);
+      clearNotice();
       detach();
     };
   }, [host, link, store]);
@@ -523,19 +628,22 @@ function useGateEntry(link: Link): void {
   useEffect(() => {
     if (link === null) return;
     const { er, signer, match } = link;
+    const { post: notice, clear: clearNotice } = transientNotice(store);
     let inFlight = false;
 
     const timer = setInterval(() => {
       if (inFlight) return;
       const state = store.getState();
-      // `assert_playable` (handlers/player.rs:501) refuses `enter_gate` outside these
-      // three, so from `PHASE_SETTLING` onward every send is a `WrongPhase` the client
-      // cannot see — `skipPreflight` returns a signature and the `.catch` below only fires
-      // on a transport failure. Without this a stranded seat pushes two doomed
-      // transactions a second into the ER for as long as the tab is open. Not an ordering
-      // test: `PHASE_MUSTERING` is 6, appended after `PHASE_ROLLED`.
-      const phase = state.arena?.phase ?? PHASE_LOBBY;
-      if (phase !== PHASE_LOBBY && phase !== PHASE_MUSTERING && phase !== PHASE_FIGHTING) return;
+      // `assert_playable` (handlers/player.rs:502) refuses `enter_gate` outside three
+      // phases, so from `PHASE_SETTLING` onward every send is a `WrongPhase` nobody can
+      // act on. Without this a stranded seat pushes two doomed transactions a second into
+      // the ER for as long as the tab is open.
+      //
+      // `gateOpen`, not the same three phases spelled out here: `screens/Gate.tsx` renders
+      // "The gate is shut." off that predicate, and if this loop's copy drifts from it the
+      // prompt claims a send that is not happening — which is precisely the invisible case
+      // the confirm below exists to end.
+      if (!gateOpen(state.arena?.phase ?? PHASE_LOBBY)) return;
       const slot = mySeatSlot(state);
       if (!slot || slot.zone !== ZONE_LOBBY) return;
       if (!onGate(slot.x, slot.y)) return;
@@ -549,11 +657,28 @@ function useGateEntry(link: Link): void {
           seat: match.seat,
         }),
       ])
+        // The gameplay path samples its confirms because `move` and `shoot` run ten times
+        // a second. This runs twice a second, at most one outstanding, and its refusals are
+        // the UNRECOVERABLE ones — `WrongSessionKey` (a second tab rotated the seat's key),
+        // `WrongPhase` racing the crank. Sending it with `skipPreflight` and no confirm at
+        // all made every one of them silent, on the one screen whose copy tells the player
+        // to stand still and stop generating the traffic that would reveal them.
+        .then((signature) => confirmSignature(er, signature, { timeoutMs: 1_500, pollMs: 300 }))
         .catch((error: unknown) => {
-          // Same reasoning as the gameplay path: a dropped send is retried on the next
-          // period, and holding `error` here would hide the world feed behind it.
-          console.error('heartrot: enter_gate send failed', error);
+          // Same reader as the gameplay path, and for the same reason: `confirmSignature`
+          // throws with the decode on `cause` and `sendInstructions` throws undecoded, so
+          // only `refusalOf` gets `code` out of both.
+          const decoded = refusalOf(error);
+          // The two that heal themselves on the next 500 ms period, and are the reason
+          // `error.rs:231` splits them at all: `NotOnGate` (15) is "the chain has not seen
+          // your last step yet", `WrongZone` (9) is "you are already through". `undefined`
+          // is a confirm timeout or a dropped send — the ER being slow, not a refusal, and
+          // ignored exactly as the gameplay path ignores it.
+          if (decoded.code === 15 || decoded.code === 9 || decoded.code === undefined) return;
+          notice(`The gate refused you: ${decoded.name ?? `Custom(${decoded.code})`} — ${decoded.message}`);
         })
+        // Held through the confirm on purpose: one `enter_gate` outstanding at a time, and
+        // 1_500/300 caps the worst-case gap between retries at ~2 s.
         .finally(() => {
           inFlight = false;
         });
@@ -561,6 +686,7 @@ function useGateEntry(link: Link): void {
 
     return () => {
       clearInterval(timer);
+      clearNotice();
     };
   }, [link, store]);
 }

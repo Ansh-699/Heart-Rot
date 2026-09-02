@@ -1,0 +1,135 @@
+[
+ {
+  "name": "P-base",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320
+  }
+ },
+ {
+  "name": "P-room-only",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 0,
+   "movesPerSec": 0,
+   "arrows": false,
+   "movesPerWrite": 0
+  }
+ },
+ {
+  "name": "P-noarrows",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "arrows": false
+  }
+ },
+ {
+  "name": "P-nomoves",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 0,
+   "movesPerWrite": 0
+  }
+ },
+ {
+  "name": "P-noscenery",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "css": "g.boss-arena{display:none!important}"
+  }
+ },
+ {
+  "name": "P-nochrome",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "hud": false,
+   "dev": false
+  }
+ },
+ {
+  "name": "P-lobby-base",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "lobby",
+   "knights": 20,
+   "movesPerSec": 320
+  }
+ }
+]

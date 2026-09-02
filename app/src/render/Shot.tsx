@@ -366,8 +366,16 @@ export interface ShotProps {
   /**
    * How many of the scene's {@link VISIBLE_PROJECTILES} `Arena.tsx` has already spent on
    * boss bullets this render. Boss ordnance ranks first — the cap's measured win (-2.08 ms
-   * p50) is spent if arrows are drawn outside it — so arrows take what is left, newest
-   * first, with the local seat's own arrow never dropped. Omitted means "the cap is mine".
+   * p50) is spent if arrows are drawn outside it — so arrows take what is left.
+   *
+   * Spent at SPAWN, in {@link Shot}'s `launch`, and NOT in the frame step. Applied in the
+   * frame step it still paid for the raycast, three one-shot animations and a `Flight` for
+   * an arrow it then hid, and with a full bullet pool (`budget === VISIBLE_PROJECTILES`,
+   * reachable at twenty seats) `drawn >= 0` was true on the first iteration — so the seat
+   * `frameOrder` put first, the LOCAL one, was the first one hidden, three lines under a
+   * comment promising the opposite (`docs/perf/frame-budget-17.md` §5.1).
+   *
+   * Omitted means "the cap is mine".
    */
   budget?: number;
   /**
@@ -463,10 +471,39 @@ export function Shot({
     );
   };
 
+  /** What is left of {@link VISIBLE_PROJECTILES} once `Arena` has drawn its bullets. */
+  const cap = Math.max(0, VISIBLE_PROJECTILES - budget);
+
   /** Start a seat's arrow. The one place a `Flight` is created, local or remote. */
   const launch = (seat: number, x: number, y: number, dx: number, dy: number, cls: number): void => {
     if (seat < 0 || seat >= MAX_SEATS) return;
     if (!inRoom(seat)) return;
+
+    // The cap, spent here rather than in the frame step — see `budget`. The local seat is
+    // exempt: its own arrow is the one the player is looking for, and this is the only
+    // place that exemption can actually hold.
+    if (seat !== localSeat) {
+      // Nothing left at all. Returning BEFORE the raycast is where the cost goes: the ray
+      // and the three one-shots are the whole of a spawn.
+      if (cap === 0) return;
+      const { live, oldest } = flightCut(flights.current, localSeat);
+      // Full: drop the arrow that has been in the air LONGEST. It is nearest its terminus,
+      // so its loss costs the least information; dropping the newest would drop the shot
+      // that was just fired, which is the one the player is watching for.
+      //
+      // ponytail: ONE eviction per launch, so a `cap` that falls mid-volley — the bullet
+      // pool filling — is absorbed by arrows expiring rather than by a mass vanish, and the
+      // count can sit above it for up to `ARROW_MAX_MS` under sustained fire. The real
+      // ceiling either way is `MAX_SEATS`, because `flights` is one entry per seat and a
+      // seat cannot have two arrows up. Evict in a `while` if that ever measures.
+      if (live >= cap && oldest >= 0) {
+        flights.current[oldest] = null;
+        const dropped = arrow.current[oldest];
+        if (dropped !== null && dropped !== undefined && dropped.style.opacity !== '0') {
+          dropped.style.opacity = '0';
+        }
+      }
+    }
 
     const b = bossRef.current;
     const end = raycastShot(x, y, dx, dy, b.parts, b.x, b.y);
@@ -605,24 +642,16 @@ export function Shot({
   // ---- the frame step, run from `Arena.tsx`'s loop -----------------------
   //
   // The ONLY per-frame work in this file, and the only writer of an arrow's transform.
-  const cap = Math.max(0, VISIBLE_PROJECTILES - budget);
-  const capRef = useRef(cap);
-  capRef.current = cap;
-  const localRef = useRef(localSeat);
-  localRef.current = localSeat;
-
+  //
+  // No cap and no ordering: `launch` already refused every arrow the scene has no room
+  // for, so what is in `flights` is exactly what is drawn. That deletes the per-frame
+  // `frameOrder` allocation and its sort, and it is what makes the local seat's own arrow
+  // survive a full bullet pool.
   useLayoutEffect(() => {
     const step = (now: number): void => {
-      // Newest first, so a cut under the cap drops the arrows that have most nearly
-      // arrived rather than the one that just left a bow. The local seat is never cut:
-      // its own shot is the one the player is looking for.
-      let drawn = 0;
-      const budgetLeft = capRef.current;
-      const mine = localRef.current;
-      const order = frameOrder(flights.current, mine);
-
-      for (const seat of order) {
-        const f = flights.current[seat]!;
+      for (let seat = 0; seat < MAX_SEATS; seat++) {
+        const f = flights.current[seat];
+        if (f === null || f === undefined) continue;
         const el = arrow.current[seat];
         const t = (now - f.t0) / f.ms;
 
@@ -637,11 +666,6 @@ export function Shot({
         }
 
         if (el === null || el === undefined) continue;
-        if (drawn >= budgetLeft) {
-          if (el.style.opacity !== '0') el.style.opacity = '0';
-          continue;
-        }
-        drawn++;
 
         // Position, plus the archer's sag: a perpendicular `sin(pi t)` that is zero at both
         // ends, so it never moves the terminus the chain already resolved.
@@ -755,24 +779,30 @@ function aimOf(slot: PlayerSlot): readonly [number, number] {
 }
 
 /**
- * Seats with an arrow in the air, newest first, with the local seat forced to the front.
+ * How many arrows are in the air, and which of them is the one to drop.
  *
- * Allocated per frame, which is one small array of at most {@link MAX_SEATS} numbers —
- * against the `atan2` and the style write it pays for, and it only ever holds the seats
- * that are actually firing (the live instrument sees 13-15 boss bullets at 20 seats, and a
- * knight fires once every eight ticks).
+ * `oldest` is the longest-flying seat that is NOT `mine` — the local player's own arrow is
+ * never the cut, which is the half of the projectile cap that used to be a comment rather
+ * than a behaviour. `-1` when there is nothing droppable.
+ *
+ * Pure and one pass, so the cap's policy is checkable without a renderer. Called once per
+ * spawn (a knight fires every eight ticks) rather than once per frame, which is the whole
+ * point of moving the cap out of the frame step.
  */
-function frameOrder(flights: ReadonlyArray<Flight | null>, mine: number | undefined): number[] {
-  const out: number[] = [];
+function flightCut(
+  flights: ReadonlyArray<Flight | null>,
+  mine: number | undefined,
+): { live: number; oldest: number } {
+  let live = 0;
+  let oldest = -1;
   for (let seat = 0; seat < flights.length; seat++) {
-    if (flights[seat] !== null) out.push(seat);
+    const f = flights[seat];
+    if (f === null || f === undefined) continue;
+    live++;
+    if (seat === mine) continue;
+    if (oldest === -1 || f.t0 < flights[oldest]!.t0) oldest = seat;
   }
-  if (out.length < 2) return out;
-  return out.sort((a, b) => {
-    if (a === mine) return -1;
-    if (b === mine) return 1;
-    return flights[b]!.t0 - flights[a]!.t0;
-  });
+  return { live, oldest };
 }
 
 // ---------------------------------------------------------------------------
@@ -872,8 +902,9 @@ if (import.meta.env.DEV) {
   ok(part !== undefined && landingOf(part, 0) === 'hit', 'a part hit is never an absorb');
   ok(landingOf({ x: 0, y: 0, struck: false, core: false }, 1) === 'miss', 'a miss reads as a miss');
 
-  // 6. The cut under the projectile cap keeps the local seat and drops the oldest. A shot
-  //    the player cannot see is the entire bug report this file answers.
+  // 6. The cut under the projectile cap keeps the local seat and drops the OLDEST. A shot
+  //    the player cannot see is the entire bug report this file answers, and applying the
+  //    cap in the frame step hid the local seat FIRST (frame-budget-17 §5.1).
   const fake = (t0: number): Flight => ({
     t0,
     x0: 0,
@@ -889,8 +920,10 @@ if (import.meta.env.DEV) {
     hit: 'miss',
     landed: false,
   });
-  const order = frameOrder([fake(10), null, fake(30), fake(20)], 0);
-  ok(order[0] === 0, "the local seat's own arrow is never the one cut");
-  ok(order[1] === 2 && order[2] === 3, 'remote arrows are ranked newest first');
-  ok(frameOrder([null, null], 0).length === 0, 'no arrows in the air is no work');
+  const cut = flightCut([fake(30), null, fake(10), fake(20)], 0);
+  ok(cut.live === 3, 'every arrow in the air counts against the cap, the local one included');
+  ok(cut.oldest === 2, 'the arrow that has flown longest is the one dropped');
+  ok(flightCut([fake(10), fake(30)], 0).oldest === 1, "the local seat's own arrow is never cut");
+  const none = flightCut([null, null], 0);
+  ok(none.live === 0 && none.oldest === -1, 'no arrows in the air is nothing to drop');
 }

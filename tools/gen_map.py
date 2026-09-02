@@ -112,8 +112,18 @@ def read_rust_geometry(tile: int, map_tiles: int) -> dict[str, object]:
         "LOBBY_ENTRANCE": rust_const(PLAYER_RS, "LOBBY_ENTRANCE", env),
         "LOBBY_SPACING": rust_const(PLAYER_RS, "LOBBY_SPACING", env),
         "ENTRANCE_SPACING": rust_const(TICK_RS, "ENTRANCE_SPACING", env),
+        # The eight-way step, read back rather than restated: the freeze sweep below is
+        # only worth running if it steps exactly as far as `move_player` does.
+        "STEP": rust_const(PLAYER_RS, "STEP", env),
+        "STEP_DIAG": rust_const(PLAYER_RS, "STEP_DIAG", env),
     }
     return g
+
+
+def move_steps(g: dict[str, object]) -> list[tuple[int, int]]:
+    """`player::MOVE_STEP`, rebuilt from the two constants that define it."""
+    s, d = g["STEP"], g["STEP_DIAG"]
+    return [(0, -s), (d, -d), (s, 0), (d, d), (0, s), (-d, d), (-s, 0), (-d, -d)]
 
 
 def fans_along_x(ex: int, ey: int, arena_size: int) -> bool:
@@ -262,8 +272,8 @@ def heart_world(grid: list[str], tile: int) -> tuple[int, int]:
 def pit_box(grid: list[str], tile: int) -> dict[str, int]:
     """`PIT_TOP` / `PIT_BOT`: the y band a `ZONE_ARENA` player is confined to.
 
-    Drawn as the `P` block. Only the *rows* matter -- the pit is corner-shaped and the
-    doorway is four tiles wide, so there is no rectangle to speak of -- and the band is
+    Drawn as the `P` block. Only the *rows* matter -- the pit is chamfered and the
+    doorway is eight tiles wide, so there is no rectangle to speak of -- and the band is
     inclusive of the last row's last unit, which is the form `move_player` compares a
     destination against.
 
@@ -471,6 +481,96 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
             die(f"entrance_for({seat}) lands at ({rx}, {ry}), outside the pit rows "
                 f"{ptop}..{pbot} -- that seat is clamped out of every legal move")
 
+    # -----------------------------------------------------------------------
+    # The open-arena rules -- docs/architecture/18-open-arena.md 2 and 6.
+    #
+    # Everything above proves the map is *playable*. What follows proves it is the
+    # map that was drawn. Thirty 2x2 pillars stood in the lobby and every check
+    # above passed with them there: they sealed nothing, pinched nothing and moved
+    # no constant, so nothing in this tool could see them. These can.
+    # -----------------------------------------------------------------------
+
+    # At most ONE contiguous run of floor per row. That single rule is the whole of
+    # "no square blocks, no scattered cover tiles, no grid of obstacles": a
+    # free-standing block anywhere splits its rows into two runs or more, while the
+    # perimeter, the chamfer, the divider and the doorway each leave exactly one.
+    # Perimeter architecture, banners, torches, chains, medallions and floor
+    # markings are paint on tiles this grid already declares -- never a wall tile.
+    for y, row in enumerate(grid):
+        runs = sum(1 for x, c in enumerate(row)
+                   if c != WALL and (x == 0 or row[x - 1] == WALL))
+        if runs > 1:
+            die(f"row {y} carries {runs} separate runs of floor -- an interior "
+                "obstacle splits it. The arena floor is open: perimeter and divider "
+                "only, and a decoration may never become a wall tile")
+
+    # Mirror symmetry about the vertical centre line, reading `B` and `E` as the pit
+    # terrain they are drawn in. The doors used to sit at cols 10/22/42/54, which is
+    # 16 units of respawn offset nobody drew on purpose and which no other check on
+    # this page can see -- all four are floor, in the band, and reach the heart.
+    for y, row in enumerate(grid):
+        flat = row.replace(HEART, PIT).replace(ENTRANCE, PIT)
+        if flat != flat[::-1]:
+            die(f"row {y} is not symmetric about the vertical centre line:\n"
+                f"  {row}\n  {row[::-1]}")
+    ecols = {x for x, _ in entrances}
+    if {n - 1 - x for x in ecols} != ecols:
+        die(f"the respawn doors sit at columns {sorted(ecols)}, which are not mirror "
+            f"pairs about {(n - 1) / 2} -- one side of the raid respawns off centre")
+    if hx * tile * 2 != n * tile:
+        die(f"the `{HEART}` heart is at world x {hx * tile}, not the centre line "
+            f"{n * tile // 2} -- the boss must stand top *centre*")
+
+    # The gate is reachable from every lobby spawn WITHOUT leaving the lobby's zone
+    # box (`player::zone_box`, `PIT_BOT + 1 ..= MAP_MAX_XY`). The whole-map flood
+    # fill above cannot answer this: it walks through the pit, which a `ZONE_LOBBY`
+    # seat may not enter. A lobby that cannot reach its own gate is a raid nobody
+    # can ever start.
+    lobby_rows = range(gy0, n)
+    lobby_open = {(x, y) for y in lobby_rows for x in range(n) if not solid(x, y)}
+    lobby_seen = {(gx0, gy0)}
+    q = deque([(gx0, gy0)])
+    while q:
+        x, y = q.popleft()
+        for nb in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if nb in lobby_open and nb not in lobby_seen:
+                lobby_seen.add(nb)
+                q.append(nb)
+    for seat in range(g["MAX_SEATS"]):
+        lx, ly = lobby_spawn(seat, g)
+        if (lx // tile, ly // tile) not in lobby_seen:
+            die(f"lobby_spawn({seat}) at tile ({lx // tile}, {ly // tile}) cannot walk "
+                "to the gate without leaving the lobby box -- that seat can never "
+                "enter the raid")
+
+    # No position in either zone with zero legal moves. `move_player` refuses a step
+    # unless `!is_wall(nx, ny) && may_move_to(zone, y, ny)`, so the wall bitboard and
+    # the zone box can each remove moves the other left. A position where every one
+    # of the eight is refused is a hard freeze with nothing logged anywhere -- the
+    # most dangerous defect this map can carry. Replays `player.rs`'s
+    # `the_box_never_removes_a_seats_last_legal_move` at the same tile stride, plus
+    # the stronger claim that a legal move exists at all.
+    steps = move_steps(g)
+    zones = {"ZONE_ARENA": (pit["PIT_TOP"], pit["PIT_BOT"]),
+             "ZONE_LOBBY": (pit["PIT_BOT"] + 1, max_xy)}
+    wall_at = lambda x, y: (  # noqa: E731 - `player::is_wall`, verbatim
+        x < 0 or y < 0 or x // tile >= n or y // tile >= n or solid(x // tile, y // tile))
+    for zone, (top, bot) in zones.items():
+        over = lambda v: max(top - v, v - bot, 0)  # noqa: E731 - `box_overshoot`
+        for ty in range(n):
+            for tx in range(n):
+                if solid(tx, ty):
+                    continue
+                x, y = tx * tile, ty * tile
+                free = [(dx, dy) for dx, dy in steps if not wall_at(x + dx, y + dy)]
+                if not free:
+                    die(f"tile ({tx}, {ty}) is floor walled in on all eight steps")
+                # `may_move_to`: inside the box, or already outside it (stranded seats
+                # are governed by walls alone until they walk home).
+                if not any(over(y) > 0 or over(y + dy) == 0 for _, dy in free):
+                    die(f"{zone} at ({x}, {y}) -- tile ({tx}, {ty}) -- has no legal "
+                        "move: the zone box removed the last one the walls left")
+
     floor = sum(row.count(c) for row in grid for c in FLOOR_CHARS)
     if len(seen) != floor:
         die(f"{floor - len(seen)} floor tiles are sealed off from the heart chamber "
@@ -507,6 +607,11 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
     ptop, pbot = pit["PIT_ROWS"]
     gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
     pit_floor = sum(sum(1 for c in row if c != WALL) for row in grid[ptop:pbot + 1])
+    # The columns the boss's air actually spans. Emitted rather than written as
+    # `1..MAP_TILES - 1`, which silently assumed a one-tile border and became false
+    # the moment the side perimeter went to two.
+    air = [x for y in range(1, ptop) for x, c in enumerate(grid[y]) if c != WALL]
+    air_x0, air_x1 = min(air), max(air)
     return f'''//! Arena wall bitboard.
 //!
 //! {BANNER.replace(chr(10), chr(10) + "//! ")}
@@ -541,11 +646,16 @@ pub const TILE: i16 = {g["TILE"]};
 
 /// Wall bitboard: bit *x* of row *y* set means tile (x, y) is solid.
 ///
-/// Layout, top to bottom -- the 33 Immortals composition. Open floor for the boss's
-/// air, then the shaped pit the raid fights from, then a rim wall pierced by one
-/// four-tile doorway, then the gate block, then a pillared temple approach for the
-/// lobby. The whole vertical order is the fight: you walk up the temple, through the
-/// gate, out of the doorway into the pit, and the creature is above you.
+/// Layout, top to bottom. Open floor for the boss's air, then the chamfered pit the
+/// raid fights from, then the divider -- the lobby's top wall -- pierced by one
+/// eight-tile doorway, then the gate block, then the open lobby floor. The whole
+/// vertical order is the fight: you walk up the lobby, through the gate, out of the
+/// doorway into the pit, and the creature is above you.
+///
+/// Both rooms are open floor with zero interior obstacles. `tools/gen_map.py` holds
+/// them that way: at most one contiguous run of floor per row, so a free-standing
+/// block anywhere splits a row and is refused. Perimeter architecture, banners,
+/// torches, chains and floor markings are paint, never wall tiles.
 ///
 /// The rows above the pit are floor, not wall, and that is load-bearing rather than
 /// lazy drawing -- see [`PIT_TOP`].
@@ -862,11 +972,15 @@ mod tests {{
     /// column -- a raid that cannot be won, reporting nothing. The pit ceiling is
     /// `PIT_TOP`, a movement rule, and this is the test that keeps it from becoming a
     /// wall the next time someone redraws the grid.
+    ///
+    /// The column span is generated ({air_x0}..={air_x1}) rather than written as
+    /// `1..MAP_TILES - 1`: that form assumed a one-tile border ring and started
+    /// failing the moment the side perimeter was drawn two tiles thick.
     #[test]
     fn the_boss_air_above_the_pit_is_open() {{
         let top = (PIT_TOP / TILE) as usize;
         for ty in 1..top {{
-            for tx in 1..MAP_TILES - 1 {{
+            for tx in {air_x0}..={air_x1} {{
                 assert!(
                     !solid(tx, ty),
                     "tile ({{tx}}, {{ty}}) is wall above PIT_TOP -- every shot in that \\
@@ -1056,6 +1170,16 @@ def self_test(grid: list[str], g: dict[str, object]) -> None:
         "border breached": poke(grid, n // 2, 0, FLOOR),
         "heart deleted": poke(grid, *heart_point(grid), PIT),
         "row too short": [grid[0][:-1]] + grid[1:],
+        # The three below are the open-arena rules. The first is the pillar grid in
+        # miniature: one tile of cover, blocking nothing, sealing nothing, moving no
+        # constant -- accepted by every check this tool had before it.
+        "a cover tile in the open lobby": poke(
+            poke(grid, n // 2, n - 3, WALL), n - 1 - n // 2, n - 3, WALL),
+        "a respawn door off the centre line": poke(
+            poke(grid, ex0, ey0, PIT), ex0 + 1, ey0, ENTRANCE),
+        "the gate cut off from the lobby": [
+            r if y != gy1 + 1 else WALL * n for y, r in enumerate(grid)
+        ],
     }
     for name, broken in cases.items():
         try:

@@ -1,0 +1,9768 @@
+{
+ "long.plain.samples": [
+  {
+   "t": 1.6,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 7.7,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 13.8,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.002,
+   "seats": 29
+  },
+  {
+   "t": 28.9,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.014,
+   "seats": 29
+  },
+  {
+   "t": 43.8,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.037,
+   "seats": 29
+  },
+  {
+   "t": 49,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.052,
+   "seats": 29
+  },
+  {
+   "t": 59.4,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.069,
+   "seats": 29
+  },
+  {
+   "t": 65.6,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.088,
+   "seats": 29
+  },
+  {
+   "t": 72.8,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.109,
+   "seats": 29
+  },
+  {
+   "t": 81,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.131,
+   "seats": 29
+  },
+  {
+   "t": 88.4,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.155,
+   "seats": 29
+  },
+  {
+   "t": 94.9,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.181,
+   "seats": 29
+  },
+  {
+   "t": 111.1,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.266,
+   "seats": 29
+  },
+  {
+   "t": 119.4,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.298,
+   "seats": 29
+  },
+  {
+   "t": 129.7,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.33,
+   "seats": 29
+  },
+  {
+   "t": 135.9,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.002,
+   "mouthA": 0.364,
+   "seats": 29
+  },
+  {
+   "t": 143.2,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.004,
+   "mouthA": 0.398,
+   "seats": 29
+  },
+  {
+   "t": 150,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.008,
+   "mouthA": 0.434,
+   "seats": 29
+  },
+  {
+   "t": 156.2,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.014,
+   "mouthA": 0.47,
+   "seats": 29
+  },
+  {
+   "t": 162.6,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.02,
+   "mouthA": 0.509,
+   "seats": 29
+  },
+  {
+   "t": 171,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.028,
+   "mouthA": 0.548,
+   "seats": 29
+  },
+  {
+   "t": 180.5,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.046,
+   "mouthA": 0.629,
+   "seats": 29
+  },
+  {
+   "t": 187.5,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.057,
+   "mouthA": 0.67,
+   "seats": 29
+  },
+  {
+   "t": 194.7,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.068,
+   "mouthA": 0.713,
+   "seats": 29
+  },
+  {
+   "t": 201.9,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.081,
+   "mouthA": 0.758,
+   "seats": 29
+  },
+  {
+   "t": 208.4,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.094,
+   "mouthA": 0.802,
+   "seats": 29
+  },
+  {
+   "t": 219,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.108,
+   "mouthA": 0.849,
+   "seats": 29
+  },
+  {
+   "t": 225.6,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.123,
+   "mouthA": 0.896,
+   "seats": 29
+  },
+  {
+   "t": 232.6,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.138,
+   "mouthA": 0.944,
+   "seats": 29
+  },
+  {
+   "t": 239.8,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.154,
+   "mouthA": 0.994,
+   "seats": 29
+  },
+  {
+   "t": 254,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.189,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 260,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.207,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 267.3,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.226,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 273.9,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.245,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 281,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.265,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 288.5,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.286,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 296.9,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.307,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 303.1,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.329,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 309.1,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.351,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 319.5,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.397,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 326.6,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.42,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 333.2,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.444,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 340.3,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.469,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 347.3,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.494,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 354.4,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.52,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 361.1,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.546,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 368,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.572,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 375,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.6,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 382.2,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.627,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 388.8,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.654,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 395.8,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.683,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 402.6,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.712,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 410,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.741,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 417.9,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.77,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 423.7,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.801,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 430.6,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.831,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 441.4,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.862,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 449.1,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.894,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 455.8,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.926,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 461.7,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.958,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 468.2,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 0.992,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 475.7,
+   "self": true,
+   "tf": "translate(1002px, 640px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 483.8,
+   "self": true,
+   "tf": "translate(689px, 425px)",
+   "room": "arena",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 494.2,
+   "self": true,
+   "tf": "translate(692.328px, 425px)",
+   "room": "arena",
+   "flat": 0.94,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 500.2,
+   "self": true,
+   "tf": "translate(694.216px, 425px)",
+   "room": "arena",
+   "flat": 0.911,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 516.5,
+   "self": true,
+   "tf": "translate(699.255px, 423.533px)",
+   "room": "arena",
+   "flat": 0.854,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 569.5,
+   "self": true,
+   "tf": "translate(715.246px, 424.069px)",
+   "room": "arena",
+   "flat": 0.642,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 585.2,
+   "self": true,
+   "tf": "translate(720.237px, 424.175px)",
+   "room": "arena",
+   "flat": 0.593,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 597.8,
+   "self": true,
+   "tf": "translate(724.051px, 422.682px)",
+   "room": "arena",
+   "flat": 0.545,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 608.9,
+   "self": true,
+   "tf": "translate(726.734px, 420.404px)",
+   "room": "arena",
+   "flat": 0.522,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 625.2,
+   "self": true,
+   "tf": "translate(731.581px, 418.566px)",
+   "room": "arena",
+   "flat": 0.454,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 634,
+   "self": true,
+   "tf": "translate(733.86px, 416.753px)",
+   "room": "arena",
+   "flat": 0.431,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 645.9,
+   "self": true,
+   "tf": "translate(737.394px, 415.422px)",
+   "room": "arena",
+   "flat": 0.389,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 655.9,
+   "self": true,
+   "tf": "translate(740.253px, 413.986px)",
+   "room": "arena",
+   "flat": 0.368,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 668.2,
+   "self": true,
+   "tf": "translate(743.742px, 412.234px)",
+   "room": "arena",
+   "flat": 0.328,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 677.6,
+   "self": true,
+   "tf": "translate(746.43px, 410.884px)",
+   "room": "arena",
+   "flat": 0.309,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 688.4,
+   "self": true,
+   "tf": "translate(749.547px, 409.319px)",
+   "room": "arena",
+   "flat": 0.271,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 697.1,
+   "self": true,
+   "tf": "translate(752.133px, 408.376px)",
+   "room": "arena",
+   "flat": 0.253,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 711.1,
+   "self": true,
+   "tf": "translate(756.341px, 406.841px)",
+   "room": "arena",
+   "flat": 0.218,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 724.7,
+   "self": true,
+   "tf": "translate(760.43px, 405.35px)",
+   "room": "arena",
+   "flat": 0.185,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 736.9,
+   "self": true,
+   "tf": "translate(764.068px, 404.023px)",
+   "room": "arena",
+   "flat": 0.154,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 756.9,
+   "self": true,
+   "tf": "translate(770.473px, 403.437px)",
+   "room": "arena",
+   "flat": 0.112,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 767.7,
+   "self": true,
+   "tf": "translate(835px, 399px)",
+   "room": "arena",
+   "flat": 0.099,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 780,
+   "self": true,
+   "tf": "translate(838.936px, 399px)",
+   "room": "arena",
+   "flat": 0.076,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 795.3,
+   "self": true,
+   "tf": "translate(843.864px, 399px)",
+   "room": "arena",
+   "flat": 0.055,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 808.2,
+   "self": true,
+   "tf": "translate(847.928px, 399px)",
+   "room": "arena",
+   "flat": 0.037,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 837.6,
+   "self": true,
+   "tf": "translate(857.368px, 399px)",
+   "room": "arena",
+   "flat": 0.011,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 861.9,
+   "self": true,
+   "tf": "translate(865.112px, 399px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 875.6,
+   "self": true,
+   "tf": "translate(869.56px, 399px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 882.9,
+   "self": true,
+   "tf": "translate(871.632px, 399.932px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 890.3,
+   "self": true,
+   "tf": "translate(873.661px, 401.214px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 906,
+   "self": true,
+   "tf": "translate(877.725px, 404.168px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 924.4,
+   "self": true,
+   "tf": "translate(882.992px, 406.87px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 937.6,
+   "self": true,
+   "tf": "translate(943px, 443px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 954.2,
+   "self": true,
+   "tf": "translate(948.312px, 443px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 966.5,
+   "self": true,
+   "tf": "translate(952.216px, 443px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 993.1,
+   "self": true,
+   "tf": "translate(960.279px, 445.625px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1004.3,
+   "self": true,
+   "tf": "translate(963.506px, 447.328px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1027.8,
+   "self": true,
+   "tf": "translate(971.016px, 447.703px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1042.6,
+   "self": true,
+   "tf": "translate(975.715px, 447.937px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1053.9,
+   "self": true,
+   "tf": "translate(979.326px, 448.118px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1069.8,
+   "self": true,
+   "tf": "translate(984.376px, 448.37px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1083.5,
+   "self": true,
+   "tf": "translate(988.786px, 448.59px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1092.4,
+   "self": true,
+   "tf": "translate(991.631px, 448.732px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1107.1,
+   "self": true,
+   "tf": "translate(996.297px, 448.965px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1127.6,
+   "self": true,
+   "tf": "translate(996.588px, 442.347px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1139.4,
+   "self": true,
+   "tf": "translate(996.752px, 438.639px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1153.2,
+   "self": true,
+   "tf": "translate(996.946px, 434.227px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1163.7,
+   "self": true,
+   "tf": "translate(997px, 433px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1174,
+   "self": true,
+   "tf": "translate(997px, 433px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1188.2,
+   "self": true,
+   "tf": "translate(997px, 433px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1197.5,
+   "self": true,
+   "tf": "translate(997px, 430.024px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1217.1,
+   "self": true,
+   "tf": "translate(997px, 423.752px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1226.3,
+   "self": true,
+   "tf": "translate(997px, 420.808px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1236.3,
+   "self": true,
+   "tf": "translate(997px, 417.608px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1247.6,
+   "self": true,
+   "tf": "translate(997px, 413.96px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1259.6,
+   "self": true,
+   "tf": "translate(997px, 410.152px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1270.8,
+   "self": true,
+   "tf": "translate(997px, 406.568px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1279.1,
+   "self": true,
+   "tf": "translate(997px, 403.912px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1289,
+   "self": true,
+   "tf": "translate(997px, 400.776px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1298.7,
+   "self": true,
+   "tf": "translate(997px, 397.64px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1312.4,
+   "self": true,
+   "tf": "translate(997px, 393.224px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1328.7,
+   "self": true,
+   "tf": "translate(997px, 388.04px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1338.5,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1348.8,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1358.7,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1369.8,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1389.2,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1402.7,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1417.7,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1427.4,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1437.8,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1448.1,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1461.4,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1472.4,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1481.7,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1493,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1500.9,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1510.4,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1523.5,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1532.8,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1541.7,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1552.1,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1563.1,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1576.4,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1586.9,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1598.6,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1618.1,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1625.6,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1636.5,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1649.1,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1660.3,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1677.6,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1690.2,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1703.1,
+   "self": true,
+   "tf": "translate(997px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "long.plain": [
+  {
+   "frames": 155,
+   "spanMs": 1703.1,
+   "frameMs": 11.06,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1002px, 640px)",
+   "frozenFrames": 62,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 483.8,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 483.8,
+   "cutVeil": 1,
+   "coverStartMs": 43.8,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 150,
+   "spanMs": 1704.8,
+   "frameMs": 11.44,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1007px, 651px)",
+   "frozenFrames": 68,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 508.9,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 519.5,
+   "cutVeil": 0.94,
+   "coverStartMs": 47,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 80,
+   "spanMs": 1715.5,
+   "frameMs": 21.72,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1000px, 653.728px)",
+   "frozenFrames": 42,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 515.8,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 515.8,
+   "cutVeil": 1,
+   "coverStartMs": 49.9,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "long.phase@120.samples": [
+  {
+   "t": 1.6,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 11.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 15.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 22.5,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.002,
+   "seats": 29
+  },
+  {
+   "t": 28.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.006,
+   "seats": 29
+  },
+  {
+   "t": 34.9,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.014,
+   "seats": 29
+  },
+  {
+   "t": 42.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.024,
+   "seats": 29
+  },
+  {
+   "t": 48.8,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.037,
+   "seats": 29
+  },
+  {
+   "t": 55.8,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.052,
+   "seats": 29
+  },
+  {
+   "t": 63.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.069,
+   "seats": 29
+  },
+  {
+   "t": 69.8,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.088,
+   "seats": 29
+  },
+  {
+   "t": 76.5,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.109,
+   "seats": 29
+  },
+  {
+   "t": 83.4,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.131,
+   "seats": 29
+  },
+  {
+   "t": 90.4,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.155,
+   "seats": 29
+  },
+  {
+   "t": 100.7,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.181,
+   "seats": 29
+  },
+  {
+   "t": 106.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.208,
+   "seats": 29
+  },
+  {
+   "t": 111.2,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.236,
+   "seats": 29
+  },
+  {
+   "t": 122.6,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.266,
+   "seats": 29
+  },
+  {
+   "t": 128.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.298,
+   "seats": 29
+  },
+  {
+   "t": 135.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.33,
+   "seats": 29
+  },
+  {
+   "t": 142.7,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.002,
+   "mouthA": 0.363,
+   "seats": 29
+  },
+  {
+   "t": 149.2,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.004,
+   "mouthA": 0.398,
+   "seats": 29
+  },
+  {
+   "t": 155.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.008,
+   "mouthA": 0.434,
+   "seats": 29
+  },
+  {
+   "t": 162.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.014,
+   "mouthA": 0.471,
+   "seats": 29
+  },
+  {
+   "t": 169.9,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.02,
+   "mouthA": 0.509,
+   "seats": 29
+  },
+  {
+   "t": 176.5,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.028,
+   "mouthA": 0.548,
+   "seats": 29
+  },
+  {
+   "t": 183.4,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.037,
+   "mouthA": 0.588,
+   "seats": 29
+  },
+  {
+   "t": 190.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.046,
+   "mouthA": 0.628,
+   "seats": 29
+  },
+  {
+   "t": 197.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.057,
+   "mouthA": 0.67,
+   "seats": 29
+  },
+  {
+   "t": 208.9,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.081,
+   "mouthA": 0.758,
+   "seats": 29
+  },
+  {
+   "t": 218.7,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.094,
+   "mouthA": 0.802,
+   "seats": 29
+  },
+  {
+   "t": 225.4,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.108,
+   "mouthA": 0.849,
+   "seats": 29
+  },
+  {
+   "t": 232.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.123,
+   "mouthA": 0.896,
+   "seats": 29
+  },
+  {
+   "t": 239.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.138,
+   "mouthA": 0.944,
+   "seats": 29
+  },
+  {
+   "t": 246.7,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.154,
+   "mouthA": 0.994,
+   "seats": 29
+  },
+  {
+   "t": 253.7,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.171,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 259.8,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.189,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 267.5,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.207,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 274.8,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.226,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 281.8,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.245,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 289.2,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.265,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 295.9,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.286,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 312.9,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.351,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 319.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.374,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 326.4,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.396,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 333.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.42,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 340.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.445,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 347.4,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.469,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 354.2,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.494,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 361.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.52,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 368.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.546,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 375,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.572,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 382,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.6,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 388.9,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.627,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 395.9,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.655,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 402.7,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.683,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 409.9,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.712,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 416.7,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.741,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 423.7,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.77,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 430.5,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.801,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 437.6,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.831,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 444.5,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.862,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 451.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.894,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 458.2,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.925,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 465.3,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.958,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 472.1,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 0.992,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 479.6,
+   "self": true,
+   "tf": "translate(1003px, 653px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 487.8,
+   "self": true,
+   "tf": "translate(930px, 392px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 495.1,
+   "self": true,
+   "tf": "translate(931.674px, 393.674px)",
+   "room": "arena",
+   "flat": 0.969,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 523.8,
+   "self": true,
+   "tf": "translate(939.143px, 388.329px)",
+   "room": "arena",
+   "flat": 0.854,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 532.9,
+   "self": true,
+   "tf": "translate(941.47px, 390.08px)",
+   "room": "arena",
+   "flat": 0.826,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 548.9,
+   "self": true,
+   "tf": "translate(945.34px, 393.481px)",
+   "room": "arena",
+   "flat": 0.745,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 628.7,
+   "self": true,
+   "tf": "translate(961.145px, 395.973px)",
+   "room": "arena",
+   "flat": 0.476,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 661.6,
+   "self": true,
+   "tf": "translate(970.939px, 392.289px)",
+   "room": "arena",
+   "flat": 0.368,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 696.9,
+   "self": true,
+   "tf": "translate(981.921px, 394.792px)",
+   "room": "arena",
+   "flat": 0.271,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 716.8,
+   "self": true,
+   "tf": "translate(988.13px, 396.207px)",
+   "room": "arena",
+   "flat": 0.218,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 734,
+   "self": true,
+   "tf": "translate(992.712px, 399.313px)",
+   "room": "arena",
+   "flat": 0.185,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 747.3,
+   "self": true,
+   "tf": "translate(996.605px, 397.593px)",
+   "room": "arena",
+   "flat": 0.154,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 763.9,
+   "self": true,
+   "tf": "translate(1001.49px, 395.433px)",
+   "room": "arena",
+   "flat": 0.112,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 785,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0.075,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 796.5,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0.065,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 820.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0.029,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 841,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0.01,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 862.8,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0.001,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 876.6,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 889.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 913.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 924.5,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 936,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 947.5,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 960,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 972.6,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 983.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 994.6,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1013.9,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1025.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1035,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1044.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1053.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1062.9,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1076.4,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1083.4,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1094.5,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1111.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1125.5,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1139,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1147.9,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1161,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1168.4,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1176.9,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1194.3,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1208.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1217.4,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1237.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1247.5,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1260.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1277.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1285.9,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1295,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1312.8,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1321.6,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1331,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1347.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1354.1,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1361,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1368.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1377.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1386.6,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1396.6,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1410.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1420.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1430.3,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1438.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1448.4,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1458.3,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1468,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1479.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1490.4,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1500.8,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1515.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1528,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1537.1,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1548.6,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1555.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1566.1,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1577.9,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1590.3,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1614.4,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1623.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1633.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1660.3,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1671.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1683.5,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1687.7,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1715.2,
+   "self": true,
+   "tf": "translate(1007px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "long.phase@120": [
+  {
+   "frames": 155,
+   "spanMs": 1715.2,
+   "frameMs": 11.14,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1003px, 653px)",
+   "frozenFrames": 68,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 487.8,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 495.1,
+   "cutVeil": 0.969,
+   "coverStartMs": 42.1,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 138,
+   "spanMs": 1711.4,
+   "frameMs": 12.49,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1002px, 644px)",
+   "frozenFrames": 63,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 490.7,
+   "firstMoveVeil": {
+    "flat": 0.97,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 497.1,
+   "cutVeil": 0.94,
+   "coverStartMs": 45.6,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 89,
+   "spanMs": 1706.8,
+   "frameMs": 19.4,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1007px, 643px)",
+   "frozenFrames": 46,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 509.2,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 530.3,
+   "cutVeil": 0.883,
+   "coverStartMs": 74.6,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "long.phase@300.samples": [
+  {
+   "t": 4.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 12.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 15.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 21.3,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.002,
+   "seats": 29
+  },
+  {
+   "t": 59.7,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.052,
+   "seats": 29
+  },
+  {
+   "t": 67.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.073,
+   "seats": 29
+  },
+  {
+   "t": 86.7,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.119,
+   "seats": 29
+  },
+  {
+   "t": 88.8,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.142,
+   "seats": 29
+  },
+  {
+   "t": 94.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.167,
+   "seats": 29
+  },
+  {
+   "t": 101.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.193,
+   "seats": 29
+  },
+  {
+   "t": 114.5,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.25,
+   "seats": 29
+  },
+  {
+   "t": 121.6,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.28,
+   "seats": 29
+  },
+  {
+   "t": 130.8,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.312,
+   "seats": 29
+  },
+  {
+   "t": 135.9,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.001,
+   "mouthA": 0.345,
+   "seats": 29
+  },
+  {
+   "t": 149.5,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.006,
+   "mouthA": 0.414,
+   "seats": 29
+  },
+  {
+   "t": 156.7,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.011,
+   "mouthA": 0.45,
+   "seats": 29
+  },
+  {
+   "t": 170.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.023,
+   "mouthA": 0.526,
+   "seats": 29
+  },
+  {
+   "t": 177.4,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.032,
+   "mouthA": 0.565,
+   "seats": 29
+  },
+  {
+   "t": 184,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.041,
+   "mouthA": 0.606,
+   "seats": 29
+  },
+  {
+   "t": 198.3,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.062,
+   "mouthA": 0.69,
+   "seats": 29
+  },
+  {
+   "t": 205.6,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.074,
+   "mouthA": 0.733,
+   "seats": 29
+  },
+  {
+   "t": 211.9,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.086,
+   "mouthA": 0.777,
+   "seats": 29
+  },
+  {
+   "t": 219,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.1,
+   "mouthA": 0.823,
+   "seats": 29
+  },
+  {
+   "t": 226,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.114,
+   "mouthA": 0.869,
+   "seats": 29
+  },
+  {
+   "t": 233.5,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.129,
+   "mouthA": 0.917,
+   "seats": 29
+  },
+  {
+   "t": 246.6,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.162,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 253.5,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.179,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 260.6,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.197,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 281.4,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.254,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 288.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.274,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 295.8,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.295,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 303.8,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.316,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 309.3,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.338,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 316.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.361,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 323.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.384,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 330.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.407,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 337.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.431,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 344,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.455,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 351.3,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.48,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 359.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.506,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 368.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.532,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 372.4,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.558,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 379,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.584,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 393.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.639,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 406.4,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.696,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 413.6,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.725,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 420.2,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.754,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 427.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.784,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 434.4,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.814,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 441.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.845,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 454.8,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.908,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 462.1,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.94,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 469,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 0.973,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 476.7,
+   "self": true,
+   "tf": "translate(1000px, 644px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 488.4,
+   "self": true,
+   "tf": "translate(560px, 402px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 511.5,
+   "self": true,
+   "tf": "translate(565.227px, 407.227px)",
+   "room": "arena",
+   "flat": 0.882,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 533.2,
+   "self": true,
+   "tf": "translate(571.826px, 405.171px)",
+   "room": "arena",
+   "flat": 0.799,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 542.5,
+   "self": true,
+   "tf": "translate(574.812px, 404.809px)",
+   "room": "arena",
+   "flat": 0.772,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 566.9,
+   "self": true,
+   "tf": "translate(580.901px, 399.87px)",
+   "room": "arena",
+   "flat": 0.668,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 630.5,
+   "self": true,
+   "tf": "translate(596.818px, 398.244px)",
+   "room": "arena",
+   "flat": 0.454,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 672,
+   "self": true,
+   "tf": "translate(609px, 397px)",
+   "room": "arena",
+   "flat": 0.328,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 784.9,
+   "self": true,
+   "tf": "translate(620px, 386px)",
+   "room": "arena",
+   "flat": 0.076,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 816.9,
+   "self": true,
+   "tf": "translate(630.208px, 386px)",
+   "room": "arena",
+   "flat": 0.029,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 845.4,
+   "self": true,
+   "tf": "translate(636px, 386px)",
+   "room": "arena",
+   "flat": 0.011,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 867.2,
+   "self": true,
+   "tf": "translate(636px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 887.6,
+   "self": true,
+   "tf": "translate(636px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 931.9,
+   "self": true,
+   "tf": "translate(646.024px, 396.024px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 982,
+   "self": true,
+   "tf": "translate(657.338px, 407.338px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1004.6,
+   "self": true,
+   "tf": "translate(664.564px, 407.625px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1034.3,
+   "self": true,
+   "tf": "translate(673.971px, 407.764px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1065.2,
+   "self": true,
+   "tf": "translate(683.955px, 407.837px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1113,
+   "self": true,
+   "tf": "translate(698.489px, 403.071px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1155,
+   "self": true,
+   "tf": "translate(711.682px, 405.274px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1196,
+   "self": true,
+   "tf": "translate(721.86px, 396.995px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1217.6,
+   "self": true,
+   "tf": "translate(728.474px, 399.312px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1251.1,
+   "self": true,
+   "tf": "translate(737.276px, 405.318px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1300.6,
+   "self": true,
+   "tf": "translate(753.041px, 403.778px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1309.4,
+   "self": true,
+   "tf": "translate(754.248px, 401.233px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1341.9,
+   "self": true,
+   "tf": "translate(764.448px, 399.376px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1389.3,
+   "self": true,
+   "tf": "translate(776.853px, 391.1px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1434.6,
+   "self": true,
+   "tf": "translate(790.568px, 396.619px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1483.9,
+   "self": true,
+   "tf": "translate(802.493px, 406.85px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1509.5,
+   "self": true,
+   "tf": "translate(803.958px, 398.757px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1521.1,
+   "self": true,
+   "tf": "translate(807.391px, 400.252px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1549,
+   "self": true,
+   "tf": "translate(815.795px, 397.144px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1585.7,
+   "self": true,
+   "tf": "translate(827.373px, 395.38px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1618.5,
+   "self": true,
+   "tf": "translate(837.389px, 398.623px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1632.9,
+   "self": true,
+   "tf": "translate(841.904px, 399.367px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1653.8,
+   "self": true,
+   "tf": "translate(848.505px, 398.292px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1674.6,
+   "self": true,
+   "tf": "translate(855.075px, 397.222px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1687.9,
+   "self": true,
+   "tf": "translate(859.307px, 396.533px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1701.8,
+   "self": true,
+   "tf": "translate(863.697px, 395.818px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "long.phase@300": [
+  {
+   "frames": 92,
+   "spanMs": 1701.8,
+   "frameMs": 18.7,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1000px, 644px)",
+   "frozenFrames": 55,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 488.4,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 511.5,
+   "cutVeil": 0.882,
+   "coverStartMs": 59.7,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 82,
+   "spanMs": 1802.5,
+   "frameMs": 22.25,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1006px, 644px)",
+   "frozenFrames": 43,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 518.3,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 518.3,
+   "cutVeil": 1,
+   "coverStartMs": 59,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 146,
+   "spanMs": 1710.2,
+   "frameMs": 11.79,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1002px, 642px)",
+   "frozenFrames": 61,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 505.1,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 505.1,
+   "cutVeil": 1,
+   "coverStartMs": 56.3,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "long.phase+tick@100,250,400.samples": [
+  {
+   "t": 5,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 11.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 17.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.002,
+   "seats": 29
+  },
+  {
+   "t": 27.3,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.006,
+   "seats": 29
+  },
+  {
+   "t": 31.2,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.014,
+   "seats": 29
+  },
+  {
+   "t": 39.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.028,
+   "seats": 29
+  },
+  {
+   "t": 44,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.035,
+   "seats": 29
+  },
+  {
+   "t": 53.1,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.05,
+   "seats": 29
+  },
+  {
+   "t": 60.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.067,
+   "seats": 29
+  },
+  {
+   "t": 67.2,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.085,
+   "seats": 29
+  },
+  {
+   "t": 78.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.128,
+   "seats": 29
+  },
+  {
+   "t": 85.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.152,
+   "seats": 29
+  },
+  {
+   "t": 92.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.177,
+   "seats": 29
+  },
+  {
+   "t": 99.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.205,
+   "seats": 29
+  },
+  {
+   "t": 108.1,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.233,
+   "seats": 29
+  },
+  {
+   "t": 113.7,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.263,
+   "seats": 29
+  },
+  {
+   "t": 120.6,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.293,
+   "seats": 29
+  },
+  {
+   "t": 127.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.326,
+   "seats": 29
+  },
+  {
+   "t": 134.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.001,
+   "mouthA": 0.359,
+   "seats": 29
+  },
+  {
+   "t": 141.3,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.004,
+   "mouthA": 0.393,
+   "seats": 29
+  },
+  {
+   "t": 148.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.008,
+   "mouthA": 0.429,
+   "seats": 29
+  },
+  {
+   "t": 155.2,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.013,
+   "mouthA": 0.466,
+   "seats": 29
+  },
+  {
+   "t": 162.2,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.019,
+   "mouthA": 0.504,
+   "seats": 29
+  },
+  {
+   "t": 169,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.027,
+   "mouthA": 0.543,
+   "seats": 29
+  },
+  {
+   "t": 177.9,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.035,
+   "mouthA": 0.583,
+   "seats": 29
+  },
+  {
+   "t": 182.9,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.045,
+   "mouthA": 0.623,
+   "seats": 29
+  },
+  {
+   "t": 189.9,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.055,
+   "mouthA": 0.665,
+   "seats": 29
+  },
+  {
+   "t": 198.5,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.067,
+   "mouthA": 0.708,
+   "seats": 29
+  },
+  {
+   "t": 205.7,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.079,
+   "mouthA": 0.752,
+   "seats": 29
+  },
+  {
+   "t": 212.9,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.092,
+   "mouthA": 0.797,
+   "seats": 29
+  },
+  {
+   "t": 219.3,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.106,
+   "mouthA": 0.842,
+   "seats": 29
+  },
+  {
+   "t": 226.3,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.121,
+   "mouthA": 0.89,
+   "seats": 29
+  },
+  {
+   "t": 233.2,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.136,
+   "mouthA": 0.938,
+   "seats": 29
+  },
+  {
+   "t": 241,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.152,
+   "mouthA": 0.988,
+   "seats": 29
+  },
+  {
+   "t": 247.1,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.169,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 256,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.187,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 261.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.205,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 268.6,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.223,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 277.3,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.243,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 282.1,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.262,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 289,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.283,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 296.1,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.304,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 302.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.325,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 309.9,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.348,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 317.1,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.37,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 323.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.394,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 330.5,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.417,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 338.1,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.441,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 344.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.466,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 351.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.491,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 358.7,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.517,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 365.7,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.543,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 371.9,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.569,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 379.3,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.596,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 386.3,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.623,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 392.7,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.651,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 399.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.679,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 407.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.708,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 414.5,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.737,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 421.1,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.767,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 430.7,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.796,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 434.8,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.827,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 441.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.858,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 448.6,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.89,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 455.5,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.921,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 462.5,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.954,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 469.4,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 0.987,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 478,
+   "self": true,
+   "tf": "translate(1003px, 645px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 485.7,
+   "self": true,
+   "tf": "translate(636px, 460px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 495.7,
+   "self": true,
+   "tf": "translate(638.263px, 462.263px)",
+   "room": "arena",
+   "flat": 0.94,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 510.5,
+   "self": true,
+   "tf": "translate(642.904px, 461.731px)",
+   "room": "arena",
+   "flat": 0.882,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 516.7,
+   "self": true,
+   "tf": "translate(644.687px, 460.861px)",
+   "room": "arena",
+   "flat": 0.854,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 526.8,
+   "self": true,
+   "tf": "translate(646.876px, 458.353px)",
+   "room": "arena",
+   "flat": 0.826,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 572.5,
+   "self": true,
+   "tf": "translate(660.265px, 452.552px)",
+   "room": "arena",
+   "flat": 0.642,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 609.8,
+   "self": true,
+   "tf": "translate(667.763px, 443.224px)",
+   "room": "arena",
+   "flat": 0.522,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 642.1,
+   "self": true,
+   "tf": "translate(676.833px, 438.334px)",
+   "room": "arena",
+   "flat": 0.41,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 655.5,
+   "self": true,
+   "tf": "translate(680.916px, 437.134px)",
+   "room": "arena",
+   "flat": 0.368,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 666.2,
+   "self": true,
+   "tf": "translate(684.34px, 436.47px)",
+   "room": "arena",
+   "flat": 0.348,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 683.9,
+   "self": true,
+   "tf": "translate(689.916px, 435.678px)",
+   "room": "arena",
+   "flat": 0.289,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 700.3,
+   "self": true,
+   "tf": "translate(755px, 439px)",
+   "room": "arena",
+   "flat": 0.253,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 718.3,
+   "self": true,
+   "tf": "translate(759.028px, 434.972px)",
+   "room": "arena",
+   "flat": 0.201,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 728.2,
+   "self": true,
+   "tf": "translate(762.15px, 435.672px)",
+   "room": "arena",
+   "flat": 0.185,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 739.4,
+   "self": true,
+   "tf": "translate(765.285px, 437.41px)",
+   "room": "arena",
+   "flat": 0.154,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 752.5,
+   "self": true,
+   "tf": "translate(769.44px, 437.606px)",
+   "room": "arena",
+   "flat": 0.126,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 766.5,
+   "self": true,
+   "tf": "translate(773.831px, 436.566px)",
+   "room": "arena",
+   "flat": 0.099,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 777.6,
+   "self": true,
+   "tf": "translate(777.336px, 435.99px)",
+   "room": "arena",
+   "flat": 0.087,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 787.5,
+   "self": true,
+   "tf": "translate(780.355px, 435.029px)",
+   "room": "arena",
+   "flat": 0.065,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 798.2,
+   "self": true,
+   "tf": "translate(848px, 406px)",
+   "room": "arena",
+   "flat": 0.055,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 810.3,
+   "self": true,
+   "tf": "translate(850.738px, 403.262px)",
+   "room": "arena",
+   "flat": 0.036,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 825.6,
+   "self": true,
+   "tf": "translate(854.155px, 399.845px)",
+   "room": "arena",
+   "flat": 0.022,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 837.8,
+   "self": true,
+   "tf": "translate(856.938px, 397.062px)",
+   "room": "arena",
+   "flat": 0.01,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 859.6,
+   "self": true,
+   "tf": "translate(863.301px, 394.202px)",
+   "room": "arena",
+   "flat": 0.001,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 879.3,
+   "self": true,
+   "tf": "translate(869.396px, 392.595px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 891.4,
+   "self": true,
+   "tf": "translate(873.263px, 392.809px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 905.2,
+   "self": true,
+   "tf": "translate(877.567px, 393.928px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 916.4,
+   "self": true,
+   "tf": "translate(881.086px, 394.608px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 928.2,
+   "self": true,
+   "tf": "translate(951px, 417px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 940.4,
+   "self": true,
+   "tf": "translate(951px, 413.096px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 953.9,
+   "self": true,
+   "tf": "translate(954.446px, 410.491px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 964.9,
+   "self": true,
+   "tf": "translate(956.001px, 407.333px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 981.6,
+   "self": true,
+   "tf": "translate(958.376px, 402.51px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 991.9,
+   "self": true,
+   "tf": "translate(961.036px, 400.619px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1002.9,
+   "self": true,
+   "tf": "translate(963.931px, 398.56px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1016.6,
+   "self": true,
+   "tf": "translate(967.478px, 396.038px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1026.9,
+   "self": true,
+   "tf": "translate(970.19px, 394.109px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1037.9,
+   "self": true,
+   "tf": "translate(973.059px, 392.069px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1047.9,
+   "self": true,
+   "tf": "translate(975.614px, 390.252px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1065.4,
+   "self": true,
+   "tf": "translate(980.204px, 386.988px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1079.2,
+   "self": true,
+   "tf": "translate(983px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1092.9,
+   "self": true,
+   "tf": "translate(986.123px, 388.123px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1103.9,
+   "self": true,
+   "tf": "translate(988.612px, 390.612px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1114.7,
+   "self": true,
+   "tf": "translate(991.01px, 393.01px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1124.4,
+   "self": true,
+   "tf": "translate(993.228px, 395.228px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1134.5,
+   "self": true,
+   "tf": "translate(995.667px, 393.108px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1141.9,
+   "self": true,
+   "tf": "translate(997.431px, 391.576px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1151.8,
+   "self": true,
+   "tf": "translate(999.847px, 389.477px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1162.9,
+   "self": true,
+   "tf": "translate(1002.53px, 387.148px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1172.4,
+   "self": true,
+   "tf": "translate(1004.82px, 385.154px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1185.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1197.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1206.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1218.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1232.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1254.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1266.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1296.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1305.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1315.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1325.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1335.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1347,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1357.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1367.6,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1384.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1396.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1407.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1420.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1430.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1443.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1454.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1465.6,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1492.6,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1503.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1513.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1523.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1532.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1544.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1553.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1563.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1572.9,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1588.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1599.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1609.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1620.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1629.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1639.9,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1650.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1660.6,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1671.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1701.6,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "long.phase+tick@100,250,400": [
+  {
+   "frames": 160,
+   "spanMs": 1701.6,
+   "frameMs": 10.7,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1003px, 645px)",
+   "frozenFrames": 69,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 485.7,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 495.7,
+   "cutVeil": 0.94,
+   "coverStartMs": 39.8,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 123,
+   "spanMs": 1705.4,
+   "frameMs": 13.98,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1007px, 641px)",
+   "frozenFrames": 70,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 501.9,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 519.7,
+   "cutVeil": 0.911,
+   "coverStartMs": 42.7,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 152,
+   "spanMs": 1703.9,
+   "frameMs": 11.28,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1001px, 649px)",
+   "frozenFrames": 65,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 500.4,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 511.8,
+   "cutVeil": 0.94,
+   "coverStartMs": 47.1,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "long.epoch@200.samples": [
+  {
+   "t": 10.3,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 24.7,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 40.6,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 60.6,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.009,
+   "seats": 29
+  },
+  {
+   "t": 122.1,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.122,
+   "seats": 29
+  },
+  {
+   "t": 139.9,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.248,
+   "seats": 29
+  },
+  {
+   "t": 158.8,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.323,
+   "seats": 29
+  },
+  {
+   "t": 171.1,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.005,
+   "mouthA": 0.405,
+   "seats": 29
+  },
+  {
+   "t": 193.7,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.018,
+   "mouthA": 0.493,
+   "seats": 29
+  },
+  {
+   "t": 205.5,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.037,
+   "mouthA": 0.588,
+   "seats": 29
+  },
+  {
+   "t": 220.6,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.061,
+   "mouthA": 0.687,
+   "seats": 29
+  },
+  {
+   "t": 244.1,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.091,
+   "mouthA": 0.793,
+   "seats": 29
+  },
+  {
+   "t": 255.2,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.125,
+   "mouthA": 0.905,
+   "seats": 29
+  },
+  {
+   "t": 270.2,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.164,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 286.8,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.207,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 303.6,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.253,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 320.1,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.302,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 337.9,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.355,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 354.3,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.411,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 371.7,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.469,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 387,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.53,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 407.1,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.594,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 421.7,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.66,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 437.8,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.729,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 456.6,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.8,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 472.1,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.874,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 490.8,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 0.952,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 507.7,
+   "self": true,
+   "tf": "translate(996.571px, 661.066px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 535.5,
+   "self": true,
+   "tf": "translate(458px, 396px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 547.1,
+   "self": true,
+   "tf": "translate(460.67px, 398.67px)",
+   "room": "arena",
+   "flat": 0.928,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 562.5,
+   "self": true,
+   "tf": "translate(464.272px, 395.354px)",
+   "room": "arena",
+   "flat": 0.86,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 570.9,
+   "self": true,
+   "tf": "translate(466.226px, 393.555px)",
+   "room": "arena",
+   "flat": 0.794,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 587.2,
+   "self": true,
+   "tf": "translate(470.672px, 396.281px)",
+   "room": "arena",
+   "flat": 0.729,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 604.4,
+   "self": true,
+   "tf": "translate(474.392px, 392.181px)",
+   "room": "arena",
+   "flat": 0.668,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 825.7,
+   "self": true,
+   "tf": "translate(480px, 386px)",
+   "room": "arena",
+   "flat": 0.073,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 913.6,
+   "self": true,
+   "tf": "translate(491px, 397px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 975.5,
+   "self": true,
+   "tf": "translate(502px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1025,
+   "self": true,
+   "tf": "translate(502px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1060,
+   "self": true,
+   "tf": "translate(509.897px, 393.897px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1196.6,
+   "self": true,
+   "tf": "translate(525.69px, 396.462px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1256.8,
+   "self": true,
+   "tf": "translate(538.146px, 406.505px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1331.1,
+   "self": true,
+   "tf": "translate(554.09px, 407.84px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1488.1,
+   "self": true,
+   "tf": "translate(570.089px, 407.983px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1558.2,
+   "self": true,
+   "tf": "translate(571.989px, 392.096px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1595.5,
+   "self": true,
+   "tf": "translate(580.493px, 400.517px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1771.5,
+   "self": true,
+   "tf": "translate(583px, 387px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "long.epoch@200": [
+  {
+   "frames": 46,
+   "spanMs": 1771.5,
+   "frameMs": 39.37,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(996.571px, 661.066px)",
+   "frozenFrames": 29,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 535.5,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 547.1,
+   "cutVeil": 0.928,
+   "coverStartMs": 122.1,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 100,
+   "spanMs": 1713.5,
+   "frameMs": 17.31,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1000px, 640px)",
+   "frozenFrames": 59,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 509.8,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 519.7,
+   "cutVeil": 0.97,
+   "coverStartMs": 54.5,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 54,
+   "spanMs": 1718,
+   "frameMs": 32.42,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1002.57px, 726.708px)",
+   "frozenFrames": 24,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 539.4,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 562.4,
+   "cutVeil": 0.882,
+   "coverStartMs": 88.3,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "long.zoneback@200.samples": [
+  {
+   "t": 13.9,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 38.6,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 46.1,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 60.9,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 69.3,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 108.7,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.069,
+   "seats": 29
+  },
+  {
+   "t": 186.7,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.33,
+   "seats": 29
+  },
+  {
+   "t": 237.6,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.028,
+   "mouthA": 0.548,
+   "seats": 29
+  },
+  {
+   "t": 270.6,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.111,
+   "mouthA": 0.859,
+   "seats": 29
+  },
+  {
+   "t": 293,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.148,
+   "mouthA": 0.975,
+   "seats": 29
+  },
+  {
+   "t": 307.1,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.189,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 321.6,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.234,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 347.6,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.282,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 368.9,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.333,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 373,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.388,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 388.1,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.445,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 417.5,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.505,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 424.6,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.568,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 473.8,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.771,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 495.7,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.844,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 514.6,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 0.92,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 527.1,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 547,
+   "self": true,
+   "tf": "translate(835.21px, 853.772px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 566.9,
+   "self": true,
+   "tf": "translate(888px, 804px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 589.8,
+   "self": true,
+   "tf": "translate(893.227px, 798.773px)",
+   "room": "lobby",
+   "flat": 0.86,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 624.5,
+   "self": true,
+   "tf": "translate(899px, 793px)",
+   "room": "lobby",
+   "flat": 0.729,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 642.9,
+   "self": true,
+   "tf": "translate(899px, 793px)",
+   "room": "lobby",
+   "flat": 0.668,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 653.9,
+   "self": true,
+   "tf": "translate(899px, 789.736px)",
+   "room": "lobby",
+   "flat": 0.608,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 672.3,
+   "self": true,
+   "tf": "translate(903.732px, 785.969px)",
+   "room": "lobby",
+   "flat": 0.55,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 692,
+   "self": true,
+   "tf": "translate(909.811px, 783.97px)",
+   "room": "lobby",
+   "flat": 0.494,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 706,
+   "self": true,
+   "tf": "translate(914.215px, 783.144px)",
+   "room": "lobby",
+   "flat": 0.44,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 719.7,
+   "self": true,
+   "tf": "translate(918.54px, 783.624px)",
+   "room": "lobby",
+   "flat": 0.389,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 738,
+   "self": true,
+   "tf": "translate(924.158px, 781.969px)",
+   "room": "lobby",
+   "flat": 0.34,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 753.3,
+   "self": true,
+   "tf": "translate(928.959px, 781.009px)",
+   "room": "lobby",
+   "flat": 0.293,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 770,
+   "self": true,
+   "tf": "translate(934.277px, 780.224px)",
+   "room": "lobby",
+   "flat": 0.249,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 786.2,
+   "self": true,
+   "tf": "translate(1001px, 761px)",
+   "room": "lobby",
+   "flat": 0.208,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 803.6,
+   "self": true,
+   "tf": "translate(1001px, 761px)",
+   "room": "lobby",
+   "flat": 0.169,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 819.9,
+   "self": true,
+   "tf": "translate(1001px, 755.848px)",
+   "room": "lobby",
+   "flat": 0.134,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 836.1,
+   "self": true,
+   "tf": "translate(1001px, 750.6px)",
+   "room": "lobby",
+   "flat": 0.102,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 852.8,
+   "self": true,
+   "tf": "translate(1001px, 745.288px)",
+   "room": "lobby",
+   "flat": 0.073,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 869.5,
+   "self": true,
+   "tf": "translate(1001px, 739.944px)",
+   "room": "lobby",
+   "flat": 0.049,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 886.6,
+   "self": true,
+   "tf": "translate(1001px, 734.568px)",
+   "room": "lobby",
+   "flat": 0.029,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 902.9,
+   "self": true,
+   "tf": "translate(1001px, 729.256px)",
+   "room": "lobby",
+   "flat": 0.013,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 919.6,
+   "self": true,
+   "tf": "translate(1001px, 723.944px)",
+   "room": "lobby",
+   "flat": 0.004,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 939,
+   "self": true,
+   "tf": "translate(1001px, 717.736px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 956.3,
+   "self": true,
+   "tf": "translate(1001px, 712.168px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 987.3,
+   "self": true,
+   "tf": "translate(1001px, 702.248px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1003.2,
+   "self": true,
+   "tf": "translate(1001px, 697.16px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1020.4,
+   "self": true,
+   "tf": "translate(1001px, 691.656px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1038.5,
+   "self": true,
+   "tf": "translate(1001px, 685.832px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1053.8,
+   "self": true,
+   "tf": "translate(1001px, 681px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1070.3,
+   "self": true,
+   "tf": "translate(1001px, 681px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1087.5,
+   "self": true,
+   "tf": "translate(1001px, 681px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1102.9,
+   "self": true,
+   "tf": "translate(1001px, 681px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1119.6,
+   "self": true,
+   "tf": "translate(1001px, 675.72px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1138.1,
+   "self": true,
+   "tf": "translate(1001px, 669.768px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1152.9,
+   "self": true,
+   "tf": "translate(1001px, 665.032px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1169.5,
+   "self": true,
+   "tf": "translate(1001px, 659.72px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1186.2,
+   "self": true,
+   "tf": "translate(1001px, 654.376px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1203.5,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 1219.6,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1237.3,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1252.9,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1269.8,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1286.1,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1303.5,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1321.5,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1336,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1353.5,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1369.6,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1386.2,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1402.8,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1421.1,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1436.8,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1453.4,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1474.6,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1487.1,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1503.9,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1519.5,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1536.3,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1552.8,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1573,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1589.8,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1602.8,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1622.8,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1642.5,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1654.8,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1670,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1686,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 1702.7,
+   "self": true,
+   "tf": "translate(1001px, 649px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  }
+ ],
+ "long.zoneback@200": [
+  {
+   "frames": 90,
+   "spanMs": 1702.7,
+   "frameMs": 19.13,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(835.21px, 853.772px)",
+   "frozenFrames": 90,
+   "tfChangesBeforeCut": 32,
+   "firstMoveMs": 566.9,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 0,
+   "cutMs": null,
+   "cutVeil": null,
+   "coverStartMs": 108.7,
+   "maxFlat": 1,
+   "endRoom": "lobby",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 37,
+   "spanMs": 1700.8,
+   "frameMs": 47.24,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(829px, 831px)",
+   "frozenFrames": 37,
+   "tfChangesBeforeCut": 22,
+   "firstMoveMs": 1109.1,
+   "firstMoveVeil": {
+    "flat": 0.253,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 0.207,
+   "cuts": 0,
+   "cutMs": null,
+   "cutVeil": null,
+   "coverStartMs": 891.3,
+   "maxFlat": 1,
+   "endRoom": "lobby",
+   "endSelf": true,
+   "endFlat": 0.073,
+   "errors": []
+  },
+  {
+   "frames": 98,
+   "spanMs": 1702.4,
+   "frameMs": 17.55,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1002px, 648px)",
+   "frozenFrames": 98,
+   "tfChangesBeforeCut": 40,
+   "firstMoveMs": 512.3,
+   "firstMoveVeil": {
+    "flat": 0.928,
+    "mouthA": 1
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 0,
+   "cutMs": null,
+   "cutVeil": null,
+   "coverStartMs": 61.1,
+   "maxFlat": 1,
+   "endRoom": "lobby",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "live.plain.samples": [
+  {
+   "t": 9.5,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 22.4,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 36.2,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 48,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.023,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 65.7,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.085,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 74.7,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.176,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 88.8,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.259,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 99.2,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.344,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 107.4,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.426,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 119,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.523,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 131.3,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.627,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 141.5,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.723,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 158.6,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 0.852,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 173.5,
+   "self": true,
+   "tf": "translate(994.559px, 643.625px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 193,
+   "self": true,
+   "tf": "translate(469px, 395px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 212,
+   "self": true,
+   "tf": "translate(469px, 395px)",
+   "room": "arena",
+   "flat": 1,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 249.1,
+   "self": true,
+   "tf": "translate(469px, 395px)",
+   "room": "arena",
+   "flat": 0.525,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 384.6,
+   "self": true,
+   "tf": "translate(485px, 395px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 425.3,
+   "self": true,
+   "tf": "translate(494.164px, 385.836px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 573.7,
+   "self": true,
+   "tf": "translate(507px, 395px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 605.9,
+   "self": true,
+   "tf": "translate(514.286px, 387.714px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 689,
+   "self": true,
+   "tf": "translate(518px, 384px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 713.9,
+   "self": true,
+   "tf": "translate(518px, 384px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 734.7,
+   "self": true,
+   "tf": "translate(518px, 384px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 778.9,
+   "self": true,
+   "tf": "translate(532.112px, 384px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 808,
+   "self": true,
+   "tf": "translate(541.36px, 384px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 821,
+   "self": true,
+   "tf": "translate(545.017px, 386.048px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 844.4,
+   "self": true,
+   "tf": "translate(551.09px, 390.538px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 863.2,
+   "self": true,
+   "tf": "translate(557.016px, 391.367px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 870.4,
+   "self": true,
+   "tf": "translate(559.158px, 392.215px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 885.9,
+   "self": true,
+   "tf": "translate(564.14px, 391.898px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 904.1,
+   "self": true,
+   "tf": "translate(569.889px, 391.533px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 918.8,
+   "self": true,
+   "tf": "translate(574.589px, 391.353px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 930.3,
+   "self": true,
+   "tf": "translate(578.299px, 391.211px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 962.8,
+   "self": true,
+   "tf": "translate(588.467px, 393.542px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 977,
+   "self": true,
+   "tf": "translate(592.964px, 393.176px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1011.4,
+   "self": true,
+   "tf": "translate(603.84px, 394.877px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1027.9,
+   "self": true,
+   "tf": "translate(608.776px, 396.562px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1044,
+   "self": true,
+   "tf": "translate(613.976px, 396.972px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1079.7,
+   "self": true,
+   "tf": "translate(681px, 401px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1102.3,
+   "self": true,
+   "tf": "translate(688.552px, 401px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1117.7,
+   "self": true,
+   "tf": "translate(690.838px, 396.67px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1133.9,
+   "self": true,
+   "tf": "translate(695.482px, 394.225px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1157.7,
+   "self": true,
+   "tf": "translate(702.192px, 390.691px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1187.1,
+   "self": true,
+   "tf": "translate(710.488px, 386.323px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1197,
+   "self": true,
+   "tf": "translate(713px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1263.9,
+   "self": true,
+   "tf": "translate(729px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "live.plain": [
+  {
+   "frames": 47,
+   "spanMs": 1263.9,
+   "frameMs": 27.48,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(994.559px, 643.625px)",
+   "frozenFrames": 15,
+   "tfChangesBeforeCut": 1,
+   "firstMoveMs": 193,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 212,
+   "cutVeil": 1,
+   "coverStartMs": 48,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 71,
+   "spanMs": 1207.9,
+   "frameMs": 17.26,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1001px, 645px)",
+   "frozenFrames": 11,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 189.2,
+   "firstMoveVeil": {
+    "flat": 0.759,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 189.2,
+   "cutVeil": 0.759,
+   "coverStartMs": 39.5,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 95,
+   "spanMs": 1201,
+   "frameMs": 12.78,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1001px, 655px)",
+   "frozenFrames": 24,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 193.1,
+   "firstMoveVeil": {
+    "flat": 1,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 193.1,
+   "cutVeil": 1,
+   "coverStartMs": 39.2,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "live.phase@60.samples": [
+  {
+   "t": 16.4,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 30.9,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 47.6,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0.024,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 65.5,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0.085,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 81.1,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0.176,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 97.5,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0.29,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 114.3,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0.423,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 131,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0.574,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 147.7,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0.74,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 164.2,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 0.921,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 181.2,
+   "self": true,
+   "tf": "translate(1007px, 651px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 197.5,
+   "self": true,
+   "tf": "translate(225px, 395px)",
+   "room": "arena",
+   "flat": 0.757,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 214.4,
+   "self": true,
+   "tf": "translate(225px, 395px)",
+   "room": "arena",
+   "flat": 0.543,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 230.9,
+   "self": true,
+   "tf": "translate(225px, 395px)",
+   "room": "arena",
+   "flat": 0.356,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 280.9,
+   "self": true,
+   "tf": "translate(240.968px, 395px)",
+   "room": "arena",
+   "flat": 0.01,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 303.3,
+   "self": true,
+   "tf": "translate(248.2px, 395px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 318.1,
+   "self": true,
+   "tf": "translate(252.872px, 395px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 348.9,
+   "self": true,
+   "tf": "translate(262.225px, 391.695px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 380.2,
+   "self": true,
+   "tf": "translate(271.639px, 388.368px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 382.3,
+   "self": true,
+   "tf": "translate(272.272px, 388.144px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 407.4,
+   "self": true,
+   "tf": "translate(280.216px, 386.957px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 416.5,
+   "self": true,
+   "tf": "translate(283.086px, 386.72px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 431,
+   "self": true,
+   "tf": "translate(287.751px, 386.46px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 447.8,
+   "self": true,
+   "tf": "translate(293.055px, 386.166px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 464.4,
+   "self": true,
+   "tf": "translate(298.423px, 385.867px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 481.1,
+   "self": true,
+   "tf": "translate(303.758px, 385.57px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 498.1,
+   "self": true,
+   "tf": "translate(309.126px, 385.272px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 514.4,
+   "self": true,
+   "tf": "translate(314.403px, 385.099px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 531.1,
+   "self": true,
+   "tf": "translate(319.744px, 384.924px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 547.6,
+   "self": true,
+   "tf": "translate(325.023px, 384.814px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 564.4,
+   "self": true,
+   "tf": "translate(330.291px, 385.888px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 581.1,
+   "self": true,
+   "tf": "translate(335.287px, 387.692px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 597.8,
+   "self": true,
+   "tf": "translate(402px, 406px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 614.4,
+   "self": true,
+   "tf": "translate(402px, 400.656px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 631.2,
+   "self": true,
+   "tf": "translate(406.474px, 397.676px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 647.8,
+   "self": true,
+   "tf": "translate(411.73px, 398.451px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 664.5,
+   "self": true,
+   "tf": "translate(415.92px, 395.187px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 681.2,
+   "self": true,
+   "tf": "translate(421.293px, 395.369px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 697.8,
+   "self": true,
+   "tf": "translate(426.21px, 397.294px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 714.3,
+   "self": true,
+   "tf": "translate(431.359px, 395.987px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 731.1,
+   "self": true,
+   "tf": "translate(436.683px, 395.242px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 748,
+   "self": true,
+   "tf": "translate(442.007px, 394.497px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 765.4,
+   "self": true,
+   "tf": "translate(447.523px, 394.026px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 781.3,
+   "self": true,
+   "tf": "translate(452.634px, 393.726px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 807.7,
+   "self": true,
+   "tf": "translate(460.932px, 394.923px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 820.2,
+   "self": true,
+   "tf": "translate(464.987px, 394.658px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 833.3,
+   "self": true,
+   "tf": "translate(469.202px, 394.383px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 847.8,
+   "self": true,
+   "tf": "translate(537px, 391px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 867.4,
+   "self": true,
+   "tf": "translate(537px, 391px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 879.3,
+   "self": true,
+   "tf": "translate(539.693px, 393.693px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 894.6,
+   "self": true,
+   "tf": "translate(544.326px, 395.276px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 906.1,
+   "self": true,
+   "tf": "translate(547.54px, 397.133px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 917.8,
+   "self": true,
+   "tf": "translate(551.156px, 397.116px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 952.3,
+   "self": true,
+   "tf": "translate(561.704px, 393.751px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 975.5,
+   "self": true,
+   "tf": "translate(569.026px, 392.342px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 986.6,
+   "self": true,
+   "tf": "translate(572.516px, 391.89px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1003.1,
+   "self": true,
+   "tf": "translate(577.785px, 391.208px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1019.7,
+   "self": true,
+   "tf": "translate(583.053px, 390.526px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1032.2,
+   "self": true,
+   "tf": "translate(587.019px, 390.012px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1049,
+   "self": true,
+   "tf": "translate(592.351px, 389.322px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1064.9,
+   "self": true,
+   "tf": "translate(597.397px, 388.668px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1077.7,
+   "self": true,
+   "tf": "translate(601.459px, 388.142px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1094.4,
+   "self": true,
+   "tf": "translate(606.727px, 387.46px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1111.1,
+   "self": true,
+   "tf": "translate(611.669px, 389.577px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1122.3,
+   "self": true,
+   "tf": "translate(615.224px, 389.128px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1139.1,
+   "self": true,
+   "tf": "translate(620.553px, 388.719px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1149.6,
+   "self": true,
+   "tf": "translate(623.924px, 389.32px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1166.5,
+   "self": true,
+   "tf": "translate(629.005px, 391.075px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1183.2,
+   "self": true,
+   "tf": "translate(634.323px, 391.6px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1200.5,
+   "self": true,
+   "tf": "translate(639.832px, 392.145px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "live.phase@60": [
+  {
+   "frames": 70,
+   "spanMs": 1200.5,
+   "frameMs": 17.4,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1007px, 651px)",
+   "frozenFrames": 11,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 197.5,
+   "firstMoveVeil": {
+    "flat": 0.757,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 197.5,
+   "cutVeil": 0.757,
+   "coverStartMs": 47.6,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 68,
+   "spanMs": 1207.1,
+   "frameMs": 18.02,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(997px, 647px)",
+   "frozenFrames": 11,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 193.1,
+   "firstMoveVeil": {
+    "flat": 0.649,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 193.1,
+   "cutVeil": 0.649,
+   "coverStartMs": 34.9,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 70,
+   "spanMs": 1216,
+   "frameMs": 17.62,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1007px, 645px)",
+   "frozenFrames": 11,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 199.1,
+   "firstMoveVeil": {
+    "flat": 0.758,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 199.1,
+   "cutVeil": 0.758,
+   "coverStartMs": 49,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "reduced.samples": [
+  {
+   "t": 12,
+   "self": true,
+   "tf": "translate(1006px, 648px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 25.9,
+   "self": true,
+   "tf": "translate(1006px, 648px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 42.5,
+   "self": true,
+   "tf": "translate(1006px, 648px)",
+   "room": "lobby",
+   "flat": 0.075,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 59.2,
+   "self": true,
+   "tf": "translate(1006px, 648px)",
+   "room": "lobby",
+   "flat": 0.258,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 75.8,
+   "self": true,
+   "tf": "translate(1006px, 648px)",
+   "room": "lobby",
+   "flat": 0.511,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 92.6,
+   "self": true,
+   "tf": "translate(1006px, 648px)",
+   "room": "lobby",
+   "flat": 0.823,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 109.4,
+   "self": true,
+   "tf": "translate(1006px, 648px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 126,
+   "self": true,
+   "tf": "translate(236px, 454px)",
+   "room": "arena",
+   "flat": 0.466,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 143,
+   "self": true,
+   "tf": "translate(236px, 438px)",
+   "room": "arena",
+   "flat": 0.099,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 159.4,
+   "self": true,
+   "tf": "translate(247px, 449px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 219.7,
+   "self": true,
+   "tf": "translate(263px, 449px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 225.9,
+   "self": true,
+   "tf": "translate(274px, 438px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 242.6,
+   "self": true,
+   "tf": "translate(285px, 427px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 259.3,
+   "self": true,
+   "tf": "translate(296px, 416px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 275.8,
+   "self": true,
+   "tf": "translate(296px, 400px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 292.6,
+   "self": true,
+   "tf": "translate(312px, 400px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 309.4,
+   "self": true,
+   "tf": "translate(328px, 400px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 326,
+   "self": true,
+   "tf": "translate(339px, 411px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 342.7,
+   "self": true,
+   "tf": "translate(350px, 400px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 359.2,
+   "self": true,
+   "tf": "translate(361px, 411px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 376,
+   "self": true,
+   "tf": "translate(377px, 411px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 392.6,
+   "self": true,
+   "tf": "translate(388px, 422px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 409.2,
+   "self": true,
+   "tf": "translate(399px, 433px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 425.9,
+   "self": true,
+   "tf": "translate(410px, 444px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 442.6,
+   "self": true,
+   "tf": "translate(421px, 455px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 459.1,
+   "self": true,
+   "tf": "translate(421px, 439px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 475.9,
+   "self": true,
+   "tf": "translate(432px, 450px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 492.5,
+   "self": true,
+   "tf": "translate(432px, 434px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 509.3,
+   "self": true,
+   "tf": "translate(432px, 418px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 525.9,
+   "self": true,
+   "tf": "translate(443px, 407px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 542.6,
+   "self": true,
+   "tf": "translate(459px, 407px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 559.1,
+   "self": true,
+   "tf": "translate(470px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 575.7,
+   "self": true,
+   "tf": "translate(486px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 593.4,
+   "self": true,
+   "tf": "translate(497px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 610.1,
+   "self": true,
+   "tf": "translate(508px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 627.9,
+   "self": true,
+   "tf": "translate(519px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 644.4,
+   "self": true,
+   "tf": "translate(535px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 661.8,
+   "self": true,
+   "tf": "translate(535px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 678.5,
+   "self": true,
+   "tf": "translate(535px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 698.5,
+   "self": true,
+   "tf": "translate(546px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 715.2,
+   "self": true,
+   "tf": "translate(557px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 734.6,
+   "self": true,
+   "tf": "translate(557px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 751.3,
+   "self": true,
+   "tf": "translate(568px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 767.8,
+   "self": true,
+   "tf": "translate(579px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 786.8,
+   "self": true,
+   "tf": "translate(595px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 803.5,
+   "self": true,
+   "tf": "translate(606px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 822.6,
+   "self": true,
+   "tf": "translate(617px, 407px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 839.3,
+   "self": true,
+   "tf": "translate(628px, 418px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 858.5,
+   "self": true,
+   "tf": "translate(639px, 429px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 875,
+   "self": true,
+   "tf": "translate(650px, 440px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 894.1,
+   "self": true,
+   "tf": "translate(650px, 424px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 910.7,
+   "self": true,
+   "tf": "translate(666px, 424px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "reduced": [
+  {
+   "frames": 52,
+   "spanMs": 910.7,
+   "frameMs": 17.86,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1006px, 648px)",
+   "frozenFrames": 7,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 126,
+   "firstMoveVeil": {
+    "flat": 0.466,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 126,
+   "cutVeil": 0.466,
+   "coverStartMs": 42.5,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 61,
+   "spanMs": 902,
+   "frameMs": 15.03,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1003px, 645px)",
+   "frozenFrames": 7,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 120.2,
+   "firstMoveVeil": {
+    "flat": 0.465,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 120.2,
+   "cutVeil": 0.465,
+   "coverStartMs": 36.7,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 123,
+   "spanMs": 900.4,
+   "frameMs": 7.38,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1000px, 654px)",
+   "frozenFrames": 14,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 103.9,
+   "firstMoveVeil": {
+    "flat": 0.757,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 103.9,
+   "cutVeil": 0.757,
+   "coverStartMs": 27,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "reduced.phase@40.samples": [
+  {
+   "t": 1.8,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 7,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 13.8,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.015,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 20.7,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.054,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 27.8,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.114,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 34.8,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.188,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 42.3,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.268,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 48,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.368,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 55,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.48,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 61.9,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.599,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 68.8,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.728,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 75.7,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 0.868,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 83,
+   "self": true,
+   "tf": "translate(1007px, 641px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 93,
+   "self": true,
+   "tf": "translate(409px, 437px)",
+   "room": "arena",
+   "flat": 0.757,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 97.6,
+   "self": true,
+   "tf": "translate(409px, 421px)",
+   "room": "arena",
+   "flat": 0.544,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 103.8,
+   "self": true,
+   "tf": "translate(425px, 421px)",
+   "room": "arena",
+   "flat": 0.358,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 110.6,
+   "self": true,
+   "tf": "translate(436px, 410px)",
+   "room": "arena",
+   "flat": 0.197,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 159.9,
+   "self": true,
+   "tf": "translate(452px, 410px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 166.5,
+   "self": true,
+   "tf": "translate(463px, 421px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 173.3,
+   "self": true,
+   "tf": "translate(479px, 421px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 180.3,
+   "self": true,
+   "tf": "translate(479px, 405px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 187.2,
+   "self": true,
+   "tf": "translate(495px, 405px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 194.1,
+   "self": true,
+   "tf": "translate(506px, 394px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 200.9,
+   "self": true,
+   "tf": "translate(506px, 394px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 207.7,
+   "self": true,
+   "tf": "translate(506px, 394px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 214.6,
+   "self": true,
+   "tf": "translate(517px, 405px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 221.7,
+   "self": true,
+   "tf": "translate(517px, 389px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 228.7,
+   "self": true,
+   "tf": "translate(528px, 400px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 235.6,
+   "self": true,
+   "tf": "translate(539px, 411px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 242.5,
+   "self": true,
+   "tf": "translate(550px, 422px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 249.5,
+   "self": true,
+   "tf": "translate(566px, 422px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 256.5,
+   "self": true,
+   "tf": "translate(577px, 411px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 263.4,
+   "self": true,
+   "tf": "translate(588px, 422px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 270.3,
+   "self": true,
+   "tf": "translate(604px, 422px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 277.3,
+   "self": true,
+   "tf": "translate(615px, 433px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 284.2,
+   "self": true,
+   "tf": "translate(615px, 417px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 291.2,
+   "self": true,
+   "tf": "translate(631px, 417px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 298,
+   "self": true,
+   "tf": "translate(647px, 417px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 305,
+   "self": true,
+   "tf": "translate(663px, 417px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 311.9,
+   "self": true,
+   "tf": "translate(679px, 417px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 318.8,
+   "self": true,
+   "tf": "translate(690px, 428px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 326.1,
+   "self": true,
+   "tf": "translate(701px, 439px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 332.8,
+   "self": true,
+   "tf": "translate(717px, 439px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 339.9,
+   "self": true,
+   "tf": "translate(728px, 450px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 346.7,
+   "self": true,
+   "tf": "translate(739px, 439px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 353.7,
+   "self": true,
+   "tf": "translate(750px, 428px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 360.6,
+   "self": true,
+   "tf": "translate(750px, 412px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 367.6,
+   "self": true,
+   "tf": "translate(766px, 412px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 374.5,
+   "self": true,
+   "tf": "translate(777px, 401px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 381.4,
+   "self": true,
+   "tf": "translate(788px, 390px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 388.4,
+   "self": true,
+   "tf": "translate(799px, 401px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 395.4,
+   "self": true,
+   "tf": "translate(815px, 401px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 402.2,
+   "self": true,
+   "tf": "translate(815px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 409.1,
+   "self": true,
+   "tf": "translate(815px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 416,
+   "self": true,
+   "tf": "translate(826px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 423.1,
+   "self": true,
+   "tf": "translate(826px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 429.8,
+   "self": true,
+   "tf": "translate(837px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 436.9,
+   "self": true,
+   "tf": "translate(853px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 443.8,
+   "self": true,
+   "tf": "translate(853px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 450.8,
+   "self": true,
+   "tf": "translate(864px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 457.8,
+   "self": true,
+   "tf": "translate(875px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 464.7,
+   "self": true,
+   "tf": "translate(891px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 471.7,
+   "self": true,
+   "tf": "translate(891px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 478.5,
+   "self": true,
+   "tf": "translate(902px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 485.5,
+   "self": true,
+   "tf": "translate(918px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 492.5,
+   "self": true,
+   "tf": "translate(934px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 499.4,
+   "self": true,
+   "tf": "translate(945px, 407px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 506.5,
+   "self": true,
+   "tf": "translate(956px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 513.6,
+   "self": true,
+   "tf": "translate(967px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 520.3,
+   "self": true,
+   "tf": "translate(967px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 527.2,
+   "self": true,
+   "tf": "translate(967px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 534.3,
+   "self": true,
+   "tf": "translate(983px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 541.2,
+   "self": true,
+   "tf": "translate(994px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 548,
+   "self": true,
+   "tf": "translate(994px, 396px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 554.9,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 562,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 569,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 575.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 582.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 589.6,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 596.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 603.6,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 610.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 617.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 624.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 631.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 638.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 645.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 652.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 659,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 666,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 672.9,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 679.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 686.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 693.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 700.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 707.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 714.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 721.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 728.6,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 735.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 742.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 749.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 756.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 763.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 770.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 777.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 784,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 791,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 797.9,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 804.9,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 811.8,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 818.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 825.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 832.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 839.7,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 846.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 853.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 860.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 867.5,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 874.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 881.4,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 888.3,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 895.2,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 902.1,
+   "self": true,
+   "tf": "translate(1005px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "reduced.phase@40": [
+  {
+   "frames": 125,
+   "spanMs": 902.1,
+   "frameMs": 7.28,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1007px, 641px)",
+   "frozenFrames": 13,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 93,
+   "firstMoveVeil": {
+    "flat": 0.757,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 93,
+   "cutVeil": 0.757,
+   "coverStartMs": 20.7,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 124,
+   "spanMs": 903.5,
+   "frameMs": 7.35,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1001px, 655px)",
+   "frozenFrames": 14,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 100.3,
+   "firstMoveVeil": {
+    "flat": 0.759,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 100.3,
+   "cutVeil": 0.759,
+   "coverStartMs": 23,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  },
+  {
+   "frames": 123,
+   "spanMs": 906.5,
+   "frameMs": 7.43,
+   "selfMissingFrames": 0,
+   "frozenTf": "translate(1007px, 653px)",
+   "frozenFrames": 13,
+   "tfChangesBeforeCut": 0,
+   "firstMoveMs": 99.3,
+   "firstMoveVeil": {
+    "flat": 0.76,
+    "mouthA": 0
+   },
+   "veilAtFrameBeforeMove": 1,
+   "cuts": 1,
+   "cutMs": 99.3,
+   "cutVeil": 0.76,
+   "coverStartMs": 23,
+   "maxFlat": 1,
+   "endRoom": "arena",
+   "endSelf": true,
+   "endFlat": 0,
+   "errors": []
+  }
+ ],
+ "ceilingHidden": {
+  "visLog": [
+   {
+    "s": "visible",
+    "t": 0
+   }
+  ],
+  "framesWhileHidden": 33,
+  "selfMissing": 0,
+  "distinctTfAfterReturn": 40,
+  "framesAfterReturn": 40,
+  "errors": []
+ },
+ "ceilingVisible": {
+  "firstSampleMs": 27.9,
+  "frozenUntilMs": 1012.8,
+  "frameMs": 15.97,
+  "selfMissing": 0,
+  "tfAfter": 40,
+  "errors": []
+ },
+ "pausedForever": {
+  "animationsPaused": 11,
+  "frames": 318,
+  "frameMs": 6.94,
+  "selfMissing": 0,
+  "firstMoveMs": 1000.5,
+  "veilAtFirstMove": {
+   "flat": 0.091,
+   "mouthA": 0.792
+  },
+  "roomAtEnd": "lobby",
+  "cuts": 0,
+  "distinctTfAfterMove": 1,
+  "errors": []
+ },
+ "pausedThenResumed": {
+  "animationsPaused": 11,
+  "animationsResumed": 11,
+  "frames": 346,
+  "selfMissing": 0,
+  "cuts": [
+   {
+    "t": 1881.6,
+    "to": "arena",
+    "flat": 0.97
+   }
+  ],
+  "roomAtEnd": "arena",
+  "veilAtEnd": 0,
+  "animsLeft": 4,
+  "errors": []
+ },
+ "animsAfterHealthyBeat": {
+  "anims": 4,
+  "errors": []
+ },
+ "cleanup": {
+  "midCover": {
+   "s": {
+    "t": 0.2,
+    "self": true,
+    "tf": "translate(1007px, 649px)",
+    "room": "lobby",
+    "flat": 0.123,
+    "mouthA": 0.897,
+    "seats": 29
+   },
+   "anims": 11
+  },
+  "animsAfterUnmount": 0,
+  "remount": {
+   "room": "arena",
+   "self": true,
+   "distinctTf": 1
+  },
+  "errors": []
+ }
+}

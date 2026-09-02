@@ -1,0 +1,38 @@
+[
+ {
+  "name": "K-dedup-moves",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 330,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 33,
+   "sparseMoves": true,
+   "movesPerWrite": 2
+  }
+ },
+ {
+  "name": "K-dedup-nomoves",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 330,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 33,
+   "sparseMoves": true,
+   "movesPerWrite": 0
+  }
+ }
+]

@@ -337,9 +337,10 @@ fn gate_refusal(slot: &PlayerSlot) -> Result<(), ProgramError> {
 /// `phase == PHASE_FIGHTING`, so a tick-only limiter would grant each player exactly
 /// one lobby move ever and then freeze them short of the gate — no match could ever
 /// start. The ER's 50 ms slot is the only other monotonic counter available on this
-/// side of the boundary, so the lobby uses that. The generated dungeon makes this more
-/// load-bearing, not less: the walk from a lobby spawn to the gate is now dozens of
-/// steps down a corridor rather than a straight line across an empty rectangle.
+/// side of the boundary, so the lobby uses that. The open arena makes this more
+/// load-bearing, not less: the lobby is now 60x20 tiles of unobstructed floor and the
+/// gate is one 8-tile slot in the far wall, so the walk to it is a long straight run
+/// that a one-move-per-400 ms limiter would turn back into wading.
 ///
 /// The comparison against the stamp is `!=`, not `>`. Swapping sources at the phase
 /// flip leaves a stamp from the other clock in the field (a slot number dwarfs a
@@ -1043,7 +1044,15 @@ mod tests {
         // The outer ring is closed.
         assert!(is_wall(0, 0) && is_wall(MAP_MAX_XY, MAP_MAX_XY));
         assert!(is_wall(500, MAP_MAX_XY) && is_wall(0, 500));
-        assert!(!is_wall(TILE, TILE));
+        // ...and it opens onto floor. Searched for rather than typed as tile (1, 1): the
+        // perimeter's thickness is the map's to choose and it is two tiles today, so the
+        // named-tile form of this line asserted the ring was *thin* while claiming to
+        // assert it was closed. `inset` is the first open column of the boss's air and is
+        // reused below, so the two assertions cannot disagree about where the ring ends.
+        let inset = (0..MAP_TILES as i16)
+            .find(|tx| !is_wall(tx * TILE, TILE))
+            .expect("row 1 is solid — the boss's air must be open floor or every ray dies");
+        assert!(inset > 0, "the border ring is open at the top-left corner");
         // Off-map fails closed rather than indexing out of range.
         assert!(is_wall(-1, 0) && is_wall(0, -1) && is_wall(MAP_MAX_XY + 1, 0));
 
@@ -1073,8 +1082,9 @@ mod tests {
             let ny = i16::MIN.saturating_add(dy).clamp(0, MAP_MAX_XY);
             assert!((0..=MAP_MAX_XY).contains(&nx) && (0..=MAP_MAX_XY).contains(&ny));
         }
+        // West out of the first open column is rock, whatever the ring's thickness.
         assert!(is_wall(
-            TILE.saturating_add(MOVE_STEP[6].0).clamp(0, MAP_MAX_XY),
+            (inset * TILE).saturating_add(MOVE_STEP[6].0).clamp(0, MAP_MAX_XY),
             TILE
         ));
 
@@ -1268,10 +1278,13 @@ mod tests {
         assert!(!seen[idx(crate::map::BOSS_SPAWN.0, crate::map::BOSS_SPAWN.1)]);
         // The escape clause cannot be ridden upward: every reachable position is inside
         // the box, so the walk that produced them never left it.
-        // 170,240 positions today, against 445,696 before the lobby box existed. The bound
-        // is loose on purpose — the exact number is a property of the generated map and
-        // would have to be re-measured every time `arena.json` is redrawn — but a lobby
-        // that has collapsed to a corridor is a different bug wearing this one's clothes.
+        // 155,648 positions today, against 445,696 before the lobby box existed. It was
+        // 170,240 while the lobby was a pillared temple: the open arena deletes 26 pillars
+        // but hands the deeper pit three rows and the perimeter a second tile, and the rows
+        // cost more than the pillars returned. The bound is loose on purpose — the exact
+        // number is a property of the generated map and would have to be re-measured every
+        // time `arena.json` is redrawn — but a lobby that has collapsed to a corridor is a
+        // different bug wearing this one's clothes.
         assert!(
             count > 10_000,
             "only {count} positions reachable — the lobby is a closet"
@@ -1404,6 +1417,12 @@ mod tests {
     ///
     /// Exhaustive rather than sampled, because the defect this replaces was found by replay
     /// and missed by a test that checked the y arithmetic without consulting the map.
+    ///
+    /// `walls_allow` is asserted true as well as equal, and that second assertion is not
+    /// redundant: the equality alone is satisfied by `false == false`, which is a walkable
+    /// tile with eight walled neighbours — a sealed pocket in the drawn map, and a freeze
+    /// the box is innocent of. Nothing else in the repo would report one. (0 such tiles on
+    /// this map, in both rooms.)
     #[test]
     fn the_box_never_removes_a_seats_last_legal_move() {
         for zone in [ZONE_LOBBY, ZONE_ARENA] {
@@ -1416,6 +1435,10 @@ mod tests {
                         let both_allow = MOVE_STEP.iter().any(|(dx, dy)| {
                             !is_wall(x + dx, y + dy) && may_move_to(zone, y, y + dy)
                         });
+                        assert!(
+                            walls_allow,
+                            "({x},{y}) is walkable floor sealed in on all eight sides"
+                        );
                         assert_eq!(
                             walls_allow, both_allow,
                             "zone {zone} at ({x},{y}): the box removed the last legal move"

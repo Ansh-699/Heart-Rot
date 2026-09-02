@@ -1292,18 +1292,42 @@ mod tests {
     /// the wall test, and every one of them died the first time `assets/map/arena.json`
     /// was redrawn. Searching for the shape keeps the intent across any arena that still
     /// has walls in it, and `expect` below fails loudly if one ever does not.
+    ///
+    /// The step set comes from [`unit_velocity`], not from a hand-written multiple of
+    /// `BULLET_SPEED`. The previous version searched only `±BULLET_SPEED` on one axis,
+    /// which is a *second* model of what a bullet step is — and a wrong one, because the
+    /// octagonal normalisation makes the 45° step `(28, 28)` and not `(42, 42)`. That
+    /// mattered the moment the pillars came out: the open arena has no axis-aligned
+    /// one-step-thick cover left, so `mid && !end` had no witness on any of the four
+    /// directions and the search reported the *map* had no cover when what it really had
+    /// was a search too narrow to see the gate throat's diagonal shoulder. Asking the
+    /// production function for the directions keeps the two in step by construction.
     fn find_step(want: fn(bool, bool) -> bool) -> Option<(i16, i16, i8, i8)> {
+        // A magnitude, not a unit: `unit_velocity` divides by an integer octagonal length,
+        // so `(1, 1)` degenerates to `(42, 42)` while any realistic aim vector — these are
+        // differences between world positions, hundreds of units apart — gives `(28, 28)`.
+        const AIM: i32 = 1000;
         for ty in 0..map::MAP_TILES as i32 {
             for tx in 0..map::MAP_TILES as i32 {
                 let (x, y) = (tx * TILE + TILE / 2, ty * TILE + TILE / 2);
                 if wall_at(x, y) {
                     continue;
                 }
-                for (ux, uy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
-                    let (dx, dy) = (ux * BULLET_SPEED, uy * BULLET_SPEED);
-                    let (ex, ey) = (x + dx, y + dy);
+                for (ux, uy) in [
+                    (1i32, 0i32),
+                    (-1, 0),
+                    (0, 1),
+                    (0, -1),
+                    (1, 1),
+                    (1, -1),
+                    (-1, 1),
+                    (-1, -1),
+                ] {
+                    let (dx, dy) =
+                        unit_velocity(ux * AIM, uy * AIM).expect("a direction is not stationary");
+                    let (ex, ey) = (x + dx as i32, y + dy as i32);
                     if want(wall_at((x + ex) / 2, (y + ey) / 2), wall_at(ex, ey)) {
-                        return Some((x as i16, y as i16, dx as i8, dy as i8));
+                        return Some((x as i16, y as i16, dx, dy));
                     }
                 }
             }
@@ -1335,6 +1359,15 @@ mod tests {
     /// that is solid only at its *midpoint* dies too. The last is the one an
     /// endpoint-only test gets wrong — a bullet steps 42 units and the map's thinnest
     /// solid feature is 2 tiles, 32 units through.
+    ///
+    /// The third case's witness moved when the lobby's pillars were deleted. Those 2×2
+    /// pillars were the only cover an axis-aligned step could clear in one tick; what is
+    /// left is the 2-tile side perimeter and the 5-row divider, both of which a straight
+    /// step ends *inside*. The case still occurs — a diagonal shot clipping the shoulder
+    /// of the gate throat crosses the jamb and lands back on floor, 8 such steps on this
+    /// map — which is why `find_step` searches the real velocity set. It is a fact about
+    /// the sampler, not about the pillars, and deleting the assertion when the pillars
+    /// went would have left the two-sample design with nothing holding it in place.
     #[test]
     fn bullets_stop_at_generated_walls() {
         let fired = |(x, y, dx, dy): (i16, i16, i8, i8)| {

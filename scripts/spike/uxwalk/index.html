@@ -1,0 +1,86 @@
+<!doctype html><html><head><meta charset="utf-8"><title>ux walk</title>
+<script>try{Object.defineProperty(window,"indexedDB",{value:undefined,configurable:true});}catch(e){}</script>
+<link rel="stylesheet" href="../../../app/src/styles.css"></head>
+<body><div id="root"></div><script type="module" src="./main.tsx"></script>
+<script>
+// Throwaway driver: query params -> the harness's own __scene bridge, then a flag chrome
+// --virtual-time-budget can wait on. Nothing product-side is touched.
+(function () {
+  var q = new URLSearchParams(location.search);
+  var t = setInterval(function () {
+    if (!window.__ready) return;
+    clearInterval(t);
+    (async function () {
+      if (q.get('fail')) {
+        var inner = globalThis.fetch;
+        globalThis.fetch = function (i, init) {
+          var u = String(typeof i === 'string' ? i : i.url || i);
+          if (u.indexOf('/api/session/init') >= 0) {
+            return Promise.resolve(new Response(JSON.stringify({ error: q.get('fail') }), { status: 503, headers: { 'content-type': 'application/json' } }));
+          }
+          return inner(i, init);
+        };
+      }
+      try {
+        await window.__store.signIn();
+        await window.__store.join();
+      } catch (e) {
+        var d = document.createElement('pre');
+        d.style.cssText='position:fixed;top:0;left:0;z-index:99999;color:#f00;background:#fff;font-size:20px';
+        d.textContent = 'DRIVER: ' + (e && e.message ? e.message : String(e));
+        document.body.appendChild(d);
+      }
+      var st = window.__store.getState();
+      var dd = document.createElement('pre');
+      dd.style.cssText='position:fixed;top:0;left:0;z-index:99999;color:#0f0;background:#000;font-size:18px';
+      dd.hidden = q.get('diag') !== '1';
+      dd.textContent = 'auth=' + st.authenticated + ' key=' + (st.sessionKey?'y':'n') + ' match=' + (st.match?'y':'n') + ' status=' + st.status + ' err=' + st.error;
+      document.body.appendChild(dd);
+      var drive = function () {
+        window.__scene(q.get('room') || 'arena', {
+          seats: Number(q.get('seats') || 20),
+          bullets: Number(q.get('bullets') || 0),
+          phase: q.get('phase') === null ? undefined : Number(q.get('phase')),
+        });
+      };
+      if (q.get('noworld') !== '1') { drive(); setInterval(drive, 150); }
+      if (q.get('dev') === '1') { setTimeout(function(){ window.dispatchEvent(new KeyboardEvent('keydown', {code:'Backquote', bubbles:true})); }, 300); }
+      if (q.get('noerr') === '1') { setTimeout(function(){ window.__store.setStatus('live'); }, 400); }
+      setTimeout(function () {
+        var out = [];
+        document.querySelectorAll('use[href^="#k"]').forEach(function (u) {
+          var r = u.getBoundingClientRect();
+          if (r.width > 0) out.push([Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height), u.getAttribute('href')]);
+        });
+        document.body.setAttribute('data-rects', JSON.stringify(out));
+        var hit = [];
+        document.querySelectorAll('body *').forEach(function (el) {
+          var cs = getComputedStyle(el);
+          if (cs.pointerEvents === 'none' || cs.visibility === 'hidden' || cs.display === 'none') return;
+          if (el.id === 'stage' || el.closest('#stage')) return;
+          var r = el.getBoundingClientRect();
+          if (r.width < 1 || r.height < 1) return;
+          if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return;
+          hit.push([el.tagName + '.' + (el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || ''), Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]);
+        });
+        document.body.setAttribute('data-hit', JSON.stringify(hit));
+        var st2 = document.getElementById('stage');
+        var sr = st2 ? st2.getBoundingClientRect() : null;
+        var sv = st2 ? st2.querySelector('svg') : null;
+        document.body.setAttribute('data-stage', JSON.stringify({
+          stage: sr ? [Math.round(sr.x), Math.round(sr.y), Math.round(sr.width), Math.round(sr.height)] : null,
+          viewBox: sv ? sv.getAttribute('viewBox') : null,
+          bar: !!document.querySelector('.errorbar'),
+        }));
+        window.__shot = true;
+      }, 1200);
+    })();
+    if (q.get('hud') === '0') {
+      var s = document.createElement('style');
+      s.textContent = '.hud,.dev,.dev-cue,.errorbar,.header{display:none!important}.stage::after{display:none!important}';
+      document.head.appendChild(s);
+    }
+  }, 30);
+})();
+</script>
+</body></html>

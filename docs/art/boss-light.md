@@ -140,6 +140,13 @@ the creature at 4:1 against the reference's 0.025. The missing light has to be *
 light*, not squeezed out of thirteen flat fills. That is the finding that decides the shape
 of the fix.
 
+> The chain in that fence is the **search's own optimum**, not a shipped one — note the
+> `grayscale(0.8)`, which no build has ever carried — and the percentiles beside it are the
+> search's output. It is left exactly as measured. What ships is §5.1's
+> `brightness(0.45) contrast(2.0)`, which this section's finding is the argument *against*
+> trying to beat by re-tuning: the search says a transfer function alone tops out here, and
+> the orb and its spill are what actually add the light.
+
 ## 3. The three things that are actually broken
 
 ### 3.1 The rim is a 1-pixel decoration
@@ -284,7 +291,7 @@ change, no generated file touched.
 ```
 const BOSS_GRADE =
   'grayscale(0.7) sepia(0.6) hue-rotate(195deg) saturate(0.5) ' +
-  'brightness(0.55) contrast(1.6) ' +
+  'brightness(0.45) contrast(2.0) ' +
   'drop-shadow(-3px -3px 0 rgb(159 232 255 / 0.30))';
 ```
 
@@ -294,9 +301,19 @@ Four terms move and one is added:
 |---|---|---|---|
 | `hue-rotate` | 185deg | **195deg** | graded median hue 219° → 229°; the reference's is 244° |
 | `saturate` | 1.6 | **0.5** | `contrast()` amplifies chroma. At 1.6 the graded body measures sat 52 %; the reference is **19 %**, and 0.5 lands on 19 % |
-| `brightness` | 0.32 | **0.55** | the bulk stays dark because `contrast` pulls it back down, not because `brightness` crushes it |
-| `contrast` | — | **1.6** | `c ↦ 1.6c − 0.3`: darks clip toward black, the top of the range survives. This is the term that restores the tail |
+| `brightness` | 0.32 | **0.45** | the bulk stays dark because `contrast` pulls it back down, not because `brightness` crushes it |
+| `contrast` | — | **2.0** | `c ↦ 2.0c − 0.5`: darks clip toward black, the top of the range survives. This is the term that restores the tail |
 | `drop-shadow` | 2px, α 0.25 | **3px, α 0.30** | 0.88 px → 1.40 px exposed, 1.50:1 → 1.75:1 vs the cavern |
+
+**This block first shipped as `brightness(0.55) contrast(1.6)` and that overshot.** Measured
+on the shipped frame after it landed: body p50 relL 0.0564 against a floor at 0.0159 —
+**3.5× brighter than the floor it stands on**, where reference B's creature is **0.58×**. The
+tail did not arrive either (p50→p99 spread 3.5× against the reference's 15×): 0.55 lifted the
+whole body rather than opening the range. `0.45 / 2.0` is the same two terms re-solved
+against the *ratio* rather than against an absolute median, and it reads 15.0× spread at
+**0.57× the floor**. The measured table for both chains lives in `Boss.tsx`'s own comment
+above `BOSS_GRADE`, next to the constant, which is where it cannot go stale unread. §7's
+acceptance criterion moved with it — see the note there.
 
 `contrast` goes **after** `brightness`; the pair is `c ↦ k·b·c + (1−k)/2` and swapping them
 changes the black point. The drop-shadow stays **last** so the grade cannot tint the light it
@@ -395,10 +412,15 @@ neighbours. Delete all of it.
 
 That block quotes graded values for the four dominant fills, an internal-contrast ratio of
 2.47, and a `brightness(2.2)` flash ceiling of L 80.8, all computed for the old chain. Under
-the new one the flash is stronger — a fill at ungraded 0.79 clips at `brightness(2.2)`, then
-grades to sRGB ≈ 148, relL ≈ 0.29, **L255 ≈ 74 against a resting body at 13**, a 5.7× lift
-where the old chain gave about 2×. Re-derive or delete; leaving stale arithmetic in the one
+the new one the flash is stronger. Re-derive or delete; leaving stale arithmetic in the one
 comment people read before touching this is how it gets re-broken.
+
+**Done, and the file is now the record.** `Boss.tsx`'s comment carries the re-derivation
+against the shipped `brightness(0.45) contrast(2.0)`: the flash grades to relL 0.129,
+**15.8× the resting body's 0.0082**, where the old chain gave 5.1×. Stated as a ratio to the
+body it flashes, for the same reason as §7.2 — an absolute L255 is not scale-free, and this
+paragraph's earlier "L255 ≈ 74 against a resting body at 13" was quoting a body median that
+has since moved. Read it there, not here.
 
 ---
 
@@ -431,8 +453,16 @@ Re-run `python3 scripts/spike/framebudget/bosslight.py` after the edit and requi
 
 1. **Ladder within ±0.06 of the reference at every step** — `0.532 / 0.232 / 0.123 / 0.070 /
    0.025`. `g3` measured `0.486 / 0.279 / 0.111 / 0.073 / 0.027`.
-2. **Body median L255 in 11…16** (reference 13.0). Not brighter: the creature is supposed to
-   be dark, and every earlier failure in this area was somebody lifting the bulk.
+2. **Body p50 BELOW the floor's own p50** — reference B's creature is **0.58×** its floor —
+   **with a p50→p99 spread near 15×** (reference 15.1×).
+
+   > This criterion used to read "body median L255 in 11…16 (reference 13.0)", and that
+   > absolute bar is what let the first attempt at §5.1 overshoot. An L255 median is not
+   > scale-free: it moves with the floor under it, and the floor has since moved twice — the
+   > map rebuild changed which mix of floor and backdrop the creature sits on, and
+   > `BossArena.tsx`'s `GAIN` went to 0.92. A grade tuned to hit "13" against one floor is a
+   > **4.6× value inversion** against another, which is exactly what shipped. The ratio and
+   > the spread survive both moves; the median does not. Never restate this as an absolute.
 3. **Orb ring band, r 50–70 units from `CORE`, mean L255 in 30…70** with the interior
    (r < 40) **under 8**. Shipped reads 17.2 / 10.6 on the ring and 8.2 on the interior — a
    flat disc. `g3` reads 35.7 / 58.5 and 4.7.

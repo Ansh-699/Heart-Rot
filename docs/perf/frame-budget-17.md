@@ -329,10 +329,12 @@ in disguise; the client now services **39 notifications/s where it used to servi
 
 In order:
 
-1. **Move `VISIBLE_PROJECTILES` from the draw step into `Shot.launch()`.** Measured ceiling
-   **−4.60 ms p50 / −4.20 ms p95**, and it is the same edit that stops the local player's own
-   arrow being hidden during a volley (§5.1). Highest value per line in the whole file. Cap
-   concurrent *spawns*, drop the oldest, exempt the local seat.
+1. ~~**Move `VISIBLE_PROJECTILES` from the draw step into `Shot.launch()`.**~~ **LANDED.**
+   `launch` returns before the raycast at `cap === 0`, evicts the oldest flight when full and
+   exempts the local seat; the frame step lost its cap, its `drawn`/`budgetLeft` pair and
+   `frameOrder` entirely, and `flightCut` carries the policy with a DEV self-check. **The
+   −4.60 / −4.20 ceiling is still UNVERIFIED on this tree** — re-run `cases34.json` through
+   `drive34.mjs` on an idle box before quoting it.
 2. **Stop `<Arena>` re-rendering on every notification.** The largest lever in the table by
    some distance: **714 Hz → 20 Hz is −7.70 ms p50 and −13.70 ms p95** (18.70 / 30.00 →
    11.00 / 16.30), and it is the difference between failing the gate and passing it.
@@ -350,7 +352,10 @@ In order:
    4.8× area sweep. **Every one of these was a named risk and every one is closed** — the
    levers §10.4 nominated ("if it fails the lever is scene complexity") are the wrong levers,
    and reaching for them would cost the redesign its picture for nothing.
-5. **One `shown === 'arena' &&` on `Arena.tsx:791`** (§5.2). Costs nothing; it is correctness.
+5. ~~**One `shown === 'arena' &&` on `Arena.tsx:791`**~~ (§5.2). **LANDED**, and one line
+   earlier than proposed: the gate is on `shownBullets` itself, not on row 11's `<g>`, so the
+   count `Shot` budgets against is the count actually drawn. Gating only the `<g>` would have
+   left room A passing a non-zero `budget` for bullets nobody paints.
 
 ### What this does not cover
 

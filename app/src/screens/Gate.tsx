@@ -44,8 +44,13 @@ import {
   GATE_MIN_Y,
   MAP_TILE,
   MUSTER_TICKS,
+  PHASE_FIGHTING,
   PHASE_LOBBY,
   PHASE_MUSTERING,
+  PHASE_ROLLED,
+  PHASE_ROLLING,
+  PHASE_SETTLED,
+  PHASE_SETTLING,
   TICK_MS,
   ZONE_ARENA,
   onGate,
@@ -69,6 +74,18 @@ function raiderCount(state: State): number {
 // Beat 3 — the interaction
 // ---------------------------------------------------------------------------
 
+/**
+ * Will the chain take an `enter_gate` at all in this phase?
+ *
+ * `assert_playable` (`handlers/player.rs:502`), mirrored. Exported because `App.tsx`'s
+ * retry loop tests the same three phases inline to decide whether to send, and the prompt
+ * below tells the player which of the two is happening — one table, or the copy eventually
+ * says "the gate is reading you" over a loop that has stopped sending.
+ */
+export function gateOpen(phase: number): boolean {
+  return phase === PHASE_LOBBY || phase === PHASE_MUSTERING || phase === PHASE_FIGHTING;
+}
+
 /** World units from `(x, y)` to the nearest edge of the gate block; 0 while standing on it. */
 function gateGap(x: number, y: number): number {
   const dx = Math.max(GATE_MIN_X - x, 0, x - GATE_MAX_X);
@@ -85,20 +102,51 @@ function gateGap(x: number, y: number): number {
  * optimistically would show nothing at all if the send were dropped and the 500 ms poll had
  * to retry. The *instant* half — the gate lighting under your feet off `predictor.self` —
  * is the renderer's node and the frame loop's alone; React must never own it.
+ *
+ * A third state, and a second voice for the hold, because "stand still, it is being sent"
+ * is a claim and this prompt used to make it unconditionally. Two ways it is false:
+ *
+ * - **Nothing is being sent at all.** `assert_playable` (`handlers/player.rs:502`) refuses
+ *   `enter_gate` outside the three phases below, and `App.tsx`'s retry loop mirrors that
+ *   and returns without sending. `layout.ts`'s own phase table asks for exactly this — "so
+ *   a UI can say *why* an action is unavailable rather than sending it and losing".
+ * - **Something came back refused.** `enter_gate`'s refusals include the ones retrying
+ *   cannot heal — `WrongSessionKey` (a second tab rotated the seat's key), `WrongPhase`
+ *   racing the crank — and telling that player their position is being checked "until it
+ *   takes" is the one sentence that guarantees they wait forever. The message itself is
+ *   NOT repeated here: `App.tsx`'s error bar is its one renderer and this reads a boolean,
+ *   so the prompt corrects its own advice without becoming a second copy of the notice.
  */
 export function GatePrompt() {
   const slot = useSelect(mySeatSlot);
+  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  const refused = useSelect((s) => s.error !== null);
   if (!slot || !slot.occupied || slot.zone === ZONE_ARENA) return null;
+
+  if (!gateOpen(phase)) {
+    return (
+      <div className="vent" role="status">
+        <strong>The gate is shut.</strong>
+        <p className="fine">
+          This raid is past the point where the gate takes anyone, so nothing is being sent
+          for you any more. The verdict lands when the chain finishes settling it, and the
+          next raid starts from this room.
+        </p>
+      </div>
+    );
+  }
 
   const gap = gateGap(slot.x, slot.y);
   if (gap === 0) {
     return (
       <div className="vent" role="status">
-        <strong>Hold here. The gate is reading you.</strong>
+        <strong>
+          {refused ? 'The gate is still trying.' : 'Hold here. The gate is reading you.'}
+        </strong>
         <p className="fine">
-          You can let go of the keys. Your position on the gate is checked against the
-          chain&rsquo;s copy a couple of times a second until it takes, so standing still is
-          the correct thing to do.
+          {refused
+            ? 'Something came back refused — the notice on the right says what. Keep standing here: the gate is re-sent a couple of times a second, and every refusal that answering again can clear is cleared that way.'
+            : 'You can let go of the keys. Your position on the gate is checked against the chain’s copy a couple of times a second until it takes, so standing still is the correct thing to do.'}
         </p>
       </div>
     );
@@ -238,4 +286,14 @@ if (import.meta.env.DEV) {
   } as unknown as State;
 
   if (raiderCount(roster) !== 2) fail('the pit count is wrong');
+
+  // The other silent-failure predicate: a phase missing from `gateOpen` tells a player
+  // mid-raid that the gate is shut while the loop is still sending for them, and a phase
+  // wrongly included leaves the old lie in place. Both are invisible without this.
+  for (const open of [PHASE_LOBBY, PHASE_MUSTERING, PHASE_FIGHTING]) {
+    if (!gateOpen(open)) fail(`phase ${open} takes enter_gate and gateOpen says it does not`);
+  }
+  for (const shut of [PHASE_SETTLING, PHASE_SETTLED, PHASE_ROLLING, PHASE_ROLLED]) {
+    if (gateOpen(shut)) fail(`phase ${shut} refuses enter_gate and gateOpen says it does not`);
+  }
 }

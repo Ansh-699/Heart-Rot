@@ -1,0 +1,3018 @@
+{
+ "A.commitSample": {
+  "t": 8.5,
+  "self": true,
+  "tf": "translate(616px, 824px)",
+  "room": "lobby",
+  "flat": 0,
+  "mouthA": 0,
+  "seats": 29
+ },
+ "A.digest": {
+  "frames": 163,
+  "spanMs": 1702.7,
+  "medianFrameMs": 10.51,
+  "selfMissingFrames": 0,
+  "selfMissingAt": [],
+  "cuts": [
+   {
+    "t": 512.1,
+    "from": "lobby",
+    "to": "arena",
+    "flat": 0.911,
+    "mouthA": 1,
+    "self": true
+   }
+  ],
+  "firstFlatFull": 477.3,
+  "lastFlatFull": 497.5,
+  "distinctTransforms": 38,
+  "seatsMin": 22,
+  "seatsMax": 29,
+  "endFlat": 0,
+  "endRoom": "arena",
+  "endSelf": true
+ },
+ "A.samples": [
+  {
+   "t": 6.9,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 12.9,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 18.9,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 26,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.002,
+   "seats": 29
+  },
+  {
+   "t": 39.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.014,
+   "seats": 29
+  },
+  {
+   "t": 46.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.024,
+   "seats": 29
+  },
+  {
+   "t": 53.7,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.037,
+   "seats": 29
+  },
+  {
+   "t": 60.7,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.052,
+   "seats": 29
+  },
+  {
+   "t": 68.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.069,
+   "seats": 29
+  },
+  {
+   "t": 74.5,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.088,
+   "seats": 29
+  },
+  {
+   "t": 81.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.109,
+   "seats": 29
+  },
+  {
+   "t": 88.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.131,
+   "seats": 29
+  },
+  {
+   "t": 96.3,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.155,
+   "seats": 29
+  },
+  {
+   "t": 102.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.181,
+   "seats": 29
+  },
+  {
+   "t": 109.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.208,
+   "seats": 29
+  },
+  {
+   "t": 116.1,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.237,
+   "seats": 29
+  },
+  {
+   "t": 123.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.266,
+   "seats": 29
+  },
+  {
+   "t": 130.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.297,
+   "seats": 29
+  },
+  {
+   "t": 137,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.329,
+   "seats": 29
+  },
+  {
+   "t": 144,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.002,
+   "mouthA": 0.363,
+   "seats": 29
+  },
+  {
+   "t": 151.1,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.004,
+   "mouthA": 0.398,
+   "seats": 29
+  },
+  {
+   "t": 157.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.008,
+   "mouthA": 0.434,
+   "seats": 29
+  },
+  {
+   "t": 164.9,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.014,
+   "mouthA": 0.471,
+   "seats": 29
+  },
+  {
+   "t": 172,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.02,
+   "mouthA": 0.509,
+   "seats": 29
+  },
+  {
+   "t": 178.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.028,
+   "mouthA": 0.548,
+   "seats": 29
+  },
+  {
+   "t": 185.7,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.036,
+   "mouthA": 0.587,
+   "seats": 29
+  },
+  {
+   "t": 192.5,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.046,
+   "mouthA": 0.628,
+   "seats": 29
+  },
+  {
+   "t": 199.4,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.057,
+   "mouthA": 0.671,
+   "seats": 29
+  },
+  {
+   "t": 206.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.068,
+   "mouthA": 0.713,
+   "seats": 29
+  },
+  {
+   "t": 213.1,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.08,
+   "mouthA": 0.757,
+   "seats": 29
+  },
+  {
+   "t": 220.4,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.094,
+   "mouthA": 0.802,
+   "seats": 29
+  },
+  {
+   "t": 227.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.108,
+   "mouthA": 0.849,
+   "seats": 29
+  },
+  {
+   "t": 234.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.122,
+   "mouthA": 0.895,
+   "seats": 29
+  },
+  {
+   "t": 241.1,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.138,
+   "mouthA": 0.944,
+   "seats": 29
+  },
+  {
+   "t": 248.1,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.154,
+   "mouthA": 0.994,
+   "seats": 29
+  },
+  {
+   "t": 254.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.171,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 261.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.189,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 268.7,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.207,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 275.7,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.226,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 282.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.245,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 289.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.265,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 296.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.285,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 303.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.307,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 310.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.329,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 317.4,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.351,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 324.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.373,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 331.3,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.397,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 338.3,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.42,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 345.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.445,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 352.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.469,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 359.1,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.494,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 366,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.52,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 373,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.546,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 379.9,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.572,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 387,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.599,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 393.9,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.627,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 400.9,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.655,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 407.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.683,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 414.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.712,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 421.6,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.741,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 428.5,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.771,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 435.5,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.801,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 442.5,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.831,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 449.3,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.862,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 456.2,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.894,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 463.3,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.926,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 470.3,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.958,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 477.3,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 0.992,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 484.8,
+   "self": true,
+   "tf": "translate(1007px, 653px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 497.5,
+   "self": true,
+   "tf": "translate(825px, 385px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 512.1,
+   "self": true,
+   "tf": "translate(829.704px, 385px)",
+   "room": "arena",
+   "flat": 0.911,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 536.2,
+   "self": true,
+   "tf": "translate(836.591px, 388.398px)",
+   "room": "arena",
+   "flat": 0.826,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 609.6,
+   "self": true,
+   "tf": "translate(849.672px, 397.612px)",
+   "room": "arena",
+   "flat": 0.545,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 616.2,
+   "self": true,
+   "tf": "translate(851.535px, 396.688px)",
+   "room": "arena",
+   "flat": 0.522,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 730.6,
+   "self": true,
+   "tf": "translate(863px, 391px)",
+   "room": "arena",
+   "flat": 0.201,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 789.5,
+   "self": true,
+   "tf": "translate(879px, 391px)",
+   "room": "arena",
+   "flat": 0.075,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 831.8,
+   "self": true,
+   "tf": "translate(892.536px, 391px)",
+   "room": "arena",
+   "flat": 0.022,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 841.7,
+   "self": true,
+   "tf": "translate(895px, 391px)",
+   "room": "arena",
+   "flat": 0.016,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 853.2,
+   "self": true,
+   "tf": "translate(898.68px, 391px)",
+   "room": "arena",
+   "flat": 0.006,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 867.5,
+   "self": true,
+   "tf": "translate(903.224px, 391px)",
+   "room": "arena",
+   "flat": 0.001,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 880.2,
+   "self": true,
+   "tf": "translate(906.786px, 393.087px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 894.6,
+   "self": true,
+   "tf": "translate(911.186px, 394.343px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 917.3,
+   "self": true,
+   "tf": "translate(918.368px, 395.628px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 929.8,
+   "self": true,
+   "tf": "translate(922.199px, 394.593px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 940,
+   "self": true,
+   "tf": "translate(925.35px, 393.741px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 949.8,
+   "self": true,
+   "tf": "translate(928.408px, 392.915px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 963.2,
+   "self": true,
+   "tf": "translate(932.486px, 391.813px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 973.7,
+   "self": true,
+   "tf": "translate(935.729px, 390.937px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 984.9,
+   "self": true,
+   "tf": "translate(939.22px, 389.993px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 994.1,
+   "self": true,
+   "tf": "translate(942.061px, 390.766px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1004.8,
+   "self": true,
+   "tf": "translate(945.452px, 390.289px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1019.5,
+   "self": true,
+   "tf": "translate(950.127px, 391.045px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1035.1,
+   "self": true,
+   "tf": "translate(955.06px, 390.525px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1044.2,
+   "self": true,
+   "tf": "translate(957.956px, 390.22px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1054.3,
+   "self": true,
+   "tf": "translate(961.138px, 389.884px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1062,
+   "self": true,
+   "tf": "translate(963.621px, 389.623px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1075.1,
+   "self": true,
+   "tf": "translate(967.758px, 389.187px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1090.5,
+   "self": true,
+   "tf": "translate(972.69px, 388.667px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1104.5,
+   "self": true,
+   "tf": "translate(977.146px, 388.198px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1119.2,
+   "self": true,
+   "tf": "translate(981.824px, 387.705px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1127.8,
+   "self": true,
+   "tf": "translate(984.592px, 387.413px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1137.2,
+   "self": true,
+   "tf": "translate(987.584px, 387.098px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1146.8,
+   "self": true,
+   "tf": "translate(990.639px, 386.776px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1158,
+   "self": true,
+   "tf": "translate(994.171px, 386.403px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1167.9,
+   "self": true,
+   "tf": "translate(997.258px, 386.078px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1180.7,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1192.2,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1199.7,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1214.3,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1224.9,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1241.1,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1248.2,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1256.4,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1265.2,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1273.1,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1275.6,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1283.9,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1291.5,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1299.1,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1313,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1322.4,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1329.3,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1338.1,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1345.3,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1352.9,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1360.2,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1372.8,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1380.1,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1387.8,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1395,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1411.7,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1425.6,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1436.5,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1449.4,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1456.9,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1464.1,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1473.4,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1482.5,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1492.4,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1500.8,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1515.2,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1523.3,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1530.8,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1539.8,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1546.9,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1555.8,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1563.9,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1574.2,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1581.2,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1588.5,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1597,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1610,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1618.1,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1625.9,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1634.7,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1643.6,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1651.8,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1659.6,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1667.7,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1679,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1687,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1695.3,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1702.7,
+   "self": true,
+   "tf": "translate(998px, 386px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "A.errors": [
+  "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ],
+ "B.digest": {
+  "frames": 82,
+  "spanMs": 1716.4,
+  "medianFrameMs": 21.19,
+  "selfMissingFrames": 0,
+  "selfMissingAt": [],
+  "cuts": [
+   {
+    "t": 679,
+    "from": "lobby",
+    "to": "arena",
+    "flat": 0.854,
+    "mouthA": 1,
+    "self": true
+   }
+  ],
+  "firstFlatFull": 627.3,
+  "lastFlatFull": 648,
+  "distinctTransforms": 36,
+  "seatsMin": 22,
+  "seatsMax": 29,
+  "endFlat": 0,
+  "endRoom": "arena",
+  "endSelf": true
+ },
+ "B.samples": [
+  {
+   "t": 159.2,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 171.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 280.8,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.297,
+   "seats": 29
+  },
+  {
+   "t": 286.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0.33,
+   "seats": 29
+  },
+  {
+   "t": 342.9,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.046,
+   "mouthA": 0.629,
+   "seats": 29
+  },
+  {
+   "t": 356.5,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.068,
+   "mouthA": 0.714,
+   "seats": 29
+  },
+  {
+   "t": 362.7,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.08,
+   "mouthA": 0.757,
+   "seats": 29
+  },
+  {
+   "t": 369.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.094,
+   "mouthA": 0.803,
+   "seats": 29
+  },
+  {
+   "t": 377.5,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.108,
+   "mouthA": 0.849,
+   "seats": 29
+  },
+  {
+   "t": 384,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.123,
+   "mouthA": 0.896,
+   "seats": 29
+  },
+  {
+   "t": 389.9,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.138,
+   "mouthA": 0.944,
+   "seats": 29
+  },
+  {
+   "t": 396.7,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.154,
+   "mouthA": 0.993,
+   "seats": 29
+  },
+  {
+   "t": 403.7,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.171,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 411.5,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.189,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 418.4,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.207,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 424.4,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.226,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 431.5,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.245,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 438.4,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.265,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 446.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.285,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 453.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.307,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 459.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.329,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 466,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.351,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 473,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.374,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 481.2,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.397,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 488.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.42,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 493.9,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.445,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 500.8,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.469,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 507.9,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.494,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 515.6,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.52,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 522.9,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.546,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 528.5,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.572,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 535.5,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.599,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 543.2,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.627,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 553,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.655,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 558.7,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.683,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 565.5,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.712,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 571.7,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.741,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 578.7,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.77,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 585.7,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.8,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 592.8,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.831,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 601.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.862,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 607.1,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.894,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 614,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.926,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 621.3,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.958,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 627.3,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.992,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 634.4,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 29
+  },
+  {
+   "t": 648,
+   "self": true,
+   "tf": "translate(529px, 391px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 679,
+   "self": true,
+   "tf": "translate(536.105px, 398.105px)",
+   "room": "arena",
+   "flat": 0.854,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 701.4,
+   "self": true,
+   "tf": "translate(541.151px, 403.151px)",
+   "room": "arena",
+   "flat": 0.772,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 723.7,
+   "self": true,
+   "tf": "translate(546.219px, 408.219px)",
+   "room": "arena",
+   "flat": 0.667,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 730.1,
+   "self": true,
+   "tf": "translate(547.69px, 409.69px)",
+   "room": "arena",
+   "flat": 0.642,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1021.7,
+   "self": true,
+   "tf": "translate(559.004px, 421.004px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1115.9,
+   "self": true,
+   "tf": "translate(573.916px, 426.802px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1197.5,
+   "self": true,
+   "tf": "translate(587.646px, 435.018px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1209.7,
+   "self": true,
+   "tf": "translate(591.55px, 435.015px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1233.3,
+   "self": true,
+   "tf": "translate(598.749px, 432.84px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1254.7,
+   "self": true,
+   "tf": "translate(603.993px, 428.387px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1271.9,
+   "self": true,
+   "tf": "translate(608.925px, 425.873px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1291.8,
+   "self": true,
+   "tf": "translate(614.936px, 423.77px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1301.5,
+   "self": true,
+   "tf": "translate(617.473px, 421.981px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  {
+   "t": 1313.5,
+   "self": true,
+   "tf": "translate(621.062px, 420.709px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1330.1,
+   "self": true,
+   "tf": "translate(625.491px, 417.719px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1346.2,
+   "self": true,
+   "tf": "translate(630.386px, 416.011px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1363.2,
+   "self": true,
+   "tf": "translate(635.76px, 415.409px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1379.7,
+   "self": true,
+   "tf": "translate(704px, 398px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1396.8,
+   "self": true,
+   "tf": "translate(709.504px, 398px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1413.9,
+   "self": true,
+   "tf": "translate(714.375px, 400.493px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1429.8,
+   "self": true,
+   "tf": "translate(718.505px, 403.409px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1447.6,
+   "self": true,
+   "tf": "translate(723.757px, 405.615px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1465.8,
+   "self": true,
+   "tf": "translate(729.542px, 405.342px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1493.3,
+   "self": true,
+   "tf": "translate(737.972px, 402.706px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1498.8,
+   "self": true,
+   "tf": "translate(739.695px, 402.35px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1524.5,
+   "self": true,
+   "tf": "translate(747.794px, 401.115px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1546.3,
+   "self": true,
+   "tf": "translate(817px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1562.9,
+   "self": true,
+   "tf": "translate(817px, 393px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1579.7,
+   "self": true,
+   "tf": "translate(820.779px, 396.779px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1596.5,
+   "self": true,
+   "tf": "translate(824.174px, 392.652px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1613,
+   "self": true,
+   "tf": "translate(827.548px, 388.549px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1630.9,
+   "self": true,
+   "tf": "translate(828px, 388px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1646.4,
+   "self": true,
+   "tf": "translate(832.96px, 388px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1681.1,
+   "self": true,
+   "tf": "translate(844.032px, 388px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 1716.4,
+   "self": true,
+   "tf": "translate(855.36px, 388px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "B.errors": [
+  "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ],
+ "C.digest": {
+  "frames": 112,
+  "spanMs": 1704.6,
+  "medianFrameMs": 15.36,
+  "selfMissingFrames": 0,
+  "selfMissingAt": [],
+  "cuts": [
+   {
+    "t": 731.6,
+    "from": "lobby",
+    "to": "arena",
+    "flat": 0.97,
+    "mouthA": 1,
+    "self": true
+   }
+  ],
+  "firstFlatFull": 704.7,
+  "lastFlatFull": 725.9,
+  "distinctTransforms": 64,
+  "seatsMin": 22,
+  "seatsMax": 29,
+  "endFlat": 0,
+  "endRoom": "arena",
+  "endSelf": true
+ },
+ "C.errors": [
+  "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ],
+ "D": {
+  "coverUpAtTeardown": 0,
+  "animsDuringCover": 11,
+  "animsAfterUnmount": 0,
+  "remountRoom": "arena",
+  "remountSelf": true,
+  "remountDistinctTransforms": 41,
+  "errors": [
+   "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+ },
+ "E": {
+  "frames": 175,
+  "medianFrameMs": 11.52,
+  "firstSampleAtMs": 67.4,
+  "frozenUntilMs": 1006.1,
+  "distinctTransformsAfterRelease": 33,
+  "selfMissingFrames": 0,
+  "errors": [
+   "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+ },
+ "F": {
+  "startVisibility": "visible",
+  "visibilityOnReturn": {
+   "vis": "visible",
+   "since": 1656.2000000001863
+  },
+  "framesAfterReturn": 54,
+  "distinctTransformsAfterReturn": 53,
+  "selfPresent": true,
+  "errors": [
+   "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+ },
+ "G": {
+  "atHide": {
+   "t": 0.4,
+   "self": true,
+   "tf": "translate(616px, 824px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  "onReturnFirst": {
+   "t": 4.5,
+   "self": true,
+   "tf": "translate(350px, 388px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 1,
+   "seats": 22
+  },
+  "onReturnLast": {
+   "t": 900.4,
+   "self": true,
+   "tf": "translate(999px, 385px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  "selfMissingFrames": 0,
+  "distinctTransforms": 77,
+  "animsLeft": 4,
+  "errors": [
+   "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+ },
+ "H": {
+  "before": {
+   "t": 0.4,
+   "self": true,
+   "tf": "translate(616px, 824px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  "crossingCommit": {
+   "t": 11.9,
+   "self": true,
+   "tf": "translate(616px, 824px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  "crossingSettled": {
+   "t": 0.1,
+   "self": true,
+   "tf": "translate(616px, 824px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  "pureFilter": {
+   "withHold": true,
+   "withoutHold": false,
+   "drawnWith": 1,
+   "drawnWithout": 0
+  },
+  "unoccupied": {
+   "t": 1.9,
+   "self": false,
+   "tf": null,
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 28
+  },
+  "reoccupied": {
+   "t": 1.1,
+   "self": true,
+   "tf": "translate(160px, 512px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  "unmounted": {
+   "t": 1.7,
+   "self": false,
+   "tf": null,
+   "room": null,
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 0
+  },
+  "errors": [
+   "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+ },
+ "I.digest": {
+  "frames": 61,
+  "spanMs": 703.5,
+  "medianFrameMs": 11.72,
+  "selfMissingFrames": 0,
+  "selfMissingAt": [],
+  "cuts": [
+   {
+    "t": 183.4,
+    "from": "lobby",
+    "to": "arena",
+    "flat": 0.544,
+    "mouthA": 0,
+    "self": true
+   }
+  ],
+  "firstFlatFull": 168.4,
+  "lastFlatFull": 168.4,
+  "distinctTransforms": 54,
+  "seatsMin": 22,
+  "seatsMax": 29,
+  "endFlat": 0,
+  "endRoom": "arena",
+  "endSelf": true
+ },
+ "I.samples": [
+  {
+   "t": 80,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 82.8,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 85.2,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 90.9,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.015,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 157.8,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 0.881,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 168.4,
+   "self": true,
+   "tf": "translate(627px, 813px)",
+   "room": "lobby",
+   "flat": 1,
+   "mouthA": 0,
+   "seats": 29
+  },
+  {
+   "t": 176,
+   "self": true,
+   "tf": "translate(231px, 545px)",
+   "room": "lobby",
+   "flat": 0.757,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 183.4,
+   "self": true,
+   "tf": "translate(242px, 534px)",
+   "room": "arena",
+   "flat": 0.544,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 190,
+   "self": true,
+   "tf": "translate(253px, 545px)",
+   "room": "arena",
+   "flat": 0.355,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 196,
+   "self": true,
+   "tf": "translate(253px, 529px)",
+   "room": "arena",
+   "flat": 0.199,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 259.3,
+   "self": true,
+   "tf": "translate(269px, 529px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 356.9,
+   "self": true,
+   "tf": "translate(280px, 540px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 361.8,
+   "self": true,
+   "tf": "translate(296px, 540px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 368.6,
+   "self": true,
+   "tf": "translate(307px, 551px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 378.9,
+   "self": true,
+   "tf": "translate(323px, 551px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 391.3,
+   "self": true,
+   "tf": "translate(334px, 540px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 397,
+   "self": true,
+   "tf": "translate(345px, 529px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 403.2,
+   "self": true,
+   "tf": "translate(361px, 529px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 413.6,
+   "self": true,
+   "tf": "translate(372px, 540px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 419.9,
+   "self": true,
+   "tf": "translate(383px, 551px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 426,
+   "self": true,
+   "tf": "translate(394px, 540px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 433,
+   "self": true,
+   "tf": "translate(394px, 524px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 440.1,
+   "self": true,
+   "tf": "translate(405px, 535px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 447.9,
+   "self": true,
+   "tf": "translate(416px, 524px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 454.5,
+   "self": true,
+   "tf": "translate(427px, 535px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 461.5,
+   "self": true,
+   "tf": "translate(443px, 535px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 468.6,
+   "self": true,
+   "tf": "translate(454px, 524px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 475.8,
+   "self": true,
+   "tf": "translate(470px, 524px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 482.5,
+   "self": true,
+   "tf": "translate(470px, 508px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 489.4,
+   "self": true,
+   "tf": "translate(481px, 497px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 495.7,
+   "self": true,
+   "tf": "translate(497px, 497px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 502.3,
+   "self": true,
+   "tf": "translate(508px, 508px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 509.1,
+   "self": true,
+   "tf": "translate(508px, 492px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 516.1,
+   "self": true,
+   "tf": "translate(508px, 476px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 523.7,
+   "self": true,
+   "tf": "translate(508px, 460px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 530.1,
+   "self": true,
+   "tf": "translate(524px, 460px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 537,
+   "self": true,
+   "tf": "translate(540px, 460px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 543.9,
+   "self": true,
+   "tf": "translate(551px, 471px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 550.7,
+   "self": true,
+   "tf": "translate(551px, 455px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 558.1,
+   "self": true,
+   "tf": "translate(567px, 455px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 565.1,
+   "self": true,
+   "tf": "translate(567px, 439px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 572.1,
+   "self": true,
+   "tf": "translate(578px, 450px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 578.7,
+   "self": true,
+   "tf": "translate(594px, 450px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 585.6,
+   "self": true,
+   "tf": "translate(605px, 461px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 592.7,
+   "self": true,
+   "tf": "translate(616px, 472px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 599.6,
+   "self": true,
+   "tf": "translate(616px, 456px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 606.6,
+   "self": true,
+   "tf": "translate(632px, 456px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 613.9,
+   "self": true,
+   "tf": "translate(643px, 467px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 620.5,
+   "self": true,
+   "tf": "translate(654px, 478px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 627.6,
+   "self": true,
+   "tf": "translate(665px, 467px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 634.4,
+   "self": true,
+   "tf": "translate(665px, 451px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 641.5,
+   "self": true,
+   "tf": "translate(665px, 435px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 648.1,
+   "self": true,
+   "tf": "translate(676px, 446px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 655.1,
+   "self": true,
+   "tf": "translate(687px, 435px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 662.1,
+   "self": true,
+   "tf": "translate(687px, 419px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 669.1,
+   "self": true,
+   "tf": "translate(687px, 403px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 676,
+   "self": true,
+   "tf": "translate(698px, 392px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 683.1,
+   "self": true,
+   "tf": "translate(714px, 392px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 690,
+   "self": true,
+   "tf": "translate(730px, 392px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 696.8,
+   "self": true,
+   "tf": "translate(730px, 392px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  },
+  {
+   "t": 703.5,
+   "self": true,
+   "tf": "translate(730px, 392px)",
+   "room": "arena",
+   "flat": 0,
+   "mouthA": 0,
+   "seats": 22
+  }
+ ],
+ "I.errors": [
+  "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

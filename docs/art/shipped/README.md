@@ -134,6 +134,14 @@ reachable until the rim is lifted. Halo first, then torch pools.
 
 ## 4. Room B: the boss, and the value inversion
 
+> **HISTORICAL — this is the run that FOUND the inversion, not a description of the build.**
+> Every number in this section was taken on the `brightness(0.55) contrast(1.6)` grade and on
+> the pre-`18-open-arena` bitboard. Both have moved: the grade is now
+> `brightness(0.45) contrast(2.0)` and the map rebuild changed the mix of floor and backdrop
+> the creature sits on, so the *same* old grade re-measures 0.0564 / 0.0159 / **3.54×** on
+> this tree rather than the 0.0597 / 0.0125 / 4.77× below. The finding stands; the figures
+> are dated. `Boss.tsx`'s comment above `BOSS_GRADE` holds the current ones.
+
 Boss mask = full arena plate minus a plate with `.hr-boss-breathe` hidden; the orb and its
 spill (a disc of `CORE_R × 2.6` at world (587, 346)) excluded, because the creature must
 not be measured against its own light source.
@@ -270,10 +278,19 @@ The generator and the sheet both lack the groups; `Knight.tsx`'s `HAS_HALO` fall
 that with no error anywhere. Lift the rims first, then raise `POOL_ALPHA` (0.045 today,
 29 % of the cap's headroom unused) to put reference A's warm pools on the floor.
 
-**Room B — invert the boss's value back.** The creature must be *darker* than its own floor
-(reference 0.58×), not 4.77× brighter, and its p50→p99 spread must be ~15× not 3.3×. Cut
-`brightness` hard and let `contrast` plus the spill do the work: the target is a dark mass
-with a bright edge and one burning orb, which is the whole read of reference B. Two things
-follow for free — knights stop being grey-on-grey against it (2.17:1 today), and the eye
-finally goes to the orb. Then shrink the orb's black well relative to the ring, and lift the
-ring mortar from 1.0–5.4 L8 into the 4.9–13.1 L8 spec §2.2 already solved for.
+~~**Room B — invert the boss's value back.**~~ **DONE — do not action this twice.** The
+creature had to be *darker* than its own floor (reference 0.58×) with a p50→p99 spread near
+15×, and `brightness(0.45) contrast(2.0)` gets there: **0.57× the floor, spread 15.0×**,
+re-measured on the shipped frame and recorded in `Boss.tsx`'s comment above `BOSS_GRADE`
+alongside the two chains it replaced. `boss-light.md` §5.1 carries the change and §7.2 the
+criterion — which is now the *ratio*, never an absolute median, because an absolute median is
+what let the first attempt overshoot.
+
+**Still open from that paragraph: the ring mortar.** Lifting it out of 1.0–5.4 L8 is the
+other half of "reference B's signature is hidden", and it belongs to `BossArena.tsx`, not to
+`Boss.tsx`. `MORTAR_ALPHA` has since gone 0.60 → 0.92 at `GAIN` 0.92; **the 4.9–13.1 L8 band
+quoted above and in `boss-arena.md` §5.5 was measured at `g = 0.46`** and no longer describes
+this build — the floor is roughly twice as bright, so gate it on the scale-free
+floor:trough ratio instead. With the creature now at 0.57× its floor, the rings are the
+brightest thing competing for the eye after the orb, so the same lift reads far harder than
+it would have against the old bright body.

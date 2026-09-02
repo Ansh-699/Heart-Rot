@@ -68,6 +68,18 @@ TILE = 16
 
 REGEN = "python3 tools/gen_hitboxes.py"
 
+# What ONE ray step is actually worth, in arena units.
+#
+# `shoot.rs::unit_q12` is alpha-max-plus-beta-min, which OVERESTIMATES the true vector
+# length by up to 11.8%, so a `TILE`-long step along the normalised direction covers
+# 0.894..1.000 of a tile -- never more. Walking a full 16.0 here credits 64 x 16 = 1024
+# units of reach against the 915 the program guarantees: 108 units, 11.8%, of range this
+# tool would swear exists and the chain does not have. That is the difference between a
+# guard and a rubber stamp, so the walk steps the SHORT step -- the one the program is
+# contractually never worse than. It is also never coarser than the program's finest
+# sample, so a box this walk steps over is a box the ray can step over too.
+RAY_STEP = TILE * 894 // 1000
+
 
 def load(path):
     """-> (part names in chain-index order, {name: box}, sprite w, h).
@@ -174,18 +186,38 @@ def to_muzzles(boxes, parts, anchor, scale):
 
 
 def check_pit_reach(map_path, parts, core):
-    """Refuse a boss the back of the pit cannot shoot.
+    """Refuse a boss the pit cannot shoot. Three properties, all of them silent failures.
 
-    `MAX_RAY_STEPS` is `map::MAP_TILES`, so the ray reaches `MAP_TILES * TILE` units and
-    dies on the first wall tile. Deepen the pit, move `B`, or drop `--scale` and the back
-    rows go dead WITH NO ERROR ANYWHERE -- a player stands in the pit, fires at a boss
-    filling the screen, and nothing happens. This is that error.
+    `MAX_RAY_STEPS` is `map::MAP_TILES`, so the ray reaches `MAP_TILES * RAY_STEP` units
+    and dies on the first wall tile. Deepen the pit, widen it, move `B`, or drop `--scale`
+    and part of the arena goes dead WITH NO ERROR ANYWHERE -- a player stands in the pit,
+    fires at a boss filling the screen, and nothing happens. This is that error, and an
+    enlarged pit is exactly the change that causes it.
+
+    Every walkable stand in the pit is swept, not every pit tile: the origin is each of
+    the four corners of the tile, because a player's position is a unit and the tile
+    corner nearest the far wall is 21 units further from the boss than the tile itself.
+
+    **1. Shell intact.** Some part or the vent is reachable, so the fight can start.
+
+    **2. Shell stripped -- `parts=[]`.** `raycast` skips a part with 0 HP, so in the
+    endgame the vent circle is the ONLY target on the map, 7.5 tiles across where the
+    whole shell spans 41. A pit that reaches the mace and not the vent is a raid
+    that cannot be finished, from a stand that looked fine in property 1. This is the
+    property the old version of this check did not test at all.
+
+    **3. Every part is killable from the pit.** First-match order means a box can be
+    wholly claimed by a lower-indexed one; `no_part_is_shadowed_out_of_the_fight` proves
+    a part keeps a tile of box, and this proves a ray from a place a player can stand
+    actually lands on it. Aim points are sampled from the part's OWN points -- the ones
+    first-match awards to it -- because a part's box centre often belongs to a thorn.
 
     The ray is walked as an exact float line rather than through the chain's integer
     normaliser: over 200,000 angles that normaliser measures 0.2354 degrees of direction
     error, which is 3.55 units of lateral miss at the worst-case 865-unit range -- under a
     quarter tile, and every box here is at least a tile. Approximating it costs nothing a
     reachability guard can see, and mirroring it here would be `unit_velocity` stated twice.
+    The step length is NOT approximated: see [`RAY_STEP`].
 
     Skipped, loudly, when the map carries no `P`: the pit markers are `gen_map.py`'s and
     this tool must not fail because that file has not been redrawn yet.
@@ -195,52 +227,117 @@ def check_pit_reach(map_path, parts, core):
     except (OSError, KeyError, ValueError) as e:
         print(f"pit reach: SKIPPED, cannot read {map_path} ({e})")
         return
-    pit = [(tx, ty) for ty, row in enumerate(grid) for tx, c in enumerate(row) if c == 'P']
+    # `B` and `E` are pit terrain with a marker painted on them, not a different floor:
+    # the respawn doors are where a raider re-enters and stands, and the boss anchor is
+    # inside the movement box like every other pit tile. Sweeping only `P` left the four
+    # doors -- the tiles a player is GUARANTEED to stand on -- unchecked.
+    pit = [(tx, ty) for ty, row in enumerate(grid)
+           for tx, c in enumerate(row) if c in 'PBE']
     if not pit:
-        print(f"pit reach: SKIPPED, no `P` tiles in {os.path.basename(map_path)} yet")
+        print(f"pit reach: SKIPPED, no pit terrain in {os.path.basename(map_path)} yet")
         return
     spawn = [(tx, ty) for ty, row in enumerate(grid) for tx, c in enumerate(row) if c == 'B']
     if len(spawn) != 1:
         raise SystemExit(f"{map_path}: {len(spawn)} `B` markers, expected exactly 1")
     bx, by = spawn[0][0] * TILE, spawn[0][1] * TILE
     steps = len(grid)                      # MAX_RAY_STEPS == map::MAP_TILES
+    reach = steps * RAY_STEP
     cx, cy, crsq = core
-
-    # Targets in WORLD units: the nine part boxes plus the vent circle.
-    aims = [(bx + x + w // 2, by + y + h // 2) for _, x, y, w, h in parts]
-    aims.append((bx + cx, by + cy))
 
     def blocked(x, y):
         tx, ty = x // TILE, y // TILE
         return not (0 <= ty < len(grid) and 0 <= tx < len(grid[ty])) or grid[ty][tx] == '#'
 
-    def hits(x, y):
-        for _, px, py, pw, ph in parts:
-            if bx + px <= x < bx + px + pw and by + py <= y < by + py + ph:
-                return True
+    def in_core(x, y):
         dx, dy = x - (bx + cx), y - (by + cy)
         return dx * dx + dy * dy <= crsq
 
-    dead = []
-    for tx, ty in pit:
-        ox, oy = tx * TILE, ty * TILE
-        if not any(_walk(ox, oy, ax, ay, steps, blocked, hits) for ax, ay in aims):
-            dead.append((tx, ty))
-    if dead:
-        raise SystemExit(
-            f"{len(dead)} of {len(pit)} pit tiles cannot reach ANY boss part within "
-            f"{steps} ray steps -- e.g. {dead[:6]}. Move `B` down, widen the pit, or lower "
-            f"--scale. A player standing there fires at the boss and nothing happens.")
-    print(f"pit reach: {len(pit)} pit tiles, all reach a part within {steps} steps")
+    def first_part(x, y):
+        """`raycast`'s rule: the FIRST part in index order whose box claims the point."""
+        for i, (_, px, py, pw, ph) in enumerate(parts):
+            if bx + px <= x < bx + px + pw and by + py <= y < by + py + ph:
+                return i
+        return None
+
+    # Property 1 and 2 differ ONLY in which targets exist, which is the difference the
+    # program itself draws on `boss.parts[index] != 0`. One walker, two target sets.
+    def hits_shell(x, y):
+        return first_part(x, y) is not None or in_core(x, y)
+
+    # Stands, in WORLD units: every corner of every pit tile a player can occupy.
+    stands = [(tx * TILE + ox, ty * TILE + oy)
+              for tx, ty in pit for ox in (0, TILE - 1) for oy in (0, TILE - 1)]
+
+    # Targets in WORLD units: the nine part boxes, plus nine points across the vent.
+    # Aim is free (`shoot.rs` takes the raw pointer vector), so a stand counts as reaching
+    # the vent if ANY line into the circle gets there -- one that clears a doorway jamb the
+    # centre line clips is a shot a player really has. Nine points, all inside the circle
+    # at 2/3 radius, is enough angular spread to say so without pretending to sweep 256
+    # directions per stand.
+    r23 = math.isqrt(crsq) * 2 // 3
+    core_aims = [(bx + cx + dx, by + cy + dy)
+                 for dx in (-r23, 0, r23) for dy in (-r23, 0, r23)]
+    core_aim = (bx + cx, by + cy)
+    aims = [(bx + x + w // 2, by + y + h // 2) for _, x, y, w, h in parts] + core_aims
+
+    def sweep(what, targets, hit, worst_of=None):
+        """Every stand must reach `hit` by aiming at one of `targets`. -> worst range."""
+        dead, worst = [], 0
+        for sx, sy in stands:
+            for ax, ay in targets:
+                if _walk(sx, sy, ax, ay, steps, blocked, hit):
+                    break
+            else:
+                dead.append((sx // TILE, sy // TILE))
+            if worst_of is not None:
+                worst = max(worst, math.dist((sx, sy), worst_of))
+        if dead:
+            raise SystemExit(
+                f"{len(dead)} of {len(stands)} pit stands cannot reach {what} within "
+                f"{steps} ray steps ({reach} units) -- e.g. tiles {sorted(set(dead))[:6]}. "
+                f"Move `B` down, shrink the pit, or lower --scale. A player standing there "
+                f"fires at the boss and nothing happens.")
+        return worst
+
+    sweep("ANY boss part or the vent", aims, hits_shell)
+    worst = sweep("THE VENT with the shell stripped", core_aims, in_core, core_aim)
+
+    # Property 3. Aim at points the part actually owns; a box centre is often a thorn's.
+    for i, (name, px, py, pw, ph) in enumerate(parts):
+        # Half a tile is the finest a ray can be expected to resolve, so scanning the box
+        # at that stride is as good as scanning it whole. beast_r is the reason this is a
+        # scan and not a grid of quarter-points: thorn1's box swallows all but a 24-unit
+        # strip down its left edge, and every quarter-point of beast_r lies in that strip's
+        # shadow. `no_part_is_shadowed_out_of_the_fight` proves the strip exists; this
+        # proves a player can put a shot in it.
+        own = [(bx + px + x, by + py + y)
+               for y in range(TILE // 2, ph, TILE // 2)
+               for x in range(TILE // 2, pw, TILE // 2)
+               if first_part(bx + px + x, by + py + y) == i][:32]
+        if not own:
+            raise SystemExit(
+                f"part {i} ({name}) owns none of its sampled points: a lower-indexed box "
+                f"has swallowed it and no shot can ever damage it.")
+        if not any(_walk(sx, sy, ax, ay, steps, blocked,
+                         lambda x, y, i=i: first_part(x, y) == i)
+                   for ax, ay in own for sx, sy in stands):
+            raise SystemExit(
+                f"part {i} ({name}) is unhittable from every one of {len(stands)} pit "
+                f"stands: it is behind a wall, out of range, or shadowed by a lower-indexed "
+                f"box. That limb can never be destroyed and the vent never opens.")
+
+    print(f"pit reach: {len(pit)} pit tiles / {len(stands)} stands, all reach a part AND "
+          f"the bare vent within {steps} x {RAY_STEP} = {reach} units "
+          f"(worst stand-to-vent {worst:.0f}); all {len(parts)} parts hittable")
 
 
 def _walk(ox, oy, ax, ay, steps, blocked, hits):
-    """One ray, TILE per step, aborting on the first wall -- `shoot.rs::raycast`."""
+    """One ray, [`RAY_STEP`] per step, aborting on the first wall -- `shoot.rs::raycast`."""
     vx, vy = ax - ox, ay - oy
     d = math.hypot(vx, vy)
     if d == 0:
         return True
-    vx, vy = vx / d * TILE, vy / d * TILE
+    vx, vy = vx / d * RAY_STEP, vy / d * RAY_STEP
     x, y = float(ox), float(oy)
     for _ in range(steps):
         x += vx
@@ -278,6 +375,14 @@ def emit_rust(parts, anchor, core, muzzles, src, w, h, scale):
 //! constant here). `Boss.x`/`Boss.y` is the centre of that scaled canvas, so the two
 //! spaces differ by `local = sprite * {scale} + ({ax}, {ay})` and nothing else -- no
 //! flip, no shear. See the tool's docstring for the derivation.
+//!
+//! **Why the `rustfmt::skip`s below.** This file is emitted, and `--check` compares it
+//! byte for byte against a fresh emission. Let rustfmt reflow it and a perfectly synced
+//! tree reports STALE -- 94 lines of pure reformatting with not one number changed. A
+//! check that cries wolf on every run is a check everyone learns to ignore, and then a
+//! real drift is ignored too. The generator owns the formatting of its own output.
+//! (A single `#![rustfmt::skip]` on the file would say this once, but an inner attribute
+//! outside the crate root is `custom_inner_attributes` and does not compile on stable.)
 
 /// A boss-local axis-aligned box, in arena units relative to `Boss.x` / `Boss.y`.
 #[derive(Clone, Copy)]
@@ -302,6 +407,7 @@ impl Rect {{
 /// Every box is at least `TILE` (16) units on both axes -- the generator refuses to
 /// emit one that is not, because the ray samples one point per tile and would step
 /// straight over anything thinner.
+#[rustfmt::skip]
 pub const PART_HITBOXES: [Rect; crate::state::N_PARTS] = [
 {rows}
 ];
@@ -341,6 +447,7 @@ pub const N_MUZZLES: usize = {len(muzzles)};
 /// the four volleys used to spawn in mid-air beside the creature, and thorn1's spawned
 /// inside `beast_r`'s box. That is invisible while the boss is a circle and glaring the
 /// moment the art is on screen.
+#[rustfmt::skip]
 pub const MUZZLES: [Muzzle; N_MUZZLES] = [
 {muzzle_rows}
 ];
@@ -362,6 +469,7 @@ const _: () = {{
 }};
 
 #[cfg(test)]
+#[rustfmt::skip]
 mod tests {{
     use super::*;
     use crate::map::TILE;

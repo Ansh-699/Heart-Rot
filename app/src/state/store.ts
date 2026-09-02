@@ -172,6 +172,12 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+  }).catch(() => {
+    // A `fetch` that never gets an answer rejects with the browser's own words, and the
+    // three engines disagree: "Failed to fetch", "NetworkError when attempting to fetch
+    // resource.", "Load failed". All three used to reach the error bar verbatim. One
+    // sentence, engine-independent, and the only route failure a player can actually act on.
+    throw new Error('The server could not be reached. Check your connection and try again.');
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
@@ -185,8 +191,17 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 /**
- * Route error codes, in the words a player can act on. Anything unlisted is shown raw —
- * an unfamiliar code on screen is more useful than a reassuring lie.
+ * Route error codes, in the words a player can act on.
+ *
+ * Every `{ error: … }` the Worker can answer with is here — the five refusals of
+ * `session/init` included, which is the set a failed seat claim draws from and the set
+ * this map used to be missing. An uncovered code fell through `readable` verbatim, so
+ * `no_open_arena` was printed as `no_open_arena`, 259 px from the button that had just
+ * failed. The remaining gap is `index.ts`'s `BadRequest`, whose message is a validator's
+ * own words (`skinId out of range`) and half of it interpolated (`missing or malformed
+ * field: …`) — unkeyable, and unreachable from this client anyway, since every field it
+ * validates comes from our own UI or from the Worker's own previous answer. Those land on
+ * `UNKNOWN`, with the token kept in parentheses for a bug report.
  */
 const MESSAGES: Record<string, string> = {
   treasury_low: 'The devnet treasury is out of SOL. Nothing can start until it is topped up.',
@@ -199,7 +214,26 @@ const MESSAGES: Record<string, string> = {
   nothing_to_settle: 'There is nothing to settle.',
   rate_limited: 'Too many requests from this network. Wait a moment.',
   rate_limiter_unconfigured: 'The backend is misconfigured and is refusing to spend SOL.',
+  no_open_arena: 'The lobby is between arenas. The next one opens in a few seconds — try again.',
+  no_such_match: 'That raid no longer exists. Take a new seat.',
+  not_in_match: 'You do not hold a seat in that raid.',
+  not_settleable: 'That raid has not finished yet.',
+  unauthorized: 'Your sign-in has expired. Sign in again.',
+  misconfigured: 'The backend is missing configuration and cannot start a raid.',
+  not_found: 'The app asked for a route this server does not have. Reload the page.',
+  internal_error: 'The server hit an error it did not expect. Try again.',
 };
+
+/**
+ * The fallback, for a code no build of this client has heard of.
+ *
+ * Not the raw token any more. "An unfamiliar code is more useful than a reassuring lie"
+ * was half right — it is more useful *to us* — but `no_such_match` on screen tells a
+ * player neither what happened nor what to do, and every route in the Worker can produce
+ * one. The sentence says what happened; the parenthesised token keeps everything the raw
+ * form carried.
+ */
+const UNKNOWN = 'Something went wrong talking to the server. Try again in a moment.';
 
 /** The raw route code `postJson` threw, before `MESSAGES` turns it into a sentence. */
 function code(error: unknown): string {
@@ -207,7 +241,13 @@ function code(error: unknown): string {
 }
 
 function readable(error: unknown): string {
-  return MESSAGES[code(error)] ?? code(error);
+  const raw = code(error);
+  // Two populations reach here. The Worker's are machine-facing, lower-case by
+  // construction — snake_case tokens, `http_502`, and `BadRequest`'s validator words.
+  // Ours are already sentences and start with a capital. Sentence-casing is the whole
+  // test, and it is the reason `settle`'s "The raid is taking an unusually long time"
+  // does not come back wrapped in an apology about the server.
+  return MESSAGES[raw] ?? (/^[a-z]/.test(raw) ? `${UNKNOWN} (${raw})` : raw);
 }
 
 /**
@@ -524,6 +564,25 @@ if (import.meta.env.DEV) {
     const actual = screenOf({ ...INITIAL, ...patch });
     if (actual !== expected) {
       throw new Error(`store self-check: ${name} should be '${expected}', got '${actual}'`);
+    }
+  }
+
+  // `readable`'s branch. Its failure is silent in the same way: a machine token renders
+  // as happily as a sentence does, and the bug is only visible to someone reading the
+  // error bar at the moment a route refuses.
+  // `string | undefined` is `noUncheckedIndexedAccess` on the `Record` lookups, and a
+  // missing key is exactly what the first two cases exist to catch.
+  const readableCases: readonly (readonly [string, string | undefined])[] = [
+    ['arena_full', MESSAGES.arena_full],
+    ['no_open_arena', MESSAGES.no_open_arena],
+    ['skinId out of range', `${UNKNOWN} (skinId out of range)`],
+    ['http_502', `${UNKNOWN} (http_502)`],
+    ['Sign in before taking a seat.', 'Sign in before taking a seat.'],
+  ];
+  for (const [raw, expected] of readableCases) {
+    const actual = readable(new Error(raw));
+    if (actual !== expected) {
+      throw new Error(`store self-check: readable('${raw}') got '${actual}'`);
     }
   }
 }

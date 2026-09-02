@@ -35,7 +35,7 @@
  * which is the correct failure: no exception, no blank screen, and the art appears the
  * moment the generator lands.
  */
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 
 import { CLASS_ARCHER, MAP_TILE, classOf, type PlayerSlot } from '@heartrot/client';
 
@@ -411,7 +411,20 @@ export interface KnightProps {
   reduced?: boolean;
 }
 
-export function Knight({ slot, tick, mine = false, reduced = false }: KnightProps) {
+/**
+ * How long a seat must go without an accepted step before it is standing again.
+ *
+ * `w.stepped` alone can no longer answer that. {@link Knight} is memoised on the values it
+ * draws, so the notification that WOULD clear the latch — same position, same hp, same
+ * everything — produces no render at all, and the latch would hold the breathe cancelled
+ * for the rest of the seat's life. That is `docs/review/render.md` finding 3 (nineteen
+ * standing raiders as statues) reached by a second route, so the answer moves off the
+ * render and onto a clock: five ER slots, against one accepted move per slot while the
+ * player is actually walking.
+ */
+const IDLE_MS = 250;
+
+function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) {
   const state = useRef<Walk | null>(null);
   // Guards the fold against React re-rendering this component with the *same* snapshot —
   // StrictMode's double render, or a parent re-rendering for the bullet feed. The decoder
@@ -518,34 +531,45 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
   // Idle breathe. A timer is correct *here and only here*: breathing is not locomotion, so
   // there is no displacement to derive it from. One infinite composited animation per idle
   // seat, cancelled the moment the legs take over so the two never fight — and started
-  // again the moment they stop, which is what `moving` off `w.stepped` buys.
+  // again once they have stopped, which is what `moving` off `w.stepped` buys.
   //
   // No `if (breathe.current !== null) return` guard: the cleanup below is the only exit
   // from the branch that creates one, so `breathe.current` is provably null on entry here.
   // That guard is how the old latched `moving` turned into a permanent statue — once it
   // held a cancelled animation there was no path back.
+  //
+  // A WALKING seat arms {@link IDLE_MS} instead of simply staying cancelled, and `w.d` — the
+  // stride odometer, which rises on every accepted step and on nothing else — is a
+  // dependency so each step re-arms it. Under memoisation the seat that stops walking gets
+  // no further render, so the timer left by its LAST step is what starts the breathe again.
   useEffect(() => {
     const body = bodyRef.current;
     if (body === null) return;
-    if (reduced || dead || moving) {
+    if (reduced || dead) {
       breathe.current?.cancel();
       breathe.current = null;
       return;
     }
-    breathe.current = body.animate(
-      [
-        { transform: 'translate(0px,0px)', offset: 0 },
-        { transform: 'translate(0px,0px)', offset: 0.499 },
-        { transform: 'translate(0px,-1px)', offset: 0.5 },
-        { transform: 'translate(0px,-1px)', offset: 1 },
-      ],
-      { duration: 1200, iterations: Infinity },
-    );
+    const start = (): void => {
+      breathe.current = body.animate(
+        [
+          { transform: 'translate(0px,0px)', offset: 0 },
+          { transform: 'translate(0px,0px)', offset: 0.499 },
+          { transform: 'translate(0px,-1px)', offset: 0.5 },
+          { transform: 'translate(0px,-1px)', offset: 1 },
+        ],
+        { duration: 1200, iterations: Infinity },
+      );
+    };
+    let idle = 0;
+    if (moving) idle = window.setTimeout(start, IDLE_MS);
+    else start();
     return () => {
+      clearTimeout(idle);
       breathe.current?.cancel();
       breathe.current = null;
     };
-  }, [reduced, dead, moving]);
+  }, [reduced, dead, moving, w.d]);
 
   // Elapsed fraction of this seat's own death-to-respawn window. `RESPAWN_TICKS` is a chain
   // fact and is deliberately not restated: both ends of the sweep are read off the feed.
@@ -682,6 +706,63 @@ export function Knight({ slot, tick, mine = false, reduced = false }: KnightProp
   );
 }
 
+/**
+ * Does this seat draw the same picture it drew last time.
+ *
+ * **The comparison is over VALUES, never over object identity.** Every accepted `move` is
+ * one `Players` write, the chain accepts ~322 of them a second at twenty seats, and the
+ * decoder allocates a fresh {@link PlayerSlot} for ALL twenty seats on each one — so a
+ * shallow prop compare memoises exactly nothing, and an unmemoised `Knight` re-rendered
+ * the whole twenty-seat actor layer ~322 times a second for one seat's step. That is the
+ * measured root of the frame-budget failure (`docs/perf/frame-budget-17.md` §7 item 2:
+ * "the rate has to come down at the REACT boundary, not the socket"). One write now
+ * re-renders the one seat it moved.
+ *
+ * The fields are exactly what this component reads, and it is a closed list on purpose —
+ * a field added to the render and forgotten here is a knight that stops updating, which
+ * is silent. In render order: position and facing (the walk, via `advance`), `hp`/`hpMax`
+ * (the flash, the corpse, the bar), `deaths` and `respawnAtTick` (the fall, the revive,
+ * the arc), `lastShotTick` (the recoil and the loose), `skinId` (the sprite and its rim)
+ * and the CLASS bits of `classAim` — the aim bits are not read here and change every tick,
+ * so comparing the raw byte would memoise nothing at all.
+ *
+ * `advance` reads exactly this subset too, so a skipped snapshot is one that would have
+ * folded nothing: the fold stays driven by `seen.current !== slot` and stays correct
+ * against whichever snapshot was last *rendered*.
+ *
+ * `tick` is the one prop that is not a seat fact. Only the respawn arc reads it, so it is
+ * a difference only while this seat is dead — otherwise every `Arena` write (half the
+ * feed) would re-render all twenty seats to redraw nothing.
+ */
+function sameSeat(a: KnightProps, b: KnightProps): boolean {
+  const p = a.slot;
+  const n = b.slot;
+  return (
+    a.mine === b.mine &&
+    a.reduced === b.reduced &&
+    p.x === n.x &&
+    p.y === n.y &&
+    p.facing === n.facing &&
+    p.hp === n.hp &&
+    p.hpMax === n.hpMax &&
+    p.deaths === n.deaths &&
+    p.respawnAtTick === n.respawnAtTick &&
+    p.lastShotTick === n.lastShotTick &&
+    p.skinId === n.skinId &&
+    classOf(p) === classOf(n) &&
+    (a.tick === b.tick || (p.hp > 0 && n.hp > 0))
+  );
+}
+
+/**
+ * One seat, re-rendered only when its own bytes say something changed. See {@link sameSeat}.
+ *
+ * This also holds the LOCAL seat to the input rate rather than the render rate: `Arena`
+ * hands it a `predictedSlot` whose identity discipline exists for the same reason this
+ * comparison does, and the two now agree instead of one covering for the other.
+ */
+export const Knight = memo(KnightBody, sameSeat);
+
 // ---------------------------------------------------------------------------
 // Self-check
 //
@@ -702,6 +783,7 @@ if (import.meta.env.DEV) {
       occupied: true,
       zone: 0,
       facing: 0,
+      classAim: 0,
       skinId: 0,
       x: 100,
       y: 100,
@@ -804,4 +886,27 @@ if (import.meta.env.DEV) {
     slot({ seat: 4, y: 0, occupied: false }),
   ]);
   ok(order.map((s) => s.seat).join(',') === '1,2,3', 'draw order is y then seat, occupied only');
+
+  // The memo comparison. Every failure mode here is silent in exactly one of two
+  // directions: a field left out is a knight that stops updating, a field wrongly included
+  // is the twenty-seat re-render this exists to remove, coming straight back.
+  const props = (o: Partial<PlayerSlot>, tick = 0): KnightProps => ({ slot: slot(o), tick });
+  const base = props({});
+  ok(sameSeat(base, props({})), 'a byte-identical seat is skipped');
+  ok(!sameSeat(base, props({ x: 100 + MAP_TILE })), 'a step renders');
+  ok(!sameSeat(base, props({ facing: 6 })), 'a turn renders');
+  ok(!sameSeat(base, props({ hp: 60 })), 'a hit renders');
+  ok(!sameSeat(base, props({ hp: 0, deaths: 1 })), 'a death renders');
+  ok(!sameSeat(base, props({ respawnAtTick: 30 })), 'a respawn window renders');
+  ok(!sameSeat(base, props({ lastShotTick: 12 })), 'a shot renders');
+  ok(!sameSeat(base, props({ skinId: 2 })), 'a re-skin renders');
+  ok(!sameSeat(base, props({ classAim: CLASS_ARCHER << 7 })), 'a class change renders');
+  ok(!sameSeat(base, { ...base, mine: true }), 'the local cues render');
+  // The two rows the whole fix rests on. An `Arena` write is half the feed and moves
+  // `tick` alone; the aim bits move with every one of them and nothing here draws them.
+  ok(sameSeat(base, props({ classAim: 0x3f }, 9)), 'aim and tick alone are skipped');
+  ok(
+    !sameSeat(props({ hp: 0, deaths: 1, respawnAtTick: 30 }), props({ hp: 0, deaths: 1, respawnAtTick: 30 }, 9)),
+    'a dead seat still follows the tick, or its respawn arc freezes',
+  );
 }

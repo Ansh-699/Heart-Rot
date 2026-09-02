@@ -1,0 +1,8 @@
+{"name":"room-arena-empty","nodes":820,"jsHeapMB":9.3,"before":{"treeMB":1252,"rendererMB":372.9,"procs":11},"after":{"treeMB":1501.5,"rendererMB":575.3,"procs":11}}
+{"name":"room-lobby-empty","nodes":898,"jsHeapMB":9.5,"before":{"treeMB":1265.7,"rendererMB":377.4,"procs":11},"after":{"treeMB":1473.1,"rendererMB":569.4,"procs":11}}
+{"name":"boss-only","nodes":170,"jsHeapMB":8.4,"before":{"treeMB":1269.9,"rendererMB":379.8,"procs":11},"after":{"treeMB":1464.6,"rendererMB":553.8,"procs":11}}
+{"name":"arena-k20","nodes":1075,"jsHeapMB":6.5,"before":{"treeMB":1267,"rendererMB":378.8,"procs":11},"after":{"treeMB":1384.7,"rendererMB":465,"procs":11}}
+{"name":"lobby-k20","nodes":1153,"jsHeapMB":6.6,"before":{"treeMB":1268,"rendererMB":379.2,"procs":11},"after":{"treeMB":1369.7,"rendererMB":460.8,"procs":11}}
+{"name":"arena-k20-feed714","nodes":1078,"jsHeapMB":17.6,"before":{"treeMB":1268.3,"rendererMB":379.9,"procs":11},"after":{"treeMB":1455.9,"rendererMB":527.4,"procs":11}}
+{"name":"passage-k20","nodes":935,"jsHeapMB":14.1,"before":{"treeMB":1266.1,"rendererMB":377.9,"procs":11},"after":{"treeMB":1440.5,"rendererMB":492.2,"procs":11}}
+{"name":"arena-k20-nochrome","nodes":1018,"jsHeapMB":7.3,"before":{"treeMB":1266.1,"rendererMB":378.3,"procs":11},"after":{"treeMB":1444.6,"rendererMB":493.4,"procs":11}}

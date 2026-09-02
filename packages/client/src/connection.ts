@@ -174,9 +174,50 @@ function asCode(value: unknown): number | undefined {
 }
 
 /**
+ * The refusal behind a thrown value, from whichever of this module's two throw sites
+ * produced it. **This is what a `catch` should call**, not {@link decodeTransactionError}.
+ *
+ * {@link confirmSignature} throws with the DECODE already on `cause`;
+ * {@link sendInstructions} throws whatever kit or the transport threw, undecoded. Callers
+ * wrote `decodeTransactionError(e.cause ?? e)` to cover both — which re-decodes the
+ * decode. `memberOf` finds no `InstructionError` on a decode, so the second pass returns
+ * `{ message: <the JSON of the first pass> }` **with `code` gone**, and `code` is the
+ * field every caller branches on. Measured, not reasoned: `sp_error_decode.ts` asserts it.
+ *
+ * The consequence was total. `App.tsx`'s gameplay path confirms one send at a time
+ * specifically to catch `RateLimited` and `PlayerDead`, then tests
+ * `decoded.code === undefined` and returns — so every confirm-time refusal it existed to
+ * report was dropped on the floor, and the one it meant to filter (`BlockedByWall`) was
+ * filtered by accident.
+ */
+export function refusalOf(error: unknown): DecodedTransactionError {
+  const cause: unknown = error instanceof Error ? error.cause : undefined;
+  if (isDecoded(cause)) return cause;
+  return decodeTransactionError(cause !== undefined ? cause : error);
+}
+
+/**
+ * Has this already been through {@link decodeTransactionError}?
+ *
+ * A raw `TransactionError` is a bare string or a single-variant object —
+ * `{ InstructionError: … }`, `{ DuplicateInstruction: 0 }`, `{ BlockhashNotFound: {} }` —
+ * and **none of them carries a `message`**. A decode always does. That is the whole test.
+ */
+function isDecoded(value: unknown): value is DecodedTransactionError {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { message?: unknown }).message === 'string'
+  );
+}
+
+/**
  * Read a `TransactionError` — from `getSignatureStatuses`, from a simulation, or off a
  * `cause` — and name the rule that refused, so a caller sees `PlayerDead` rather than
  * `Custom(8)`.
+ *
+ * Takes a **raw** error. Something caught from a promise goes through {@link refusalOf}
+ * instead, which knows that half of them are already decoded.
  *
  * The `Custom(n) -> name` table is GENERATED from `programs/heartrot/src/error.rs` into
  * `errors.ts` by `tools/gen_errors.py`; the codes are wire ABI and a Pinocchio program

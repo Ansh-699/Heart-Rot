@@ -1,0 +1,74 @@
+[
+ {
+  "name": "I-1024x1024",
+  "cpu": 6,
+  "viewport": {
+   "width": 1024,
+   "height": 1024
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10
+  }
+ },
+ {
+  "name": "I-1366x768",
+  "cpu": 6,
+  "viewport": {
+   "width": 1366,
+   "height": 768
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10
+  }
+ },
+ {
+  "name": "I-1920x1080",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10
+  }
+ },
+ {
+  "name": "I-2560x1440",
+  "cpu": 6,
+  "viewport": {
+   "width": 2560,
+   "height": 1440
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10
+  }
+ }
+]

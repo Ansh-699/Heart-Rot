@@ -1,0 +1,135 @@
+[
+ {
+  "name": "G-base",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10
+  }
+ },
+ {
+  "name": "G-bossgrade-off",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10,
+   "css": "g.hr-boss-grade{filter:none!important}"
+  }
+ },
+ {
+  "name": "G-allgrade-off",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10,
+   "css": "#stage svg g[style*=filter]{filter:none!important}g.hr-boss-grade{filter:none!important}"
+  }
+ },
+ {
+  "name": "G-novignette",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10,
+   "noVignette": true
+  }
+ },
+ {
+  "name": "G-noarrows",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10,
+   "arrows": false
+  }
+ },
+ {
+  "name": "G-nochrome",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 20,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10,
+   "hud": false,
+   "dev": false
+  }
+ },
+ {
+  "name": "G-k0",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "room": "arena",
+   "knights": 0,
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 14,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "movesPerWrite": 10,
+   "arrows": false
+  }
+ }
+]

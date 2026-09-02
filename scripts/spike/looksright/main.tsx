@@ -59,8 +59,26 @@ function bossBytes(hurt: boolean) {
 }
 
 /** 20 seats spread over the room named by `zone`, mixed skins and classes. */
-function playersBytes(zone: number, tick: number, seats: number) {
+function playersBytes(zone: number, tick: number, seats: number, at?: number[][]) {
   const { d, v } = blank(PLAYERS.size, DISC_PLAYERS);
+  if (at) {
+    // art-judge: explicit world placements [x, y, skin, isArcher]. Everything else matches
+    // the grid path below so the two sets of numbers are comparable.
+    at.forEach((p, seat) => {
+      const s = PLAYERS.offsets.slots + seat * PLAYER_SLOT.size;
+      d[s + PLAYER_SLOT.offsets.session_pubkey] = seat + 1;
+      v.setUint8(s + PLAYER_SLOT.offsets.zone, zone);
+      v.setUint8(s + PLAYER_SLOT.offsets.skin_id, p[2]);
+      v.setUint8(s + PLAYER_SLOT.offsets.facing, 0);
+      v.setUint8(s + PLAYER_SLOT.offsets.class_aim, (p[3] ? CLASS_MASK : 0) | 0x18);
+      v.setInt16(s + PLAYER_SLOT.offsets.x, p[0], true);
+      v.setInt16(s + PLAYER_SLOT.offsets.y, p[1], true);
+      v.setUint16(s + PLAYER_SLOT.offsets.hp, 100, true);
+      v.setUint16(s + PLAYER_SLOT.offsets.hp_max, 100, true);
+      v.setUint32(s + PLAYER_SLOT.offsets.last_shot_tick, 0, true);
+    });
+    return decodePlayers(d);
+  }
   for (let seat = 0; seat < seats; seat++) {
     const s = PLAYERS.offsets.slots + seat * PLAYER_SLOT.size;
     d[s + PLAYER_SLOT.offsets.session_pubkey] = seat + 1;
@@ -98,7 +116,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return realFetch(input as RequestInfo, init);
 }) as typeof fetch;
 
-interface SceneOpts { hurt?: boolean; bullets?: number; seats?: number; phase?: number }
+interface SceneOpts { hurt?: boolean; bullets?: number; seats?: number; phase?: number; at?: number[][] }
 
 function Bridge() {
   const store = useStore();
@@ -112,7 +130,7 @@ function Bridge() {
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,
           arena ? (opts.bullets ?? 10) : 0),
         boss: bossBytes(!!opts.hurt),
-        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS),
+        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, opts.at),
       });
     };
     w.__PHASE = { PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING };

@@ -1,0 +1,38 @@
+== contrast at the stands the chain actually produces (1920x1080) ==
+   body = median Y of the changed pixels in the seat box; floor = median Y of the same
+   box on the empty plate. n is the number of seats that resolved.
+
+-- room A: the lobby spawn row, map.ts LOBBY_SPAWN_Y 832, x 208..664, 19 seats --
+   Cobalt    knight n=19  body Y 0.1206  floor Y 0.0211  contrast median 2.42:1  worst 2.25:1  best 2.70:1
+   Cobalt    archer n=19  body Y 0.1567  floor Y 0.0211  contrast median 2.90:1  worst 2.56:1  best 3.85:1
+   Nocturne  knight n=19  body Y 0.1006  floor Y 0.0211  contrast median 2.16:1  worst 1.92:1  best 2.37:1
+   Nocturne  archer n=19  body Y 0.1666  floor Y 0.0211  contrast median 3.04:1  worst 2.63:1  best 4.14:1
+   Argent    knight n=19  body Y 0.0855  floor Y 0.0211  contrast median 1.95:1  worst 1.73:1  best 2.27:1
+   Argent    archer n=19  body Y 0.1486  floor Y 0.0211  contrast median 2.78:1  worst 2.48:1  best 4.00:1
+
+-- room A: the aisle walk from the spawn row onto the gate block, 12 seats --
+   Cobalt    knight n=12  body Y 0.1246  floor Y 0.0180  contrast median 2.59:1  worst 2.19:1  best 3.06:1
+   Cobalt    archer n=12  body Y 0.1819  floor Y 0.0180  contrast median 3.40:1  worst 2.59:1  best 4.60:1
+   Nocturne  knight n=12  body Y 0.1078  floor Y 0.0180  contrast median 2.32:1  worst 2.02:1  best 2.68:1
+   Nocturne  archer n=12  body Y 0.1676  floor Y 0.0180  contrast median 3.21:1  worst 2.49:1  best 4.40:1
+   Argent    knight n=12  body Y 0.0939  floor Y 0.0180  contrast median 2.14:1  worst 1.79:1  best 2.61:1
+   Argent    archer n=12  body Y 0.1792  floor Y 0.0180  contrast median 3.42:1  worst 2.38:1  best 5.15:1
+
+-- room A: standing in the CENTRE of each of the ten torch pools, 10 seats --
+   Cobalt    knight n=19  body Y 0.0916  floor Y 0.0082  contrast median 2.44:1  worst 2.22:1  best 2.73:1
+   Cobalt    archer n=19  body Y 0.1539  floor Y 0.0082  contrast median 3.47:1  worst 2.79:1  best 3.96:1
+   Nocturne  knight n=19  body Y 0.0761  floor Y 0.0082  contrast median 2.10:1  worst 1.94:1  best 2.54:1
+   Nocturne  archer n=19  body Y 0.1515  floor Y 0.0082  contrast median 3.46:1  worst 2.77:1  best 4.04:1
+   Argent    knight n=19  body Y 0.0762  floor Y 0.0082  contrast median 2.12:1  worst 1.92:1  best 2.40:1
+   Argent    archer n=19  body Y 0.1676  floor Y 0.0082  contrast median 3.74:1  worst 2.80:1  best 4.73:1
+
+-- room B: the arena pit, y 440..596 across x 140..860, 19 seats --
+   Cobalt    knight n=19  body Y 0.1041  floor Y 0.0168  contrast median 2.16:1  worst 1.67:1  best 2.51:1
+   Cobalt    archer n=19  body Y 0.1288  floor Y 0.0168  contrast median 2.51:1  worst 1.86:1  best 3.14:1
+   Nocturne  knight n=19  body Y 0.0846  floor Y 0.0168  contrast median 1.94:1  worst 1.44:1  best 2.24:1
+   Nocturne  archer n=19  body Y 0.1127  floor Y 0.0168  contrast median 2.43:1  worst 1.66:1  best 3.03:1
+   Argent    knight n=19  body Y 0.0889  floor Y 0.0168  contrast median 1.97:1  worst 1.44:1  best 2.32:1
+   Argent    archer n=19  body Y 0.1290  floor Y 0.0168  contrast median 2.63:1  worst 1.76:1  best 3.42:1
+
+== rim light: measured off an 8x-zoomed knight, not asserted ==
+   SKIPPED: the 8x-zoom seat is off the page under the new camera; not re-measured.

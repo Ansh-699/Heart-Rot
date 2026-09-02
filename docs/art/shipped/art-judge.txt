@@ -1,0 +1,103 @@
+##############################################################################
+# HEARTROT art-judge. Screenshots shot 2026-09-02 21:39 IST by
+# scripts/spike/looksright/shoot.mjs against a vite build made 21:38 IST the same
+# evening, from the working tree as it stands. Nothing here is reused from an
+# earlier sitting.
+##############################################################################
+
+== Q1. SQUARE / BLOCK OBSTACLES ON THE PLAYABLE FLOOR ==
+   lobby floor band  : 1200 walkable tiles, bbox 60 x 20 tiles
+   interior wall tiles inside that 60x20 box            : 0
+   largest single open rectangle inside the lobby       : 1200 tiles  (100.0% of the floor)
+   pit floor         : 842 walkable tiles, largest open rectangle 702 tiles
+   -> NOTHING on either floor blocks a move. The wall bitboard the chain raycasts
+      has zero interior solids in both rooms.
+   painted prop mass in the lobby: 54 connected components >= 40 px;
+      17 of them put any pixel on a walkable tile, 10014 px in total
+   every one of those is a perimeter fixture (barrel, chest, candle, skull, torch)
+      whose sprite overhangs the wall it stands against; the largest overhang is 1739 px.
+
+== Q2. IS THE FLOOR "ALMOST COMPLETELY OPEN"? ==
+   Fraction of walkable-floor screen pixels covered by anything that is NOT floor
+   and NOT a flat marking. Mass = the prop plate diff above. Flat markings
+   (medallions, cracks, worn patches, light pools) are excluded by construction:
+   they are drawn in the floor group, not the prop group.
+   lobby walkable floor on screen : 761544 px
+   of which carry prop mass       : 10019 px  = 1.316%
+   -> the lobby floor is 98.684% clear.
+   arena walkable floor on screen : 533097 px
+   of which the creature covers   : 121441 px  = 22.78%
+   (the creature is the only mass on the arena floor; there are no props on it)
+
+== Q3. IS THE ROOM LARGE / WIDE / SPACIOUS? ==
+   Playable floor as a fraction of the whole frame, measured the same way in both:
+   the interior floor rectangle, over the full image.
+   ship A: walkable floor 761544 px of stage 1982592 px = 38.4% of frame
+           floor box 960 x 320 units -> 1511 x 504 px, aspect 3.00:1
+   ref A : interior floor x 78..1046, y 264..691 = 968 x 427 px, aspect 2.27:1
+           413336 px of frame 880770 = 46.9% of frame
+   -> ship A is 0.82x the reference's own floor-to-frame ratio.
+   ship B: walkable pit floor 533097 px = 26.9% of frame
+           (of that, 6.1% of frame is under the creature)
+
+== Q4. SYMMETRY ==
+   Mirror the frame about the room centre line and compare. Empty rooms, HUD hidden,
+   so no knight or bullet contaminates. Reported over the walkable floor and over
+   the whole room box.
+   ship A floor           mean |dY| 0.00515  median 0.00100  = 39.77% of the region mean, n=761544
+   ship A room+wallhead   mean |dY| 0.00555  median 0.00075  = 36.78% of the region mean, n=950670
+   ship B pit floor       mean |dY| 0.00734  median 0.00236  = 33.68% of the region mean, n=533097
+   ref A floor            mean |dY| 0.00791  median 0.00454  = 33.16% of the region mean, n=413336
+   ref B floor            mean |dY| 0.01196  median 0.00571  = 53.45% of the region mean, n=303600
+
+== Q5. DOES THE GATE READ AS BUILT INTO THE WALL? ==
+   The wall band is 80 units deep (world y 608..687,
+   5 map rows). The gate slot is 128 units of it (8 tiles).
+   world y  600: 100.0% of the room width is painted mass (Y > 0.0035), median Y 0.00561
+   world y  612: 100.0% of the room width is painted mass (Y > 0.0035), median Y 0.02414
+   world y  648: 100.0% of the room width is painted mass (Y > 0.0035), median Y 0.02414
+   world y  682: 100.0% of the room width is painted mass (Y > 0.0035), median Y 0.02414
+   the seam, 351 px wide x 125 px tall, centred on the wall's
+      outer face: min Y 0.00435, 0.00% of it is void. A floating sign would read as a band of void here.
+   course module: wall 8 px per course (autocorr 0.17), tower 8 px per course (autocorr 0.67);
+      one map tile is 25.2 px, so both are the same 16-unit module.
+   the doorway is 128 units of a 960-unit wall run: 13.3% opening, 86.7% continuous masonry either side.
+   ref A, the same seam over its gatehouse (x 430..700, y 150..230): min Y 0.00000, 33.44% void.
+
+== Q6. BOSS BODY-TO-FLOOR LUMINANCE ==
+   ship B: creature mask 389825 px (|with-boss - without-boss| > 8/255)
+      body   Y p5/p25/p50/p75/p95 = 0.0000 0.0012 0.0088 0.0337 0.1035
+      floor  Y p5/p25/p50/p75/p95 = 0.0069 0.0101 0.0145 0.0220 0.0419
+      body p50 / floor p50 = 0.61x
+      creature bbox x 576..1494 (918 px = 47.8% of frame width), y 66..1077
+   ref B : creature mask 15870 px inside bbox x 415..700, y 40..345
+      (colour rule: R >= B - 4, the wall behind it is teal; mask written to refB-creature-mask.png)
+      body   Y p5/p25/p50/p75/p95 = 0.0049 0.0159 0.0342 0.0676 0.1492
+      floor  Y p5/p25/p50/p75/p95 = 0.0041 0.0100 0.0179 0.0330 0.0704
+      body p50 / floor p50 = 1.91x
+      creature width 278 px = 24.8% of frame width
+
+== Q7. RING SEPARATION ON THE ARENA FLOOR ==
+   radial median Y over the pit, 400 bins of k = r/R (boss pixels removed):
+      min 0.00590  max 0.06921  max/min 11.73x
+      detrended (31-bin moving median removed): p95-p5 of residual 0.01468
+      distinct bright rings detected: 20 at k = [np.float64(0.01), np.float64(0.044), np.float64(0.088), np.float64(0.125), np.float64(0.182), np.float64(0.225), np.float64(0.252), np.float64(0.32), np.float64(0.382), np.float64(0.475), np.float64(0.528), np.float64(0.59), np.float64(0.64), np.float64(0.705), np.float64(0.79), np.float64(0.831), np.float64(0.89), np.float64(0.95), np.float64(0.975), np.float64(0.99)]
+      ring : adjacent-trough luminance ratios = [np.float64(1.087), np.float64(1.009), np.float64(1.021), np.float64(1.675), np.float64(1.433), np.float64(1.081), np.float64(1.006), np.float64(1.766), np.float64(1.012), np.float64(1.071), np.float64(1.698), np.float64(1.156), np.float64(1.017), np.float64(2.139), np.float64(1.726), np.float64(1.072), np.float64(1.111), np.float64(1.058), np.float64(2.057)]
+   ref B: same read on its own circle (cx 561.0 cy 385.0 rx 460.0 ry 175.0):
+      min 0.00869  max 0.08365  max/min 9.63x
+      detrended p95-p5 of residual 0.01139
+      distinct bright rings: 26; ring:trough ratios [np.float64(1.215), np.float64(1.125), np.float64(1.171), np.float64(1.452), np.float64(1.292), np.float64(1.188), np.float64(1.43), np.float64(1.202), np.float64(1.215), np.float64(1.007), np.float64(1.046), np.float64(1.094), np.float64(1.083), np.float64(1.075), np.float64(1.124), np.float64(1.192), np.float64(1.089), np.float64(1.147), np.float64(1.076), np.float64(1.109), np.float64(1.041), np.float64(1.072), np.float64(1.169), np.float64(1.155), np.float64(1.186), np.float64(1.049)]
+
+== Q8. STONE GRAIN IN ROOM A ==
+   Fraction of interior floor pixels whose 9x9 neighbourhood is FLAT, where flat
+   means the 9x9 sRGB-grey range is <= 1/255. Same rule applied to both images.
+   ship A floor: 1.8% flat   (n=745488, median 9x9 range 3.67/255)
+   ref  A floor: 0.0% flat   (n=402240, median 9x9 range 32.33/255)
+   ship B floor: 1.5% flat   (n=374653, median 9x9 range 6.00/255)
+   ref  B floor: 0.0% flat   (n=105864, median 9x9 range 48.33/255)
+
+== Q9. KNIGHT AND ARCHER CONTRAST WHERE PLAYERS STAND ==
+   A lobby knight: n=9  body Y 0.1152  floor Y 0.0119  body:floor 2.79:1  worst seat 2.16:1  boundary p50 2.62:1
+   A lobby archer: n=10  body Y 0.2119  floor Y 0.0115  body:floor 4.34:1  worst seat 3.07:1  boundary p50 2.80:1
+   B arena knight: n=9  body Y 0.0692  floor Y 0.0219  body:floor 1.79:1  worst seat 1.09:1  boundary p50 1.64:1
+   B arena archer: n=10  body Y 0.1257  floor Y 0.0231  body:floor 2.57:1  worst seat 1.20:1  boundary p50 1.63:1

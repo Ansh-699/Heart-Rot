@@ -220,6 +220,8 @@ interface Shape {
   remoteArrows: boolean;
   frozen: boolean;
   fullHp: boolean;
+  /** Per-seat accepted-move counter. One entry rises per Players write when sparse. */
+  seq: Int32Array | null;
 }
 
 function slot(seat: number, tick: number, sh: Shape): PlayerSlot {
@@ -227,7 +229,10 @@ function slot(seat: number, tick: number, sh: Shape): PlayerSlot {
   const table = zone === ZONE_ARENA ? PIT_STANDS : LOBBY_STANDS;
   // A walk: one whole MAP_TILE per 50 ms is the chain's real cadence, so `Knight.tsx`'s
   // walk accumulator advances exactly as it does in a fight.
-  const idx = (seat * 37 + (sh.frozen ? 0 : tick * 2) + ((seat * 13) % 7)) % table.length;
+  // Sparse mode: only the seat whose counter just rose has a new x/y, which is what one
+  // accepted `move` writes into Players. Dense mode keeps the old whole-world advance.
+  const walk = sh.seq !== null ? sh.seq[seat]! : sh.frozen ? 0 : tick * 2;
+  const idx = (seat * 37 + walk + ((seat * 13) % 7)) % table.length;
   const at = table[idx]!;
   const cls = seat % 100 < sh.archerPct ? CLASS_ARCHER : CLASS_KNIGHT;
   // Every seat fires on its own class cadence, staggered: 8 ticks for a knight, 14 for an
@@ -351,6 +356,13 @@ type Opts = {
   dev: boolean;
   /** Payloads per `arena.tick` increment. 2 = the old harness; `feedHz/10` = the crank. */
   tickEvery: number;
+  /** One seat's x/y advances per Players write, the shape an accepted `move` has on the
+   *  wire, instead of all twenty advancing together on a fabricated tick. */
+  sparseMoves: boolean;
+  /** Seats advanced per Players write. */
+  movesPerWrite: number;
+  /** Accepted moves per second, paced off the wall clock. 0 = use `movesPerWrite`. */
+  movesPerSec: number;
 };
 
 const DEFAULTS: Opts = {
@@ -372,6 +384,9 @@ const DEFAULTS: Opts = {
   hud: true,
   dev: true,
   tickEvery: 2,
+  sparseMoves: false,
+  movesPerWrite: 1,
+  movesPerSec: 0,
 };
 
 // The shipped DOM: header + stage, and World's absolutely-positioned grid box inside it.
@@ -412,6 +427,11 @@ let localZone = ZONE_ARENA;
 let passages = 0;
 const PASSAGE_EVERY = 18; // ticks -> 1.8 s at the crank's 10 Hz; the long beat is 1.1 s
 
+const seatSeq = new Int32Array(MAX_SEATS);
+let seatCursor = 0;
+let moveDebt = 0;
+let moveAt = 0;
+
 function shape(): Shape {
   const arenaSide = opts.room !== 'lobby';
   return {
@@ -424,6 +444,7 @@ function shape(): Shape {
     remoteArrows: opts.remoteArrows,
     frozen: opts.frozen,
     fullHp: opts.fullHp,
+    seq: opts.sparseMoves ? seatSeq : null,
   };
 }
 
@@ -440,6 +461,7 @@ let cur = {
     remoteArrows: DEFAULTS.remoteArrows,
     frozen: DEFAULTS.frozen,
     fullHp: DEFAULTS.fullHp,
+    seq: null,
   }),
 };
 
@@ -504,6 +526,23 @@ function startFeed(): void {
         if (localZone === ZONE_ARENA) passages++;
       }
       const r = updates % 20;
+      if (opts.sparseMoves && r >= 10 && r < 19 && opts.knights > 0) {
+        // Seats advance per Players write. `movesPerSec > 0` paces them off the WALL CLOCK,
+        // which is the only way to pin the chain's accepted-move rate: at 6x throttle the
+        // client services only ~60-90 payloads/s, so a fixed count per write lands wherever
+        // the throttle happens to put it. `movesPerWrite` is the old fixed-count knob.
+        let n = opts.movesPerWrite;
+        if (opts.movesPerSec > 0) {
+          moveDebt += ((now - moveAt) / 1000) * opts.movesPerSec;
+          moveAt = now;
+          n = Math.floor(moveDebt);
+          moveDebt -= n;
+        }
+        for (let i = 0; i < n; i++) {
+          seatSeq[seatCursor % opts.knights]! += 1;
+          seatCursor++;
+        }
+      }
       paint(r < 10 ? 'arena' : r < 19 ? 'players' : 'boss');
       predictor.push((tick + (dup ? 0 : 4)) % 8);
       localFire(now);
@@ -540,6 +579,10 @@ window.__run = async (o) => {
   sheet.textContent = opts.css;
   mount();
   tick = 0;
+  seatSeq.fill(0);
+  seatCursor = 0;
+  moveDebt = 0;
+  moveAt = performance.now();
   passages = 0;
   localZone = ZONE_ARENA;
   lastLocalShot = 0;
@@ -617,6 +660,10 @@ window.__run = async (o) => {
     hud: opts.hud,
     dev: opts.dev,
     tickEvery: opts.tickEvery,
+    sparseMoves: opts.sparseMoves,
+    movesPerWrite: opts.movesPerWrite,
+    movesPerSec: opts.movesPerSec,
+    seatMoves: seatCursor,
     tick,
     // Proof the chrome is actually mounted and seated, not silently absent.
     seat: store?.getState().match?.seat ?? null,

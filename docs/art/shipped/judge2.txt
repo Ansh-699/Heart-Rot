@@ -1,0 +1,65 @@
+== 1. SQUARE / BLOCK OBSTACLES ON THE PLAYABLE FLOOR ==
+   MAP_GRID wall tiles that are neither perimeter (rows 0/63, cols 0-1/62-63)
+   nor the rows 35-42 divider/gate structure: 0
+   inside the LOBBY movement box (world y 688..1007, cols 2..61): 0 wall tiles
+   inside the PIT   movement box (world y 384..655, cols 2..61): 178 wall tiles   (the chamfer + divider shoulders, rows [35, 36, 37, 38, 39, 40])
+   lobby rows 43-62 whose floor is NOT one single run (i.e. something splits it): 0
+   pit rows 24-40 whose floor is NOT one single run: 0
+
+   pixel check -- painted wall colour standing on a walkable tile:
+   lobby wall median Y 0.0219  floor median Y 0.0092  walkable px at or above wall median: 9.12% (69500 of 762048)
+   arena wall median Y 0.0150  floor median Y 0.0161  walkable px at or above wall median: 54.31% (290539 of 534936)
+
+== 2. IS THE FLOOR "ALMOST COMPLETELY OPEN"? ==
+   mask = |full frame - the same frame with that layer hidden|, restricted to walkable tiles.
+   LOBBY: props/decoration nodes hidden = 1 group. prop pixels total 36474
+          of which ON WALKABLE FLOOR: 11574 px = 1.519% of the walkable floor
+   ARENA: boss pixels total 352138
+          of which ON WALKABLE PIT FLOOR: 105830 px = 19.784% of the walkable pit
+   reference B for comparison is measured in section 3.
+
+== 3. IS THE ROOM LARGE, WIDE AND SPACIOUS? playable area / frame ==
+   reference A png 1122x785
+   ref A floor median Y 0.0359
+   ref A interior floor box x 109..1016 (907px), y 285..680 (395px) = 40.7% of the png
+   ship A lobby: walkable pixels 762048 = 38.5% of the 1920x1032 stage
+                  on-screen extent x 204..1715 (1511px, 78.7% of frame width), y 403..906 (503px, 48.7% of frame height)
+   ship B arena: walkable pixels 534936 = 27.0% of the 1920x1032 stage
+                  on-screen extent x 204..1715 (1511px, 78.7% of frame width), y 604..1031 (427px, 41.4% of frame height)
+   reference B png 1122x612
+
+== 4. SYMMETRY ==
+   MAP_GRID rows not mirror-symmetric about x=31.5 (B/E read as P): 0 of 64
+   ship A lobby (empty plate)   mean |L-mirror| 0.00294 = 6.47% of the frame's own L range (+/-958px about the room centre line)
+   ship B arena (empty plate)   mean |L-mirror| 0.02216 = 11.21% of the frame's own L range (+/-958px about the room centre line)
+   ship B arena, no boss        mean |L-mirror| 0.00415 = 6.19% of the frame's own L range (+/-958px about the room centre line)
+   ref A                        mean |L-mirror| 0.00739 = 8.58% of its own L range (+/-558px)
+
+== 5. THE GATE: built into the wall, or a floating sign? ==
+   walkable slot from map.ts: world x 448..575 = 128 units, 13.3% of the 960-unit interior
+   divider rows 35..42 on the stage: y 202..403
+   row 38 (world y 616): wall Y 0.0241, painted dark opening 0 px = 0 world units  (slot is 128; cap is slot+16 = 144)
+   row 39 (world y 632): wall Y 0.0241, painted dark opening 0 px = 0 world units  (slot is 128; cap is slot+16 = 144)
+   row 40 (world y 648): wall Y 0.0216, painted dark opening 0 px = 0 world units  (slot is 128; cap is slot+16 = 144)
+   row 41 (world y 664): wall Y 0.0216, painted dark opening 0 px = 0 world units  (slot is 128; cap is slot+16 = 144)
+   row 42 (world y 680): wall Y 0.0241, painted dark opening 0 px = 0 world units  (slot is 128; cap is slot+16 = 144)
+   horizontal-joint density (fraction of px with a vertical L step > 0.004), rows 36..41:
+     left pier   x764..846: 0.094
+     plain wall  x390..626: 0.065
+   wall line (row 35 top) on stage: y 201
+   painted structure above the wall line spans stage y 0..200 = 128 world units of tower above the wall
+   rows between the tower top and the wall line with NO structure (a floating gap): 0
+
+== 6. REFERENCE ELEMENTS ==
+   svg node counts (geometry.json): lobby 996, arena 929
+
+   floor DETAIL -- edge density and local contrast on the floor itself:
+   ship A lobby floor   edge px 2.3%  |grad| p95 0.00226  L sd 0.01990
+   ship B pit floor     edge px 9.7%  |grad| p95 0.00931  L sd 0.03387
+   ref A floor          edge px 53.4%  |grad| p95 0.01917  L sd 0.01371
+   ref B floor          edge px 56.0%  |grad| p95 0.03793  L sd 0.02197
+
+   torch pools -- floor luminance at the pool centre vs the floor median:
+   floor median Y 0.0092; pool centres Y ['0.0448', '0.0094', '0.0101', '0.0096', '0.0106', '0.0067', '0.0112', '0.0057', '0.0063', '0.0063']
+   brightest pool / floor median = 4.89x, median pool / floor = 1.04x
+   ref A: floor median Y 0.0245, left-wall torch pool Y 0.0118 = 0.48x

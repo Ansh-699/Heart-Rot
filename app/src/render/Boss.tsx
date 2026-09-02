@@ -169,37 +169,43 @@ const SPILL_R = 2.6;
  * `#af8c92`, `#936975` and `#753757` — warm pale mauve, a pastel sticker on a cold cave. In
  * the reference the demon is DARK and rim-lit. Dark it already was; lit it was not.
  *
- * WHY THIS CHAIN AND NOT THE OLD ONE (`docs/art/boss-light.md` §2, every number a real
- * Chrome raster of this renderer, not a model). The old chain ended in `brightness(0.32)`,
- * and `brightness(b)` is `c ↦ b·c` — a straight multiply, so it maps the creature's tonal
- * distribution onto a scaled copy of itself. Measured, every percentile of the body landed
- * on the same ~0.13 factor: p50 68.1 → 9.3, p99 149.6 → 22.8. The reference's shape is a
- * dark bulk with a BRIGHT TAIL (p50 13.0 → p99 72.7, a 5.6× spread); the old chain's spread
- * was 2.5×. Against the cavern behind it at relL 0.0235 a body pixel needs L255 15.4 just to
- * reach 1.5:1, so the entire creature above its own 91st percentile was fighting for the
- * first contrast step: **8.5 % of its pixels cleared 1.5:1 and 0.4 % cleared 2:1**, against
- * the reference's 53.2 % and 23.2 %. That is what "the boss lighting is wrong" measures as.
+ * WHAT THE REFERENCE ACTUALLY SETS IS A RATIO, NOT A LEVEL. Reference B's creature sits at
+ * **0.58× the luminance of its own floor** — one of the darkest masses in the picture,
+ * rim-lit, with the orb and the eyes the only bright things on it. Two rounds missed that
+ * from opposite sides, and both were caught by the same raster (`scripts/spike/looksright`,
+ * which mounts the real `App.tsx`, so the numbers are the shipped frame and not a model;
+ * `docs/art/shipped/README.md` §4 is the run that named the inversion).
  *
- * `contrast(1.6)` is the term that restores the tail: `c ↦ 1.6c − 0.3` clips the darks
- * toward black while the top of the range survives, so `brightness` can go 0.32 → 0.55
- * without lifting the bulk. It goes AFTER `brightness` — the pair is `c ↦ k·b·c + (1−k)/2`
- * and swapping them moves the black point. `saturate` drops 1.6 → 0.5 because `contrast`
- * amplifies chroma: at 1.6 the graded body measured 52 % saturation against the reference's
- * 19 %, and 0.5 lands on 19 %. `hue-rotate` 185 → 195deg takes the graded median hue 219 →
- * 229° (the reference's is 244°).
+ * `brightness(b)` is `c ↦ b·c` — a straight multiply, so it maps the creature's tonal
+ * distribution onto a scaled copy of itself. The first chain ended in `brightness(0.32)` and
+ * every percentile of the body landed on the same ~0.13 factor: a 2.5× p50→p99 spread
+ * against the reference's 15×, and 8.5 % of the body clearing 1.5:1 against the cavern.
+ * Dark, and dead. `brightness(0.55) contrast(1.6)` then opened the range by LIFTING it —
+ * measured on the shipped frame, body p50 0.0564 relative luminance against a floor at
+ * 0.0159, i.e. **3.5× brighter than the floor it stands on** where the reference is 0.58×.
+ * Same defect, mirrored: a bright body with a short tail instead of a dark one.
  *
- * Ladder after, as a fraction of the creature's own pixels clearing each step against the
- * cavern — 1.5 / 2 / 2.5 / 3 / 4:1, with body median L255:
+ * `contrast` is the only term here that darkens the bulk WITHOUT flattening the tail:
+ * `c ↦ k·c + (1−k)/2` clips the darks toward black while the top of the range survives. It
+ * goes AFTER `brightness` — the pair is `c ↦ k·b·c + (1−k)/2` and swapping them moves the
+ * black point. At `brightness(0.45) contrast(2.0)` the same raster reads (n = 2 browser
+ * launches, agreeing to two figures; body mask = the arena plate minus a boss-hidden plate,
+ * the orb and its spill disc excluded so the creature is not measured against its own lamp):
  *
- *     reference   0.532 0.232 0.123 0.070 0.025   p50 13.0
- *     old chain   0.085 0.004 0.003 0.003 0.003   p50  9.3
- *     this chain  0.486 0.279 0.111 0.073 0.027   p50 13.1
+ *                        p5      p50      p90      p99    spread   body/floor
+ *     this chain      0.0000   0.0082   0.0731   0.1233    15.0×      0.57×
+ *     reference B     0.0031   0.0127   0.0634   0.1909    15.1×      0.58×
+ *     old chain       0.0001   0.0564   0.1231   0.1984     3.5×      3.54×
+ *
+ * `saturate(0.5)` and `hue-rotate(195deg)` are unchanged, and re-checked rather than
+ * re-argued: the graded body measures HSV saturation p50 0.33 against the reference
+ * creature's 0.44 — already under it, so pulling chroma further buys nothing.
  *
  * The `brightness(2.2)` hit flash below is applied INSIDE this group, so it composes with
- * this chain and not the old one. Re-derived: a dominant fill at ungraded 0.79 clips under
- * the flash, then grades to sRGB ≈ 148 (relL ≈ 0.29), i.e. **L255 ≈ 74 against a resting
- * body at 13 — a 5.7× lift**, where the old chain gave about 2×. The flash got stronger for
- * free; nothing about it needs retuning.
+ * this chain. Re-derived: a dominant fill clips to white under the flash and then grades to
+ * relative luminance 0.129 — **15.8× the resting body's 0.0082**, where the old chain gave
+ * 5.1×. A darker body makes the flash read harder, not softer; nothing about it needs
+ * retuning.
  *
  * THE RIM IS NOT THE LIGHT, and this is why it stays a one-line term. It draws the same
  * silhouette offset 3 units up-left, flooded cyan at 0.30, behind. Measured, thickening it
@@ -207,18 +213,31 @@ const SPILL_R = 2.6;
  * 1.75:1 against the cavern — but isolating it moves the 1.5:1 ladder step by 0.005. The
  * reference's own lit edge is 2 px at 1.54:1: nobody's rim is doing this work. It is free
  * and it is kept, and the light itself comes from the orb (`.hr-boss-vent`) and its spill.
- * It is last in the chain on purpose, so the grade cannot touch the light it adds.
+ * It is last in the chain on purpose, so the grade cannot touch the light it adds — which is
+ * also why it SURVIVES the darker body above instead of being crushed with it. Measured by
+ * shooting the same frame with the term deleted: 150,918 px move, and that band reads Y
+ * 0.0215 with the rim against 0.0130 without, over a cavern at 0.0184.
  *
  * The grade is on the WRAPPER, not on the art group: filters are applied in the element's
  * own coordinate system, and the art group carries `scale(BOSS_SCALE)`, which would make
  * this 3 into 9 arena units. The wrapper has no transform, so a unit here is an arena unit.
  *
  * Core, spill and eyes are siblings of the graded group, never inside it — after this they
- * are the only warm, bright things in the frame, which is the whole point.
+ * are the only warm, bright things in the frame, which is the whole point. Confirmed on the
+ * same raster: the brightest pixels anywhere in the creature's mask are the orb's own glow
+ * (cyan, ≈ rgb(131 217 227)) sitting just outside the excluded spill disc, not body art.
+ *
+ * WHAT THIS CHAIN CANNOT FIX, so nobody tries it here: the creature is 47.9 % of stage width
+ * against the reference's 22.3 %, which is what hides the tiered floor rings. Drawn extent
+ * IS hittable extent — `BOSS_SCALE`, `BOSS_ANCHOR_*`, `PART_HITBOXES`, `CORE` and `MUZZLES`
+ * are all emitted by `tools/gen_hitboxes.py --scale` into `hitboxes.rs` AND `hitboxes.ts`,
+ * and the program raycasts against them. Shrinking the drawing from this file would make
+ * players shoot at a limb that is not where it is drawn. Narrowing the silhouette is a
+ * generator re-run plus a same-commit program+client deploy, not a render change.
  */
 const BOSS_GRADE =
-  'grayscale(0.7) sepia(0.6) hue-rotate(195deg) saturate(0.5) brightness(0.55) ' +
-  'contrast(1.6) drop-shadow(-3px -3px 0 rgb(159 232 255 / 0.30))';
+  'grayscale(0.7) sepia(0.6) hue-rotate(195deg) saturate(0.5) brightness(0.45) ' +
+  'contrast(2.0) drop-shadow(-3px -3px 0 rgb(159 232 255 / 0.30))';
 
 /** Checked at fire time, not held in state: it is always current and costs one line. */
 function reduced(): boolean {

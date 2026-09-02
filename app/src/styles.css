@@ -74,11 +74,14 @@
 
   /*
    * The temple grade used to live here as `--temple-grade`, applied by `.scene-bg`.
-   * Both are gone: the live grade is `TEMPLE_GRADE` in `app/src/render/Scene.tsx`, fitted
-   * by least squares against the art doc's 16-entry target ramp, and nothing in
-   * `app/src/render/` has ever carried the `scene-bg` class. Two grades for one layer is
-   * this project's one-fact-stored-twice defect with a stylesheet around it
-   * (`docs/review/art.md` fix 5c). Scene.tsx is the one place it is stored.
+   * Both are gone, and so is the `Scene.tsx` that replaced them: the two rooms now carry
+   * one grade each, `TEMPLE_GRADE` in `app/src/render/BossArena.tsx` (cold, reference B)
+   * and `LOBBY_GRADE` in `app/src/render/WaitingRoom.tsx` (purple, reference A), each
+   * fitted by least squares against the art doc's 16-entry target ramp. Nothing in
+   * `app/src/render/` has ever carried the `scene-bg` class. A grade duplicated between a
+   * stylesheet and a renderer is this project's one-fact-stored-twice defect with a
+   * stylesheet around it (`docs/review/art.md` fix 5c); each room's grade is stored in
+   * exactly one place, which is the room that uses it.
    */
 
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
@@ -182,10 +185,46 @@ h3 {
    Shell
    -------------------------------------------------------------------------- */
 
+/*
+ * Two rows, and the third one is deleted rather than left empty. It was `.errorbar`'s,
+ * and the bar is `position: fixed` now (see the rule below) — so is everything else
+ * `.shell` holds: `Hud`'s clusters, the result overlay, the telemetry panel. Header and
+ * `<main>` are the only children still in flow.
+ */
 .shell {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   height: 100%;
+}
+
+/*
+ * With a stage mounted the scene is the whole window, and the header floats OVER it.
+ *
+ * In flow the bar was a 48 px row of flat page colour above the room -- the one strip of
+ * the window `Arena.tsx`'s fit could never reach, on a screen whose reference is a
+ * dungeon that fills its frame. The wordmark stays (spec §9.1: a branding decision the
+ * user has not made); it is drawn on the scene the way every HUD cluster is, under them
+ * (`.hud` is z-index 30) and hit-testing nothing, because `controls.ts` binds aim to
+ * `#stage` and a fixed bar over its top edge would swallow the clicks that land there.
+ *
+ * The row template has to change with it: a fixed child leaves the grid, and with the
+ * header gone from flow `main` would be the first item -- placed in the `auto` track,
+ * leaving the `1fr` one empty under it. One explicit track, the stage's, and nothing else
+ * to land in.
+ */
+.shell:has(> .main > .stage) {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.shell:has(> .main > .stage) .header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  pointer-events: none;
+  border-bottom: 0;
+  background: none;
 }
 
 .header {
@@ -276,12 +315,58 @@ h3 {
   overflow: auto;
 }
 
+/*
+ * The notice is an OVERLAY, and that is the whole of this rule's point.
+ *
+ * It used to be `.shell`'s third `auto` row, so a transient line — a refused datagram, a
+ * stale feed, a route error — resized the `1fr` stage under it by 3.85–5.85 % and the
+ * scene re-fitted, twice: once when the message appeared and once 2.5 s later when
+ * `NOTICE_MS` cleared it. Every HUD cluster is `position: fixed` for exactly this reason
+ * (`ui/Hud.tsx`'s block, `.overlay`, `.dev`); the one element that appears and disappears
+ * on its own was the one still in flow.
+ *
+ * Middle-right, because it is the last free lane: `.hud-tl` / `.hud-tc` / `.hud-tr` own
+ * the top, `.hud-bl` / `.hud-bc` / `.dev-cue` own the bottom, and `.hud-ml` is the
+ * verdict on the middle-left. This mirrors it. `.dev` (z-index 40) out-ranks this on
+ * purpose — an open telemetry panel is a deliberate act and owns that corner.
+ *
+ * `pointer-events: none` is not optional: `controls.ts` binds `pointerdown` to `#stage`
+ * and this is a SIBLING of the stage, so a hit-testing box floating over the play area
+ * would swallow aim clicks — the exact defect `.dev` was fixed for. Nothing in the bar is
+ * interactive.
+ *
+ * The `translateY` matches `.hud-ml`, which already carries one permanently, so it adds
+ * no layer this scene was not already paying for; nothing here animates or promotes.
+ */
 .errorbar {
-  padding: 8px 16px;
-  border-top: 1px solid var(--maroon);
+  position: fixed;
+  z-index: 35;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  max-width: min(340px, 30vw);
+  pointer-events: none;
+  padding: 8px 10px;
+  border: 1px solid var(--maroon);
+  border-radius: 3px;
   background: #1d1420;
   color: var(--flesh-lit);
   font-size: 12px;
+  box-shadow: 0 8px 26px -10px rgb(0 0 0 / 0.75);
+}
+
+/*
+ * Onboarding and character select have no scene and no HUD — one 560 px card, centred —
+ * and there the middle-right lane clips the card's right edge on any window under
+ * ~1240 px. Same overlay, the anchor the card leaves free. `:has()` on the shell, the
+ * same idiom `.main:has(> .stage)` above already uses.
+ */
+.shell:has(.main > .card) .errorbar {
+  top: auto;
+  bottom: 12px;
+  right: 50%;
+  transform: translateX(50%);
+  max-width: min(560px, calc(100vw - 24px));
 }
 
 /* --------------------------------------------------------------------------

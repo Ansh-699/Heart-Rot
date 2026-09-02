@@ -16,5 +16,9 @@
     "program:build": "cargo build-sbf --manifest-path programs/heartrot/Cargo.toml",
     "program:test": "cargo test --manifest-path programs/heartrot/Cargo.toml",
     "program:lint": "cargo clippy --manifest-path programs/heartrot/Cargo.toml -- -D warnings"
+  },
+  "devDependencies": {
+    "@heartrot/client": "workspace:*",
+    "@solana/kit": "8.2.0"
   }
 }

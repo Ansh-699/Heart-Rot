@@ -33,78 +33,83 @@ pub const TILE: i16 = 16;
 
 /// Wall bitboard: bit *x* of row *y* set means tile (x, y) is solid.
 ///
-/// Layout, top to bottom -- the 33 Immortals composition. Open floor for the boss's
-/// air, then the shaped pit the raid fights from, then a rim wall pierced by one
-/// four-tile doorway, then the gate block, then a pillared temple approach for the
-/// lobby. The whole vertical order is the fight: you walk up the temple, through the
-/// gate, out of the doorway into the pit, and the creature is above you.
+/// Layout, top to bottom. Open floor for the boss's air, then the chamfered pit the
+/// raid fights from, then the divider -- the lobby's top wall -- pierced by one
+/// eight-tile doorway, then the gate block, then the open lobby floor. The whole
+/// vertical order is the fight: you walk up the lobby, through the gate, out of the
+/// doorway into the pit, and the creature is above you.
+///
+/// Both rooms are open floor with zero interior obstacles. `tools/gen_map.py` holds
+/// them that way: at most one contiguous run of floor per row, so a free-standing
+/// block anywhere splits a row and is refused. Perimeter architecture, banners,
+/// torches, chains and floor markings are paint, never wall tiles.
 ///
 /// The rows above the pit are floor, not wall, and that is load-bearing rather than
 /// lazy drawing -- see [`PIT_TOP`].
 pub const WALLS: [u64; MAP_TILES] = [
     0xffffffffffffffff, // y=0  ################################################################
-    0x8000000000000001, // y=1  #..............................................................#
-    0x8000000000000001, // y=2  #..............................................................#
-    0x8000000000000001, // y=3  #..............................................................#
-    0x8000000000000001, // y=4  #..............................................................#
-    0x8000000000000001, // y=5  #..............................................................#
-    0x8000000000000001, // y=6  #..............................................................#
-    0x8000000000000001, // y=7  #..............................................................#
-    0x8000000000000001, // y=8  #..............................................................#
-    0x8000000000000001, // y=9  #..............................................................#
-    0x8000000000000001, // y=10 #..............................................................#
-    0x8000000000000001, // y=11 #..............................................................#
-    0x8000000000000001, // y=12 #..............................................................#
-    0x8000000000000001, // y=13 #..............................................................#
-    0x8000000000000001, // y=14 #..............................................................#
-    0x8000000000000001, // y=15 #..............................................................#
-    0x8000000000000001, // y=16 #..............................................................#
-    0x8000000000000001, // y=17 #..............................................................#
-    0x8000000000000001, // y=18 #..............................................................#
-    0x8000000000000001, // y=19 #..............................................................#
-    0x8000000000000001, // y=20 #..............................................................#
-    0x8000000000000001, // y=21 #..............................................................#
-    0x8000000000000001, // y=22 #..............................................................#
-    0x8000000000000001, // y=23 #..............................................................#
-    0x8000000000000001, // y=24 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
-    0x8000000000000001, // y=25 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPBPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
-    0x8000000000000001, // y=26 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
-    0x8000000000000001, // y=27 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
-    0x8000000000000001, // y=28 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
-    0x8000000000000001, // y=29 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
-    0x8000000000000001, // y=30 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
-    0x8000000000000001, // y=31 #PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#
-    0x8000000000000001, // y=32 #PPPPPPPPPEPPPPPPPPPPPEPPPPPPPPPPPPPPPPPPPEPPPPPPPPPPPEPPPPPPPP#
-    0xe000000000000007, // y=33 ###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###
-    0xf80000000000001f, // y=34 #####PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#####
-    0xff000000000000ff, // y=35 ########PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP########
-    0xfffffffc3fffffff, // y=36 ##############################PPPP##############################
-    0xfffffffc3fffffff, // y=37 ##############################PPPP##############################
-    0xfffffffc3fffffff, // y=38 ##############################GGGG##############################
-    0xfffffffc3fffffff, // y=39 ##############################GGGG##############################
-    0x8000000000000001, // y=40 #..............................................................#
-    0x8000000000000001, // y=41 #..............................................................#
-    0x8303030000c0c0c1, // y=42 #.....##......##......##................##......##......##.....#
-    0x8303030000c0c0c1, // y=43 #.....##......##......##................##......##......##.....#
-    0x8000000000000001, // y=44 #..............................................................#
-    0x8000000000000001, // y=45 #..............................................................#
-    0x80303000000c0c01, // y=46 #.........##......##........................##......##.........#
-    0x80303000000c0c01, // y=47 #.........##......##........................##......##.........#
-    0x8000000000000001, // y=48 #..............................................................#
-    0x8000000000000001, // y=49 #..............................................................#
-    0x8303030000c0c0c1, // y=50 #.....##......##......##................##......##......##.....#
-    0x8303030000c0c0c1, // y=51 #.....##......##......##................##......##......##.....#
-    0x8000000000000001, // y=52 #..............................................................#
-    0x8000000000000001, // y=53 #..............................................................#
-    0x80303000000c0c01, // y=54 #.........##......##........................##......##.........#
-    0x80303000000c0c01, // y=55 #.........##......##........................##......##.........#
-    0x8000000000000001, // y=56 #..............................................................#
-    0x8000000000000001, // y=57 #..............................................................#
-    0x8303030000c0c0c1, // y=58 #.....##......##......##................##......##......##.....#
-    0x8303030000c0c0c1, // y=59 #.....##......##......##................##......##......##.....#
-    0x8000000000000001, // y=60 #..............................................................#
-    0x8000000000000001, // y=61 #..............................................................#
-    0x8000000000000001, // y=62 #..............................................................#
+    0xc000000000000003, // y=1  ##............................................................##
+    0xc000000000000003, // y=2  ##............................................................##
+    0xc000000000000003, // y=3  ##............................................................##
+    0xc000000000000003, // y=4  ##............................................................##
+    0xc000000000000003, // y=5  ##............................................................##
+    0xc000000000000003, // y=6  ##............................................................##
+    0xc000000000000003, // y=7  ##............................................................##
+    0xc000000000000003, // y=8  ##............................................................##
+    0xc000000000000003, // y=9  ##............................................................##
+    0xc000000000000003, // y=10 ##............................................................##
+    0xc000000000000003, // y=11 ##............................................................##
+    0xc000000000000003, // y=12 ##............................................................##
+    0xc000000000000003, // y=13 ##............................................................##
+    0xc000000000000003, // y=14 ##............................................................##
+    0xc000000000000003, // y=15 ##............................................................##
+    0xc000000000000003, // y=16 ##............................................................##
+    0xc000000000000003, // y=17 ##............................................................##
+    0xc000000000000003, // y=18 ##............................................................##
+    0xc000000000000003, // y=19 ##............................................................##
+    0xc000000000000003, // y=20 ##............................................................##
+    0xc000000000000003, // y=21 ##............................................................##
+    0xc000000000000003, // y=22 ##............................................................##
+    0xc000000000000003, // y=23 ##............................................................##
+    0xc000000000000003, // y=24 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=25 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPBPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=26 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=27 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=28 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=29 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=30 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=31 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=32 ##PPPPPPPPEPPPPPPPPPPPEPPPPPPPPPPPPPPPPPPEPPPPPPPPPPPEPPPPPPPP##
+    0xc000000000000003, // y=33 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xc000000000000003, // y=34 ##PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP##
+    0xe000000000000007, // y=35 ###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###
+    0xf80000000000001f, // y=36 #####PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#####
+    0xff800000000001ff, // y=37 #########PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP#########
+    0xfffffff00fffffff, // y=38 ############################PPPPPPPP############################
+    0xfffffff00fffffff, // y=39 ############################PPPPPPPP############################
+    0xfffffff00fffffff, // y=40 ############################PPPPPPPP############################
+    0xfffffff00fffffff, // y=41 ############################GGGGGGGG############################
+    0xfffffff00fffffff, // y=42 ############################GGGGGGGG############################
+    0xc000000000000003, // y=43 ##............................................................##
+    0xc000000000000003, // y=44 ##............................................................##
+    0xc000000000000003, // y=45 ##............................................................##
+    0xc000000000000003, // y=46 ##............................................................##
+    0xc000000000000003, // y=47 ##............................................................##
+    0xc000000000000003, // y=48 ##............................................................##
+    0xc000000000000003, // y=49 ##............................................................##
+    0xc000000000000003, // y=50 ##............................................................##
+    0xc000000000000003, // y=51 ##............................................................##
+    0xc000000000000003, // y=52 ##............................................................##
+    0xc000000000000003, // y=53 ##............................................................##
+    0xc000000000000003, // y=54 ##............................................................##
+    0xc000000000000003, // y=55 ##............................................................##
+    0xc000000000000003, // y=56 ##............................................................##
+    0xc000000000000003, // y=57 ##............................................................##
+    0xc000000000000003, // y=58 ##............................................................##
+    0xc000000000000003, // y=59 ##............................................................##
+    0xc000000000000003, // y=60 ##............................................................##
+    0xc000000000000003, // y=61 ##............................................................##
+    0xc000000000000003, // y=62 ##............................................................##
     0xffffffffffffffff, // y=63 ################################################################
 ];
 
@@ -123,8 +128,8 @@ pub const WALLS: [u64; MAP_TILES] = [
 pub const ENTRANCES: [(i16, i16); 4] = [
     (160, 512), // tile (10, 32)
     (352, 512), // tile (22, 32)
-    (672, 512), // tile (42, 32)
-    (864, 512), // tile (54, 32)
+    (656, 512), // tile (41, 32)
+    (848, 512), // tile (53, 32)
 ];
 
 /// The `B` heart tile: where the boss stands, in world units at the tile's top-left
@@ -150,7 +155,7 @@ pub const BOSS_SPAWN: (i16, i16) = (512, 400); // tile (32, 25)
 
 /// The raider box: a `ZONE_ARENA` player's y is confined to `PIT_TOP..=PIT_BOT`.
 ///
-/// Compiled from the `P` block's bounding rows (24..37) -- inclusive of the last
+/// Compiled from the `P` block's bounding rows (24..40) -- inclusive of the last
 /// row's last unit, which is the form `move_player` compares a *destination* against.
 /// Comparing the destination and not the current position is load-bearing: a player who
 /// flips zone while standing on the gate is below `PIT_BOT`, and a current-position test
@@ -164,19 +169,19 @@ pub const BOSS_SPAWN: (i16, i16) = (512, 400); // tile (32, 25)
 /// `tools/gen_map.py` proves the pit is one connected room and that the gate walks into
 /// it, which is the only guard against a clamp that boxes someone in open floor.
 pub const PIT_TOP: i16 = 384; // tile row 24
-pub const PIT_BOT: i16 = 607; // tile row 37, last unit
+pub const PIT_BOT: i16 = 655; // tile row 40, last unit
 
 /// The gate block `enter_gate` demands the player be standing in, compiled from the `G`
-/// rectangle -- tiles (30, 38)..(33, 39).
+/// rectangle -- tiles (28, 41)..(35, 42).
 ///
 /// These were four hand literals in `handlers::player` that `gen_map.py` parsed back out
 /// of Rust source to validate against the drawn grid: one fact stored twice, with the
 /// tool agreeing with whichever copy it read. Drawing them is what lets the assertion
 /// below prove `BOSS_SPAWN` is outside the gate on every `cargo check`.
-pub const GATE_MIN_X: i16 = 480;
-pub const GATE_MAX_X: i16 = 543;
-pub const GATE_MIN_Y: i16 = 608;
-pub const GATE_MAX_Y: i16 = 639;
+pub const GATE_MIN_X: i16 = 448;
+pub const GATE_MAX_X: i16 = 575;
+pub const GATE_MIN_Y: i16 = 656;
+pub const GATE_MAX_Y: i16 = 687;
 
 /// The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
 ///
@@ -187,7 +192,7 @@ pub const LOBBY_SPAWN_MIN_X: i16 = 208;
 pub const LOBBY_SPAWN_MAX_X: i16 = 664;
 pub const LOBBY_SPAWN_Y: i16 = 832;
 
-/// The lobby floor band: the drawn floor rows below the gate (40..62), in world
+/// The lobby floor band: the drawn floor rows below the gate (43..62), in world
 /// units, `LOBBY_BOT` inclusive of the last row's last unit exactly as [`PIT_BOT`] is.
 ///
 /// A *drawing* fact, not a movement rule -- `player::zone_box` holds a `ZONE_LOBBY` seat
@@ -197,7 +202,7 @@ pub const LOBBY_SPAWN_Y: i16 = 832;
 /// units of masonry above and 80 below, and its self-check asserts the frame still lands
 /// on `LOBBY_BOT + 1`. Retyping 640/1008 in the browser beside a map that owns them is the
 /// drift this generator exists to prevent.
-pub const LOBBY_TOP: i16 = 640; // tile row 40
+pub const LOBBY_TOP: i16 = 688; // tile row 43
 pub const LOBBY_BOT: i16 = 1007; // tile row 62, last unit
 
 /// Every entrance stands on floor in the table above.
@@ -380,7 +385,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(floor, 726, "the drawn pit changed size");
+        assert_eq!(floor, 842, "the drawn pit changed size");
     }
 
     /// Every respawn door is inside the pit band. A raider respawned above `PIT_TOP` or
@@ -420,11 +425,15 @@ mod tests {
     /// column -- a raid that cannot be won, reporting nothing. The pit ceiling is
     /// `PIT_TOP`, a movement rule, and this is the test that keeps it from becoming a
     /// wall the next time someone redraws the grid.
+    ///
+    /// The column span is generated (2..=61) rather than written as
+    /// `1..MAP_TILES - 1`: that form assumed a one-tile border ring and started
+    /// failing the moment the side perimeter was drawn two tiles thick.
     #[test]
     fn the_boss_air_above_the_pit_is_open() {
         let top = (PIT_TOP / TILE) as usize;
         for ty in 1..top {
-            for tx in 1..MAP_TILES - 1 {
+            for tx in 2..=61 {
                 assert!(
                     !solid(tx, ty),
                     "tile ({tx}, {ty}) is wall above PIT_TOP -- every shot in that \
