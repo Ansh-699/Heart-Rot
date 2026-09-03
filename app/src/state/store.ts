@@ -393,8 +393,13 @@ export function createStore(): Store {
    * with this arena. Local state clears first and unconditionally — the player is watching
    * a screen change and must never be stuck behind a devnet round trip.
    */
+  /** Have we ever seen our own seat occupied? See `setWorld` for why this cannot be a
+   * one-shot check against the first payload. */
+  let seatHeld = false;
+
   const release = async (): Promise<void> => {
     settling = false;
+    seatHeld = false;
     const held = state.match;
     set({ match: null, arena: null, boss: null, players: null, status: 'idle', error: null });
     if (!held) return;
@@ -509,6 +514,25 @@ export function createStore(): Store {
       const slot = seat === undefined || seat === null ? undefined : update.players?.slots?.[seat];
       recordWorld(update.arena?.tick, slot?.lastMoveSeq);
 
+      // Our seat is gone. Someone released it — another tab of ours pressing Exit, a
+      // beacon from a window that closed, or the Worker's reaper — and the match we are
+      // holding no longer has us in it.
+      //
+      // `seatHeld` is what makes this safe to act on. The ER offers no read-your-writes,
+      // so the first `Players` payload after a join routinely predates the claim; treating
+      // that as "released" would bounce every player straight back out of the seat they
+      // just took. Only a seat we have *watched* be ours and then watched disappear is a
+      // release. Without it the local match survives as a ghost: an archer nobody draws,
+      // a HUD reading "down 0:00", and no way back to the character select.
+      if (update.players) {
+        if (slot?.occupied) seatHeld = true;
+        else if (seatHeld) {
+          seatHeld = false;
+          set({ match: null, arena: null, boss: null, players: null, status: 'idle' });
+          return;
+        }
+      }
+
       set({
         ...update,
         updatedAt: Date.now(),
@@ -549,7 +573,14 @@ export function createStore(): Store {
 export function mySeatSlot(state: State): PlayerSlot | null {
   const { match, players } = state;
   if (!match || !players) return null;
-  return players.slots[match.seat] ?? null;
+  const slot = players.slots[match.seat] ?? null;
+  // `occupied` is not decoration here. A seat that has been released — by Exit, by a
+  // closing tab, or by the Worker's reaper — is zeroed on chain, and a zeroed slot answers
+  // hp 0, zone LOBBY and class 0. Returned as if it were ours, that renders a player who
+  // is dead, invisible and permanently at 0:00: every consumer reads plausible values and
+  // none of them are about us. `null` is the honest answer to "which seat is mine" when
+  // the answer is "none".
+  return slot?.occupied ? slot : null;
 }
 
 /**

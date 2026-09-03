@@ -162,14 +162,26 @@ export default function App() {
         );
       });
     };
-    const onHide = (): void => {
-      if (document.visibilityState === 'hidden') release();
+    // ONLY a real teardown, and `persisted` is the whole of the difference.
+    //
+    // This used to also listen on `visibilitychange`, which fires the moment a tab is
+    // backgrounded — alt-tab, minimise, lock the screen, switch apps. It released the seat
+    // of a player who had gone nowhere, and they came back to a tab still holding a match
+    // whose seat no longer existed: no archer, and a HUD reading "down 0:00" off a zeroed
+    // slot. Backgrounding is not leaving.
+    //
+    // `persisted === true` means the page is going into the bfcache and may be restored
+    // intact, which is also not leaving. Only a discard releases.
+    //
+    // The cost of being wrong here is asymmetric and that is what settles it: releasing a
+    // seat someone is still using is a player deleted mid-game, while failing to release
+    // one is an arena the Worker's reaper collects on the next join.
+    const onPageHide = (event: PageTransitionEvent): void => {
+      if (!event.persisted) release();
     };
-    window.addEventListener('pagehide', release);
-    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onPageHide);
     return () => {
-      window.removeEventListener('pagehide', release);
-      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onPageHide);
     };
   }, [store]);
 
