@@ -228,9 +228,8 @@ const HUD_CSS = `
    the room. Fill colour is the state: --ok / --cyan while it is fine, --ember when it is
    not, which is the same rule the boss's own eyes follow. The mark on the boss bar is the
    enrage line at FURY_PCT. */
-.hud-tl { width: min(380px, 42vw); }
-.hud-vitals { display: grid; gap: 5px; margin: 6px 0 4px; }
-.hud-bar-row { display: grid; grid-template-columns: 62px 1fr 58px; align-items: center; gap: 8px; }
+.hud-vitals { display: grid; gap: 6px; }
+.hud-bar-row { display: grid; grid-template-columns: 68px 1fr 64px; align-items: center; gap: 10px; }
 .hud-bar-label { font-family: var(--pixel); font-size: 10px; letter-spacing: 0.1em; color: var(--muted); }
 .hud-bar-num { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
 .hud-bar { position: relative; height: 9px; background: color-mix(in srgb, var(--line) 55%, transparent); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
@@ -287,6 +286,12 @@ export function Hud() {
           paragraph telling you where it is. `Verdict` stays because it is the end of a
           match, not chrome. */}
       <PhaseCluster />
+      {/* The two healths, top centre: "make hp top center instead of left". The phase
+          cluster stays top left; the bars are the one thing a raider reads from the far
+          side of the room, so they sit where every raid game puts them. */}
+      <div className="hud hud-tc">
+        <VitalsRow />
+      </div>
       <Verdict />
     </>
   );
@@ -385,7 +390,6 @@ function PhaseCluster() {
         <MutePill />
         <ExitPill />
       </div>
-      <VitalsRow />
       <ol className="hud-seats">
         {Array.from({ length: MAX_SEATS }, (_, i) => {
           const slot = players?.slots[i];

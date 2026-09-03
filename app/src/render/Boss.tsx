@@ -72,7 +72,7 @@ import {
 } from '@heartrot/client';
 
 import { ATLAS_H, ATLAS_SCALE, ATLAS_W, BOSS_ATLAS, BOSS_PARTS, EYES_PX } from './boss.gen';
-import { play, speak } from './sfx';
+import { play, speak, VOICE_NAMES, type VoiceName } from './sfx';
 
 /**
  * Which way a limb flinches and breaks off: away from the boss origin, along its own
@@ -251,20 +251,29 @@ export interface BossProps {
  * line to a different moment is one edit here and no asset moves. The clips are named for
  * where they came from (`sfx.ts::VoiceName`), deliberately not for these moments.
  *
- * `speak` refuses a line while another is still speaking, so a limb break landing on the
- * same tick as the vent opening plays one line, not two over each other. The limb line is
- * also held to one per `TAUNT_GAP_MS`: nine limbs breaking in a solo fight is nine
- * chances to speak, and a boss that talks on every one is a boss nobody listens to.
+ * The three beats interrupt whatever taunt is speaking; everything else is the taunt
+ * clock below.
  */
 const VOICE = {
   wakes: 'boss-new1',
-  limb: 'boss-02',
-  vent: 'boss-04',
   fury: 'boss-07',
   dies: 'boss-08',
 } as const;
-const TAUNT_GAP_MS = 12_000;
-let lastTauntAt = -Infinity;
+
+/**
+ * Between the beats the boss taunts on a clock: one line every 5–10 s of the fight, drawn
+ * from the whole pool with no immediate repeat ("make boss say line after every 5-10sec").
+ * Wall-clock, deliberately: this is presentation, not a rule, and a taunt cadence tied to
+ * the crank would stutter with the feed. `speak` still refuses a taunt that would land on
+ * top of a beat, so the cadence yields to the fight rather than the other way round.
+ */
+const TAUNT_MIN_MS = 5_000;
+const TAUNT_MAX_MS = 10_000;
+
+function nextTaunt(last: VoiceName | null): VoiceName {
+  const pool = VOICE_NAMES.filter((v) => v !== last);
+  return pool[Math.floor(Math.random() * pool.length)] ?? VOICE_NAMES[0]!;
+}
 
 export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
   const shellRef = useRef<SVGGElement | null>(null);
@@ -319,6 +328,25 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     [],
   );
 
+  // The taunt clock runs only while the fight does. Keyed on the phase alone so a
+  // notification that changes nothing else never re-arms it, and cleared on the way out so
+  // a settled arena — or an unmounted room — never speaks.
+  const fighting = arena.phase === PHASE_FIGHTING;
+  useEffect(() => {
+    if (!fighting) return;
+    let last: VoiceName | null = null;
+    let timer = 0;
+    const arm = (): void => {
+      timer = window.setTimeout(() => {
+        last = nextTaunt(last);
+        speak(last);
+        arm();
+      }, TAUNT_MIN_MS + Math.random() * (TAUNT_MAX_MS - TAUNT_MIN_MS));
+    };
+    arm();
+    return () => window.clearTimeout(timer);
+  }, [fighting]);
+
   useEffect(() => {
     const now = { parts: boss.parts.slice(0, N_PARTS), phase: arena.phase, vent: boss.ventOpen, fury: furious };
     const was = prev.current;
@@ -353,10 +381,6 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
 
       if (after === 0) {
         play('partBreak');
-        if (performance.now() - lastTauntAt >= TAUNT_GAP_MS) {
-          lastTauntAt = performance.now();
-          speak(VOICE.limb);
-        }
         el.classList.add('hr-dead');
         // Ends where `.hr-dead` rests, so the limb lands charred with no pop.
         el.animate(
@@ -396,22 +420,21 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     // The vent opening is one edge of one byte; the ring's own transition is the visual.
     if (was.vent !== VENT_OPEN && now.vent === VENT_OPEN) {
       play('ventOpen');
-      speak(VOICE.vent);
     }
     // Fury is the same shape: one edge of one derived bit, the class is the visual and
     // the roar is the one-shot. A reload onto a furious boss lands on the first-snapshot
     // return above and shows the glow without the roar.
     if (!was.fury && now.fury) {
       play('fury');
-      speak(VOICE.fury);
+      speak(VOICE.fury, true);
     }
     // The boss speaks on the tick it wakes — MUSTERING → FIGHTING is the crank's flip and
     // the one edge every raider sees at the same time — and on the tick the fight ends
     // with its core gone. A wipe or an enrage ends the fight through the same phase
     // change; the death line is only for the raid that actually killed it.
-    if (was.phase === PHASE_MUSTERING && now.phase === PHASE_FIGHTING) speak(VOICE.wakes);
+    if (was.phase === PHASE_MUSTERING && now.phase === PHASE_FIGHTING) speak(VOICE.wakes, true);
     if (was.phase === PHASE_FIGHTING && now.phase === PHASE_SETTLING && boss.coreHp === 0) {
-      speak(VOICE.dies);
+      speak(VOICE.dies, true);
     }
 
     const shell = shellRef.current;

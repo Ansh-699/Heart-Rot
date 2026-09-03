@@ -68,11 +68,12 @@ let noiseBuf: AudioBuffer | null = null;
  * has clicked, and a failed fetch is a line that never plays, not an error anywhere.
  */
 export type VoiceName = 'boss-02' | 'boss-04' | 'boss-07' | 'boss-08' | 'boss-new1';
-const VOICE_NAMES: readonly VoiceName[] = ['boss-02', 'boss-04', 'boss-07', 'boss-08', 'boss-new1'];
+export const VOICE_NAMES: readonly VoiceName[] = ['boss-02', 'boss-04', 'boss-07', 'boss-08', 'boss-new1'];
 /** Louder than a cue: a voice is the one sound meant to be listened to rather than felt. */
 const VOICE_GAIN = 1.6;
 /** One line at a time; a line asked for while one is speaking is dropped, not queued. */
 let voiceUntil = 0;
+let speaking: AudioBufferSourceNode | null = null;
 const voices = new Map<VoiceName, AudioBuffer>();
 let muted = readMuted();
 const lastAt = new Map<SfxName, number>();
@@ -311,15 +312,19 @@ function preloadVoices(c: AudioContext): void {
 /**
  * Speak one of the boss's lines. Same master as every cue, so MUTED silences it; its own
  * gain on top, because a voice under the volley's noise floor is a voice nobody hears.
- * Refused while another line is still speaking — two lines over each other is noise, and
- * the moments that ask for one (a limb breaking, the vent opening) can cluster in a tick.
+ * Refused while another line is still speaking — two lines over each other is noise —
+ * unless `interrupt` is set: the fight's beats (waking, fury, dying) cut a taunt off,
+ * because a boss finishing a quip over its own death is worse than a clipped quip.
  */
-export function speak(name: VoiceName): void {
+export function speak(name: VoiceName, interrupt = false): void {
   if (muted || ctx === null || master === null) return;
   const buffer = voices.get(name);
   if (buffer === undefined) return;
   const now = ctx.currentTime;
-  if (now < voiceUntil) return;
+  if (now < voiceUntil) {
+    if (!interrupt) return;
+    speaking?.stop();
+  }
   voiceUntil = now + buffer.duration;
   const src = ctx.createBufferSource();
   src.buffer = buffer;
@@ -328,6 +333,7 @@ export function speak(name: VoiceName): void {
   src.connect(g);
   g.connect(master);
   src.start(now);
+  speaking = src;
 }
 
 export function play(name: SfxName): void {
