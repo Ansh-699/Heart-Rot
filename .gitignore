@@ -29,3 +29,4 @@ secrets/
 *.swp
 .idea/
 .vscode/
+scripts/ops/routes.probe.ts

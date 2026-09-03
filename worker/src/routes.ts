@@ -61,6 +61,7 @@ import {
   type DecodedTransactionError,
   type HeartrotRpc,
   writeLeaderboard,
+  DELEGATION_PROGRAM_ID,
 } from '@heartrot/client';
 
 import { identityFromDid, verifyPrivyToken } from './auth';
@@ -229,7 +230,11 @@ async function context(env: Env): Promise<Ctx> {
 async function accountData(rpc: HeartrotRpc, account: Address): Promise<Uint8Array | null> {
   const { value } = await rpc.getAccountInfo(account, { encoding: 'base64' }).send();
   if (!value) return null;
-  const raw = atob(value.data[0]);
+  return bytesOf(value.data[0]);
+}
+
+function bytesOf(base64: string): Uint8Array {
+  const raw = atob(base64);
   const bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   return bytes;
@@ -397,19 +402,76 @@ const ARENA_SCAN = 12;
 const GRIND_STEPS = 64;
 
 /**
- * Ids read per wave of the scan. The reads are independent and read-only; the scan was
- * serial only because it grew one `continue` at a time. Measured serially with
- * `scripts/ops/joinprobe.ts`: 18 steps, 10.7 s to a confirmed seat — two round trips
- * per id (router, then RPC), one id at a time.
+ * Ids per wave of the scan: one base-layer `getMultipleAccounts` per wave, then the router
+ * and the ER only for the ids the base layer says are delegated.
  *
- * Why 8 and not the whole window at once. workerd keeps at most six outbound
- * connections open per request and queues the rest, so a wave costs roughly its
- * fetches divided by six — and every id read past the one that answers is overshoot,
- * paid in full because the wave is awaited whole. Eight ids is sixteen fetches: enough
- * to keep all six connections busy, small enough that the overshoot is at most seven
- * ids. The measured 18-step join becomes three waves instead of eighteen serial steps.
+ * SUBREQUESTS ARE THE BUDGET, not latency. The first batched scan read every id through
+ * `readArena` — a router call and an RPC read each — in waves of eight, and overshot to
+ * the end of the wave: 24 ids, 48 fetches, before the seat claim had sent anything.
+ * Measured with `scripts/ops/workerprobe.ts` + `countfetch.mjs`: 67 outbound fetches in
+ * one `sessionInit`, against Cloudflare's 50-subrequest cap on the free plan. The request
+ * died mid-scan and `preClaim` reported it as `try_again`; the very fix for the rejoin
+ * 500 had made every join fail. The base copy already says which layer an arena is on —
+ * a delegated account is a husk OWNED BY THE DELEGATION PROGRAM — so one call classifies
+ * a whole wave and only the delegated few (the live rooms) cost a router and an ER read.
+ * 18 ids: 2 waves + 1 delegated id = 4 fetches, down from 48. Sixteen because the
+ * overshoot is now nearly free and fewer waves is fewer round trips.
  */
-const SCAN_BATCH = 8;
+const SCAN_BATCH = 16;
+
+type MatchPdas = Awaited<ReturnType<typeof matchPdas>>;
+type WaveRead = { pdas: MatchPdas; state: ArenaAccount | null; erFqdn?: string };
+
+/**
+ * One wave of the scan. A wave whose base read fails is a wave of busy ids — the walk
+ * counts each toward its budget and logs it — never a throw out of the scan.
+ *
+ * Three answers per id, from the base copy's OWNER: absent (never created, or closed);
+ * ours (settled, or a lobby that has not been delegated yet — decoded from the bytes
+ * already in hand); the delegation program's (a live room: ask the router where it is
+ * and read it there). A husk the router no longer calls delegated is an arena BETWEEN
+ * LAYERS — a settle's commit-and-undelegate in flight — and that is a busy id, not an
+ * absent one: treating it as free would hand `warmArena` an id that already exists.
+ */
+async function readWave(c: Ctx, wave: MatchPdas[]): Promise<PromiseSettledResult<WaveRead>[]> {
+  let infos: ReadonlyArray<{ owner: Address; data: readonly [string, string] } | null>;
+  try {
+    const { value } = await c.base
+      .getMultipleAccounts(
+        wave.map((p) => p.arena),
+        { encoding: 'base64' },
+      )
+      .send();
+    infos = value as typeof infos;
+  } catch (reason) {
+    return wave.map(() => ({ status: 'rejected', reason }));
+  }
+  return Promise.allSettled(
+    wave.map(async (pdas, i): Promise<WaveRead> => {
+      const info = infos[i] ?? null;
+      if (info === null) return { pdas, state: null };
+      if (info.owner === DELEGATION_PROGRAM_ID) {
+        const status = await getDelegationStatus(pdas.arena, c.env.ROUTER_ENDPOINT);
+        if (!status.isDelegated || status.fqdn === undefined) {
+          throw new Error('between layers: base husk, router says undelegated');
+        }
+        const data = await accountData(createRpc(status.fqdn), pdas.arena);
+        if (!data) throw new Error('between layers: router says delegated, ER has no account');
+        return { pdas, state: decodeOrNull(data), erFqdn: status.fqdn };
+      }
+      return { pdas, state: decodeOrNull(bytesOf(info.data[0])) };
+    }),
+  );
+}
+
+/** Wrong discriminator or wrong version: a husk, or an account we must not touch. */
+function decodeOrNull(data: Uint8Array): ArenaAccount | null {
+  try {
+    return decodeArena(data);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Both child PDAs of this arena land on bump 255?
@@ -482,12 +544,12 @@ async function openArena(
     // the wave with it, and the results are walked in id order below: the rendezvous
     // property — every caller stops at the same arena — is a property of the walk, not
     // of the fetch, so reading eight at once does not disturb it.
-    const reads = await Promise.allSettled(
-      Array.from({ length: Math.min(SCAN_BATCH, span - from) }, async (_, i) => {
-        const pdas = await matchPdas(c.programId, head + BigInt(from + i));
-        return { pdas, ...(await readArena(c, pdas.arena)) };
-      }),
+    const wave = await Promise.all(
+      Array.from({ length: Math.min(SCAN_BATCH, span - from) }, (_, i) =>
+        matchPdas(c.programId, head + BigInt(from + i)),
+      ),
     );
+    const reads = await readWave(c, wave);
     for (const [i, read] of reads.entries()) {
       if (occupied >= ARENA_SCAN) break;
       const arenaId = head + BigInt(from + i);
