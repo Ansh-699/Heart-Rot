@@ -223,6 +223,24 @@ const HUD_CSS = `
 .hud-keys { color: var(--dim); }
 .hud-keys b { font-family: var(--pixel); font-weight: 400; color: var(--ink); }
 .hud-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The two bars. The cluster grows to fit them; it is the one panel that survived, so it
+   can carry the fight's two most-read numbers at a width that reads from the far side of
+   the room. Fill colour is the state: --ok / --cyan while it is fine, --ember when it is
+   not, which is the same rule the boss's own eyes follow. The mark on the boss bar is the
+   enrage line at FURY_PCT. */
+.hud-tl { width: min(380px, 42vw); }
+.hud-vitals { display: grid; gap: 5px; margin: 6px 0 4px; }
+.hud-bar-row { display: grid; grid-template-columns: 62px 1fr 58px; align-items: center; gap: 8px; }
+.hud-bar-label { font-family: var(--pixel); font-size: 10px; letter-spacing: 0.1em; color: var(--muted); }
+.hud-bar-num { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
+.hud-bar { position: relative; height: 9px; background: color-mix(in srgb, var(--line) 55%, transparent); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+.hud-bar-boss { height: 12px; }
+.hud-bar-fill { height: 100%; background: var(--ok); transition: width 0.25s ease-out, background-color 0.3s; }
+.hud-bar-boss .hud-bar-fill { background: var(--cyan); }
+.hud-bar-fill.is-low, .is-down .hud-bar-fill, .hud-enraged .hud-bar-fill { background: var(--ember); }
+.hud-bar-mark { position: absolute; top: -1px; bottom: -1px; width: 1px; background: var(--ember); opacity: 0.8; }
+.is-down .hud-bar-label, .hud-enraged .hud-bar-label { color: var(--ember); }
+@media (prefers-reduced-motion: reduce) { .hud-bar-fill { transition: none; } }
 .hud-urgent { color: var(--ember); }
 .hud-seats { display: flex; gap: 3px; margin: 2px 0 0; padding: 0; list-style: none; }
 .hud-seat {
@@ -307,18 +325,40 @@ function VitalsRow() {
   // label is `isFurious`'s, never the number's.
   const hp = boss ? fightHp(boss, raidSize) : null;
   const furious = phase === PHASE_FIGHTING && boss !== null && isFurious(boss, raidSize);
+  const bossShown = hp !== null && hp.max > 0 && phase !== PHASE_LOBBY && phase !== PHASE_MUSTERING;
+  const bossPct = bossShown ? floorPercent(hp.left, hp.max) : 0;
+  const ownPct = slot.hpMax > 0 ? floorPercent(slot.hp, slot.hpMax) : 0;
 
+  // BARS, not numbers. "the health bar is confusing i dont see it quite good how much
+  // health is left" — the numbers were 11 px text in a corner while the player's eyes
+  // were on the creature. A filled bar is read at a glance from anywhere on the screen,
+  // the number rides on it for whoever wants it, and the boss bar carries the enrage line
+  // at FURY_PCT so the moment the fight changes is visible before it happens.
   return (
-    <div className="hud-row hud-vitals">
-      <span className={`fine tabular ${dead ? 'is-down' : ''}`}>
-        {dead
-          ? `down ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}`
-          : `${slot.hp} hp`}
-      </span>
-      {hp !== null && hp.max > 0 && phase !== PHASE_LOBBY && phase !== PHASE_MUSTERING && (
-        <span className={`fine tabular${furious ? ' hud-enraged' : ''}`}>
-          {furious ? 'ENRAGED' : 'boss'} {floorPercent(hp.left, hp.max)}%
+    <div className="hud-vitals">
+      <div className={`hud-bar-row${dead ? ' is-down' : ''}`}>
+        <span className="hud-bar-label">
+          {dead ? `DOWN ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}` : 'HP'}
         </span>
+        <div className="hud-bar" role="meter" aria-label="your health" aria-valuenow={slot.hp} aria-valuemax={slot.hpMax}>
+          <div
+            className={`hud-bar-fill${ownPct <= 30 ? ' is-low' : ''}`}
+            style={{ width: `${ownPct}%` }}
+          />
+        </div>
+        <span className="hud-bar-num">
+          {slot.hp}/{slot.hpMax}
+        </span>
+      </div>
+      {bossShown && (
+        <div className={`hud-bar-row hud-boss${furious ? ' hud-enraged' : ''}`}>
+          <span className="hud-bar-label">{furious ? 'ENRAGED' : 'BOSS'}</span>
+          <div className="hud-bar hud-bar-boss" role="meter" aria-label="boss health" aria-valuenow={bossPct} aria-valuemax={100}>
+            <div className="hud-bar-fill" style={{ width: `${bossPct}%` }} />
+            <div className="hud-bar-mark" style={{ left: `${FURY_PCT}%` }} aria-hidden="true" />
+          </div>
+          <span className="hud-bar-num">{bossPct}%</span>
+        </div>
       )}
     </div>
   );
