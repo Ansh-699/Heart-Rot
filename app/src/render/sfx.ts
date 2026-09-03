@@ -50,6 +50,30 @@ const FLOOR = 0.0001;
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let noiseBuf: AudioBuffer | null = null;
+
+// ---------------------------------------------------------------------------
+// The boss's voice — the ONE set of recorded assets in the game
+// ---------------------------------------------------------------------------
+
+/**
+ * Five lines the player recorded and processed himself (Downloads, Sep 3 2026), served
+ * from `public/voice/` as mono 64 kbps mp3 loudness-normalised to -16 LUFS by ffmpeg — mp3
+ * because it is the one format every browser's `decodeAudioData` takes, and 170–475 KB of
+ * 48 kHz stereo WAV each became 8–20 KB. Named by the clip they came from, not by the
+ * moment they play at: the moments are a table in `Boss.tsx` and can be re-dealt without
+ * touching an asset.
+ *
+ * Fetched and decoded on `unlock`, after the first gesture, never at import: the module
+ * promise is that nothing here touches the network or the audio device before the player
+ * has clicked, and a failed fetch is a line that never plays, not an error anywhere.
+ */
+export type VoiceName = 'boss-02' | 'boss-04' | 'boss-07' | 'boss-08' | 'boss-new1';
+const VOICE_NAMES: readonly VoiceName[] = ['boss-02', 'boss-04', 'boss-07', 'boss-08', 'boss-new1'];
+/** Louder than a cue: a voice is the one sound meant to be listened to rather than felt. */
+const VOICE_GAIN = 1.6;
+/** One line at a time; a line asked for while one is speaking is dropped, not queued. */
+let voiceUntil = 0;
+const voices = new Map<VoiceName, AudioBuffer>();
 let muted = readMuted();
 const lastAt = new Map<SfxName, number>();
 
@@ -87,6 +111,7 @@ function unlock(): void {
     const data = noiseBuf.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     void ctx.resume();
+    preloadVoices(ctx);
   } catch {
     // No audio device or API: `ctx` stays null and every cue is dropped, silently.
     ctx = null;
@@ -271,6 +296,40 @@ const RECIPES: Readonly<Record<SfxName, Recipe>> = {
 };
 
 /** Cue one sound. Safe before unlock (dropped), safe muted (dropped), never throws. */
+function preloadVoices(c: AudioContext): void {
+  for (const name of VOICE_NAMES) {
+    void fetch(`/voice/${name}.mp3`)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${r.status}`))))
+      .then((bytes) => c.decodeAudioData(bytes))
+      .then((buffer) => voices.set(name, buffer))
+      .catch(() => {
+        // A missing or undecodable clip is a line that never plays. The fight is unchanged.
+      });
+  }
+}
+
+/**
+ * Speak one of the boss's lines. Same master as every cue, so MUTED silences it; its own
+ * gain on top, because a voice under the volley's noise floor is a voice nobody hears.
+ * Refused while another line is still speaking — two lines over each other is noise, and
+ * the moments that ask for one (a limb breaking, the vent opening) can cluster in a tick.
+ */
+export function speak(name: VoiceName): void {
+  if (muted || ctx === null || master === null) return;
+  const buffer = voices.get(name);
+  if (buffer === undefined) return;
+  const now = ctx.currentTime;
+  if (now < voiceUntil) return;
+  voiceUntil = now + buffer.duration;
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  const g = ctx.createGain();
+  g.gain.value = VOICE_GAIN;
+  src.connect(g);
+  g.connect(master);
+  src.start(now);
+}
+
 export function play(name: SfxName): void {
   if (muted || ctx === null || master === null) return;
   const now = performance.now();
