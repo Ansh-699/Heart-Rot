@@ -128,6 +128,7 @@ export default function App() {
   const screen = useSelect(screenOf);
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
   const status = useSelect((s) => s.status);
+  const worldReady = useSelect((s) => s.arena !== null && s.players !== null);
   const store = useStore();
 
   /**
@@ -255,7 +256,9 @@ export default function App() {
           mounted once here rather than by each screen — which is also what finally puts a
           shot indicator in the waiting area, the one screen the dead spacebar lived on
           (spec §9.2). */}
-      {hasStage && <Hud />}
+      {/* Not before the world: the card would read LOBBY · tick 0 · connecting under the
+          "Opening the arena" loader, which is the "old UI behind the loading screen". */}
+      {hasStage && worldReady && <Hud />}
       {/* Not while settled: the verdict (`Hud.tsx`) is the results panel and the way out,
           on both sides of the gate, and this card would otherwise stack over it in the
           window where `Arena` says SETTLED and `Boss` has not landed yet. */}
@@ -847,10 +850,10 @@ function useMatchLink(onFeedDrop: () => void): Link {
         subscription = subscribeMatch({
           rpc: er,
           ...accounts,
-          onArena: (arena) => store.setWorld({ arena }),
-          onBoss: (boss) => store.setWorld({ boss }),
+          onArena: (arena) => store.setWorld({ arena, from: match.arenaPda }),
+          onBoss: (boss) => store.setWorld({ boss, from: match.arenaPda }),
           onPlayers: (players) => {
-            store.setWorld({ players });
+            store.setWorld({ players, from: match.arenaPda });
             const slot = players.slots[match.seat];
             // The reconcile is what drains the prediction buffer. Without it every input
             // replays forever and the local knight walks away from the server's copy.

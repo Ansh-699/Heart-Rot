@@ -164,6 +164,7 @@ function Bridge() {
       const arena = which === 'arena';
       const tick = opts.tick ?? (arena ? (opts.beam ? BEAM_TICK[opts.beam] : 900) : 0);
       store.setWorld({
+        from: '11111111111111111111111111111111',
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,
           arena ? (opts.bullets ?? 10) : 0, opts.outcome ?? 0, opts.incarnation ?? 0),
         boss: bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, !!opts.beam),

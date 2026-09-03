@@ -129,6 +129,15 @@ export type WorldUpdate = {
   arena?: ArenaAccount;
   boss?: BossAccount;
   players?: PlayersAccount;
+  /**
+   * The arena PDA of the feed this came from. A feed outlives the match it was opened
+   * for by a round trip — its socket is closed on the effect's cleanup, but a decode
+   * already in flight still lands — and a roster from the PREVIOUS arena, where our old
+   * seat is empty, arriving after the new seat was seen occupied is what bounced players
+   * back to the character select right after taking a seat. `setWorld` drops anything
+   * not from the match it holds.
+   */
+  from: string;
 };
 
 export type Store = {
@@ -337,6 +346,8 @@ const WARMING: ReadonlySet<string> = new Set(['no_open_arena', 'try_again']);
  * limit of 30 per minute per IP per path (`index.ts`) — a faster loop would spend the
  * budget and turn `no_open_arena` into `rate_limited`.
  */
+/** How long our seat must read empty before the match is treated as released. */
+const SEAT_LOSS_MS = 1_500;
 const WARM_RETRY_MS = 3_000;
 const WARM_RETRIES = 20;
 
@@ -465,6 +476,8 @@ export function createStore(): Store {
   /** Have we ever seen our own seat occupied? See `setWorld` for why this cannot be a
    * one-shot check against the first payload. */
   let seatHeld = false;
+  /** When the held seat was first seen empty, or 0 while it is ours. See `setWorld`. */
+  let seatMissingSince = 0;
 
   const release = async (): Promise<void> => {
     settling = false;
@@ -610,8 +623,9 @@ export function createStore(): Store {
       // the components whose selected value actually moved: only a selector returning a
       // whole account re-renders on every frame, and `App`'s `World` is the only one, by
       // design, because the renderer needs all three.
-      const seat = state.match?.seat;
-      const slot = seat === undefined || seat === null ? undefined : update.players?.slots?.[seat];
+      if (state.match === null || update.from !== state.match.arenaPda) return;
+      const seat = state.match.seat;
+      const slot = update.players?.slots?.[seat];
       recordWorld(update.arena?.tick, slot?.lastMoveSeq);
 
       // Our seat is gone. Someone released it — another tab of ours pressing Exit, a
@@ -624,12 +638,23 @@ export function createStore(): Store {
       // just took. Only a seat we have *watched* be ours and then watched disappear is a
       // release. Without it the local match survives as a ghost: an archer nobody draws,
       // a HUD reading "down 0:00", and no way back to the character select.
-      if (update.players) {
-        if (slot?.occupied) seatHeld = true;
-        else if (seatHeld) {
-          seatHeld = false;
-          set({ match: null, arena: null, boss: null, players: null, status: 'idle' });
-          return;
+      //
+      // And it is judged over time, not on one payload: the seat must be missing for
+      // `SEAT_LOSS_MS` of continuous updates, after the feed is live, before the match is
+      // dropped. One stale roster is not a release; a second of them is.
+      if (update.players && state.status !== 'connecting' && state.status !== 'joining') {
+        if (slot?.occupied) {
+          seatHeld = true;
+          seatMissingSince = 0;
+        } else if (seatHeld) {
+          const now = performance.now();
+          if (seatMissingSince === 0) seatMissingSince = now;
+          else if (now - seatMissingSince >= SEAT_LOSS_MS) {
+            seatHeld = false;
+            seatMissingSince = 0;
+            set({ match: null, arena: null, boss: null, players: null, status: 'idle' });
+            return;
+          }
         }
       }
 
