@@ -39,37 +39,6 @@
  */
 
 
-/**
- * Bottom centre, the one anchor `Hud` does not already use.
- *
- * Same `.hud` chrome as every other cluster and deliberately not a second style: it is
- * `Hud`'s block that defines the translucency, the border and the `pointer-events: none`
- * that keeps this off the aim. Only the anchor is new.
- *
- * ponytail: two `<style>` blocks for one design system. Fold this line into `HUD_CSS` if a
- * second cluster ever wants the bottom-centre anchor.
- */
-const LOBBY_CSS = `
-.hud-bc {
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  /* Bounded by the cluster BESIDE it, not by a fraction of the window. .hud-bl is
-     min-width 232px at left 8px bottom 8px, so 72vw ran into it by 8px at 1024 wide —
-     which is the first row of the spec's own scale table — and by 70px at 900. The
-     subtrahend is that cluster twice over plus its gutters: 2 x (232 + 8 + 8) = 496.
-     The max() is only a floor: under ~656px there is no arrangement of a 232px cluster
-     and a centred one that does not touch, and a calc that resolves negative would
-     collapse this box to nothing. Both clusters are pointer-events: none, so what is at
-     stake is legibility and never input. */
-  width: min(560px, max(160px, calc(100vw - 496px)));
-  text-align: center;
-}
-.hud-bc .vent { border: 0; background: none; padding: 0; }
-/* GatePrompt renders nothing once your seat is through the gate. Without this the
-   cluster's border, padding and translucent panel stay on screen as an empty box. */
-.hud-bc:empty { display: none; }
-`;
 
 export function Lobby() {
   return (
@@ -77,7 +46,6 @@ export function Lobby() {
       {/* No `#stage` here. `App` declares the one stage node and both screens share it,
           because a portal whose container changes identity is deleted and rebuilt, not
           moved — and this screen ends by handing the arena straight to the next one. */}
-      <style>{LOBBY_CSS}</style>
     </>
   );
 }

@@ -693,22 +693,6 @@ h3 {
   border-color: var(--maroon);
 }
 
-/* The mute toggle borrows `.pill`'s chrome; a `<button>` only needs its chrome reset. */
-.hud-mute {
-  background: none;
-  cursor: pointer;
-  color: var(--muted);
-}
-
-.hud-mute:hover {
-  color: var(--ink);
-}
-
-.hud-mute[aria-pressed='true'] {
-  color: var(--dim);
-  text-decoration: line-through;
-}
-
 /*
  * Charged shot — the class hooks `Shot.tsx` toggles on its pooled nodes. A CSS rule beats
  * the presentation attributes those nodes are drawn with, which is the point: the arrow

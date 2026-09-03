@@ -31,7 +31,7 @@
  * notification; the renderer inside `#stage` must not.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   CLASS_ARCHER,
@@ -47,8 +47,6 @@ import {
   PHASE_FIGHTING,
   PHASE_LOBBY,
   PHASE_MUSTERING,
-  PHASE_SETTLED,
-  PHASE_SETTLING,
   TICK_MS,
   VENT_PCT_FULL,
   VENT_PCT_SOLO,
@@ -161,13 +159,6 @@ function usePlayOnRise(when: boolean, name: SfxName): void {
   }, [when, name]);
 }
 
-const PHASE_NAMES: Readonly<Record<number, string>> = {
-  [PHASE_LOBBY]: 'LOBBY',
-  [PHASE_MUSTERING]: 'MUSTERING',
-  [PHASE_FIGHTING]: 'FIGHTING',
-  [PHASE_SETTLING]: 'SETTLING',
-  [PHASE_SETTLED]: 'SETTLED',
-};
 
 /**
  * The cluster chrome. `.hud*` only — the `.dev*` rules that used to ride along are in
@@ -182,6 +173,110 @@ const PHASE_NAMES: Readonly<Record<number, string>> = {
  * `pointerdown` to `#stage`, and an overlay that does not hit-test is not in the way.
  */
 const HUD_CSS = `
+/* THE HUD IS NOT A PANEL. Two boxed, bordered, translucent clusters covered the top of
+   the room; this is what is left after "fully professional and small ... as minimal as
+   possible". No backgrounds, no borders: every element is drawn straight onto the scene
+   under a hard 1 px shadow, which is what keeps it legible over the cyan orb and the
+   fury glow alike. What survived, and why:
+     - two icons top right (sound, leave), at half opacity until hovered
+     - top centre, in the pit only: the clock as bare digits, one 6 px boss bar with its
+       name and percentage on the bar's own ends, and a row of 5 px seat dots that
+       exists only when there is more than one seat to show
+   Gone: the phase pill, the tick counter and the feed word (telemetry has them), the
+   HP bar (it is over your archer's head), the muster label in the lobby (the gate
+   carries it), the seat dots in a solo fight.
+   The whole layer fades to 60 % after four quiet seconds and returns on any input or
+   hit; H hides it. \`.hud\` — the box — now dresses the end-of-match verdict alone.
+   (No backticks in this block beyond the escaped pair above: it is a template literal.) */
+.hud-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+.hud-layer.is-calm { opacity: 0.6; }
+.hud-layer.is-hidden { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .hud-layer { transition: none; } }
+
+/* Top right: the wordmark owns the top left and telemetry's cue owns the bottom right. */
+.hud-corner { position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; }
+.hud-icon {
+  width: 24px;
+  height: 24px;
+  padding: 2px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  opacity: 0.5;
+  cursor: pointer;
+  pointer-events: auto;
+  filter: drop-shadow(0 1px 0 #000) drop-shadow(0 0 3px rgb(0 0 0 / 0.9));
+  transition: opacity 0.15s;
+}
+.hud-icon:hover, .hud-icon:focus-visible { opacity: 1; outline: 0; }
+.hud-icon svg { width: 100%; height: 100%; display: block; }
+.hud-icon[aria-pressed='true'] { color: var(--muted); }
+
+.hud-top {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(460px, 38vw);
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+}
+.hud-digits {
+  font: 26px var(--pixel);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  text-shadow: 0 1px 0 #000, 0 0 8px rgb(0 0 0 / 0.9);
+}
+.hud-tag {
+  font: 9px var(--pixel);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-shadow: 0 1px 0 #000, 0 0 6px rgb(0 0 0 / 0.9);
+}
+.hud-urgent .hud-digits { color: var(--ember); }
+
+.hud-boss {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+.hud-boss-bar {
+  position: relative;
+  height: 6px;
+  background: rgb(0 0 0 / 0.55);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.7);
+  overflow: hidden;
+}
+/* scaleX, never width: this bar redraws on every notification that moves the shell. */
+.hud-boss-fill {
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: var(--cyan);
+  transition: transform 0.25s ease-out, background-color 0.3s;
+}
+.hud-boss-mark { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ember); opacity: 0.8; }
+.hud-boss-pct { font: 11px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); text-shadow: 0 1px 0 #000, 0 0 6px rgb(0 0 0 / 0.9); }
+.hud-enraged .hud-boss-fill { background: var(--ember); }
+.hud-enraged .hud-tag { color: var(--ember); }
+@media (prefers-reduced-motion: reduce) { .hud-boss-fill { transition: none; } }
+
+.hud-seats { display: flex; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.hud-seat { width: 5px; height: 5px; border-radius: 50%; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.6); }
+
+/* The end-of-match verdict is the one boxed thing left: it is a result, not chrome. */
 .hud {
   position: fixed;
   z-index: 30;
@@ -195,326 +290,203 @@ const HUD_CSS = `
   border-radius: 3px;
   box-shadow: 0 8px 26px -10px rgb(0 0 0 / 0.75);
 }
-.hud button { pointer-events: auto; }
-.hud h3 {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.hud p { margin: 0; }
-.hud-tl { top: 8px; left: 8px; }
-.hud-tc { top: 8px; left: 50%; transform: translateX(-50%); width: min(520px, 46vw); }
-/* Two clusters, one row: the phase cluster ends near x=345 and the centre one begins at
-   (vw - 520) / 2, so below ~1210 px they overlap and SOUND/EXIT sit under the centre
-   panel, greyed. Seen on two half-screen windows side by side. Below that width the
-   centre cluster drops under the phase cluster instead. */
-@media (max-width: 1210px) { .hud-tc { top: 66px; } }
 .hud-ml { top: 50%; left: 12px; transform: translateY(-50%); max-width: min(340px, 30vw); }
-.hud-bl { left: 8px; bottom: 8px; min-width: 232px; }
-/* Spec §1.3 puts the parts cluster bottom-right; telemetry's anchor is right 12px /
-   bottom 12px, and open it is ~700px tall, so bottom-right is under it whenever anyone
-   presses backtick. Telemetry is no longer open by DEFAULT, but its cue button rests in
-   that same corner, so bottom-right is still occupied at rest. Top-right is the free one.
-   ponytail: if telemetry ever moves to a true middle-right anchor, move this back to BR. */
-.hud-tr { top: 8px; right: 8px; min-width: 168px; }
-/* One line of instruction, and it is the whole answer to "the space bar doesn't work":
-   until now nothing in the running game named a single key except one line in Gate.tsx
-   that disappears the moment you reach the gate. Not a cluster of its own — it rides in
-   .hud-bl, which is already mounted on both sides of the gate and already carries the
-   trigger's state, so the keys sit beside the pill that reports them and the play area
-   loses nothing. --dim resolves to --muted on this surface (styles.css), so it reads.
-   (No backticks in this block: it is a template literal, and one would end it.) */
-.hud-keys { color: var(--dim); }
-.hud-keys b { font-family: var(--pixel); font-weight: 400; color: var(--ink); }
-.hud-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-/* The two bars. The cluster grows to fit them; it is the one panel that survived, so it
-   can carry the fight's two most-read numbers at a width that reads from the far side of
-   the room. Fill colour is the state: --ok / --cyan while it is fine, --ember when it is
-   not, which is the same rule the boss's own eyes follow. The mark on the boss bar is the
-   enrage line at FURY_PCT. */
-.hud-vitals { display: grid; gap: 6px; }
-.hud-clock { display: flex; align-items: baseline; justify-content: center; gap: 10px; margin: 0 0 6px; }
-.hud-clock-digits { font-family: var(--pixel); font-size: 30px; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; color: var(--ink); }
-.hud-clock-label { font-family: var(--pixel); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
-.hud-urgent .hud-clock-digits, .hud-urgent .hud-clock-label { color: var(--ember); }
-.hud-bar-row { display: grid; grid-template-columns: 68px 1fr 64px; align-items: center; gap: 10px; }
-.hud-bar-label { font-family: var(--pixel); font-size: 10px; letter-spacing: 0.1em; color: var(--muted); }
-.hud-bar-num { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
-.hud-bar { position: relative; height: 9px; background: color-mix(in srgb, var(--line) 55%, transparent); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
-.hud-bar-boss { height: 12px; }
-/* The fill is a full-width box SCALED, not a box whose width changes: width is a layout
-   property and the bar re-renders on every notification that moves hp, so a width
-   transition re-laid-out the whole cluster ten times a second. scaleX is compositor-only. */
-.hud-bar-fill { height: 100%; width: 100%; transform-origin: left center; background: var(--ok); transition: transform 0.25s ease-out, background-color 0.3s; }
-.hud-bar-boss .hud-bar-fill { background: var(--cyan); }
-.hud-bar-fill.is-low, .is-down .hud-bar-fill, .hud-enraged .hud-bar-fill { background: var(--ember); }
-.hud-bar-mark { position: absolute; top: -1px; bottom: -1px; width: 1px; background: var(--ember); opacity: 0.8; }
-.is-down .hud-bar-label, .hud-enraged .hud-bar-label { color: var(--ember); }
-@media (prefers-reduced-motion: reduce) { .hud-bar-fill { transition: none; } }
-.hud-urgent { color: var(--ember); }
-.hud-seats { display: flex; gap: 3px; margin: 2px 0 0; padding: 0; list-style: none; }
-.hud-seat {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-}
-.hud-toggle {
-  font: 10px var(--pixel);
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
-}
-.hud-toggle:hover { color: var(--ink); }
 `;
-/* The nine `.dev` rules that used to close this block are gone. Every one of them was a
-   third copy: `styles.css` already ships the 88 % backdrop, the grip, and — for the four
-   small-text roles §0.5 measured at 3.45:1 over the boss's orb — the `--dim: var(--muted)`
-   token override on `.hud, .dev, .dev-cue`, which retires the token on the surface instead
-   of rewriting the rules that name it. `DevPanel.tsx` styles `.dev`; this file styles
-   `.hud`. */
+
+/** Quiet seconds before the layer fades. Long enough that it never fades mid-dodge. */
+const CALM_AFTER_MS = 4_000;
 
 /**
- * Every cluster, mounted once. All five are `position: fixed`, so this renders the same on
- * either side of the gate and the caller does not have to place anything.
+ * The whole HUD, three nodes. Everything is `position: fixed`, so it renders the same on
+ * either side of the gate and the caller places nothing.
  */
 export function Hud() {
+  const calm = useCalm();
+  const hidden = useHideKey();
   return (
     <>
       <style>{HUD_CSS}</style>
-      {/* ONE cluster, top left. The screen used to carry four: a muster card top centre, a
-          class/health panel bottom left, a "tiles to the gate" prompt bottom centre and a
-          parts list top right. Together they covered a third of the play area and buried
-          the room the whole redesign exists to show. Everything still worth reading moved
-          into the cluster below; the gate now carries its own marker instead of a
-          paragraph telling you where it is. `Verdict` stays because it is the end of a
-          match, not chrome. */}
-      <PhaseCluster />
-      {/* The two healths, top centre: "make hp top center instead of left". The phase
-          cluster stays top left; the bars are the one thing a raider reads from the far
-          side of the room, so they sit where every raid game puts them. */}
-      <div className="hud hud-tc">
-        <FightClock />
-        <VitalsRow />
+      <div className={`hud-layer${calm ? ' is-calm' : ''}${hidden ? ' is-hidden' : ''}`}>
+        <Corner />
+        <Top />
       </div>
       <Verdict />
     </>
   );
 }
 
-// ---------------------------------------------------------------------------
-// TL — phase, tick, socket, roster
-// ---------------------------------------------------------------------------
-
 /**
- * The four facts the deleted `.header` carried, minus the wordmark. The roster is twenty
- * dots rather than twenty rows: an empty seat is information during a muster, and the
- * colour is the same `SKIN_COLORS` entry the knight is drawn in, so a dot and a figure on
- * the floor are matchable at a glance. Counts a screen reader needs are on each dot's
- * label and on the telemetry panel's Match group.
+ * Fades the layer after {@link CALM_AFTER_MS} of nothing: no pointer, no key, no change
+ * to your own hp, no phase change. Any of those brings it straight back. The timer is
+ * re-armed on every pointer move, which is cheap: React bails out of a `setCalm(false)`
+ * that changes nothing, and clearing a timeout is not work.
  */
-/**
- * The one line that survived the cull: your health, your shot, and how much shell is left.
- *
- * These three were spread across a bottom-left panel and a top-centre bar. They are worth
- * a glance mid-fight and nothing more, so they live in the cluster the player already
- * reads rather than in furniture of their own. Everything else those panels carried —
- * class name, respawn clock, muster copy, per-part list, control hints — was either
- * instructional (and now belongs to the gate marker) or legible from the scene itself.
- */
-function VitalsRow() {
-  const slot = useSelect(mySeatSlot);
-  const boss = useSelect((s) => s.boss);
+function useCalm(): boolean {
+  const [calm, setCalm] = useState(false);
+  const hp = useSelect((s) => mySeatSlot(s)?.hp ?? -1);
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
-  const raidSize = useSelect((s) => s.arena?.raidSize ?? 0);
-  const tick = useSelect((s) => s.arena?.tick ?? 0);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
-  if (!slot) return null;
-
-  const dead = slot.hp === 0;
-  // Fight HP, not shell: shell above the vent line never has to come off, so a solo bar
-  // read `shell 97%` three hits from a win. `fightHp` is the chain's own `Boss::fight_hp`
-  // and the floor is what keeps `boss 20%` and ENRAGED landing on the same tick — the
-  // label is `isFurious`'s, never the number's.
-  const hp = boss ? fightHp(boss, raidSize) : null;
-  const furious = phase === PHASE_FIGHTING && boss !== null && isFurious(boss, raidSize);
-  const bossShown = hp !== null && hp.max > 0 && phase !== PHASE_LOBBY && phase !== PHASE_MUSTERING;
-  const bossPct = bossShown ? floorPercent(hp.left, hp.max) : 0;
-  const ownPct = slot.hpMax > 0 ? floorPercent(slot.hp, slot.hpMax) : 0;
-
-  // BARS, not numbers. "the health bar is confusing i dont see it quite good how much
-  // health is left" — the numbers were 11 px text in a corner while the player's eyes
-  // were on the creature. A filled bar is read at a glance from anywhere on the screen,
-  // the number rides on it for whoever wants it, and the boss bar carries the enrage line
-  // at FURY_PCT so the moment the fight changes is visible before it happens.
-  return (
-    <div className="hud-vitals">
-      <div className={`hud-bar-row${dead ? ' is-down' : ''}`}>
-        <span className="hud-bar-label">
-          {dead ? `DOWN ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}` : 'HP'}
-        </span>
-        <div className="hud-bar" role="meter" aria-label="your health" aria-valuenow={slot.hp} aria-valuemax={slot.hpMax}>
-          <div
-            className={`hud-bar-fill${ownPct <= 30 ? ' is-low' : ''}`}
-            style={{ transform: `scaleX(${ownPct / 100})` }}
-          />
-        </div>
-        <span className="hud-bar-num">
-          {slot.hp}/{slot.hpMax}
-        </span>
-      </div>
-      {bossShown && (
-        <div className={`hud-bar-row hud-boss${furious ? ' hud-enraged' : ''}`}>
-          <span className="hud-bar-label">{furious ? 'ENRAGED' : 'BOSS'}</span>
-          <div className="hud-bar hud-bar-boss" role="meter" aria-label="boss health" aria-valuenow={bossPct} aria-valuemax={100}>
-            <div className="hud-bar-fill" style={{ transform: `scaleX(${bossPct / 100})` }} />
-            <div className="hud-bar-mark" style={{ left: `${FURY_PCT}%` }} aria-hidden="true" />
-          </div>
-          <span className="hud-bar-num">{bossPct}%</span>
-        </div>
-      )}
-    </div>
-  );
+  const timer = useRef(0);
+  const wake = useCallback((): void => {
+    setCalm(false);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCalm(true), CALM_AFTER_MS);
+  }, []);
+  useEffect(() => {
+    const on = (): void => wake();
+    window.addEventListener('pointermove', on, { passive: true });
+    window.addEventListener('pointerdown', on, { passive: true });
+    window.addEventListener('keydown', on);
+    return () => {
+      window.removeEventListener('pointermove', on);
+      window.removeEventListener('pointerdown', on);
+      window.removeEventListener('keydown', on);
+      window.clearTimeout(timer.current);
+    };
+  }, [wake]);
+  useEffect(() => wake(), [hp, phase, wake]);
+  return calm;
 }
 
-function PhaseCluster() {
-  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
-  const tick = useSelect((s) => s.arena?.tick ?? 0);
-  const status = useSelect((s) => s.status);
-  const players = useSelect((s) => s.players);
-  const seat = useSelect((s) => s.match?.seat ?? -1);
+/** H hides the layer entirely; H again brings it back. Ignored while typing in a field. */
+function useHideKey(): boolean {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    const on = (event: KeyboardEvent): void => {
+      if (event.code !== 'KeyH' || event.repeat) return;
+      const t = event.target as HTMLElement | null;
+      if (t !== null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      setHidden((h) => !h);
+    };
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, []);
+  return hidden;
+}
 
+function Corner() {
   return (
-    <div className="hud hud-tl">
-      <div className="hud-row">
-        <span className="pill">{PHASE_NAMES[phase] ?? `PHASE ${phase}`}</span>
-        <span className="fine tabular">tick {tick}</span>
-        <span className={`dot dot-${status}`} aria-hidden="true" />
-        <span className="fine">{status}</span>
-        <MutePill />
-        <ExitPill />
-      </div>
-      <ol className="hud-seats">
-        {Array.from({ length: MAX_SEATS }, (_, i) => {
-          const slot = players?.slots[i];
-          const inPit = slot?.zone === ZONE_ARENA;
-          return (
-            <li
-              key={i}
-              className="hud-seat"
-              aria-current={i === seat ? 'true' : undefined}
-              aria-label={`seat ${i}${slot?.occupied ? (inPit ? ', in the pit' : ', in the lobby') : ', empty'}`}
-              style={{
-                background: slot?.occupied ? (SKIN_COLORS[slot.skinId] ?? 'var(--dim)') : 'none',
-                borderColor: i === seat ? 'var(--ink)' : inPit ? 'var(--lobby-green)' : 'var(--line)',
-              }}
-            />
-          );
-        })}
-      </ol>
+    <div className="hud-corner">
+      <MuteIcon />
+      <ExitIcon />
     </div>
   );
 }
 
 /**
- * The two clocks a raid runs on, in the one cluster that survived the popup cull: how long
- * until the boss wakes (`fight_at_tick`, stamped by `begin_muster`) and, once it has, how
- * long before the six-minute enrage ends the fight (`enrage_at_tick`, stamped at the
- * MUSTERING → FIGHTING flip and 0 before it). Both are chain ticks against the chain's own
- * `tick`, never a wall clock — the muster card that used to show the first of these went
- * with the panels, and nothing else in the fight said how long was left.
- *
- * Ember under thirty seconds of the fight, because that is the number that changes what a
- * raid does: it is the difference between stripping one more limb and going for the core.
+ * A real `<button>`: Space is the fire key and `controls.ts` takes it before activation;
+ * Enter toggles this. `sfx.ts` owns the remembered value — this only mirrors it into
+ * React so the icon re-renders.
  */
-function FightClock() {
-  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
-  const tick = useSelect((s) => s.arena?.tick ?? 0);
-  const fightAt = useSelect((s) => s.arena?.fightAtTick ?? 0);
-  const enrageAt = useSelect((s) => s.arena?.enrageAtTick ?? 0);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
-  // BIG DIGITS, top centre, over the bars ("show boss timer in big digits"): the clock is
-  // the one number a raid plans around, and 11 px in a corner was not a number anyone
-  // planned around.
-  if (phase === PHASE_MUSTERING) {
-    return (
-      <div className="hud-clock">
-        <span className="hud-clock-label">boss wakes in</span>
-        <span className="hud-clock-digits">{clock(fightAt - tick, tickMs)}</span>
-      </div>
-    );
-  }
-  if (phase === PHASE_FIGHTING && enrageAt !== 0) {
-    const left = enrageAt - tick;
-    const urgent = left * tickMs <= 30_000;
-    return (
-      <div className={`hud-clock${urgent ? ' hud-urgent' : ''}`}>
-        <span className="hud-clock-digits">{clock(left, tickMs)}</span>
-        <span className="hud-clock-label">left</span>
-      </div>
-    );
-  }
-  return null;
-}
-
-/**
- * A real `<button>`, for the reason `Parts`' toggle is: Space is the fire key and
- * `controls.ts` takes it before activation; Enter toggles this. `sfx.ts` owns the
- * remembered value — this only mirrors it into React so the label re-renders.
- */
-function MutePill() {
+function MuteIcon() {
   const [muted, set] = useState(isMuted);
   return (
     <button
-      className="pill hud-mute"
+      className="hud-icon"
       aria-pressed={muted}
+      aria-label={muted ? 'Unmute' : 'Mute'}
+      title={muted ? 'Unmute' : 'Mute'}
       onClick={() => {
         setMuted(!muted);
         set(!muted);
       }}
     >
-      {muted ? 'MUTED' : 'SOUND'}
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" />
+        {muted ? (
+          <path d="M16 8l5 8M21 8l-5 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+        ) : (
+          <path d="M16 8.5a4.5 4.5 0 0 1 0 7M18.5 5.5a8 8 0 0 1 0 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+        )}
+      </svg>
     </button>
   );
 }
 
-/**
- * The way out — and the reason abandoned arenas no longer strand.
- *
- * A player leaving used to be invisible to the chain: the seat kept `ZONE_ARENA`, the raid
- * ran its full six minutes to enrage, and then sat in `SETTLING` with nobody left who was
- * permitted to settle it. This button is the departure signal, and `store.leaveMatch`
- * releases the seat server-side before clearing the local match.
- *
- * A real `<button>` inside a `.hud` cluster works despite the layer's `pointer-events:
- * none` — `MutePill` above is the standing proof.
- */
-function ExitPill() {
+function ExitIcon() {
   const store = useStore();
   const inMatch = useSelect((s) => s.match !== null);
   if (!inMatch) return null;
   return (
-    <button className="pill hud-exit" onClick={() => void store.leaveMatch()}>
-      EXIT
+    <button className="hud-icon" aria-label="Leave the match" title="Leave the match" onClick={() => void store.leaveMatch()}>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 3h9v18H4z" fill="currentColor" opacity="0.9" />
+        <path d="M11 12h9M17 8l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      </svg>
     </button>
   );
 }
 
-// ---------------------------------------------------------------------------
-// ML — the verdict
-// ---------------------------------------------------------------------------
-
 /**
- * `Arena.outcome` is a byte the program writes once and never revises, and the three losing
- * and winning shapes are genuinely different events: the core died, everyone died, or the
- * clock ran out with the core alive. Collapsing them into "you lost" throws away the only
- * information that tells a raid what to do differently, so each gets its own row.
+ * Top centre, in the pit only. The lobby shows nothing here: the gate carries the muster
+ * countdown in the world, and there is no boss to bar.
  */
+function Top() {
+  const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
+  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  const tick = useSelect((s) => s.arena?.tick ?? 0);
+  const fightAt = useSelect((s) => s.arena?.fightAtTick ?? 0);
+  const enrageAt = useSelect((s) => s.arena?.enrageAtTick ?? 0);
+  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
+  const raidSize = useSelect((s) => s.arena?.raidSize ?? 0);
+  const boss = useSelect((s) => s.boss);
+  const players = useSelect((s) => s.players);
+  const seat = useSelect((s) => s.match?.seat ?? -1);
+  if (!inPit) return null;
+
+  // Fight HP, not shell: shell above the vent line never has to come off, so a solo bar
+  // read 97 % three hits from a win. `fightHp` is the chain's own `Boss::fight_hp`, and
+  // the floor keeps 20 % and ENRAGED landing on the same tick.
+  const hp = boss ? fightHp(boss, raidSize) : null;
+  const furious = phase === PHASE_FIGHTING && boss !== null && isFurious(boss, raidSize);
+  const bossShown = hp !== null && hp.max > 0 && phase !== PHASE_LOBBY;
+  const pct = bossShown ? floorPercent(hp.left, hp.max) : 0;
+  const occupied = players?.slots.filter((x) => x.occupied).length ?? 0;
+  const left = enrageAt - tick;
+  const urgent = phase === PHASE_FIGHTING && left * tickMs <= 30_000;
+
+  return (
+    <div className={`hud-top${furious ? ' hud-enraged' : ''}${urgent ? ' hud-urgent' : ''}`}>
+      {phase === PHASE_MUSTERING && (
+        <>
+          <span className="hud-digits">{clock(fightAt - tick, tickMs)}</span>
+          <span className="hud-tag">boss wakes in</span>
+        </>
+      )}
+      {phase === PHASE_FIGHTING && enrageAt !== 0 && <span className="hud-digits">{clock(left, tickMs)}</span>}
+      {bossShown && (
+        <div className="hud-boss">
+          <span className="hud-tag">{furious ? 'ENRAGED' : 'BOSS'}</span>
+          <div className="hud-boss-bar" role="meter" aria-label="boss health" aria-valuenow={pct} aria-valuemax={100}>
+            <div className="hud-boss-fill" style={{ transform: `scaleX(${pct / 100})` }} />
+            <div className="hud-boss-mark" style={{ left: `${FURY_PCT}%` }} aria-hidden="true" />
+          </div>
+          <span className="hud-boss-pct">{pct}%</span>
+        </div>
+      )}
+      {occupied > 1 && (
+        <ol className="hud-seats">
+          {Array.from({ length: MAX_SEATS }, (_, i) => {
+            const slot = players?.slots[i];
+            if (!slot?.occupied) return null;
+            return (
+              <li
+                key={i}
+                className="hud-seat"
+                aria-current={i === seat ? 'true' : undefined}
+                aria-label={`seat ${i}${slot.zone === ZONE_ARENA ? ', in the pit' : ', in the lobby'}`}
+                style={{
+                  background: SKIN_COLORS[slot.skinId] ?? 'var(--dim)',
+                  opacity: slot.zone === ZONE_ARENA ? 1 : 0.45,
+                }}
+              />
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 const VERDICTS: Readonly<Record<number, { readonly label: string; readonly line: string }>> = {
   [OUTCOME_WIN]: {
     label: 'WIN',
