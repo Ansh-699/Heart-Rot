@@ -1006,6 +1006,24 @@ const _: () = {
     }
 };
 
+/// How many bullets a volley carries: `1 + alive_players`, but never fewer than the
+/// thorns that are still standing, plus one while furious.
+///
+/// The floor is the fix for "monster shows 3 cannons and shoots only 2". Every live thorn
+/// telegraphs — the client draws a line from each one to the target, off `MUZZLES` and
+/// `parts`, exactly as this function reads them — and the bullets are dealt round-robin
+/// across those thorns, so a raid of one at `1 + 1 = 2` bullets left one telegraphed
+/// cannon silent every volley. A cannon that aims and does not fire is a lie the player
+/// notices. The fury bullet rides ON TOP of the floor so that "one more while furious"
+/// stays true in the solo fight the floor exists for.
+///
+/// `const`, so the bullet-pool assert above can name the same ceiling this does.
+const fn volley_size(alive: usize, furious: bool, live_muzzles: usize) -> usize {
+    let base = BASE_VOLLEY_BULLETS + alive;
+    let floored = if base < live_muzzles { live_muzzles } else { base };
+    floored + if furious { FURY_EXTRA_BULLETS } else { 0 }
+}
+
 /// Claim up to `1 + alive` free pool slots — one more while `furious` — and fire them at
 /// `target` from whichever thorn clusters are still standing.
 ///
@@ -1035,9 +1053,7 @@ fn spawn_volley(
         return;
     }
 
-    // `1 + alive_players`, plus one while furious: difficulty as bullet density. Bounded
-    // by the const assert above at 22, well under the 128-slot pool.
-    let wanted = BASE_VOLLEY_BULLETS + alive + if furious { FURY_EXTRA_BULLETS } else { 0 };
+    let wanted = volley_size(alive, furious, muzzle_n);
 
     // One entropy draw per tick, expanded per bullet. `affix_seed` is the incarnation's
     // roll (VRF in v1.1, `hashv([arena_key, incarnation])` today); mixing the tick in
@@ -1740,6 +1756,21 @@ mod tests {
     /// `attack_timer = 0` the first FIGHTING tick published `target_seat` for the first
     /// time *and* spawned an aimed volley in the same write, so the telegraph the client
     /// draws off `attack_timer` had no frames to run in.
+    /// "monster shows 3 cannons and shoots only 2": every thorn that telegraphs must fire.
+    #[test]
+    fn every_live_thorn_fires_even_for_a_raid_of_one() {
+        assert_eq!(volley_size(1, false, N_MUZZLES), N_MUZZLES, "solo is floored at the thorns");
+        assert_eq!(volley_size(1, false, 2), 2, "two thorns left, two bullets");
+        assert_eq!(volley_size(1, false, 1), BASE_VOLLEY_BULLETS + 1, "one thorn: the base wins");
+        assert_eq!(volley_size(19, false, N_MUZZLES), BASE_VOLLEY_BULLETS + 19, "a raid is never floored");
+        assert_eq!(volley_size(1, true, 0), BASE_VOLLEY_BULLETS + 1 + FURY_EXTRA_BULLETS);
+        // The bound the pool assert names is the biggest volley this can answer.
+        assert!(
+            volley_size(MAX_SEATS, true, N_MUZZLES)
+                <= BASE_VOLLEY_BULLETS + MAX_SEATS + FURY_EXTRA_BULLETS
+        );
+    }
+
     #[test]
     fn the_first_volley_of_a_fight_has_a_wind_up() {
         let (mut arena, mut boss, mut players) = fight();
@@ -1765,7 +1796,7 @@ mod tests {
                 .iter()
                 .filter(|b| b.active == BULLET_ACTIVE)
                 .count(),
-            BASE_VOLLEY_BULLETS + 1,
+            volley_size(1, false, N_MUZZLES),
             "the volley lands on the tick the wind-up ends"
         );
     }
@@ -1804,7 +1835,7 @@ mod tests {
             !boss.is_furious(arena.raid_size),
             "one point above the line is calm"
         );
-        assert_eq!(in_flight(&arena), BASE_VOLLEY_BULLETS + 1, "a calm volley");
+        assert_eq!(in_flight(&arena), volley_size(1, false, N_MUZZLES), "a calm volley");
         assert_eq!(
             boss.attack_timer, VOLLEY_INTERVAL_TICKS,
             "and a calm reload"
@@ -1814,8 +1845,13 @@ mod tests {
         assert!(boss.is_furious(arena.raid_size), "on the line is furious");
         assert_eq!(
             in_flight(&arena),
-            BASE_VOLLEY_BULLETS + 1 + FURY_EXTRA_BULLETS,
+            volley_size(1, true, N_MUZZLES),
             "one more bullet"
+        );
+        assert_eq!(
+            volley_size(1, true, N_MUZZLES),
+            volley_size(1, false, N_MUZZLES) + FURY_EXTRA_BULLETS,
+            "the fury bullet rides on top of the thorn floor"
         );
         assert_eq!(
             boss.attack_timer, FURY_VOLLEY_INTERVAL_TICKS,
@@ -1838,7 +1874,7 @@ mod tests {
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(
             in_flight(&arena),
-            BASE_VOLLEY_BULLETS + 1 + FURY_EXTRA_BULLETS,
+            volley_size(1, true, N_MUZZLES),
             "the volley lands on the tick the half wind-up ends"
         );
     }
