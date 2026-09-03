@@ -12,7 +12,7 @@
  *     <ellipse shadow>        static            — React
  *     <ellipse ring x2>       static            — React (local seat only)
  *     <circle  respawn arc>   dash offset       — React, once per notification
- *     <circle  charge arc>    dash offset       — WAAPI, one run per hold (local seat only)
+ *     <circle  charge arc x2> dash offset       — WAAPI, one run each per hold (local seat only)
  *     <g       body>          transform+opacity — WAAPI one-shots (recoil, fall, revive,
  *                                                 idle breathe). Resting values are React
  *                                                 attributes, so a reload with no
@@ -20,7 +20,9 @@
  *       <g     flip>          static per facing — React
  *         <svg rim halo>      viewBox (frame)   — React
  *         <svg body>          viewBox (frame)   — React
- *         <svg charge glow>   opacity           — WAAPI loop (local seat, while ready)
+ *         <svg charge glow>   opacity           — WAAPI loop (local seat, tier 1), static
+ *                                                 at tier 2 (React)
+ *         <svg super glow>    static            — React (local seat, tier 2 only)
  *         <svg flash>         opacity           — WAAPI one-shot
  *       <use   hit splat>     opacity           — WAAPI one-shot
  *     <path    chevron>       static            — React (local seat only)
@@ -38,8 +40,9 @@
  */
 import { memo, useEffect, useRef, useState, type Ref } from 'react';
 
-import { CHARGE_MS, MAP_TILE, type PlayerSlot } from '@heartrot/client';
+import { MAP_TILE, type PlayerSlot, type ShotTier } from '@heartrot/client';
 
+import { holdMsFor } from '../input/controls';
 import {
   ARCHER_ATLAS,
   ATLAS_H,
@@ -127,6 +130,9 @@ const KEYLINE = '#05060a';
 /** Arc radius, and the circumference the dash patterns are cut from. */
 const ARC_R = 13;
 const ARC_C = 2 * Math.PI * ARC_R;
+/** The super arc sits just outside the charge arc, so both stay legible when full. */
+const SUPER_ARC_R = ARC_R + 3;
+const SUPER_ARC_C = 2 * Math.PI * SUPER_ARC_R;
 
 /**
  * Past this a position change was a teleport, not a walk — a reconcile onto a respawn at
@@ -238,20 +244,22 @@ function walkPose(d: number): Pose {
 // ---------------------------------------------------------------------------
 
 /**
- * Tell the local archer it is holding a draw (`true`) or has let go (`false`).
+ * Tell the local archer where its hold stands: `null` released (or walking, or dead), else
+ * the tier the stand has reached — 0 drawing, 1 charged ready, 2 super ready.
  *
  * A module-scope sink rather than a ref threaded through `App` -> `World` -> `Arena`, the
  * same shape as `Shot.tsx`'s `fireLocal`: there is exactly one local seat on a page and
  * `App.tsx`'s `onCharge` is the one caller. With no local seat mounted it is a no-op.
- * Nothing on chain says "charging" — only the loose carries the bit — so this is purely
- * the local player's own feedback: the draw pose, the arc filling over `CHARGE_MS`, and
- * the arrowhead pulsing once the hold is long enough to send.
+ * Nothing on chain says "charging" — only the loose carries the bits — so this is purely
+ * the local player's own feedback: the draw pose, the yellow arc filling to tier 1 and the
+ * white one on to tier 2, each closing at the instant a release would earn its tier, and
+ * the arrowhead pulsing at tier 1 then holding, white-lit, at tier 2.
  */
-export function chargeLocal(on: boolean): void {
-  chargeSink?.(on);
+export function chargeLocal(tier: ShotTier | null): void {
+  chargeSink?.(tier);
 }
 
-let chargeSink: ((on: boolean) => void) | null = null;
+let chargeSink: ((tier: ShotTier | null) => void) | null = null;
 
 // ---------------------------------------------------------------------------
 // The component
@@ -283,9 +291,12 @@ const IDLE_MS = 250;
 const LOOSE_MS = 300;
 /** One pulse of the ready glow. */
 const GLOW_MS = 360;
-/** Recoil, in units, uncharged and charged. */
-const RECOIL = 2;
-const RECOIL_CHARGED = 4;
+/** Recoil, in units, by the tier of the loose: plain, charged, super. */
+const RECOIL_BY_TIER: readonly [number, number, number] = [2, 4, 6];
+/** The white silhouette held over a super-ready archer. Below the hit flash's 0.9 so a hit still reads. */
+const SUPER_GLOW_OPACITY = 0.3;
+/** One flash of that silhouette when tier 2 lands. */
+const SUPER_FLASH_MS = 180;
 
 /** One frame of the atlas at a local offset. The viewBox is the crop. */
 function Sprite({
@@ -309,8 +320,6 @@ function Sprite({
   );
 }
 
-type Charge = 'off' | 'draw' | 'ready';
-
 function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) {
   const state = useRef<Walk | null>(null);
   // Guards the fold against React re-rendering this component with the *same* snapshot —
@@ -331,7 +340,8 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
   const moving = w.stepped && !dead;
   const [standing, setStanding] = useState(true);
   const [loose, setLoose] = useState(false);
-  const [charge, setCharge] = useState<Charge>('off');
+  // `controls.ts`'s hold edge, verbatim: null released, 0 drawing, 1 charged, 2 super.
+  const [hold, setHold] = useState<ShotTier | null>(null);
 
   const { dir, flip } = dirOf(w.facing);
   const skin = skinOf(slot.skinId);
@@ -339,9 +349,9 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
     ? 'fallen'
     : loose
       ? 'loose'
-      : charge === 'ready'
+      : hold !== null && hold > 0
         ? 'charge0'
-        : charge === 'draw'
+        : hold === 0
           ? 'draw'
           : standing
             ? 'idle'
@@ -358,6 +368,7 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
   const glowRef = useRef<SVGSVGElement | null>(null);
   const hitRef = useRef<SVGUseElement | null>(null);
   const arcRef = useRef<SVGCircleElement | null>(null);
+  const superArcRef = useRef<SVGCircleElement | null>(null);
   const breathe = useRef<Animation | null>(null);
   const looseTimer = useRef(0);
   // What has already been played, so the effect is a no-op on mount and on every
@@ -365,7 +376,9 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
   const played = useRef({ shots: w.shots, hurts: w.hurts, falls: w.falls, revives: w.revives });
 
   const facingUnit = FACING_UNIT[slot.facing] ?? FACING_UNIT[0]!;
-  const charged = slot.chargedShot;
+  // The bits the chain set on THIS loose. A super is bit 4 alone, never also bit 3
+  // (`shoot.rs`: "a super is not also charged"), so the order of the test matters.
+  const tier: ShotTier = slot.superShot ? 2 : slot.chargedShot ? 1 : 0;
 
   useEffect(() => {
     const body = bodyRef.current;
@@ -389,16 +402,16 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
       play('respawn');
       body.animate([{ opacity: 0.55 }, { opacity: 1 }], { duration: 250 });
     } else if (w.shots !== p.shots && !dead) {
-      // The loose frame, then the arm comes back. The bit on the seat says whether this
-      // was a charged shot — the next move clears it, which is the arrow's lifetime. The
-      // local seat's loose is cued by `Shot.tsx` at launch, before this edge arrives.
-      if (!mine) play(charged ? 'looseCharged' : 'loose');
+      // The loose frame, then the arm comes back. The bits on the seat say which tier this
+      // loose was — the next move clears them, which is the arrow's lifetime. The local
+      // seat's loose is cued by `Shot.tsx` at launch, before this edge arrives.
+      if (!mine) play(tier === 2 ? 'looseSuper' : tier === 1 ? 'looseCharged' : 'loose');
       setLoose(true);
       clearTimeout(looseTimer.current);
       looseTimer.current = window.setTimeout(() => setLoose(false), LOOSE_MS);
       if (!reduced) {
         // Against the aim, rounded so the sprite lands back on the pixel grid.
-        const kick = charged ? RECOIL_CHARGED : RECOIL;
+        const kick = RECOIL_BY_TIER[tier];
         const rx = Math.round(-facingUnit[0] * kick);
         const ry = Math.round(-facingUnit[1] * kick);
         body.animate([{ transform: `translate(${rx}px,${ry}px)` }, { transform: 'translate(0px,0px)' }], {
@@ -418,7 +431,7 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
     }
 
     played.current = { shots: w.shots, hurts: w.hurts, falls: w.falls, revives: w.revives };
-  }, [w, w.shots, w.hurts, w.falls, w.revives, dead, reduced, facingUnit, charged, mine]);
+  }, [w, w.shots, w.hurts, w.falls, w.revives, dead, reduced, facingUnit, tier, mine]);
 
   useEffect(() => () => clearTimeout(looseTimer.current), []);
 
@@ -457,48 +470,60 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
     };
   }, [reduced, dead, standing]);
 
-  // The charge sink. Only the local seat listens; `ready` is the moment the hold is long
-  // enough for the chain to accept the bit, and the same moment the arc closes — so the
-  // ready cue is played here, where that moment is known, and nowhere else.
+  // The charge sink. Only the local seat listens. Each tier's cue is played here, on the
+  // edge `controls.ts` reports at the instant a release would earn it — the same instant
+  // the matching arc closes — and nowhere else. This used to run its own `CHARGE_MS` timer
+  // and chime 250 ms before the send margin; harmless under auto-fire, a plain arrow after
+  // a full stand under release-to-fire.
   useEffect(() => {
     if (!mine) return;
-    let timer = 0;
-    const me = (on: boolean): void => {
-      clearTimeout(timer);
-      if (!on) {
-        setCharge('off');
-        return;
+    const me = (tier: ShotTier | null): void => {
+      setHold(tier);
+      if (tier === 1) play('chargeReady');
+      if (tier === 2) {
+        play('superReady');
+        // The flash: the white silhouette, once, over the glow that then stays.
+        flashRef.current?.animate([{ opacity: 0.9 }, { opacity: 0 }], { duration: SUPER_FLASH_MS });
       }
-      setCharge('draw');
-      timer = window.setTimeout(() => {
-        setCharge('ready');
-        play('chargeReady');
-      }, CHARGE_MS);
     };
     chargeSink = me;
     return () => {
-      clearTimeout(timer);
       if (chargeSink === me) chargeSink = null;
     };
   }, [mine]);
 
-  const charging = charge !== 'off' && !dead;
+  const charging = hold !== null && !dead;
+  const drawn = hold !== null && hold > 0 && !dead;
 
-  // The arc fills once per hold and holds full: `fill: 'forwards'` is the resting value
-  // while the node lives, and the node lives exactly as long as the hold. Not gated on
-  // reduced motion — it is the progress readout, not decoration.
+  // The yellow arc fills once per hold and holds full: `fill: 'forwards'` is the resting
+  // value while the node lives, and the node lives exactly as long as the hold. Not gated
+  // on reduced motion — it is the progress readout, not decoration. Its duration is the
+  // stand a release needs, margin included, so full means "let go now".
   useEffect(() => {
     if (!charging) return;
     arcRef.current?.animate([{ strokeDashoffset: `${ARC_C}px` }, { strokeDashoffset: '0px' }], {
-      duration: CHARGE_MS,
+      duration: holdMsFor(1),
       easing: 'linear',
       fill: 'forwards',
     });
   }, [charging]);
 
+  // The white arc, outside the yellow one, starts the moment tier 1 lands and fills over
+  // the rest of the super stand — so a full yellow ring reads "charged" and a full white
+  // ring reads "the beam", at a glance, from across the pit.
+  useEffect(() => {
+    if (!drawn) return;
+    superArcRef.current?.animate([{ strokeDashoffset: `${SUPER_ARC_C}px` }, { strokeDashoffset: '0px' }], {
+      duration: holdMsFor(2) - holdMsFor(1),
+      easing: 'linear',
+      fill: 'forwards',
+    });
+  }, [drawn]);
+
   // The ready glow: `charge1` over `charge0`, one opacity loop, so the arrowhead pulses
-  // between the two baked glow sizes.
-  const pulsing = charge === 'ready' && !dead && !reduced;
+  // between the two baked glow sizes. At tier 2 the loop ends and the glow HOLDS under the
+  // white silhouette: the beam is armed, and nothing about the picture should be moving.
+  const pulsing = hold === 1 && !dead && !reduced;
   useEffect(() => {
     if (!pulsing) return;
     const anim = glowRef.current?.animate([{ opacity: 0 }, { opacity: 1 }, { opacity: 0 }], {
@@ -567,6 +592,20 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
           opacity={0.85}
         />
       )}
+      {drawn && (
+        <circle
+          ref={superArcRef}
+          cy={FEET_Y}
+          r={SUPER_ARC_R}
+          fill="none"
+          stroke={PAL.selfRing}
+          strokeWidth={2}
+          strokeDasharray={SUPER_ARC_C}
+          strokeDashoffset={SUPER_ARC_C}
+          transform={`rotate(-90 0 ${FEET_Y})`}
+          opacity={0.9}
+        />
+      )}
 
       <g ref={bodyRef} opacity={dead ? 0.55 : 1}>
         {/* One flip for the whole stack: every sprite in it shares the facing. */}
@@ -575,7 +614,10 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
               everything but the boundary. The corpse gets the transposed one. */}
           <Sprite frame={`halo${skin}-${dir}-${pose}`} x={ox} y={oy} />
           <Sprite frame={`${skin}-${dir}-${pose}`} x={ox} y={oy} />
-          {pulsing && <Sprite ref={glowRef} frame={`${skin}-${dir}-charge1`} x={ox} y={oy} opacity={0} />}
+          {drawn && <Sprite ref={glowRef} frame={`${skin}-${dir}-charge1`} x={ox} y={oy} opacity={hold === 2 ? 1 : 0} />}
+          {hold === 2 && !dead && (
+            <Sprite frame={`sil-${dir}-${pose}`} x={ox} y={oy} opacity={SUPER_GLOW_OPACITY} />
+          )}
           <Sprite ref={flashRef} frame={`sil-${dir}-${pose}`} x={ox} y={oy} opacity={0} />
         </g>
         {/* The ordnance splat, `tools/gen_ordnance.py`'s 18 px `#ord-hit`, centred on the
@@ -629,8 +671,8 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
  * a field added to the render and forgotten here is a seat that stops updating, which
  * is silent. In render order: position and facing (the walk, via `advance`), `hp`/`hpMax`
  * (the flash, the corpse, the bar), `deaths` and `respawnAtTick` (the fall, the revive,
- * the arc), `lastShotTick` and `chargedShot` (the recoil and the loose), `skinId` (the
- * sprite and its rim). The aim bits of `classAim` are not read here and change every
+ * the arc), `lastShotTick`, `chargedShot` and `superShot` (the recoil and the loose),
+ * `skinId` (the sprite and its rim). The aim bits of `classAim` are not read here and change every
  * tick, so they are not compared.
  *
  * `advance` reads exactly this subset too, so a skipped snapshot is one that would have
@@ -656,6 +698,7 @@ function sameSeat(a: KnightProps, b: KnightProps): boolean {
     p.respawnAtTick === n.respawnAtTick &&
     p.lastShotTick === n.lastShotTick &&
     p.chargedShot === n.chargedShot &&
+    p.superShot === n.superShot &&
     p.skinId === n.skinId &&
     (a.tick === b.tick || (p.hp > 0 && n.hp > 0))
   );
@@ -692,6 +735,7 @@ if (import.meta.env.DEV) {
       zone: 0,
       facing: 0,
       chargedShot: false,
+      superShot: false,
       classAim: 0,
       skinId: 0,
       x: 100,
@@ -799,6 +843,7 @@ if (import.meta.env.DEV) {
   ok(!sameSeat(base, props({ respawnAtTick: 30 })), 'a respawn window renders');
   ok(!sameSeat(base, props({ lastShotTick: 12 })), 'a shot renders');
   ok(!sameSeat(base, props({ chargedShot: true })), 'a charged loose renders');
+  ok(!sameSeat(base, props({ superShot: true })), 'a super loose renders');
   ok(!sameSeat(base, props({ skinId: 2 })), 'a re-skin renders');
   ok(!sameSeat(base, { ...base, mine: true }), 'the local cues render');
   // The two rows the whole fix rests on. An `Arena` write is half the feed and moves

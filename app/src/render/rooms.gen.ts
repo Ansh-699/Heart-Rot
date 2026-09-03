@@ -66,7 +66,7 @@ export const VOID: Readonly<Record<'lobby' | 'arena', string>> = {
 /** The painted lobby floor. Every walkable lobby tile lies wholly inside it (generator-proven). */
 export const LOBBY_FLOOR: WorldRect = { x: 105.865, y: 639.2459, w: 811.4344, h: 369.3656 };
 
-/** The painted platform the pit is cut from: the walkable pit is this ellipse's lower half. */
+/** The painted platform the pit is cut from: the walkable pit is this whole ellipse, less the boss. */
 export const ARENA_PLATFORM: WorldEllipse = { cx: 512, cy: 396, rx: 461, ry: 212 };
 
 /**

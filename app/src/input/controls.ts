@@ -18,18 +18,22 @@
  * `@heartrot/client`'s `autoAim` off the predicted position — or the body's facing when
  * nothing is in reach. The pointer aims nothing any more; a pointer down is fire held.
  *
- * **The hold.** Fire held while standing still is a charged shot: after `CHARGE_MS` plus a
- * send-latency margin the trigger fires with `charged = true` and the chain deals 2.5x —
- * or refuses with `NotCharged` if a step was still in flight, which `App.tsx` answers by
- * resending uncharged. The hold is measured from the later of the press and the last step
- * (`chargeSince = max(fireDownAt, lastMoveAt)`): charge accrues ONLY while standing still,
- * and a step cancels it. That is the rule of the mechanic, not a lock on the keys —
- * suppressing `onMove` instead would break shoot-while-walking and trap a player mid-slam.
- * (Hard-rooting the player during the hold is one line in the step branch below, if it is
- * ever insisted on.) Standing still, nothing auto-repeats: the tap at the press answers the
- * key at 0 ms, and the next arrow is the charged one. Walking, the tap path auto-repeats
- * uncharged exactly as it always has. {@link ControlsConfig.onCharge} is the hold's edge,
- * for the archer's draw pose and the arc.
+ * **The hold is release-to-fire.** A press is one plain tap at 0 ms, exactly as before.
+ * Fire kept down while standing still then accrues a tier — `CHARGE_MS` plus a send-latency
+ * margin reaches tier 1 (2.5x), `SUPER_MS` plus the same margin reaches tier 2 (5x, the
+ * beam) — and the RELEASE fires the tier reached: `NotCharged` on chain if a step was still
+ * in flight, which `App.tsx` answers by resending one tier down. Nothing fires at tier 1 by
+ * itself any more; the old auto-fire at `CHARGE_MS` made a super unreachable, because the
+ * charged shot always left first. A release short of tier 1 fires nothing — the tap already
+ * answered that press — so a quick press-release is one arrow, never two. A release inside
+ * the cooldown is QUEUED, one deep, and the first pump past the gate fires it: the stand
+ * was paid for and the cooldown ring is the only reason the shot has not left. The hold is
+ * measured from the later of the press and the last step (`max(fireDownAt, lastMoveAt)`):
+ * charge accrues ONLY while standing still, and a step restarts it. That is the rule of the
+ * mechanic, not a lock on the keys — suppressing `onMove` instead would break
+ * shoot-while-walking and trap a player mid-slam. Walking, the tap path auto-repeats plain
+ * exactly as it always has. {@link ControlsConfig.onCharge} is the hold's edge, reporting
+ * the tier reached on every change, for the archer's draw pose and the two arcs.
  *
  * **Why the rate limits live here as well as on chain.** ER transaction fees are zero and
  * the forked SVM runs no fee-payer validation at all, so nothing debits a spammer and the
@@ -47,8 +51,9 @@
  * | `move`, any phase | `last_move_tick != clock.slot` (50 ms slots) | one send per 50 ms |
  * | `shoot` | `arena.phase == Fighting` -> else `WrongPhase` (6) | `live` below |
  * | `shoot` | `slot.zone == ZONE_ARENA` -> else `WrongZone` (9) | `live` below |
- * | `shoot` | `tick > last_shot_tick + CLASS_COOLDOWN_TICKS[class]` | {@link shotAllowed} |
- * | `shoot`, charged | `Clock.slot - last_move_tick >= CHARGE_SLOTS` -> else `NotCharged` (20) | {@link chargeAccrued} |
+ * | `shoot` | `tick > last_shot_tick + CLASS_COOLDOWN_TICKS[class]` | {@link shotAllowed}, one tick of slack |
+ * | `shoot`, tier 1 | `Clock.slot - last_move_tick >= CHARGE_SLOTS` -> else `NotCharged` (20) | {@link tierReached} |
+ * | `shoot`, tier 2 | `Clock.slot - last_move_tick >= SUPER_SLOTS` -> else `NotCharged` (20) | {@link tierReached} |
  * | either, dead | `hp == 0` -> `PlayerDead` (Custom 8) | `clock().alive === false` sends nothing |
  *
  * **All four shot gates are mirrored now, and that is what makes the trigger honest.**
@@ -108,8 +113,10 @@ import {
   CLASS_KNIGHT,
   CLASS_PERIOD_MS,
   PHASE_FIGHTING,
+  SUPER_MS,
   TICK_MS,
   ZONE_ARENA,
+  type ShotTier,
 } from '@heartrot/client';
 
 /** Pump period. One ER slot — the finest granularity any gate above is expressed in. */
@@ -196,10 +203,23 @@ const MIN_GAP_MS = 45;
  * which is every seat that predates the class. Every caller passes the seat's own decoded
  * byte; the class this CLIENT sends when its clock names none is the pump's own default,
  * the archer, and a different question.
+ *
+ * **Plus one tick of slack.** `lastShotTick` is this client's view of the tick at the send,
+ * and the chain stamps its OWN tick, which is at or past that view. When the view lags less
+ * at the next send than it did at this one, the mirror passes a shot the chain refuses with
+ * `RateLimited` — invisibly, under `skipPreflight` — and that is the shot that "did not
+ * fire" mid-fight. The lag is the notification latency, under two ticks at the ~130 ms
+ * round trip, and it is only the CHANGE in it between two sends that bites, so one tick
+ * covers it at 100 ms a shot. The pump also raises its record to the seat's decoded
+ * `last_shot_tick` when the roster says the chain's stamp was later. `Hud.tsx`'s pill reads
+ * this same predicate, so it goes green when a send would actually pass.
  */
 export function shotAllowed(tick: number, lastShotTick: number, cls: number = CLASS_KNIGHT): boolean {
-  return tick > lastShotTick + cooldownTicksFor(cls);
+  return tick > lastShotTick + cooldownTicksFor(cls) + SHOT_MARGIN_TICKS;
 }
+
+/** See {@link shotAllowed}. */
+const SHOT_MARGIN_TICKS = 1;
 
 const cooldownTicksFor = (cls: number): number =>
   CLASS_COOLDOWN_TICKS[cls] ?? CLASS_COOLDOWN_TICKS[CLASS_KNIGHT]!;
@@ -214,20 +234,45 @@ const cooldownTicksFor = (cls: number): number =>
 const periodMsFor = (cls: number): number => CLASS_PERIOD_MS[cls] ?? CLASS_PERIOD_MS[CLASS_KNIGHT]!;
 
 /**
- * Send latency, on top of `CHARGE_MS`, before a hold is sent as charged. The chain measures
- * the hold in ER slots between the last accepted step and the shot's arrival; the client
- * measures it in wall clock between the two SENDS. The margin covers the step landing later
- * than the shot's clock assumes — a whole `NotCharged` round trip is what it saves.
+ * Send latency, on top of `CHARGE_MS` / `SUPER_MS`, before a hold counts as its tier. The
+ * chain measures the hold in ER slots between the last accepted step and the shot's
+ * arrival; the client measures it in wall clock between the two SENDS. The margin covers
+ * the step landing later than the shot's clock assumes — a whole `NotCharged` round trip
+ * is what it saves.
  */
 const CHARGE_MARGIN_MS = 250;
 
 /**
- * Has a hold that began at `fireDownAt`, with the last step sent at `lastMoveAt`, accrued?
- * The later of the two starts the clock: charge accrues only while standing still, and a
- * step restarts it. Pure, so the rule is checkable without a DOM.
+ * The stand a tier costs as this client judges it: the chain's hold plus the margin.
+ * Exported for `Knight.tsx`'s arcs. A readout that closes at `CHARGE_MS` while the release
+ * earns the tier only at `CHARGE_MS + 250` tells the player to let go 250 ms early, and
+ * under release-to-fire that is a plain arrow after a full stand — so the arc closes at
+ * the instant a release would be granted, or it is lying.
  */
-function chargeAccrued(now: number, fireDownAt: number, lastMoveAt: number): boolean {
-  return now - Math.max(fireDownAt, lastMoveAt) >= CHARGE_MS + CHARGE_MARGIN_MS;
+export function holdMsFor(tier: 1 | 2): number {
+  return (tier === 2 ? SUPER_MS : CHARGE_MS) + CHARGE_MARGIN_MS;
+}
+
+/**
+ * The tier a hold that began at `fireDownAt`, with the last step sent at `lastMoveAt`, has
+ * reached by `now`. The later of the two starts the clock: charge accrues only while
+ * standing still, and a step restarts it. Pure, so the rule is checkable without a DOM.
+ */
+function tierReached(now: number, fireDownAt: number, lastMoveAt: number): ShotTier {
+  const stood = now - Math.max(fireDownAt, lastMoveAt);
+  return stood >= holdMsFor(2) ? 2 : stood >= holdMsFor(1) ? 1 : 0;
+}
+
+/**
+ * What a pump has to fire, if anything: a queued release first — it was earned, and only
+ * the cooldown held it — else the tap at a press or the walking auto-repeat, plain. A
+ * standing hold with no tap fires nothing; its shot is the release. Pure, for the
+ * self-check, because both wrong answers are silent: a dropped queue is a super the player
+ * stood 2.5 s for and never saw, and a tap that also fires on release is two arrows.
+ */
+function nextShot(queued: ShotTier | null, held: boolean, still: boolean, tap: boolean): ShotTier | null {
+  if (queued !== null) return queued;
+  return held && (tap || !still) ? 0 : null;
 }
 
 /**
@@ -312,6 +357,10 @@ export interface ControlsConfig {
    * defaults to the pit, so a caller that has not wired it keeps sending real shots in a
    * fight rather than silently downgrading every one of them to a practice arrow, and
    * `cls` defaults to the archer, the only class this client sends.
+   *
+   * `lastShotTick` is the seat's decoded `last_shot_tick`: the chain's own stamp of the
+   * last accepted shot, which can be LATER than the tick this client saw at the send. The
+   * pump paces against the later of the two. Optional; omitted means the local record only.
    */
   clock(): {
     readonly phase: number;
@@ -319,6 +368,7 @@ export interface ControlsConfig {
     readonly alive?: boolean;
     readonly zone?: number;
     readonly cls?: number;
+    readonly lastShotTick?: number;
   };
   /**
    * The pair the next shot is aimed along — `i8`, never `(0, 0)`; only its ratio reaches
@@ -330,7 +380,7 @@ export interface ControlsConfig {
   onMove(dir: number): void;
   /**
    * Every accepted trigger, live or practice, with the exact `i8` pair the shot was aimed
-   * along and whether it went as charged — draw it here and nowhere else. Called BEFORE
+   * along and the tier it went as — draw it here and nowhere else. Called BEFORE
    * {@link onShoot} so the arrow leaves the bow at 0 ms rather than after a transaction is
    * built.
    *
@@ -338,26 +388,27 @@ export interface ControlsConfig {
    * a spacebar that does nothing outside a fight, which is the bug this module was opened
    * for. `Shot.tsx::fireLocal` is what this is for.
    */
-  onTrigger?(dx: number, dy: number, charged: boolean): void;
+  onTrigger?(dx: number, dy: number, tier: ShotTier): void;
   /**
    * The subset of {@link onTrigger} that goes on the wire: free aim as an `i8` pair, never
-   * `(0, 0)`, and the charged byte. The caller passes both straight to `shoot({ dx, dy,
-   * charged })`; the chain normalises the pair and stamps `facing` from it, so nothing out
+   * `(0, 0)`, and the tier byte. The caller passes both straight to `shoot({ dx, dy,
+   * tier })`; the chain normalises the pair and stamps `facing` from it, so nothing out
    * here decides an octant on the shot path.
    *
    * Called only when all four chain gates pass. Anything sent from here that the chain
    * refuses is invisible under `skipPreflight`, which is exactly why the gates are mirrored
    * rather than the refusals reported — with one exception, `NotCharged`, which the caller
-   * confirms and answers by resending uncharged, because the client cannot see the step
-   * still in flight that the chain can.
+   * confirms and answers by resending one tier down, once per rung, because the client
+   * cannot see the step still in flight that the chain can.
    */
-  onShoot(dx: number, dy: number, charged: boolean): void;
+  onShoot(dx: number, dy: number, tier: ShotTier): void;
   /**
-   * The hold's edge: `true` when fire is held with no direction under it, `false` on
-   * release or on a step. Once per transition, never per pump — the archer's draw pose and
-   * arc hang off it (`Knight.tsx::chargeLocal`).
+   * The hold's edge: `null` when fire is not held standing still (released, walking, dead),
+   * otherwise the tier the stand has reached — 0 drawing, 1 charged ready, 2 super ready.
+   * Once per change, never per pump — the archer's draw pose, the two arcs and the ready
+   * cues hang off it (`Knight.tsx::chargeLocal`).
    */
-  onCharge(on: boolean): void;
+  onCharge(tier: ShotTier | null): void;
 }
 
 /** Attaches every listener and the pump. The returned function removes all of them. */
@@ -367,16 +418,21 @@ export function attachControls(cfg: ControlsConfig): () => void {
   let fireKeyDown = false;
 
   let lastMoveAt = Number.NEGATIVE_INFINITY;
-  // Below any real tick by more than any class cooldown, so the first shot of a match is
-  // never gated whatever class the seat is.
+  // Below any real tick by more than any class cooldown, so THIS record never gates the
+  // first shot of a match. The roster's stamp is folded in on every pump, and that one
+  // gates a fresh seat exactly as the chain does: its `last_shot_tick` is 0.
   let lastShotTick = Number.NEGATIVE_INFINITY;
   // Wall clock of the last trigger of either kind. Paces the practice arrow, which has no
   // tick to pace it, and stops one following a real shot through the gate inside a period.
   let lastFireAt = Number.NEGATIVE_INFINITY;
-  // When the current hold began — the first of the pointer and the fire key to go down.
+  // When the current hold began — the first of the pointer and the fire key to go down —
+  // and `-Infinity` between holds, which is how `release` tells a real release apart.
   let fireDownAt = Number.NEGATIVE_INFINITY;
-  // The last value handed to `onCharge`, so the edge fires once.
-  let charging = false;
+  // The last value handed to `onCharge`, so the edge fires once per change.
+  let hold: ShotTier | null = null;
+  // A released tier the cooldown is still holding. One deep: a second release needs a
+  // second press, and a press inside the cooldown is the tap the gate already drops.
+  let queued: ShotTier | null = null;
 
   const fireHeld = (): boolean => pointerDown || fireKeyDown;
 
@@ -393,26 +449,29 @@ export function attachControls(cfg: ControlsConfig): () => void {
     return dx === 0 && dy === 0 ? null : dirFromVector(dx, dy);
   }
 
-  function setCharging(on: boolean): void {
-    if (on === charging) return;
-    charging = on;
-    cfg.onCharge(on);
+  function setHold(next: ShotTier | null): void {
+    if (next === hold) return;
+    hold = next;
+    cfg.onCharge(next);
   }
 
   /**
-   * `tap` marks the pump a fire press dispatched itself: the one uncharged shot a standing
-   * player gets, at 0 ms. Every other pump standing still waits for the hold.
+   * `tap` marks the pump a fire press dispatched itself: the one plain shot a standing
+   * player gets, at 0 ms. Every other pump standing still fires only a queued release.
    */
   function pump(tap = false): void {
-    const { phase, tick, alive, zone, cls } = cfg.clock();
+    const { phase, tick, alive, zone, cls, lastShotTick: stamped } = cfg.clock();
     const now = performance.now();
 
     // Dead. Every move and shot would come back `PlayerDead`, invisibly. Held keys are
     // deliberately NOT cleared: the respawn eight ticks later resumes whatever the player
     // is still pressing, and clearing would strand them standing still at the entrance.
-    // The draw, though, comes down: a corpse does not hold a bow.
+    // The draw, though, comes down — a corpse does not hold a bow — and a queued release
+    // goes with it: a super fired from the entrance eight ticks later is not the shot the
+    // player stood for.
     if (alive === false) {
-      setCharging(false);
+      setHold(null);
+      queued = null;
       return;
     }
 
@@ -432,8 +491,9 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // not, which errs toward a plain shot rather than a `NotCharged` round trip.
     const still = dir === null;
     const held = fireHeld();
-    setCharging(held && still);
-    if (!held) return;
+    setHold(held && still ? tierReached(now, fireDownAt, lastMoveAt) : null);
+    const tier = nextShot(queued, held, still, tap);
+    if (tier === null) return;
     const klass = cls ?? CLASS_ARCHER;
 
     // `shoot` is Fighting-only AND arena-only on chain: outside either, the transaction is
@@ -443,27 +503,46 @@ export function attachControls(cfg: ControlsConfig): () => void {
 
     // The two clocks, each pacing the trigger it can see. Inside a live cooldown nothing is
     // drawn at all: the ring is already on screen counting it down, and an arrow there
-    // would claim a shot the chain never took.
+    // would claim a shot the chain never took. The chain's stamp of the last shot, off the
+    // roster, can be later than the tick this client saw at the send — pace against the
+    // later of the two, or the next send is `RateLimited` and the shot is lost.
+    if (stamped !== undefined) lastShotTick = Math.max(lastShotTick, stamped);
     if (live ? !shotAllowed(tick, lastShotTick, klass) : now - lastFireAt < periodMsFor(klass)) return;
 
-    // The hold. Standing still, the next arrow is the charged one and nothing auto-repeats
-    // before it — except the tap at the press itself. Walking, every arrow is plain and the
-    // tap path auto-repeats as it always has.
-    const charged = still && chargeAccrued(now, fireDownAt, lastMoveAt);
-    if (still && !charged && !tap) return;
-
+    queued = null;
     if (live) lastShotTick = tick;
     lastFireAt = now;
     const [dx, dy] = cfg.aim();
     // Draw first, send second: the arrow is client-side either way, and a practice arrow
     // and a real one are the same arrow.
-    cfg.onTrigger?.(dx, dy, charged);
-    if (live) cfg.onShoot(dx, dy, charged);
+    cfg.onTrigger?.(dx, dy, tier);
+    if (live) cfg.onShoot(dx, dy, tier);
   }
 
   /** The hold begins with whichever of the two fire inputs goes down first. */
   function fireDown(now: number): void {
     if (!fireHeld()) fireDownAt = now;
+  }
+
+  /**
+   * The hold ends with the last of the two to go up, and the tier it reached is the shot.
+   * Judged here rather than off `hold`: the edge is only re-read on a pump, and a release
+   * 40 ms after one has 40 ms more stand than the edge knows about. A direction under the
+   * release is walking — tier 0, and the auto-repeat already covered it — so a release
+   * short of tier 1 queues nothing.
+   */
+  function release(now: number): void {
+    // No hold open — a keyup for a press that landed before these listeners did, a pointer
+    // coming up over the surface it never went down on, a blur with nothing held — is not
+    // a release: `-Infinity` reads as an infinite stand and would queue a super the player
+    // never drew, and the chain would grant it to anyone who had not stepped for 2.5 s.
+    if (fireHeld() || fireDownAt === Number.NEGATIVE_INFINITY) return;
+    const tier = heldDirection() === null ? tierReached(now, fireDownAt, lastMoveAt) : 0;
+    fireDownAt = Number.NEGATIVE_INFINITY;
+    if (tier !== 0) queued = tier;
+    // Straight to the wire, as the press is: the queue drains on this pump when the
+    // cooldown allows and on the first scheduled one that does when it does not.
+    pump();
   }
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -491,16 +570,21 @@ export function attachControls(cfg: ControlsConfig): () => void {
   };
 
   const onKeyUp = (event: KeyboardEvent): void => {
-    if (event.code === FIRE_KEY) fireKeyDown = false;
     held.delete(event.code);
+    if (event.code !== FIRE_KEY) return;
+    fireKeyDown = false;
+    release(performance.now());
   };
 
   // Alt-tabbing away never delivers the keyup, so without this the player keeps walking
-  // in whatever direction they left in — for the rest of the match.
+  // in whatever direction they left in — for the rest of the match. The hold ends the way
+  // a release ends it: a tier the player stood for is theirs whether the key or the tab
+  // let go, and dropping it here would be the one silent drop this module has none of.
   const onBlur = (): void => {
     held.clear();
     fireKeyDown = false;
     pointerDown = false;
+    release(performance.now());
   };
 
   const onPointerDown = (event: PointerEvent): void => {
@@ -516,6 +600,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
     if (cfg.surface.hasPointerCapture(event.pointerId)) {
       cfg.surface.releasePointerCapture(event.pointerId);
     }
+    release(performance.now());
   };
 
   window.addEventListener('keydown', onKeyDown);
@@ -576,14 +661,16 @@ if (import.meta.env.DEV) {
   assert(moveAllowed(9999 + MIN_GAP_MS, nextMoveDeadline(9999, 0)), 'and no further apart than that');
   assert(nextMoveDeadline(0, Number.NEGATIVE_INFINITY) === -MOVE_MS + MIN_GAP_MS, 'the first move is finite');
 
-  // Shots: strictly greater, so the next accepted shot is `cooldown + 1` ticks later — one
-  // class period, whatever TICK_MS is. Expressed against the constant, never a literal:
-  // this block read `shotAllowed(9, 7)` from the 400 ms era and was passing only because
-  // the mirror had gone stale in the same direction.
+  // Shots: strictly greater, so the chain's next accepted shot is `cooldown + 1` ticks
+  // later — one class period, whatever TICK_MS is — and this mirror waits one tick more.
+  // Expressed against the constant, never a literal: this block read `shotAllowed(9, 7)`
+  // from the 400 ms era and was passing only because the mirror had gone stale in the same
+  // direction.
   for (const cls of [CLASS_KNIGHT, CLASS_ARCHER]) {
     const cd = cooldownTicksFor(cls);
     assert(!shotAllowed(7 + cd, 7, cls), 'a shot inside the cooldown must be gated');
-    assert(shotAllowed(8 + cd, 7, cls), 'a shot one tick past it must pass');
+    assert(!shotAllowed(8 + cd, 7, cls), 'and so must the first tick past it: the slack');
+    assert(shotAllowed(9 + cd, 7, cls), 'a shot past the slack must pass');
     // The DPS the boss's HP curve assumes only holds while the period the pump paces the
     // trigger at and the period the cooldown was derived from are the same one.
     assert((cd + 1) * TICK_MS === periodMsFor(cls), 'the cooldown must be one class period');
@@ -594,10 +681,11 @@ if (import.meta.env.DEV) {
   // Slower and heavier, never faster: the notification budget is the constraint, so a shot
   // a knight may take at tick t is one an archer may not.
   assert(
-    shotAllowed(8 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_KNIGHT) &&
-      !shotAllowed(8 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_ARCHER),
+    shotAllowed(9 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_KNIGHT) &&
+      !shotAllowed(9 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_ARCHER),
     'the archer must be the slower class',
   );
+  assert(SHOT_MARGIN_TICKS * TICK_MS * 4 < periodMsFor(CLASS_KNIGHT), 'the slack is slack, not a second cooldown');
   // A zeroed `class_aim` decodes to the knight, so an omitted class and any byte this build
   // does not understand resolve to it rather than to `undefined` — `Hud.tsx` pins the same
   // default. The class this client SENDS is the pump's `cls ?? CLASS_ARCHER`, not this.
@@ -606,15 +694,29 @@ if (import.meta.env.DEV) {
   assert(periodMsFor(99) === periodMsFor(CLASS_KNIGHT), 'and so does its practice period');
 
   // The hold. Measured from the LATER of the press and the last step, with the margin on
-  // top of the chain's `CHARGE_MS`: a step inside the hold restarts it, a press after a
-  // long stand still waits the full hold, and the first hold of a match is finite.
-  const hold = CHARGE_MS + CHARGE_MARGIN_MS;
-  assert(!chargeAccrued(hold - 1, 0, Number.NEGATIVE_INFINITY), 'a hold short of the margin is not charged');
-  assert(chargeAccrued(hold, 0, Number.NEGATIVE_INFINITY), 'a hold at the margin is charged');
-  assert(!chargeAccrued(hold, 0, 400), 'a step inside the hold restarts it');
-  assert(chargeAccrued(400 + hold, 0, 400), 'and it accrues again from that step');
-  assert(!chargeAccrued(hold - 1, hold - 1 - 100, Number.NEGATIVE_INFINITY), 'a long stand still does not pre-charge a fresh press');
+  // top of the chain's `CHARGE_MS` / `SUPER_MS`: a step inside the hold restarts it, a
+  // press after a long stand still waits the full hold, and the first hold of a match is
+  // finite.
+  const hold1 = holdMsFor(1);
+  const hold2 = holdMsFor(2);
+  assert(tierReached(hold1 - 1, 0, Number.NEGATIVE_INFINITY) === 0, 'a hold short of the margin is plain');
+  assert(tierReached(hold1, 0, Number.NEGATIVE_INFINITY) === 1, 'a hold at the margin is charged');
+  assert(tierReached(hold2 - 1, 0, Number.NEGATIVE_INFINITY) === 1, 'and stays charged short of the super hold');
+  assert(tierReached(hold2, 0, Number.NEGATIVE_INFINITY) === 2, 'a hold at the super margin is a super');
+  assert(tierReached(hold1, 0, 400) === 0, 'a step inside the hold restarts it');
+  assert(tierReached(400 + hold1, 0, 400) === 1, 'and it accrues again from that step');
+  assert(tierReached(hold1 - 1, hold1 - 1 - 100, Number.NEGATIVE_INFINITY) === 0, 'a long stand still does not pre-charge a fresh press');
   assert(CHARGE_MARGIN_MS > 0 && CHARGE_MARGIN_MS < CHARGE_MS, 'the margin is a margin, not a second hold');
+  assert(hold2 - hold1 === SUPER_MS - CHARGE_MS, "the second arc is the chain's own gap: the margin is paid once");
+
+  // What leaves on a pump. A queued release beats everything; a standing hold with no tap
+  // fires nothing, because its shot is the release; walking auto-repeats plain.
+  assert(nextShot(2, false, true, false) === 2, 'a queued release fires, held or not');
+  assert(nextShot(1, true, true, true) === 1, 'and beats the tap of a new press');
+  assert(nextShot(null, true, true, true) === 0, 'a press standing still is one plain tap');
+  assert(nextShot(null, true, true, false) === null, 'a standing hold fires nothing by itself');
+  assert(nextShot(null, true, false, false) === 0, 'walking auto-repeats plain');
+  assert(nextShot(null, false, true, false) === null, 'nothing held, nothing queued, nothing fired');
 
   for (let dir = 0; dir < 8; dir += 1) {
     const [sx, sy] = octantAim(dir);

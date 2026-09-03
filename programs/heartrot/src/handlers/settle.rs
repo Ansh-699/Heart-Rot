@@ -529,7 +529,21 @@ pub fn write_leaderboard(program_id: &Address, accounts: &mut [AccountView]) -> 
     // `OUTCOME_UNDECIDED` says nothing and is indistinguishable from an unwritten row's
     // zero, so it must not reach the ring at all.
     if arena_state.outcome == OUTCOME_UNDECIDED {
-        return Err(HeartrotError::MatchNotOver.into());
+        // ABANDONED, not unfinished: `PHASE_SETTLED` says the settlement happened, and an
+        // undecided outcome on a settled arena means the fight was cut short — the last
+        // player pressed Exit, or the crank died in the muster. No row is written (the
+        // outcome byte would be 0, which is what an unwritten row reads), but the head
+        // still moves. Without this the Worker's arena scan, which starts at
+        // `last_arena_id`, started at the same dead id forever: on devnet the head sat at
+        // 1788266869 while fourteen abandoned raids piled up after it and the only warm
+        // room was seventeen ids past it, every join re-walking the gap and each new
+        // abandon adding a step, until the scan window would have filled and no join
+        // could succeed at all. Refusing here with `MatchNotOver`, as this used to, was
+        // what made that unfixable from the Worker.
+        let mut lb_data = leaderboard.try_borrow_mut()?;
+        let board = load_mut::<Leaderboard>(&mut lb_data)?;
+        mark_abandoned(board, arena_state.arena_id, arena_state.incarnation);
+        return Ok(());
     }
 
     let players_data = players.try_borrow()?;
@@ -604,6 +618,22 @@ fn append_results(
         board.last_incarnation = incarnation;
     }
     wrote
+}
+
+/// Move the head past an abandoned match without writing a row.
+///
+/// Stamps the same `(last_arena_id, last_incarnation)` pair `append_results` uses as its
+/// idempotency key, and that is a deliberate, bounded compromise: the account has no
+/// spare aligned 8 bytes for a separate cursor (5 B of padding at 3 and 6 B at 26), and
+/// the head is the one thing the scan reads. The cost is the interleaving
+/// `append_results`'s comment warns about — a recorded match's *retry* landing after an
+/// abandon has moved the key would append its rows a second time. That needs the
+/// record's HTTP response to be lost and a different raid to be abandoned inside the
+/// retry window, and it duplicates leaderboard rows rather than losing them. Accepted,
+/// because the alternative was a join path that stopped working after ~76 abandons.
+fn mark_abandoned(board: &mut Leaderboard, arena_id: u64, incarnation: u16) {
+    board.last_arena_id = arena_id;
+    board.last_incarnation = incarnation;
 }
 
 // ---------------------------------------------------------------------------
@@ -770,6 +800,18 @@ mod tests {
     /// eight of the ten rows already on devnet say `survived: true` and cannot be read.
     /// `survived` stays per-seat: seat 0 lives through both matches, and that is not what
     /// distinguishes them.
+    #[test]
+    fn an_abandoned_match_moves_the_head_and_writes_no_row() {
+        let mut b = Leaderboard::zeroed();
+        let p = roster(2);
+        assert!(append_results(&mut b, &p, 7, 1, OUTCOME_WIN));
+        assert_eq!((b.last_arena_id, b.last_incarnation, b.total_written), (7, 1, 2));
+        mark_abandoned(&mut b, 9, 1);
+        assert_eq!((b.last_arena_id, b.last_incarnation), (9, 1), "the head follows the abandon");
+        assert_eq!(b.total_written, 2, "and nothing was written for it");
+        assert_eq!(b.next, 2);
+    }
+
     #[test]
     fn win_and_enrage_rows_differ() {
         let mut b = board();

@@ -34,18 +34,20 @@ pub const TILE: i16 = 16;
 
 /// Wall bitboard: bit *x* of row *y* set means tile (x, y) is solid.
 ///
-/// Layout, top to bottom. Open floor for the boss's air, then the pit -- the lower half
-/// of the painted dais, narrowing to its stairs -- then the gate block under the stairs,
-/// then the painted lobby floor. The whole vertical order is the fight: you walk up the
-/// lobby, through the gate, up the stairs onto the dais, and the creature is above you.
+/// Layout, top to bottom. Open floor for the boss's air, with the whole painted dais
+/// laid over its lower rows -- the raid stands on the dais ([`DAIS`]) and the creature
+/// stands on it too, in the middle of the band -- then the stairs, the gate block under
+/// them, then the painted lobby floor. The whole vertical order is the fight: you walk up
+/// the lobby, through the gate, up the stairs onto the dais, and walk the circle around
+/// the creature.
 ///
 /// Both rooms are open floor with zero interior obstacles. `tools/gen_map.py` holds
 /// them that way: at most one contiguous run of floor per row, so a free-standing
 /// block anywhere splits a row and is refused. Perimeter architecture, banners,
 /// torches, chains and floor markings are paint, never wall tiles.
 ///
-/// The rows above the pit are floor, not wall, and that is load-bearing rather than
-/// lazy drawing -- see [`PIT_TOP`].
+/// The rows above the dais's widest row are floor wherever they are not dais, and that
+/// is load-bearing rather than lazy drawing -- see [`DAIS`] and [`PIT_TOP`].
 pub const WALLS: [u64; MAP_TILES] = [
     0xffffffffffffffff, // y=0  ################################################################
     0xc000000000000003, // y=1  ##............................................................##
@@ -59,18 +61,18 @@ pub const WALLS: [u64; MAP_TILES] = [
     0xc000000000000003, // y=9  ##............................................................##
     0xc000000000000003, // y=10 ##............................................................##
     0xc000000000000003, // y=11 ##............................................................##
-    0xc000000000000003, // y=12 ##............................................................##
-    0xc000000000000003, // y=13 ##............................................................##
-    0xc000000000000003, // y=14 ##............................................................##
-    0xc000000000000003, // y=15 ##............................................................##
-    0xc000000000000003, // y=16 ##............................................................##
-    0xc000000000000003, // y=17 ##............................................................##
-    0xc000000000000003, // y=18 ##............................................................##
-    0xc000000000000003, // y=19 ##............................................................##
-    0xc000000000000003, // y=20 ##............................................................##
-    0xc000000000000003, // y=21 ##............................................................##
-    0xe000000000000007, // y=22 ###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPBPPPPPPPPPPPPPPPPPPPPPPPPPPPP###
-    0xe000000000000007, // y=23 ###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###
+    0xc000000000000003, // y=12 ##...................PPPPPPPPPPPPPPPPPPPPPP...................##
+    0xc000000000000003, // y=13 ##...............PPPPPPPPPPPPPPPPPPPPPPPPPPPPPP...............##
+    0xc000000000000003, // y=14 ##............PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP............##
+    0xc000000000000003, // y=15 ##.........PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.........##
+    0xc000000000000003, // y=16 ##.......PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.......##
+    0xc000000000000003, // y=17 ##......PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP......##
+    0xc000000000000003, // y=18 ##.....PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.....##
+    0xc000000000000003, // y=19 ##....PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP....##
+    0xc000000000000003, // y=20 ##...PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP...##
+    0xc000000000000003, // y=21 ##..PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP..##
+    0xc000000000000003, // y=22 ##..PPPPPPPPPPPPPPPPPPPPPPPPPPPPBPPPPPPPPPPPPPPPPPPPPPPPPPPP..##
+    0xc000000000000003, // y=23 ##.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.##
     0xe000000000000007, // y=24 ###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###
     0xe000000000000007, // y=25 ###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###
     0xe000000000000007, // y=26 ###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###
@@ -113,6 +115,90 @@ pub const WALLS: [u64; MAP_TILES] = [
     0xffffffffffffffff, // y=63 ################################################################
 ];
 
+/// Dais bitboard: bit *x* of row *y* set means a `ZONE_ARENA` seat may stand on tile
+/// (x, y). The `P`, `E` and `B` tiles of the drawn grid -- the painted platform ellipse
+/// and its stairs, 1198 tiles -- and a strict subset of the floor in [`WALLS`]
+/// (const-asserted below).
+///
+/// A second table because the two barriers answer different questions. `WALLS` is what
+/// stops a RAY: `shoot`'s raycast tests it before any part box, so a wall tile between a
+/// stand and the boss kills every shot in that column. This is what stops a STEP:
+/// `handlers::player::standable` refuses a raider a destination off it. They differ
+/// exactly where the dais narrows upward: above its widest row every row's outermost tile
+/// has no dais over it, and a raider on that tile's top corner fires every upward shot into
+/// the tile above. Wall there was a stand from which nothing could be hit -- eight of them
+/// on the first whole-dais grid, found by `gen_hitboxes.py`'s sweep -- so the tile above
+/// is the boss's air: floor for the ray, off the dais for the step. Before the dais grew
+/// past the boss's feet the y band [`PIT_TOP`]`..=`[`PIT_BOT`] was the whole of this rule.
+///
+/// Costs 512 more bytes of .so and, like `WALLS`, zero account keys.
+pub const DAIS: [u64; MAP_TILES] = [
+    0x0000000000000000, // y=0 
+    0x0000000000000000, // y=1 
+    0x0000000000000000, // y=2 
+    0x0000000000000000, // y=3 
+    0x0000000000000000, // y=4 
+    0x0000000000000000, // y=5 
+    0x0000000000000000, // y=6 
+    0x0000000000000000, // y=7 
+    0x0000000000000000, // y=8 
+    0x0000000000000000, // y=9 
+    0x0000000000000000, // y=10
+    0x0000000000000000, // y=11
+    0x000007ffffe00000, // y=12
+    0x00007ffffffe0000, // y=13
+    0x0003ffffffffc000, // y=14
+    0x001ffffffffff800, // y=15
+    0x007ffffffffffe00, // y=16
+    0x00ffffffffffff00, // y=17
+    0x01ffffffffffff80, // y=18
+    0x03ffffffffffffc0, // y=19
+    0x07ffffffffffffe0, // y=20
+    0x0ffffffffffffff0, // y=21
+    0x0ffffffffffffff0, // y=22
+    0x1ffffffffffffff8, // y=23
+    0x1ffffffffffffff8, // y=24
+    0x1ffffffffffffff8, // y=25
+    0x1ffffffffffffff8, // y=26
+    0x0ffffffffffffff0, // y=27
+    0x0ffffffffffffff0, // y=28
+    0x07ffffffffffffe0, // y=29
+    0x03ffffffffffffc0, // y=30
+    0x01ffffffffffff80, // y=31
+    0x007ffffffffffe00, // y=32
+    0x003ffffffffffc00, // y=33
+    0x000ffffffffff000, // y=34
+    0x0001ffffffff8000, // y=35
+    0x00001ffffff80000, // y=36
+    0x000000ffff000000, // y=37
+    0x0000000000000000, // y=38
+    0x0000000000000000, // y=39
+    0x0000000000000000, // y=40
+    0x0000000000000000, // y=41
+    0x0000000000000000, // y=42
+    0x0000000000000000, // y=43
+    0x0000000000000000, // y=44
+    0x0000000000000000, // y=45
+    0x0000000000000000, // y=46
+    0x0000000000000000, // y=47
+    0x0000000000000000, // y=48
+    0x0000000000000000, // y=49
+    0x0000000000000000, // y=50
+    0x0000000000000000, // y=51
+    0x0000000000000000, // y=52
+    0x0000000000000000, // y=53
+    0x0000000000000000, // y=54
+    0x0000000000000000, // y=55
+    0x0000000000000000, // y=56
+    0x0000000000000000, // y=57
+    0x0000000000000000, // y=58
+    0x0000000000000000, // y=59
+    0x0000000000000000, // y=60
+    0x0000000000000000, // y=61
+    0x0000000000000000, // y=62
+    0x0000000000000000, // y=63
+];
+
 /// The four `E` marks on the drawn map, in world units at the tile's top-left corner --
 /// the same convention `handlers::player::LOBBY_ENTRANCE` and `GATE_MIN_X` are written
 /// in, and the one `is_wall` inverts with `pos / TILE`.
@@ -138,12 +224,14 @@ pub const ENTRANCES: [(i16, i16); 4] = [
 /// `handlers::init` reads this and writes it to `Boss.x`/`Boss.y` on every spawn and
 /// respawn. It is here rather than there because the boss's position is a fact about
 /// the *map*: every rectangle in `hitboxes.rs` is an offset from this point, and the
-/// open rows above the pit are the only space on the grid tall enough to hold them.
+/// open rows above the dais are the only space on the grid tall enough to hold them.
 ///
-/// It sits at the *top* of the pit band rather than in the middle of the map: the boss
-/// is drawn upward from here, so the creature fills the top of the frame and the raid
-/// shoots up at it from the pit below. The assertion block at the bottom of this file
-/// proves it is on floor, inside `PIT_TOP..=PIT_BOT`, and outside the gate.
+/// It is the creature's feet line, on the dais's own tiles: the boss is drawn upward
+/// from here, so the creature fills the top of the frame, and the raid walks the dais
+/// around it -- `handlers::player` refuses a step into the body, folded out of the
+/// hitbox table, so the pit needs no hole cut where the boss stands. The assertion
+/// block at the bottom of this file proves it is on the dais, inside
+/// `PIT_TOP..=PIT_BOT`, and outside the gate.
 ///
 /// It used to be a pair of literals in `init.rs` reading (512, 320) -- tile (32, 20),
 /// which was a two-tile corridor on the map of the time. The shell was mostly inside
@@ -155,7 +243,7 @@ pub const BOSS_SPAWN: (i16, i16) = (512, 352); // tile (32, 22)
 
 /// The raider box: a `ZONE_ARENA` player's y is confined to `PIT_TOP..=PIT_BOT`.
 ///
-/// Compiled from the `P` block's bounding rows (22..37) -- inclusive of the last
+/// Compiled from the `P` block's bounding rows (12..37) -- inclusive of the last
 /// row's last unit, which is the form `move_player` compares a *destination* against.
 /// Comparing the destination and not the current position is load-bearing: a player who
 /// flips zone while standing on the gate is below `PIT_BOT`, and a current-position test
@@ -164,11 +252,12 @@ pub const BOSS_SPAWN: (i16, i16) = (512, 352); // tile (32, 22)
 /// This is a movement rule and deliberately **not** a wall. The rows above the pit are
 /// open floor because `shoot`'s raycast tests `is_wall` before the part rectangles, so a
 /// single wall tile between a player and the boss would kill every shot in that column
-/// with nothing logged anywhere. The clamp holds raiders out of the boss's air; the
-/// bitboard holds bullets and rays to the map. Two barriers, and they can disagree --
-/// `tools/gen_map.py` proves the pit is one connected room and that the gate walks into
-/// it, which is the only guard against a clamp that boxes someone in open floor.
-pub const PIT_TOP: i16 = 352; // tile row 22
+/// with nothing logged anywhere. The band holds the lobby below the rim and is the coarse
+/// half of the raider's rule; [`DAIS`] is the fine half, tile by tile, since the boss's
+/// air now reaches down beside the dais's shoulders. Barriers that can disagree --
+/// `tools/gen_map.py` proves the dais is one connected room and that the gate walks onto
+/// it, which is the only guard against a rule that boxes someone in open floor.
+pub const PIT_TOP: i16 = 192; // tile row 12
 pub const PIT_BOT: i16 = 607; // tile row 37, last unit
 
 /// The gate block `enter_gate` demands the player be standing in, compiled from the `G`
@@ -225,6 +314,11 @@ const _: () = {
             "an entrance in map::ENTRANCES lands in a wall -- redraw assets/map/arena.json \
              and re-run tools/gen_map.py",
         );
+        assert!(
+            DAIS[ty] & (1u64 << tx) != 0,
+            "an entrance in map::ENTRANCES is off the dais -- a raider would respawn onto \
+             the boss's air",
+        );
         i += 1;
     }
 
@@ -238,16 +332,40 @@ const _: () = {
          and re-run tools/gen_map.py",
     );
 
+    // The dais is floor, row by row, and nothing on the dais has wall directly over it:
+    // one AND per row each. The first is what lets `standable` skip the wall test's
+    // work; the second is the pocket `gen_hitboxes.py`'s sweep found -- a raider on a
+    // shoulder tile's top corner whose every upward shot died on the cap above it.
+    let mut y = 1;
+    while y < MAP_TILES {
+        assert!(
+            DAIS[y] & WALLS[y] == 0,
+            "a dais tile is a wall -- re-run tools/gen_map.py",
+        );
+        assert!(
+            DAIS[y] & WALLS[y - 1] == 0,
+            "a dais tile has wall directly over it: every upward shot from its top corner \
+             dies there -- the boss's air must reach down past it (tools/gen_rooms.py)",
+        );
+        y += 1;
+    }
+    assert!(DAIS[0] == 0, "the top border row is dais");
+
     // The pit band is non-empty and sits inside the map.
     assert!(PIT_TOP >= 0 && PIT_TOP < PIT_BOT && PIT_BOT < (MAP_TILES as i16) * TILE);
     assert!(GATE_MIN_X <= GATE_MAX_X && GATE_MIN_Y <= GATE_MAX_Y);
 
     // The boss is reachable by a raider: its anchor is inside the band they are clamped
-    // to. A boss above `PIT_TOP` would be a target no one can ever stand level with.
+    // to and on the dais they walk. A boss above `PIT_TOP` would be a target no one can
+    // ever stand level with.
     assert!(
         by >= PIT_TOP && by <= PIT_BOT,
         "map::BOSS_SPAWN is outside PIT_TOP..=PIT_BOT -- the raid is clamped away from \
          its own boss; redraw assets/map/arena.json and re-run tools/gen_map.py",
+    );
+    assert!(
+        DAIS[(by / TILE) as usize] & (1u64 << (bx / TILE)) != 0,
+        "map::BOSS_SPAWN is off the dais -- the raid can never walk up to its own boss",
     );
 
     // And it is not standing on the gate, which would let a player flip zone by walking
@@ -306,7 +424,16 @@ mod tests {
         tx >= MAP_TILES || ty >= MAP_TILES || WALLS[ty] & (1u64 << tx) != 0
     }
 
-    /// 4-connected flood fill from the boss tile, confined to tile rows `top..=bot`.
+    fn floor(tx: usize, ty: usize) -> bool {
+        !solid(tx, ty)
+    }
+
+    fn dais(tx: usize, ty: usize) -> bool {
+        tx < MAP_TILES && ty < MAP_TILES && DAIS[ty] & (1u64 << tx) != 0
+    }
+
+    /// 4-connected flood fill from the boss tile over the tiles `open` admits, confined
+    /// to tile rows `top..=bot`.
     ///
     /// 4- and not 8-connected on purpose: movement is 8-way but only tests the
     /// destination tile, so a diagonal can squeeze past a corner. Accepting that here
@@ -314,7 +441,7 @@ mod tests {
     ///
     /// Relaxed to a fixpoint rather than queued, so it allocates nothing: 64x64 is four
     /// thousand tiles and this is a test.
-    fn reachable(top: usize, bot: usize) -> [[bool; MAP_TILES]; MAP_TILES] {
+    fn reachable(top: usize, bot: usize, open: fn(usize, usize) -> bool) -> [[bool; MAP_TILES]; MAP_TILES] {
         let mut seen = [[false; MAP_TILES]; MAP_TILES];
         seen[(BOSS_SPAWN.1 / TILE) as usize][(BOSS_SPAWN.0 / TILE) as usize] = true;
         let mut changed = true;
@@ -322,7 +449,7 @@ mod tests {
             changed = false;
             for ty in top..=bot {
                 for tx in 0..MAP_TILES {
-                    if seen[ty][tx] || solid(tx, ty) {
+                    if seen[ty][tx] || !open(tx, ty) {
                         continue;
                     }
                     let touching = (ty > top && seen[ty - 1][tx])
@@ -345,7 +472,7 @@ mod tests {
     /// spawn" -- both are floor, and every floor tile is in the same component.
     #[test]
     fn every_floor_tile_is_one_room() {
-        let seen = reachable(0, MAP_TILES - 1);
+        let seen = reachable(0, MAP_TILES - 1, floor);
         for ty in 0..MAP_TILES {
             for tx in 0..MAP_TILES {
                 assert_eq!(
@@ -368,44 +495,46 @@ mod tests {
         }
     }
 
-    /// The pit is one room *on its own terms*. A raider is clamped to
-    /// `PIT_TOP..=PIT_BOT`, so a pinch in the corner shaping cannot be walked around the
-    /// way [`every_floor_tile_is_one_room`] would let you. The two are not the same
-    /// test, and this is the one that catches a shaped pit cut in half.
+    /// The dais is one room *on its own terms*. A raider may only stand on dais tiles,
+    /// so a pinch in the shaping cannot be walked around through the air the way
+    /// [`every_floor_tile_is_one_room`] would let you. The two are not the same test,
+    /// and this is the one that catches a shaped dais cut in half.
     #[test]
-    fn the_pit_is_one_room_a_raider_can_cross() {
+    fn the_dais_is_one_room_a_raider_can_cross() {
         let (top, bot) = ((PIT_TOP / TILE) as usize, (PIT_BOT / TILE) as usize);
-        let seen = reachable(top, bot);
-        let mut floor = 0usize;
-        for ty in top..=bot {
+        let seen = reachable(top, bot, dais);
+        let mut tiles = 0usize;
+        for ty in 0..MAP_TILES {
             for tx in 0..MAP_TILES {
-                if !solid(tx, ty) {
-                    floor += 1;
-                    assert!(seen[ty][tx], "pit tile ({tx}, {ty}) is cut off from the boss");
+                if dais(tx, ty) {
+                    tiles += 1;
+                    assert!(ty >= top && ty <= bot, "dais tile ({tx}, {ty}) is outside the band");
+                    assert!(seen[ty][tx], "dais tile ({tx}, {ty}) is cut off from the boss");
                 }
             }
         }
-        assert_eq!(floor, 764, "the drawn pit changed size");
+        assert_eq!(tiles, 1198, "the drawn dais changed size");
     }
 
-    /// Every respawn door is inside the pit band. A raider respawned above `PIT_TOP` or
-    /// below `PIT_BOT` is a seat clamped out of every legal move, with nothing logged.
+    /// Every respawn door is on the dais, inside the pit band. A raider respawned off it
+    /// is a seat governed by walls alone until it walks onto the dais, standing where the
+    /// painting shows no floor, with nothing logged.
     #[test]
-    fn every_door_is_inside_the_raider_box() {
+    fn every_door_is_on_the_dais() {
         for (x, y) in ENTRANCES {
             assert!(
                 y >= PIT_TOP && y <= PIT_BOT,
                 "entrance ({x}, {y}) is outside PIT_TOP..=PIT_BOT",
             );
-            assert!(!solid((x / TILE) as usize, (y / TILE) as usize));
+            assert!(dais((x / TILE) as usize, (y / TILE) as usize));
         }
     }
 
-    /// The gate block is walkable end to end, and its columns step straight into the
-    /// pit. Walling any of it is a lobby nobody can leave; a gate that does not adjoin
-    /// the pit is a player who flips zone and then cannot move.
+    /// The gate block is walkable end to end, and its columns step straight onto the
+    /// dais. Walling any of it is a lobby nobody can leave; a gate that does not adjoin
+    /// the dais is a player who flips zone and then cannot move.
     #[test]
-    fn the_gate_is_floor_and_walks_into_the_pit() {
+    fn the_gate_is_floor_and_walks_onto_the_dais() {
         for ty in (GATE_MIN_Y / TILE)..=(GATE_MAX_Y / TILE) {
             for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {
                 assert!(!solid(tx as usize, ty as usize), "gate tile ({tx}, {ty}) is wall");
@@ -414,29 +543,30 @@ mod tests {
         let last_pit_row = (PIT_BOT / TILE) as usize;
         for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {
             assert!(
-                !solid(tx as usize, last_pit_row),
-                "gate column {tx} runs into wall at the pit's last row",
+                dais(tx as usize, last_pit_row),
+                "gate column {tx} does not run onto the dais at the pit's last row",
             );
         }
     }
 
     /// The boss's air is open floor. `handlers::shoot`'s raycast tests `is_wall` before
-    /// the part rectangles, so one wall tile above the pit kills every shot in that
-    /// column -- a raid that cannot be won, reporting nothing. The pit ceiling is
-    /// `PIT_TOP`, a movement rule, and this is the test that keeps it from becoming a
-    /// wall the next time someone redraws the grid.
+    /// the part rectangles, so one wall tile between a stand and the boss kills every
+    /// shot in that column -- a raid that cannot be won, reporting nothing. The air is
+    /// held off the raid by `DAIS`, a movement rule, and this is the test that keeps it
+    /// from becoming wall the next time someone redraws the grid.
     ///
-    /// The column span is generated (2..=61) rather than written as
-    /// `1..MAP_TILES - 1`: that form assumed a one-tile border ring and started
-    /// failing the moment the side perimeter was drawn two tiles thick.
+    /// Both spans are generated -- rows 1..=23, columns 2..=61 --
+    /// rather than written as `1..PIT_TOP` and `1..MAP_TILES - 1`: the first form stopped
+    /// being true when the dais grew past the boss's feet and the air had to reach down
+    /// beside its shoulders, the second the moment the side perimeter was drawn two
+    /// tiles thick.
     #[test]
-    fn the_boss_air_above_the_pit_is_open() {
-        let top = (PIT_TOP / TILE) as usize;
-        for ty in 1..top {
+    fn the_boss_air_is_open() {
+        for ty in 1..=23 {
             for tx in 2..=61 {
                 assert!(
                     !solid(tx, ty),
-                    "tile ({tx}, {ty}) is wall above PIT_TOP -- every shot in that \
+                    "tile ({tx}, {ty}) is wall in the boss's air -- every shot in that \
                      column dies on it before reaching the boss",
                 );
             }

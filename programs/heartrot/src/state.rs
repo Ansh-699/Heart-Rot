@@ -195,14 +195,40 @@ pub const ENRAGE_TICKS: u32 = ticks_for(360_000);
 /// duration stored twice.
 pub const VOLLEY_INTERVAL_TICKS: u8 = ticks_for(3_200) as u8;
 
+/// Fight HP remaining, in percent of [`Boss::fight_hp`]'s max, at or below which the boss
+/// is FURIOUS: the volley reloads from [`FURY_VOLLEY_INTERVAL_TICKS`] with one extra bullet
+/// (`tick.rs`) and every client dresses the creature as ENRAGED. Derived from the shell and
+/// the core on every read, never stored — `Boss` has no padding left, and a cached flag
+/// would be the HP stored twice.
+///
+/// Distinct from [`OUTCOME_ENRAGE`], which is the six-minute timeout and ENDS the fight.
+/// Fury is the last fifth of the fight getting harder; the name is different on purpose so
+/// the two never get merged by a grep.
+pub const FURY_PCT: u32 = 20;
+
+/// The volley period while furious: half of [`VOLLEY_INTERVAL_TICKS`], 1.6 s. Declared
+/// beside the number it halves so the two cannot drift, `u8` because `tick.rs` writes it
+/// into `Boss::attack_timer`.
+pub const FURY_VOLLEY_INTERVAL_TICKS: u8 = VOLLEY_INTERVAL_TICKS / 2;
+
+const _: () = {
+    assert!(FURY_PCT > 0 && FURY_PCT < 100);
+    // Faster, and still a real reload: 0 would fire every tick.
+    assert!(FURY_VOLLEY_INTERVAL_TICKS > 0 && FURY_VOLLEY_INTERVAL_TICKS < VOLLEY_INTERVAL_TICKS);
+};
+
 /// `Boss::core_hp` for a solo raid — the floor, not the value a full raid fights.
 ///
-/// 300, not 2,000. At 50 DPS the old floor was 40 s of a solo fight that a lone player
-/// spent entirely on a target that cannot move or be dodged, after the shell was already
-/// down. Cutting it is half of the 10x solo pass; the other half is [`VENT_PCT_SOLO`].
-/// A full raid is untouched, because [`CORE_HP_PER_RAIDER`] dominates the sum the moment
-/// a second player arrives: twenty raiders still fight 57,300.
-pub const BOSS_CORE_HP: u16 = 300;
+/// 200, down from 300 and from 2,000 before that. At 50 DPS the 2,000 floor was 40 s of a
+/// solo fight spent entirely on a target that cannot move or be dodged, after the shell was
+/// already down. 300 was measured, not felt: a perfect solo kill was 17 s, and a standing
+/// solo player under the flat 8-per-bullet volley and 45-per-slam was dead in 5.7 s — the
+/// fight was lost three times over before the vent opened. Cutting the core is one third
+/// of the solo pass; [`VENT_PCT_SOLO`] and the incoming side ([`bullet_damage`],
+/// [`slam_damage`], `player::PLAYER_HP_MAX`) are the rest. A full raid is untouched,
+/// because [`CORE_HP_PER_RAIDER`] dominates the sum the moment a second player arrives:
+/// twenty raiders still fight 57,200.
+pub const BOSS_CORE_HP: u16 = 200;
 
 /// Added to `core_hp_max` for each raider past the first, by the tick stage that already
 /// counts arena occupants.
@@ -233,32 +259,41 @@ const _: () = {
 /// a ratio over `parts`. One byte on `Arena`, one function, the same tick stage the core
 /// top-up already runs in.
 ///
-/// 97, not 65. A solo raider strips 3 % of 18,000 shell HP — 540 damage, under 11 s at
-/// 50 DPS — and the vent opens; twenty still strip 65 % (11,700, 12 s), linear between.
-/// The shell is a wall the raid shares, and a wall sized for twenty is a grind for one:
-/// solo paid 126 s of it. With [`BOSS_CORE_HP`] this takes a perfect solo fight from 166 s
-/// to 17 s, which is what "ten times easier" means when the request is measured rather
-/// than felt. A full raid moves 71 s -> 69 s, which is noise.
-pub const VENT_PCT_SOLO: u32 = 97;
+/// 98, up from 97 and from 65 before that. A solo raider strips 2 % of 18,000 shell HP —
+/// 360 damage, 7.2 s at 50 DPS — and the vent opens; twenty still strip 65 % (11,700,
+/// 12 s), linear between. The shell is a wall the raid shares, and a wall sized for twenty
+/// is a grind for one: solo paid 126 s of it at 65. With [`BOSS_CORE_HP`] a perfect solo
+/// fight is now 12 s — eight archer hits — where it was 17, and 166 before the first pass;
+/// that is what "ten times easier" means when the request is measured rather than felt. A
+/// full raid stays at 69 s.
+pub const VENT_PCT_SOLO: u32 = 98;
 pub const VENT_PCT_FULL: u32 = 35;
 
-/// The vent threshold for a raid of `raid_size`, in percent of `sum(parts_max)`.
-///
-/// The comparison at both call sites is `sum(parts) × 100 < sum(parts_max) × vent_pct`, so
-/// no percentage is ever a float. Linear in the raid size from [`VENT_PCT_SOLO`] at one
-/// raider to [`VENT_PCT_FULL`] at [`MAX_SEATS`], clamped into `1..=MAX_SEATS` — 0 is what
-/// every account already on chain carries in `raid_size` and what an arena reads before the
-/// first raider is counted, and it must mean the solo fight rather than divide by zero.
-/// `const`, so the TTK model below is checked on every `cargo check`.
-pub const fn vent_pct(raid_size: u8) -> u32 {
-    let n = if raid_size == 0 {
+/// `raid_size` clamped into `1..=MAX_SEATS`, the domain every raid-size curve in this file
+/// is drawn over. 0 is what every account already on chain carries in `raid_size` and what
+/// an arena reads before the first raider is counted, and it must mean the solo fight
+/// rather than divide by zero; past `MAX_SEATS` cannot happen and must not wrap. Written
+/// once so [`vent_pct`], [`bullet_damage`], [`slam_damage`] and [`ttk_s`] cannot disagree
+/// about what an uncounted raid is.
+const fn raid_n(raid_size: u8) -> u32 {
+    if raid_size == 0 {
         1
     } else if raid_size as usize > MAX_SEATS {
         MAX_SEATS as u32
     } else {
         raid_size as u32
-    };
-    VENT_PCT_SOLO - (VENT_PCT_SOLO - VENT_PCT_FULL) * (n - 1) / (MAX_SEATS as u32 - 1)
+    }
+}
+
+/// The vent threshold for a raid of `raid_size`, in percent of `sum(parts_max)`.
+///
+/// The comparison at both call sites is `sum(parts) × 100 < sum(parts_max) × vent_pct`, so
+/// no percentage is ever a float. Linear in the raid size from [`VENT_PCT_SOLO`] at one
+/// raider to [`VENT_PCT_FULL`] at [`MAX_SEATS`], clamped by [`raid_n`]. `const`, so the
+/// TTK model below is checked on every `cargo check`.
+pub const fn vent_pct(raid_size: u8) -> u32 {
+    VENT_PCT_SOLO
+        - (VENT_PCT_SOLO - VENT_PCT_FULL) * (raid_n(raid_size) - 1) / (MAX_SEATS as u32 - 1)
 }
 
 const _: () = {
@@ -269,6 +304,47 @@ const _: () = {
     assert!(VENT_PCT_SOLO >= VENT_PCT_FULL);
     assert!(vent_pct(0) == VENT_PCT_SOLO && vent_pct(1) == VENT_PCT_SOLO);
     assert!(vent_pct(MAX_SEATS as u8) == VENT_PCT_FULL && vent_pct(u8::MAX) == VENT_PCT_FULL);
+};
+
+/// Damage per boss bullet and per hand slam, for a raid of one and for a full raid;
+/// [`bullet_damage`] and [`slam_damage`] draw the line between them as [`vent_pct`] does.
+///
+/// The third raid-size knob, and the one that reaches the PLAYER. The outgoing knobs alone
+/// did not make solo playable: with the vent at 97 and the core at 300 a perfect solo kill
+/// was 17 s, while a standing solo player took `3 + 1` bullets × 8 every 3.2 s plus 45
+/// every 6 s — 17.5 DPS against 100 HP, dead in 5.7 s. The full-raid endpoints are the
+/// flat `BULLET_DAMAGE` / `SLAM_DAMAGE` the crank always dealt, so twenty raiders take
+/// exactly the hits they took; solo takes a quarter of a bullet and a third of a slam.
+/// Against `player::PLAYER_HP_MAX` (150) that is ~40 s standing still, for a 12 s kill.
+pub const BULLET_DAMAGE_SOLO: u16 = 2;
+pub const BULLET_DAMAGE_FULL: u16 = 8;
+pub const SLAM_DAMAGE_SOLO: u16 = 15;
+pub const SLAM_DAMAGE_FULL: u16 = 45;
+
+/// Linear from `solo` at one raider to `full` at [`MAX_SEATS`], in integers, rounding
+/// toward solo — the same shape and the same clamp as [`vent_pct`], written once.
+const fn raid_lerp(solo: u16, full: u16, raid_size: u8) -> u16 {
+    (solo as u32 + (full - solo) as u32 * (raid_n(raid_size) - 1) / (MAX_SEATS as u32 - 1)) as u16
+}
+
+/// What one boss bullet takes off a raider, for a raid of `raid_size`.
+pub const fn bullet_damage(raid_size: u8) -> u16 {
+    raid_lerp(BULLET_DAMAGE_SOLO, BULLET_DAMAGE_FULL, raid_size)
+}
+
+/// What one hand slam takes off a raider caught in its lane, for a raid of `raid_size`.
+pub const fn slam_damage(raid_size: u8) -> u16 {
+    raid_lerp(SLAM_DAMAGE_SOLO, SLAM_DAMAGE_FULL, raid_size)
+}
+
+const _: () = {
+    // Solo is the *gentler* endpoint; inverting either pair wraps `raid_lerp`'s subtraction.
+    assert!(BULLET_DAMAGE_SOLO <= BULLET_DAMAGE_FULL && SLAM_DAMAGE_SOLO <= SLAM_DAMAGE_FULL);
+    // The endpoints, and the clamp: 0 is solo, past `MAX_SEATS` is a full raid.
+    assert!(bullet_damage(0) == 2 && bullet_damage(1) == 2);
+    assert!(bullet_damage(MAX_SEATS as u8) == 8 && bullet_damage(u8::MAX) == 8);
+    assert!(slam_damage(0) == 15 && slam_damage(1) == 15);
+    assert!(slam_damage(MAX_SEATS as u8) == 45 && slam_damage(u8::MAX) == 45);
 };
 
 /// `PlayerSlot.zone`.
@@ -405,8 +481,9 @@ pub struct Arena {
     pub bump: u8,
     /// `PHASE_*`. Authoritative for what all 20 clients render.
     pub phase: u8,
-    /// Players alive in `ZONE_ARENA`. Drives `bullets_per_volley = 3 + alive_count`,
-    /// so it is game balance, not telemetry.
+    /// Players alive in `ZONE_ARENA`. Drives `bullets_per_volley = BASE_VOLLEY_BULLETS +
+    /// alive_count` (`tick.rs`; one more while [`Boss::is_furious`]), so it is game
+    /// balance, not telemetry.
     pub alive_count: u8,
     /// Next slot `boss_tick` probes when claiming a free bullet. Wraps at
     /// `MAX_BULLETS`; a full pool simply drops the spawn.
@@ -893,6 +970,37 @@ impl Boss {
         self.attack_timer = VOLLEY_INTERVAL_TICKS;
         self.target_seat = NO_TARGET;
     }
+
+    /// The fight as ONE number: `(left, max)` — the shell a raid of `raid_size` still has
+    /// to strip to open the vent, plus the core.
+    ///
+    /// Shell above the vent threshold never has to come off, so it is not fight HP:
+    /// `threshold = shell_max × vent_pct / 100`, `left = max(shell − threshold, 0) +
+    /// core_hp`, `max = (shell_max − threshold) + core_hp_max`. This is what the HUD shows
+    /// as `boss NN%` and what [`Self::is_furious`] reads, mirrored as `fightHp` in
+    /// `layout.ts`; the alternative was a shell bar that read 97 % for a solo fight three
+    /// hits from won.
+    ///
+    /// Integers throughout. `u32`: nine `u16` parts sum to at most 589,815, and the widest
+    /// product here is that × 100.
+    pub fn fight_hp(&self, raid_size: u8) -> (u32, u32) {
+        let shell: u32 = self.parts.iter().map(|&p| p as u32).sum();
+        let shell_max: u32 = self.parts_max.iter().map(|&p| p as u32).sum();
+        let threshold = shell_max * vent_pct(raid_size) / 100;
+        let left = shell.saturating_sub(threshold) + self.core_hp as u32;
+        // `vent_pct < 100` is const-asserted, so `threshold <= shell_max` and this cannot
+        // wrap; a zeroed account is `(0, 0)`, not a panic.
+        let max = (shell_max - threshold) + self.core_hp_max as u32;
+        (left, max)
+    }
+
+    /// Is the boss in the last [`FURY_PCT`] percent of [`Self::fight_hp`]? `left > 0` keeps
+    /// a dead boss out, `max > 0` keeps a zeroed account out, and `≤` on the cross-multiplied
+    /// integers is the comparison the client mirror makes — exactly 20 % is furious.
+    pub fn is_furious(&self, raid_size: u8) -> bool {
+        let (left, max) = self.fight_hp(raid_size);
+        max > 0 && left > 0 && left * 100 <= max * FURY_PCT
+    }
 }
 
 const _: () = {
@@ -1028,6 +1136,57 @@ const _: () = {
 };
 
 // ---------------------------------------------------------------------------
+// The super shot — the beam: a longer hold, the same statelessness
+// ---------------------------------------------------------------------------
+
+/// How long a raider must stand still before a shot may be sent as a SUPER (wire tier 2).
+/// 2.5 s is a stand the boss gets most of a volley period into (one every 3.2 s), so the
+/// reward is paid for in exposure rather than in cooldown — which stays the class's.
+pub const SUPER_MS: u32 = 2_500;
+
+/// [`SUPER_MS`] in ER slots — the gap `shoot::fire` requires for tier 2, slot against
+/// slot exactly as [`CHARGE_SLOTS`] is for tier 1.
+pub const SUPER_SLOTS: u32 = SUPER_MS / SLOT_MS;
+
+/// Super damage is `CLASS_DAMAGE × SUPER_NUM / SUPER_DEN` — 5×: the archer's 70 becomes
+/// 350, the knight's 40 becomes 200. Twice a charged shot for two and a half times the
+/// hold, and it PIERCES (`shoot.rs`): every part on the ray takes it once, and the core
+/// takes it if the vent is open once those parts are gone. That is the whole case for a
+/// 2.5 s stand in a bullet hell.
+pub const SUPER_NUM: u16 = 5;
+pub const SUPER_DEN: u16 = 1;
+
+/// The bit of `PlayerSlot::facing` that says "the shot this seat last fired was a super".
+/// Bit 4, beside [`CHARGED_SHOT_BIT`]; bits 5..7 are the last free bits in the slot. Set
+/// by `shoot::fire`, cleared by the next bare-octant `facing` write like the charged bit,
+/// so a client draws the beam for exactly as long as it drew the charged arrow.
+pub const SUPER_SHOT_BIT: u8 = 4;
+
+/// Damage per landed **super** shot, per class. Total, exact, `u16`-safe — asserted below.
+pub const fn super_damage(class: u8) -> u16 {
+    (CLASS_DAMAGE[class as usize] as u32 * SUPER_NUM as u32 / SUPER_DEN as u32) as u16
+}
+
+const _: () = {
+    assert!(SUPER_MS % SLOT_MS == 0 && SUPER_SLOTS > 0);
+    // Strictly longer than the charged hold, or the tiers are not ordered and the client's
+    // downgrade ladder on `NotCharged` (super → charged → plain) has nothing to step to.
+    assert!(SUPER_SLOTS > CHARGE_SLOTS);
+    // Off the octant, off the charged flag, inside the byte.
+    assert!(SUPER_SHOT_BIT >= 3 && SUPER_SHOT_BIT < 8 && SUPER_SHOT_BIT != CHARGED_SHOT_BIT);
+    let mut class = 0;
+    while class < N_CLASSES {
+        let base = CLASS_DAMAGE[class as usize] as u32;
+        // Fits u16 and divides exactly, for the same reasons as the charged block.
+        assert!(base * SUPER_NUM as u32 / SUPER_DEN as u32 <= u16::MAX as u32);
+        assert!(super_damage(class) as u32 * SUPER_DEN as u32 == base * SUPER_NUM as u32);
+        // A super outdamages a charged shot on every row, or the longer hold is a worse deal.
+        assert!(super_damage(class) > charged_damage(class));
+        class += 1;
+    }
+};
+
+// ---------------------------------------------------------------------------
 // The time-to-kill model
 // ---------------------------------------------------------------------------
 
@@ -1045,13 +1204,7 @@ const _: () = {
 /// charging (2.5× damage while rooted), so it is a floor, not a forecast: the time a
 /// perfect solo player cannot beat.
 pub const fn ttk_s(shell_hp: u32, raid_size: u8) -> u32 {
-    let n = if raid_size == 0 {
-        1
-    } else if raid_size as usize > MAX_SEATS {
-        MAX_SEATS as u32
-    } else {
-        raid_size as u32
-    };
+    let n = raid_n(raid_size);
     let dps = n * (CLASS_DAMAGE[CLASS_KNIGHT as usize] as u32 * 1_000
         / CLASS_PERIOD_MS[CLASS_KNIGHT as usize]);
     let shell = shell_hp * (100 - vent_pct(raid_size)) / 100;
@@ -1069,20 +1222,22 @@ pub(crate) const TTK_MODEL_SHELL_HP: u32 = 18_000;
 
 const _: () = {
     let seconds_to_enrage = ENRAGE_TICKS * TICK_MS / 1_000;
-    // Solo: 540 shell + 300 core at 50 DPS = 17 s of a 360 s enrage, down from 166 and
-    // from 274 before that. The curve is the whole difficulty design, so it is asserted
-    // rather than described — change a constant and this line names what it did.
-    assert!(ttk_s(TTK_MODEL_SHELL_HP, 1) == 17);
-    // Twenty: 11,700 shell + 57,300 core at 1,000 DPS = 69 s. A full raid is the fight
-    // that was already tuned; the solo pass must not have moved it.
+    // Solo: 360 shell + 200 core at 50 DPS = 12 s of a 360 s enrage — eight archer hits —
+    // down from 17, from 166 and from 274 before that. The curve is the whole difficulty
+    // design, so it is asserted rather than described — change a constant and this line
+    // names what it did.
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, 1) == 12);
+    // Twenty: 11,700 shell + 57,200 core at 1,000 DPS = 69 s, as it was at 57,300. A full
+    // raid is the fight that was already tuned; the solo pass must not have moved it.
     assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) == 69);
     // THE CURVE POINTS THE OTHER WAY NOW, and that is the point. It used to assert that
     // more raiders kill FASTER: the shell was flat, so every extra bow was pure speed.
-    // With the solo pass the shell a lone player must strip is 540 and the core is 300,
-    // while twenty still owe 11,700 and 57,300 — so the fight LENGTHENS with the raid, and
+    // With the solo pass the shell a lone player must strip is 360 and the core is 200,
+    // while twenty still owe 11,700 and 57,200 — so the fight LENGTHENS with the raid, and
     // that is the founding requirement ("more people who join, tougher the battle is")
-    // holding as arithmetic instead of as a comment. Difficulty is also bullet density,
-    // which already scaled: `bullets_per_volley = 3 + alive`.
+    // holding as arithmetic instead of as a comment. Difficulty is also bullet density
+    // (`bullets_per_volley = BASE_VOLLEY_BULLETS + alive`) and, since the solo pass, the
+    // damage of each bullet: `bullet_damage` / `slam_damage` above.
     assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) > ttk_s(TTK_MODEL_SHELL_HP, 1));
     // The LONGEST fight — a full raid — must fit the enrage window twice over. The second
     // half is the allowance for play that is not perfect; `ttk_s` is a floor, not a
@@ -1099,14 +1254,14 @@ pub struct PlayerSlot {
     pub zone: u8,
     /// Bits 0..2: the octant this seat last stepped or fired along, 0 N … 7 NW, y down —
     /// the sprite's body direction (the arrow is drawn from `class_aim`, at 1.90° rather
-    /// than 45°). Bit 3, [`CHARGED_SHOT_BIT`]: the last shot was charged. Bits 4..7 are the
-    /// last free bits in the slot.
+    /// than 45°). Bit 3, [`CHARGED_SHOT_BIT`]: the last shot was charged. Bit 4,
+    /// [`SUPER_SHOT_BIT`]: it was a super. Bits 5..7 are the last free bits in the slot.
     ///
     /// **A reader wants `facing & 7`**, and that is the client's job (`layout.ts` decodes
-    /// the octant and the flag as two fields); nothing on chain reads the byte back. Every
-    /// on-chain writer assigns a bare octant — `move_player` and `enter_gate` — except
-    /// `shoot::fire`, which ORs the flag in. So a step clears it, which is the lifetime of
-    /// the in-flight arrow, with no second field to expire.
+    /// the octant and the two flags as three fields); nothing on chain reads the byte back.
+    /// Every on-chain writer assigns a bare octant — `move_player` and `enter_gate` — except
+    /// `shoot::fire`, which ORs the flags in. So a step clears them, which is the lifetime
+    /// of the in-flight arrow, with no second field to expire.
     pub facing: u8,
     pub skin_id: u8,
     /// Class and last aim, packed:
@@ -1752,6 +1907,17 @@ mod rate_tests {
         // half the hold.
         assert_eq!(CHARGE_SLOTS * SLOT_MS, CHARGE_MS, "the charge stays 1 s");
         assert_eq!(CHARGE_SLOTS, 20);
+        assert_eq!(
+            SUPER_SLOTS * SLOT_MS,
+            SUPER_MS,
+            "the super hold stays 2.5 s"
+        );
+        assert_eq!(SUPER_SLOTS, 50);
+        assert_eq!(
+            FURY_VOLLEY_INTERVAL_TICKS as u32 * TICK_MS,
+            1_600,
+            "a furious volley stays 1.6 s"
+        );
     }
 }
 
@@ -1760,13 +1926,13 @@ mod rate_tests {
 mod balance_tests {
     use super::*;
 
-    /// Solo opens the vent with 97 % of the shell standing, twenty with 35 %, and every
+    /// Solo opens the vent with 98 % of the shell standing, twenty with 35 %, and every
     /// raid size between is between — never a step *down* in difficulty for one more
     /// player walking through the gate. 0 and anything past `MAX_SEATS` clamp rather than
     /// divide by zero or wrap: 0 is what every live account carries today.
     #[test]
     fn the_vent_threshold_is_linear_in_the_raid() {
-        assert_eq!(vent_pct(1), 97);
+        assert_eq!(vent_pct(1), 98);
         assert_eq!(vent_pct(MAX_SEATS as u8), 35);
         assert_eq!(vent_pct(0), vent_pct(1), "an uncounted raid is a solo raid");
         assert_eq!(vent_pct(MAX_SEATS as u8 + 1), vent_pct(MAX_SEATS as u8));
@@ -1817,14 +1983,13 @@ mod balance_tests {
     }
 
     /// The model behind the two vent numbers, over every raid size and not just the two
-    /// endpoints the compile-time block pins: time-to-kill falls monotonically as the raid
-    /// grows, from 166 s solo to 71 s at twenty, and a 20-seat raid at the old flat 35 %
-    /// threshold would have been the same 71 s — the curve changed the solo fight, not the
-    /// full one.
+    /// endpoints the compile-time block pins: time-to-kill RISES with the raid, from 12 s
+    /// solo to 69 s at twenty, and a 20-seat raid at the old flat 35 % threshold was the
+    /// same 69 s — every pass changed the solo fight, never the full one.
     #[test]
     fn the_ttk_model_falls_with_every_raider() {
         let shell = TTK_MODEL_SHELL_HP;
-        assert_eq!(ttk_s(shell, 1), 17);
+        assert_eq!(ttk_s(shell, 1), 12);
         assert_eq!(ttk_s(shell, MAX_SEATS as u8), 69);
         // Monotone the other way: every extra raider makes the fight longer, never
         // shorter. Non-strict because the vent percentage is integer-divided, so adjacent
@@ -1843,6 +2008,109 @@ mod balance_tests {
         // can never fail.
         const ORIGINAL_SOLO_S: u32 = 274;
         assert!(ttk_s(shell, 1) * 10 <= ORIGINAL_SOLO_S, "the solo pass must be ~10x");
+    }
+
+    /// Incoming damage is the third raid-size knob. Solo takes a quarter-bullet and a
+    /// third-slam; twenty take exactly the flat 8 and 45 `tick.rs` dealt before the knob
+    /// existed. Monotone between, and the clamp is `vent_pct`'s.
+    #[test]
+    fn incoming_damage_scales_with_the_raid() {
+        assert_eq!((bullet_damage(1), slam_damage(1)), (2, 15));
+        assert_eq!(
+            (bullet_damage(MAX_SEATS as u8), slam_damage(MAX_SEATS as u8)),
+            (8, 45)
+        );
+        assert_eq!(
+            (bullet_damage(0), slam_damage(0)),
+            (bullet_damage(1), slam_damage(1)),
+            "an uncounted raid is a solo raid"
+        );
+        assert_eq!((bullet_damage(u8::MAX), slam_damage(u8::MAX)), (8, 45));
+        for n in 1..MAX_SEATS as u8 {
+            assert!(bullet_damage(n) <= bullet_damage(n + 1), "bullet at {n}");
+            assert!(slam_damage(n) <= slam_damage(n + 1), "slam at {n}");
+        }
+    }
+
+    /// 5× on both rows, exactly, and strictly more than the charged shot on both — the
+    /// longer hold must never be the worse deal.
+    #[test]
+    fn a_super_shot_is_five_times_the_class_damage() {
+        assert_eq!(super_damage(CLASS_ARCHER), 350);
+        assert_eq!(super_damage(CLASS_KNIGHT), 200);
+        for class in [CLASS_KNIGHT, CLASS_ARCHER] {
+            assert_eq!(super_damage(class), CLASS_DAMAGE[class as usize] * 5);
+            assert!(super_damage(class) > charged_damage(class));
+        }
+    }
+}
+
+/// Fury is derived from the same two numbers the vent reads, so its edges are arithmetic:
+/// exactly 20 % is furious, 21 % is not, and an account with nothing in it is neither
+/// furious nor a division by zero.
+#[cfg(test)]
+mod fury_tests {
+    use super::*;
+
+    /// The solo boss the tuning was done on: 18,000 shell, 200 core, vent line at 17,640.
+    fn solo_boss() -> Boss {
+        let mut boss = Boss::zeroed();
+        boss.reset_for_incarnation([2_000; N_PARTS], BOSS_CORE_HP, 0, 0);
+        boss
+    }
+
+    #[test]
+    fn fight_hp_is_the_strippable_shell_plus_the_core() {
+        let mut boss = solo_boss();
+        assert_eq!(
+            boss.fight_hp(1),
+            (560, 560),
+            "360 shell above the line + 200 core"
+        );
+        // Shell above the line is fight HP: 100 off the crown is 100 off `left`.
+        boss.parts[0] -= 100;
+        assert_eq!(boss.fight_hp(1), (460, 560));
+        // Shell below the line is not: strip everything and only the core is left, which is
+        // exactly how the vent rule reads it.
+        boss.parts = [0; N_PARTS];
+        assert_eq!(boss.fight_hp(1), (200, 560));
+        // The same shell is a different fight for twenty: 65 % of it must come off.
+        let full = solo_boss();
+        assert_eq!(full.fight_hp(MAX_SEATS as u8), (11_900, 11_900));
+        assert_eq!(
+            full.fight_hp(0),
+            full.fight_hp(1),
+            "an uncounted raid is a solo raid"
+        );
+    }
+
+    #[test]
+    fn fury_begins_at_exactly_twenty_percent() {
+        let mut boss = solo_boss();
+        boss.parts = [0; N_PARTS];
+        // max = 560, so the line is 112.
+        boss.core_hp = 118;
+        assert!(!boss.is_furious(1), "21 % is not furious");
+        boss.core_hp = 113;
+        assert!(
+            !boss.is_furious(1),
+            "one point over the line is not furious"
+        );
+        boss.core_hp = 112;
+        assert!(boss.is_furious(1), "20 % is furious");
+        boss.core_hp = 1;
+        assert!(boss.is_furious(1));
+        boss.core_hp = 0;
+        assert!(!boss.is_furious(1), "a dead boss is not furious");
+        assert!(!solo_boss().is_furious(1), "a full shell is nowhere near");
+    }
+
+    #[test]
+    fn an_empty_boss_is_safe_and_calm() {
+        let boss = Boss::zeroed();
+        assert_eq!(boss.fight_hp(0), (0, 0));
+        assert_eq!(boss.fight_hp(MAX_SEATS as u8), (0, 0));
+        assert!(!boss.is_furious(0) && !boss.is_furious(u8::MAX));
     }
 }
 

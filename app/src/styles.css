@@ -737,6 +737,31 @@ h3 {
   fill: #ffe873;
 }
 
+/*
+ * The super's beam — `Shot.tsx`'s two pooled `<line>`s per seat, white inside cyan. The
+ * widths here are the REST widths: what a reduced-motion viewer sees for the beam's whole
+ * fade, and what the WAAPI swell in `Shot.tsx` overrides for everyone else. No filter and
+ * no animation here, for the reasons the block above gives — the halo is a second line
+ * because a `drop-shadow` on a 1,000-unit stroke re-rasterises every frame of the swell.
+ * `.hr-beam-hit` is the strike's spark, coloured through `currentColor` like the arrow's.
+ */
+.hr-beam {
+  stroke: #ffffff;
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.hr-beam-halo {
+  stroke: var(--cyan);
+  stroke-width: 16;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+
+.hr-beam-hit {
+  color: #ffffff;
+}
+
 .vent {
   display: flex;
   flex-direction: column;
@@ -887,7 +912,9 @@ h3 {
    */
   .hr-boss-breathe,
   .hr-boss-eye,
-  .hr-vent-open .hr-boss-vent {
+  .hr-vent-open .hr-boss-vent,
+  .hr-fury .hr-boss-shell,
+  .fury-wash.is-on {
     animation-name: none;
   }
 
@@ -1234,4 +1261,52 @@ h3 {
 }
 @media (prefers-reduced-motion: reduce) {
   .gate-mark { animation: none; opacity: 1; }
+}
+
+/* --------------------------------------------------------------------------
+   Fury — the boss in its last fifth of fight HP (`isFurious`, `10-boss.md` §1.2.1)
+
+   Three reads, one fact: the rig's glow and eyes (`Boss.tsx`'s injected block), the
+   ENRAGED word on the vitals row, and this wash — a red vignette at the screen's edges,
+   an HTML sibling of the `<svg>` in `Arena.tsx`, mounted once and toggled by `.is-on`.
+   It is a lens effect like `.stage::after` above and takes the same shape: alpha only,
+   no `mix-blend-mode`, no `backdrop-filter` — a full-viewport blend reads the backdrop
+   back every frame the scene changes, and the scene changes every frame. Opacity is the
+   ONE animated property, on a node the frame loop never writes, so it composites.
+
+   No entry transition on purpose: the animation owns `opacity` the moment `.is-on` lands
+   and would mask one anyway, and the pop is right — the roar plays on the same edge.
+   -------------------------------------------------------------------------- */
+
+.fury-wash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(110% 80% at 50% 45%, rgb(255 90 74 / 0) 58%, rgb(255 90 74 / 0.42) 100%);
+}
+
+.fury-wash.is-on {
+  animation: fury-wash 1.6s ease-in-out infinite;
+}
+
+/* The furious volley's own beat (1.6 s), never to zero: off is the class coming off. */
+@keyframes fury-wash {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+/* ENRAGED on the vitals row. `--ember` is AA-large only (4.07:1 over the panel, §0.5 of
+   `16-hud.md`) and this is small text — accepted here, once, because it is a fight-state
+   flag beside a number in `--ink`, not reading copy, and the word is the colour's job. */
+.hud-enraged {
+  color: var(--ember);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Static, not gone: the state is information. The `animation-name: none` above is the
+     cancellation; this is the resting value it leaves behind. */
+  .fury-wash.is-on {
+    opacity: 0.8;
+  }
 }

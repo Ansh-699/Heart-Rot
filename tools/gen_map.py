@@ -2,7 +2,8 @@
 """Compile assets/map/arena.json into the arena wall bitboard the chain raycasts
 against and the copy the browser predicts against.
 
-    python3 tools/gen_map.py
+    python3 tools/gen_map.py             # compile
+    python3 tools/gen_map.py --check     # exit 1 if either mirror is not what the grid says
 
 The ASCII grid in `assets/map/arena.json` is the map -- written there by
 `tools/gen_rooms.py` from the room paintings, never by hand. This tool is the only thing
@@ -47,6 +48,11 @@ HEART = "B"
 PIT = "P"
 GATE = "G"
 FLOOR_CHARS = {FLOOR, ENTRANCE, HEART, PIT, GATE}
+# The dais: the tiles a `ZONE_ARENA` seat may stand on, emitted as a second bitboard beside
+# `WALLS`. `.` inside the pit rows is the boss's air painted over by nothing -- floor a ray
+# crosses and nobody stands on. It exists because the dais narrows upward above its widest
+# row, so a wall over its shoulder tiles is a stand from which every upward shot dies.
+DAIS_CHARS = {PIT, ENTRANCE, HEART}
 
 
 class MapError(Exception):
@@ -430,36 +436,48 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
     # below is the guard for that, checked where both facts are still in one place.
     pit = pit_box(grid, tile)
     ptop, pbot = pit["PIT_ROWS"]
+    dais = {(x, y) for y, row in enumerate(grid) for x, c in enumerate(row) if c in DAIS_CHARS}
 
-    # The pit has to be one room on its own, not merely reachable *through the lobby*.
-    # The corner shaping on the bottom rows is the thing most likely to pinch it in two,
-    # and a raider confined by PIT_TOP/PIT_BOT cannot walk around the outside to fix it.
-    inside = {(x, y) for y in range(ptop, pbot + 1)
-              for x in range(n) if not solid(x, y)}
-    start = next(iter(sorted(inside)))
-    pit_seen = {start}
+    # The dais has to be one room on its own, not merely reachable *through the air or
+    # the lobby*. A raider may only stand on dais tiles, so a pinch in the shaping --
+    # the corner rows are the likeliest place -- cannot be walked around, and the whole-map
+    # flood above walks straight across the air that a raider cannot.
+    start = next(iter(sorted(dais)))
+    dais_seen = {start}
     q = deque([start])
     while q:
         x, y = q.popleft()
         for nb in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-            if nb in inside and nb not in pit_seen:
-                pit_seen.add(nb)
+            if nb in dais and nb not in dais_seen:
+                dais_seen.add(nb)
                 q.append(nb)
-    if pit_seen != inside:
-        die(f"{len(inside) - len(pit_seen)} tiles inside the PIT_TOP..PIT_BOT band "
-            f"(rows {ptop}..{pbot}) cannot be walked to from the rest of the pit -- "
-            "a raider is clamped into that band, so they cannot go around")
+    if dais_seen != dais:
+        die(f"{len(dais) - len(dais_seen)} dais tiles cannot be walked to from the rest "
+            "of the dais -- a raider may only stand on the dais, so they cannot go around")
 
-    # The gate sits below the pit and its columns walk straight into it. If they did
-    # not, a player who flipped zone on the gate would be outside PIT_TOP..=PIT_BOT
-    # with no legal destination inside it: a hard freeze with nothing logged.
+    # Every dais tile has floor over it. The dais narrows upward above its widest row, so
+    # each such row's outermost tile has nothing of the dais above it; a player on that
+    # tile's top-outer corner -- a tile corner, where every cardinal step lands -- fires
+    # every upward shot into whatever the tile above is, and `shoot` tests `is_wall`
+    # before any part box. Wall there is a stand from which nothing can be hit: the first
+    # whole-dais grid had eight of them, found by `gen_hitboxes.py`'s pit-reach sweep. So
+    # the boss's air reaches down past the crest, and this is the row-by-row proof.
+    for x, y in sorted(dais):
+        if solid(x, y - 1):
+            die(f"dais tile ({x}, {y}) has wall directly over it at ({x}, {y - 1}) -- a "
+                "raider on its top corner cannot fire upward at all. The boss's air must "
+                "reach down to the row above the dais's widest row (tools/gen_rooms.py)")
+
+    # The gate sits below the pit and its columns walk straight onto the dais. If they
+    # did not, a player who flipped zone on the gate would be outside PIT_TOP..=PIT_BOT
+    # or off the dais, with no legal destination: a hard freeze with nothing logged.
     if gy0 != pbot + 1:
         die(f"the gate starts at row {gy0} but the pit ends at row {pbot} -- the gate "
             "must sit immediately below the pit or stepping through it is a teleport")
     for tx in range(gx0, gx1 + 1):
-        if grid[pbot][tx] not in FLOOR_CHARS:
-            die(f"gate column {tx} runs into wall at the pit's last row {pbot} -- "
-                "a player who enters the gate here can never step into the pit")
+        if grid[pbot][tx] not in DAIS_CHARS:
+            die(f"gate column {tx} does not run onto the dais at the pit's last row {pbot} "
+                "-- a player who enters the gate here can never step into the pit")
 
     # The boss stands in the pit band (it is the anchor every hitbox is measured from,
     # and the raid has to be able to reach it) and never on the gate, which would let a
@@ -470,17 +488,18 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
     if gx0 <= hx <= gx1 and gy0 <= hy <= gy1:
         die(f"the `{HEART}` heart tile {heart} is inside the gate block")
 
-    # Every respawn point lands in the pit, because a respawn is a raider and a raider
-    # is clamped to the pit. The `E` marks themselves are not the interesting case --
+    # Every respawn point lands on the dais, because a respawn is a raider and a raider
+    # may only stand on the dais. The `E` marks themselves are not the interesting case --
     # `tick::entrance_for` fans five ranks off each one, and it is a *rank* that drifts
-    # out of the band as the doors move. One outside it is a seat that respawns onto
-    # open floor and can never move again, with nothing logged anywhere.
+    # off the dais as the doors move. One off it is a seat that respawns onto the air
+    # beside the dais, which `move_player` then governs by walls alone (the un-stranding
+    # rule) -- legal, but a raider standing where the painting shows no floor.
     doors = entrance_world(grid, tile)
     for seat in range(g["MAX_SEATS"]):
         rx, ry = entrance_for(seat, doors, g)
-        if not (ptop <= ry // tile <= pbot):
-            die(f"entrance_for({seat}) lands at ({rx}, {ry}), outside the pit rows "
-                f"{ptop}..{pbot} -- that seat is clamped out of every legal move")
+        if (rx // tile, ry // tile) not in dais:
+            die(f"entrance_for({seat}) lands at ({rx}, {ry}), tile "
+                f"({rx // tile}, {ry // tile}), which is not a dais tile")
 
     # -----------------------------------------------------------------------
     # The open-arena rules -- docs/architecture/18-open-arena.md 2 and 6.
@@ -545,12 +564,14 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
                 "enter the raid")
 
     # No position in either zone with zero legal moves. `move_player` refuses a step
-    # unless `!is_wall(nx, ny) && may_move_to(zone, y, ny)`, so the wall bitboard and
-    # the zone box can each remove moves the other left. A position where every one
-    # of the eight is refused is a hard freeze with nothing logged anywhere -- the
-    # most dangerous defect this map can carry. Replays `player.rs`'s
-    # `the_box_never_removes_a_seats_last_legal_move` at the same tile stride, plus
-    # the stronger claim that a legal move exists at all.
+    # unless `!is_wall(nx, ny) && may_move_to(zone, y, ny) && may_stand_step(..)`, so the
+    # wall bitboard, the zone box and the dais table can each remove moves the others
+    # left. A position where every one of the eight is refused is a hard freeze with
+    # nothing logged anywhere -- the most dangerous defect this map can carry. Replays
+    # `player.rs`'s `the_box_never_removes_a_seats_last_legal_move` at the same tile
+    # stride, plus the stronger claim that a legal move exists at all. The boss's body
+    # (`player::standable`'s other half) is a hitbox fact this tool cannot see; the Rust
+    # test is what sweeps it.
     steps = move_steps(g)
     zones = {"ZONE_ARENA": (pit["PIT_TOP"], pit["PIT_BOT"]),
              "ZONE_LOBBY": (pit["PIT_BOT"] + 1, max_xy)}
@@ -558,6 +579,9 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
         x < 0 or y < 0 or x // tile >= n or y // tile >= n or solid(x // tile, y // tile))
     for zone, (top, bot) in zones.items():
         over = lambda v: max(top - v, v - bot, 0)  # noqa: E731 - `box_overshoot`
+        # `player::standable` less the body: a raider stands on the dais, a lobby seat
+        # anywhere its box allows.
+        stand = lambda x, y: zone != "ZONE_ARENA" or (x // tile, y // tile) in dais  # noqa: E731
         for ty in range(n):
             for tx in range(n):
                 if solid(tx, ty):
@@ -566,11 +590,14 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
                 free = [(dx, dy) for dx, dy in steps if not wall_at(x + dx, y + dy)]
                 if not free:
                     die(f"tile ({tx}, {ty}) is floor walled in on all eight steps")
-                # `may_move_to`: inside the box, or already outside it (stranded seats
-                # are governed by walls alone until they walk home).
-                if not any(over(y) > 0 or over(y + dy) == 0 for _, dy in free):
+                # `may_move_to` and `may_stand_step`: inside the box and on the dais, or
+                # already outside either (stranded seats are governed by walls alone
+                # until they walk home).
+                if not any((over(y) > 0 or over(y + dy) == 0)
+                           and (not stand(x, y) or stand(x + dx, y + dy))
+                           for dx, dy in free):
                     die(f"{zone} at ({x}, {y}) -- tile ({tx}, {ty}) -- has no legal "
-                        "move: the zone box removed the last one the walls left")
+                        "move: the zone box or the dais removed the last one the walls left")
 
     floor = sum(row.count(c) for row in grid for c in FLOOR_CHARS)
     if len(seen) != floor:
@@ -608,11 +635,20 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
     lobby = lobby_band(grid, g["TILE"], gate)
     ptop, pbot = pit["PIT_ROWS"]
     gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
-    pit_floor = sum(sum(1 for c in row if c != WALL) for row in grid[ptop:pbot + 1])
-    # The columns the boss's air actually spans. Emitted rather than written as
-    # `1..MAP_TILES - 1`, which silently assumed a one-tile border and became false
-    # the moment the side perimeter went to two.
-    air = [x for y in range(1, ptop) for x, c in enumerate(grid[y]) if c != WALL]
+    dais_body = "\n".join(
+        f"    0x{sum(1 << x for x, c in enumerate(row) if c in DAIS_CHARS):016x}, // y={y:<2}"
+        for y, row in enumerate(grid))
+    dais_tiles = sum(row.count(c) for row in grid for c in DAIS_CHARS)
+    # The boss's air: every row above the gate that carries a `.`, which is rows 1 down to
+    # the row above the dais's widest one (tools/gen_rooms.py), and the columns it spans.
+    # Both emitted rather than written as `1..PIT_TOP` and `1..MAP_TILES - 1`: the first
+    # stopped being true when the dais grew past the boss's feet, the second the moment
+    # the side perimeter went to two tiles.
+    air_rows = [y for y in range(1, gy0) if FLOOR in grid[y]]
+    if air_rows != list(range(air_rows[0], air_rows[-1] + 1)):
+        die(f"the boss's air is not one band of rows: {air_rows}")
+    air_y0, air_y1 = air_rows[0], air_rows[-1]
+    air = [x for y in air_rows for x, c in enumerate(grid[y]) if c != WALL]
     air_x0, air_x1 = min(air), max(air)
     return f'''//! Arena wall bitboard.
 //!
@@ -648,20 +684,43 @@ pub const TILE: i16 = {g["TILE"]};
 
 /// Wall bitboard: bit *x* of row *y* set means tile (x, y) is solid.
 ///
-/// Layout, top to bottom. Open floor for the boss's air, then the pit -- the lower half
-/// of the painted dais, narrowing to its stairs -- then the gate block under the stairs,
-/// then the painted lobby floor. The whole vertical order is the fight: you walk up the
-/// lobby, through the gate, up the stairs onto the dais, and the creature is above you.
+/// Layout, top to bottom. Open floor for the boss's air, with the whole painted dais
+/// laid over its lower rows -- the raid stands on the dais ([`DAIS`]) and the creature
+/// stands on it too, in the middle of the band -- then the stairs, the gate block under
+/// them, then the painted lobby floor. The whole vertical order is the fight: you walk up
+/// the lobby, through the gate, up the stairs onto the dais, and walk the circle around
+/// the creature.
 ///
 /// Both rooms are open floor with zero interior obstacles. `tools/gen_map.py` holds
 /// them that way: at most one contiguous run of floor per row, so a free-standing
 /// block anywhere splits a row and is refused. Perimeter architecture, banners,
 /// torches, chains and floor markings are paint, never wall tiles.
 ///
-/// The rows above the pit are floor, not wall, and that is load-bearing rather than
-/// lazy drawing -- see [`PIT_TOP`].
+/// The rows above the dais's widest row are floor wherever they are not dais, and that
+/// is load-bearing rather than lazy drawing -- see [`DAIS`] and [`PIT_TOP`].
 pub const WALLS: [u64; MAP_TILES] = [
 {body}
+];
+
+/// Dais bitboard: bit *x* of row *y* set means a `ZONE_ARENA` seat may stand on tile
+/// (x, y). The `P`, `E` and `B` tiles of the drawn grid -- the painted platform ellipse
+/// and its stairs, {dais_tiles} tiles -- and a strict subset of the floor in [`WALLS`]
+/// (const-asserted below).
+///
+/// A second table because the two barriers answer different questions. `WALLS` is what
+/// stops a RAY: `shoot`'s raycast tests it before any part box, so a wall tile between a
+/// stand and the boss kills every shot in that column. This is what stops a STEP:
+/// `handlers::player::standable` refuses a raider a destination off it. They differ
+/// exactly where the dais narrows upward: above its widest row every row's outermost tile
+/// has no dais over it, and a raider on that tile's top corner fires every upward shot into
+/// the tile above. Wall there was a stand from which nothing could be hit -- eight of them
+/// on the first whole-dais grid, found by `gen_hitboxes.py`'s sweep -- so the tile above
+/// is the boss's air: floor for the ray, off the dais for the step. Before the dais grew
+/// past the boss's feet the y band [`PIT_TOP`]`..=`[`PIT_BOT`] was the whole of this rule.
+///
+/// Costs {n * 8} more bytes of .so and, like `WALLS`, zero account keys.
+pub const DAIS: [u64; MAP_TILES] = [
+{dais_body}
 ];
 
 /// The four `E` marks on the drawn map, in world units at the tile's top-left corner --
@@ -686,12 +745,14 @@ pub const ENTRANCES: [(i16, i16); 4] = [
 /// `handlers::init` reads this and writes it to `Boss.x`/`Boss.y` on every spawn and
 /// respawn. It is here rather than there because the boss's position is a fact about
 /// the *map*: every rectangle in `hitboxes.rs` is an offset from this point, and the
-/// open rows above the pit are the only space on the grid tall enough to hold them.
+/// open rows above the dais are the only space on the grid tall enough to hold them.
 ///
-/// It sits at the *top* of the pit band rather than in the middle of the map: the boss
-/// is drawn upward from here, so the creature fills the top of the frame and the raid
-/// shoots up at it from the pit below. The assertion block at the bottom of this file
-/// proves it is on floor, inside `PIT_TOP..=PIT_BOT`, and outside the gate.
+/// It is the creature's feet line, on the dais's own tiles: the boss is drawn upward
+/// from here, so the creature fills the top of the frame, and the raid walks the dais
+/// around it -- `handlers::player` refuses a step into the body, folded out of the
+/// hitbox table, so the pit needs no hole cut where the boss stands. The assertion
+/// block at the bottom of this file proves it is on the dais, inside
+/// `PIT_TOP..=PIT_BOT`, and outside the gate.
 ///
 /// It used to be a pair of literals in `init.rs` reading (512, 320) -- tile (32, 20),
 /// which was a two-tile corridor on the map of the time. The shell was mostly inside
@@ -712,10 +773,11 @@ pub const BOSS_SPAWN: (i16, i16) = ({hx}, {hy}); // tile ({htx}, {hty})
 /// This is a movement rule and deliberately **not** a wall. The rows above the pit are
 /// open floor because `shoot`'s raycast tests `is_wall` before the part rectangles, so a
 /// single wall tile between a player and the boss would kill every shot in that column
-/// with nothing logged anywhere. The clamp holds raiders out of the boss's air; the
-/// bitboard holds bullets and rays to the map. Two barriers, and they can disagree --
-/// `tools/gen_map.py` proves the pit is one connected room and that the gate walks into
-/// it, which is the only guard against a clamp that boxes someone in open floor.
+/// with nothing logged anywhere. The band holds the lobby below the rim and is the coarse
+/// half of the raider's rule; [`DAIS`] is the fine half, tile by tile, since the boss's
+/// air now reaches down beside the dais's shoulders. Barriers that can disagree --
+/// `tools/gen_map.py` proves the dais is one connected room and that the gate walks onto
+/// it, which is the only guard against a rule that boxes someone in open floor.
 pub const PIT_TOP: i16 = {pit["PIT_TOP"]}; // tile row {ptop}
 pub const PIT_BOT: i16 = {pit["PIT_BOT"]}; // tile row {pbot}, last unit
 
@@ -773,6 +835,11 @@ const _: () = {{
             "an entrance in map::ENTRANCES lands in a wall -- redraw assets/map/arena.json \\
              and re-run tools/gen_map.py",
         );
+        assert!(
+            DAIS[ty] & (1u64 << tx) != 0,
+            "an entrance in map::ENTRANCES is off the dais -- a raider would respawn onto \\
+             the boss's air",
+        );
         i += 1;
     }}
 
@@ -786,16 +853,40 @@ const _: () = {{
          and re-run tools/gen_map.py",
     );
 
+    // The dais is floor, row by row, and nothing on the dais has wall directly over it:
+    // one AND per row each. The first is what lets `standable` skip the wall test's
+    // work; the second is the pocket `gen_hitboxes.py`'s sweep found -- a raider on a
+    // shoulder tile's top corner whose every upward shot died on the cap above it.
+    let mut y = 1;
+    while y < MAP_TILES {{
+        assert!(
+            DAIS[y] & WALLS[y] == 0,
+            "a dais tile is a wall -- re-run tools/gen_map.py",
+        );
+        assert!(
+            DAIS[y] & WALLS[y - 1] == 0,
+            "a dais tile has wall directly over it: every upward shot from its top corner \\
+             dies there -- the boss's air must reach down past it (tools/gen_rooms.py)",
+        );
+        y += 1;
+    }}
+    assert!(DAIS[0] == 0, "the top border row is dais");
+
     // The pit band is non-empty and sits inside the map.
     assert!(PIT_TOP >= 0 && PIT_TOP < PIT_BOT && PIT_BOT < (MAP_TILES as i16) * TILE);
     assert!(GATE_MIN_X <= GATE_MAX_X && GATE_MIN_Y <= GATE_MAX_Y);
 
     // The boss is reachable by a raider: its anchor is inside the band they are clamped
-    // to. A boss above `PIT_TOP` would be a target no one can ever stand level with.
+    // to and on the dais they walk. A boss above `PIT_TOP` would be a target no one can
+    // ever stand level with.
     assert!(
         by >= PIT_TOP && by <= PIT_BOT,
         "map::BOSS_SPAWN is outside PIT_TOP..=PIT_BOT -- the raid is clamped away from \\
          its own boss; redraw assets/map/arena.json and re-run tools/gen_map.py",
+    );
+    assert!(
+        DAIS[(by / TILE) as usize] & (1u64 << (bx / TILE)) != 0,
+        "map::BOSS_SPAWN is off the dais -- the raid can never walk up to its own boss",
     );
 
     // And it is not standing on the gate, which would let a player flip zone by walking
@@ -854,7 +945,16 @@ mod tests {{
         tx >= MAP_TILES || ty >= MAP_TILES || WALLS[ty] & (1u64 << tx) != 0
     }}
 
-    /// 4-connected flood fill from the boss tile, confined to tile rows `top..=bot`.
+    fn floor(tx: usize, ty: usize) -> bool {{
+        !solid(tx, ty)
+    }}
+
+    fn dais(tx: usize, ty: usize) -> bool {{
+        tx < MAP_TILES && ty < MAP_TILES && DAIS[ty] & (1u64 << tx) != 0
+    }}
+
+    /// 4-connected flood fill from the boss tile over the tiles `open` admits, confined
+    /// to tile rows `top..=bot`.
     ///
     /// 4- and not 8-connected on purpose: movement is 8-way but only tests the
     /// destination tile, so a diagonal can squeeze past a corner. Accepting that here
@@ -862,7 +962,7 @@ mod tests {{
     ///
     /// Relaxed to a fixpoint rather than queued, so it allocates nothing: 64x64 is four
     /// thousand tiles and this is a test.
-    fn reachable(top: usize, bot: usize) -> [[bool; MAP_TILES]; MAP_TILES] {{
+    fn reachable(top: usize, bot: usize, open: fn(usize, usize) -> bool) -> [[bool; MAP_TILES]; MAP_TILES] {{
         let mut seen = [[false; MAP_TILES]; MAP_TILES];
         seen[(BOSS_SPAWN.1 / TILE) as usize][(BOSS_SPAWN.0 / TILE) as usize] = true;
         let mut changed = true;
@@ -870,7 +970,7 @@ mod tests {{
             changed = false;
             for ty in top..=bot {{
                 for tx in 0..MAP_TILES {{
-                    if seen[ty][tx] || solid(tx, ty) {{
+                    if seen[ty][tx] || !open(tx, ty) {{
                         continue;
                     }}
                     let touching = (ty > top && seen[ty - 1][tx])
@@ -893,7 +993,7 @@ mod tests {{
     /// spawn" -- both are floor, and every floor tile is in the same component.
     #[test]
     fn every_floor_tile_is_one_room() {{
-        let seen = reachable(0, MAP_TILES - 1);
+        let seen = reachable(0, MAP_TILES - 1, floor);
         for ty in 0..MAP_TILES {{
             for tx in 0..MAP_TILES {{
                 assert_eq!(
@@ -916,44 +1016,46 @@ mod tests {{
         }}
     }}
 
-    /// The pit is one room *on its own terms*. A raider is clamped to
-    /// `PIT_TOP..=PIT_BOT`, so a pinch in the corner shaping cannot be walked around the
-    /// way [`every_floor_tile_is_one_room`] would let you. The two are not the same
-    /// test, and this is the one that catches a shaped pit cut in half.
+    /// The dais is one room *on its own terms*. A raider may only stand on dais tiles,
+    /// so a pinch in the shaping cannot be walked around through the air the way
+    /// [`every_floor_tile_is_one_room`] would let you. The two are not the same test,
+    /// and this is the one that catches a shaped dais cut in half.
     #[test]
-    fn the_pit_is_one_room_a_raider_can_cross() {{
+    fn the_dais_is_one_room_a_raider_can_cross() {{
         let (top, bot) = ((PIT_TOP / TILE) as usize, (PIT_BOT / TILE) as usize);
-        let seen = reachable(top, bot);
-        let mut floor = 0usize;
-        for ty in top..=bot {{
+        let seen = reachable(top, bot, dais);
+        let mut tiles = 0usize;
+        for ty in 0..MAP_TILES {{
             for tx in 0..MAP_TILES {{
-                if !solid(tx, ty) {{
-                    floor += 1;
-                    assert!(seen[ty][tx], "pit tile ({{tx}}, {{ty}}) is cut off from the boss");
+                if dais(tx, ty) {{
+                    tiles += 1;
+                    assert!(ty >= top && ty <= bot, "dais tile ({{tx}}, {{ty}}) is outside the band");
+                    assert!(seen[ty][tx], "dais tile ({{tx}}, {{ty}}) is cut off from the boss");
                 }}
             }}
         }}
-        assert_eq!(floor, {pit_floor}, "the drawn pit changed size");
+        assert_eq!(tiles, {dais_tiles}, "the drawn dais changed size");
     }}
 
-    /// Every respawn door is inside the pit band. A raider respawned above `PIT_TOP` or
-    /// below `PIT_BOT` is a seat clamped out of every legal move, with nothing logged.
+    /// Every respawn door is on the dais, inside the pit band. A raider respawned off it
+    /// is a seat governed by walls alone until it walks onto the dais, standing where the
+    /// painting shows no floor, with nothing logged.
     #[test]
-    fn every_door_is_inside_the_raider_box() {{
+    fn every_door_is_on_the_dais() {{
         for (x, y) in ENTRANCES {{
             assert!(
                 y >= PIT_TOP && y <= PIT_BOT,
                 "entrance ({{x}}, {{y}}) is outside PIT_TOP..=PIT_BOT",
             );
-            assert!(!solid((x / TILE) as usize, (y / TILE) as usize));
+            assert!(dais((x / TILE) as usize, (y / TILE) as usize));
         }}
     }}
 
-    /// The gate block is walkable end to end, and its columns step straight into the
-    /// pit. Walling any of it is a lobby nobody can leave; a gate that does not adjoin
-    /// the pit is a player who flips zone and then cannot move.
+    /// The gate block is walkable end to end, and its columns step straight onto the
+    /// dais. Walling any of it is a lobby nobody can leave; a gate that does not adjoin
+    /// the dais is a player who flips zone and then cannot move.
     #[test]
-    fn the_gate_is_floor_and_walks_into_the_pit() {{
+    fn the_gate_is_floor_and_walks_onto_the_dais() {{
         for ty in (GATE_MIN_Y / TILE)..=(GATE_MAX_Y / TILE) {{
             for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {{
                 assert!(!solid(tx as usize, ty as usize), "gate tile ({{tx}}, {{ty}}) is wall");
@@ -962,29 +1064,30 @@ mod tests {{
         let last_pit_row = (PIT_BOT / TILE) as usize;
         for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {{
             assert!(
-                !solid(tx as usize, last_pit_row),
-                "gate column {{tx}} runs into wall at the pit's last row",
+                dais(tx as usize, last_pit_row),
+                "gate column {{tx}} does not run onto the dais at the pit's last row",
             );
         }}
     }}
 
     /// The boss's air is open floor. `handlers::shoot`'s raycast tests `is_wall` before
-    /// the part rectangles, so one wall tile above the pit kills every shot in that
-    /// column -- a raid that cannot be won, reporting nothing. The pit ceiling is
-    /// `PIT_TOP`, a movement rule, and this is the test that keeps it from becoming a
-    /// wall the next time someone redraws the grid.
+    /// the part rectangles, so one wall tile between a stand and the boss kills every
+    /// shot in that column -- a raid that cannot be won, reporting nothing. The air is
+    /// held off the raid by `DAIS`, a movement rule, and this is the test that keeps it
+    /// from becoming wall the next time someone redraws the grid.
     ///
-    /// The column span is generated ({air_x0}..={air_x1}) rather than written as
-    /// `1..MAP_TILES - 1`: that form assumed a one-tile border ring and started
-    /// failing the moment the side perimeter was drawn two tiles thick.
+    /// Both spans are generated -- rows {air_y0}..={air_y1}, columns {air_x0}..={air_x1} --
+    /// rather than written as `1..PIT_TOP` and `1..MAP_TILES - 1`: the first form stopped
+    /// being true when the dais grew past the boss's feet and the air had to reach down
+    /// beside its shoulders, the second the moment the side perimeter was drawn two
+    /// tiles thick.
     #[test]
-    fn the_boss_air_above_the_pit_is_open() {{
-        let top = (PIT_TOP / TILE) as usize;
-        for ty in 1..top {{
+    fn the_boss_air_is_open() {{
+        for ty in {air_y0}..={air_y1} {{
             for tx in {air_x0}..={air_x1} {{
                 assert!(
                     !solid(tx, ty),
-                    "tile ({{tx}}, {{ty}}) is wall above PIT_TOP -- every shot in that \\
+                    "tile ({{tx}}, {{ty}}) is wall in the boss's air -- every shot in that \\
                      column dies on it before reaching the boss",
                 );
             }}
@@ -1033,8 +1136,9 @@ export const MAP_MAX_XY = MAP_TILES * MAP_TILE - 1;
  * One string per row, one character per tile: `#` wall, `.` floor, `P` pit floor,
  * `G` gate, `E` entrance, `B` the heart tile the boss spawns on. Row *y*, character *x*.
  *
- * Everything but `#` is walkable. A renderer that keys off `.` alone will draw the pit
- * and the gate as holes.
+ * Everything but `#` is floor to a ray. A raider stands only on the dais -- `P`, `E`,
+ * `B`, see {{@link isDaisTile}} -- and the `.` rows and shoulders around it are the boss's
+ * air. A renderer that keys off `.` alone will draw the pit and the gate as holes.
  */
 export const MAP_GRID: readonly string[] = [
 {rows}
@@ -1069,7 +1173,8 @@ export const BOSS_SPAWN: readonly [number, number] = [{hx}, {hy}]; // tile ({htx
  * same clamp, on the same side of the move: a step the browser allows and the chain
  * refuses is a permanent snap-back on that tile, which reads as lag rather than as a
  * rule. And it is a rule, not a wall -- the rows above the pit are open floor, because
- * the chain's raycast dies on any wall tile between a player and the boss.
+ * the chain's raycast dies on any wall tile between a player and the boss. The band is
+ * the coarse half of that rule; {{@link onDais}} is the fine half.
  */
 export const PIT_TOP = {pit["PIT_TOP"]};
 export const PIT_BOT = {pit["PIT_BOT"]};
@@ -1135,6 +1240,28 @@ export function isWall(x: number, y: number): boolean {{
   if (x < 0 || y < 0) return true;
   return isWallTile(Math.floor(x / MAP_TILE), Math.floor(y / MAP_TILE));
 }}
+
+/**
+ * May a raider stand on this tile? The `P`, `E` and `B` tiles -- the painted platform and
+ * its stairs -- exactly the bits of the chain's `map::DAIS`. Off-map is not dais.
+ *
+ * A second question from the same grid, because the two barriers differ: a `.` tile
+ * inside the pit rows is the boss's air beside the dais's shoulders -- floor to the
+ * chain's raycast (a wall there was a stand from which every upward shot died) and off
+ * limits to a step. `handlers::player::standable` refuses a raider a destination off the
+ * dais, and prediction mirrors it through {{@link onDais}}.
+ */
+export function isDaisTile(tx: number, ty: number): boolean {{
+  if (tx < 0 || ty < 0 || tx >= MAP_TILES || ty >= MAP_TILES) return false;
+  const c = MAP_GRID[ty]![tx];
+  return c === 'P' || c === 'E' || c === 'B';
+}}
+
+/** Is the tile containing this arena-space point dais? `handlers::player::on_dais`, byte for byte. */
+export function onDais(x: number, y: number): boolean {{
+  if (x < 0 || y < 0) return false;
+  return isDaisTile(Math.floor(x / MAP_TILE), Math.floor(y / MAP_TILE));
+}}
 '''
 
 
@@ -1158,6 +1285,9 @@ def self_test(grid: list[str], g: dict[str, object]) -> None:
     (ex0, ey0) = entrance_points(grid)[0]
     (gx0, gy0, gx1, gy1) = gate_box(grid, g["TILE"])["GATE_TILES"]
     (ptop, pbot) = pit_box(grid, g["TILE"])["PIT_ROWS"]
+    # The dais's outermost tile on its widest row: the tile above it is air, not dais.
+    shoulder = min((x, y) for y, row in enumerate(grid) for x, c in enumerate(row)
+                   if c in DAIS_CHARS and grid[y - 1][x] == FLOOR)
     cases = {
         "entrance erased": poke(grid, ex0, ey0, PIT),
         "fifth entrance": poke(grid, ex0, ey0 - 1, ENTRANCE),
@@ -1168,6 +1298,12 @@ def self_test(grid: list[str], g: dict[str, object]) -> None:
         ],
         "stray pit tile in the lobby": poke(grid, gx0, n - 2, PIT),
         "boss out of the pit": poke(poke(grid, *heart_point(grid), PIT), 32, ptop - 1, HEART),
+        # The pocket: wall over the dais's outermost tile on a row where it narrows
+        # upward. Both shoulders, so the mirror rule is not what refuses it.
+        "a lid over the dais's shoulder": poke(
+            poke(grid, shoulder[0], shoulder[1] - 1, WALL), n - 1 - shoulder[0], shoulder[1] - 1, WALL),
+        "a respawn rank on the air": poke(poke(grid, rx // g["TILE"], ry // g["TILE"], FLOOR),
+                                          n - 1 - rx // g["TILE"], ry // g["TILE"], FLOOR),
         "border breached": poke(grid, n // 2, 0, FLOOR),
         "heart deleted": poke(grid, *heart_point(grid), PIT),
         "row too short": [grid[0][:-1]] + grid[1:],
@@ -1205,13 +1341,25 @@ def main() -> int:
         print(f"gen_map: MAP REJECTED: {exc}", file=sys.stderr)
         return 1
 
-    OUT_RS.write_text(emit_rust(grid, g))
-    OUT_TS.write_text(emit_ts(grid, g))
+    outputs = ((OUT_RS, emit_rust(grid, g)), (OUT_TS, emit_ts(grid, g)))
+    check = "--check" in sys.argv
+    if check:
+        # The same drift test `gen_hitboxes` and `gen_errors` have: a hand edit to either
+        # mirror, or a grid regenerated and not recompiled, exits 1 here instead of being
+        # silently overwritten by the "check" that was supposed to catch it.
+        stale = [p.relative_to(ROOT) for p, text in outputs if not p.exists() or p.read_text() != text]
+        if stale:
+            print(f"gen_map: stale: {', '.join(map(str, stale))}; re-run without --check", file=sys.stderr)
+            return 1
+    else:
+        for p, text in outputs:
+            p.write_text(text)
     walls = sum(row.count(WALL) for row in grid)
     total = g["MAP_TILES"] ** 2
     print(f"gen_map: {g['MAP_TILES']}x{g['MAP_TILES']}, {walls} wall / {total - walls} floor")
-    print(f"gen_map: wrote {OUT_RS.relative_to(ROOT)}")
-    print(f"gen_map: wrote {OUT_TS.relative_to(ROOT)}")
+    verb = "matches" if check else "wrote"
+    print(f"gen_map: {verb} {OUT_RS.relative_to(ROOT)}")
+    print(f"gen_map: {verb} {OUT_TS.relative_to(ROOT)}")
     return 0
 
 

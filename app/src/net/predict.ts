@@ -30,15 +30,20 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 import {
+  BOSS_SPAWN,
   MAP_MAX_XY,
   MAP_TILE,
+  MAP_TILES,
   PIT_BOT,
   PIT_TOP,
   TICK_MS,
   ZONE_ARENA,
   ZONE_LOBBY,
+  isDaisTile,
   isWall,
   mayMoveTo,
+  mayStandStep,
+  onDais,
   type Bullet,
   type PlayerSlot,
   type PlayersAccount,
@@ -96,22 +101,24 @@ function clamp(v: number, lo: number, hi: number): number {
 
 /**
  * Apply one move exactly as `move_player` would: clamp into the map, reject a wall, then
- * reject a destination outside the seat's zone box. `null` means the chain would have
- * returned `Err` — the caller must not move *or* turn, because a rejected move leaves
- * `facing` untouched on chain too.
+ * reject a destination outside the seat's zone box, then one off the dais or inside the
+ * boss. `null` means the chain would have returned `Err` — the caller must not move *or*
+ * turn, because a rejected move leaves `facing` untouched on chain too.
  *
- * The zone test is `mayMoveTo`, imported rather than restated: `player.rs` refuses on
- * `is_wall(nx, ny) || !may_move_to(zone, y, ny)`, one condition with one error, and a
- * prediction that mirrors only the wall half mispredicts every step at a box edge. That
- * was live: a raider walking north at the pit rim moved locally, got `BlockedByWall` back
- * and rubber-banded — this file's own signature failure mode, misread as lag.
+ * The zone test is `mayMoveTo` and the dais-and-body test is `mayStandStep`, both
+ * imported rather than restated: `player.rs` refuses on
+ * `is_wall(nx, ny) || !may_move_to(zone, y, ny) || !may_stand_step(zone, (x, y), (nx, ny))`,
+ * one condition with one error, and a prediction that mirrors only the wall part
+ * mispredicts every step at a box edge. That was live: a raider walking north at the pit
+ * rim moved locally, got `BlockedByWall` back and rubber-banded — this file's own
+ * signature failure mode, misread as lag.
  */
 function stepFrom(x: number, y: number, dir: number, zone: number): Point | null {
   const step = MOVE_STEP[dir];
   if (step === undefined) throw new RangeError(`predict: dir ${dir} is not 0..7`);
   const nx = clamp(x + step[0], 0, MAP_MAX_XY);
   const ny = clamp(y + step[1], 0, MAP_MAX_XY);
-  if (isWall(nx, ny) || !mayMoveTo(zone, y, ny)) return null;
+  if (isWall(nx, ny) || !mayMoveTo(zone, y, ny) || !mayStandStep(zone, x, y, nx, ny)) return null;
   return { x: nx, y: ny };
 }
 
@@ -604,15 +611,17 @@ if (import.meta.env.DEV) {
     if (!cond) throw new Error(`predict self-check: ${what}`);
   };
 
-  // The pit's top row: open floor for its whole width, and — the part that matters — inside
-  // the `ZONE_ARENA` box. It used to be tile row 4, which is open floor too but is *boss
-  // air*: legal for a ray to cross, illegal for anybody to stand on. That went unnoticed
-  // while `stepFrom` mirrored only the wall test, and every case below silently exercised
-  // half the rule. A fixture must stand somewhere the chain would actually accept.
+  // The boss's feet row: dais for its whole width, outside the creature (the hitboxes end
+  // above the feet line) and — the part that matters — inside the `ZONE_ARENA` box. It
+  // used to be the pit's top row, which is the dais's crest now: two tiles wide and inside
+  // the boss. Before that it was tile row 4, open floor but *boss air* — legal for a ray to
+  // cross, illegal for anybody to stand on — and that went unnoticed while `stepFrom`
+  // mirrored only the wall test, so every case below silently exercised half the rule. A
+  // fixture must stand somewhere the chain would actually accept.
   //
   // `zone` is spelled out for the same reason: it is an input to the move rule now, and a
   // slot without one is not a seat the chain would ever hold.
-  const FREE_Y = PIT_TOP;
+  const FREE_Y = BOSS_SPAWN[1];
   const slot = (over: Partial<PlayerSlot>): PlayerSlot =>
     ({
       x: 320,
@@ -624,9 +633,9 @@ if (import.meta.env.DEV) {
       ...over,
     }) as unknown as PlayerSlot;
 
-  // The generated wall table is really the one being consulted — a stale or missing build
+  // The generated tables are really the ones being consulted — a stale or missing build
   // of `packages/client/src/map.ts` would otherwise show up only as in-game rubber-banding.
-  ok(isWall(0, 0) && !isWall(320, FREE_Y), 'generated wall map is loaded');
+  ok(isWall(0, 0) && !isWall(320, FREE_Y) && onDais(320, FREE_Y), 'generated wall map is loaded');
 
   // Wrap-space acks: the u16 rollover must not read as "nothing acknowledged".
   ok(isAcked(5, 5) && isAcked(5, 4) && !isAcked(4, 5), 'ack ordering');
@@ -654,15 +663,28 @@ if (import.meta.env.DEV) {
   edge.reconcile(slot({ x: TILE, facing: 4 }), 0);
   ok(edge.push(6, 0) === null && edge.self.facing === 4, 'wall move is not predicted');
 
-  // The zone box — `handlers::player::may_move_to`, the OTHER half of the chain's one
-  // refusal. Neither of these is a wall: rows 1..23 are open floor so `raycast` survives,
-  // and the gate rows are floor the lobby walks over. A prediction that mirrors only
-  // `is_wall` moves the knight, the chain answers `BlockedByWall`, and the seat
-  // rubber-bands — which this project reads as lag every single time.
+  // The zone box — `handlers::player::may_move_to` — and the dais and the boss's body —
+  // `may_stand_step` — the OTHER parts of the chain's one refusal. None of these is a wall:
+  // the boss's air is open floor so `raycast` survives, and the gate rows are floor the
+  // lobby walks over. A prediction that mirrors only `is_wall` moves the knight, the chain
+  // answers `BlockedByWall`, and the seat rubber-bands — which this project reads as lag
+  // every single time. The stand is the dais's westernmost tile on its crest row, found in
+  // the generated grid rather than typed: west of it is the air beside the shoulder.
+  const crest = PIT_TOP / TILE;
+  let shoulderX = 0;
+  while (shoulderX < MAP_TILES * TILE && !isDaisTile(shoulderX / TILE, crest)) shoulderX += TILE;
+  ok(onDais(shoulderX, PIT_TOP) && !isWall(shoulderX - TILE, PIT_TOP), 'the crest row has a dais tile with air beside it');
   const rim = createPredictor();
-  rim.reconcile(slot({ y: PIT_TOP, facing: 2 }), 0);
+  rim.reconcile(slot({ x: shoulderX, y: PIT_TOP, facing: 2 }), 0);
   ok(rim.push(0, 0) === null && rim.self.y === PIT_TOP, 'a raider cannot walk north out of the pit');
+  ok(rim.push(6, 0) === null && rim.self.x === shoulderX, 'a raider cannot step off the dais into the air');
   ok(rim.push(4, 0) !== null, 'and can still walk south');
+
+  // The boss: its feet line is a stand and the body above it is not.
+  const feet = createPredictor();
+  feet.reconcile(slot({ x: BOSS_SPAWN[0], y: BOSS_SPAWN[1], facing: 2 }), 0);
+  ok(feet.push(0, 0) === null && feet.self.facing === 2, 'a raider cannot step into the boss');
+  ok(feet.push(2, 0) !== null, 'and can walk along its feet');
 
   const lobby = createPredictor();
   lobby.reconcile(slot({ x: 512, y: PIT_BOT + 1, zone: ZONE_LOBBY, facing: 2 }), 0);

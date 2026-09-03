@@ -821,3 +821,32 @@ does not relayout, `left`/`top` does) and not a frame-budget delta in the real s
 gutter table assumes the renderer keeps a square `viewBox`; if the scene rebuild changes it
 to match the reference images' 1.43:1 and 1.83:1 aspects, the gutters shrink and the
 edge-anchoring rule of §1.2 still holds — it was written not to depend on the number.
+
+---
+
+## 12. Fury on the HUD (added 2026-09-03)
+
+`10-boss.md` §1.2.1 adds an HP-based state, **fury**, distinct from the six-minute enrage
+timeout. Three HUD-side changes, all reading `layout.ts`'s `fightHp` / `isFurious` and
+never a second formula:
+
+- **The vitals row prints `boss NN%` from `fightHp`, not `shell NN%`.** Shell above the
+  vent line never has to come off, so a solo bar read `shell 97%` three hits from a win.
+  The percentage is floored (`floorPercent`, the old `shellPercent`), so the number can
+  never read 21 % beside ENRAGED; the label is `isFurious`'s, the number is a ceiling.
+- **While furious and `FIGHTING` the same span reads `ENRAGED NN%` in `--ember`**
+  (`.hud-enraged`, `styles.css`). `--ember` is AA-large only (§0.5); accepted once, for a
+  fight-state flag beside a number in `--ink`.
+- **`.fury-wash`** — a red edge vignette, an HTML sibling of the `<svg>` in `Arena.tsx`,
+  mounted once and toggled by `.is-on`, room B only, opacity-only animation, static at
+  0.8 under reduced motion. Same lens-effect rules as `.stage::after`: alpha compositing,
+  no blend modes.
+
+The self-check block gains the fury rows (furious flips at exactly `FURY_PCT`, and the
+shown percent is `≤ FURY_PCT` whenever furious) and names `VENT_PCT_SOLO` / `VENT_PCT_FULL`
+instead of the literal 65 / 35 that had gone stale through two solo retunes.
+
+The boss's open-vent ring — the "flash light" of the player's report — is `Boss.tsx`'s and
+is now a hairline at half opacity with a ≤ 8 px glow and a slow opacity breathe; no scale
+pulse, static under reduced motion. Not a HUD change, noted here because the HUD's `boss
+NN%` and the ring are the two places the vent state reaches the player.

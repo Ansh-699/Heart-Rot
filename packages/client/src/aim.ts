@@ -1,12 +1,14 @@
 /**
  * Aim — the client's copy of the chain's raycast, and the auto-aim built on top of it.
  *
- * `programs/heartrot/src/handlers/shoot.rs::raycast` IS THE AUTHORITY. {@link raycastShot}
- * is a third copy of that algorithm — the first is the program, the second its tests — and
- * it exists for two reasons only: to find the point an arrow stops at, because the chain
- * publishes no such point, and to pick the target {@link autoAim} sends, which the chain
- * then resolves for itself. It lived in `app/src/render/Shot.tsx` until the aim needed it
- * from the input path too; there is no fourth copy.
+ * `programs/heartrot/src/handlers/shoot.rs::walk_ray` IS THE AUTHORITY. {@link raycastShot}
+ * and {@link raycastBeam} are a third copy of that algorithm — the first is the program, the
+ * second its tests — and they exist for two reasons only: to find the point an arrow stops
+ * at (or the parts a beam passed through), because the chain publishes no such point, and
+ * to pick the target {@link autoAim} sends, which the chain then resolves for itself. It
+ * lived in `app/src/render/Shot.tsx` until the aim needed it from the input path too; there
+ * is no fourth copy. As on chain the two rays are ONE walk with a different stop rule: a
+ * tap or charged shot stops at its first hit, a super (tier 2) never stops.
  *
  * The *data* cannot drift — `isWall` reads the same generated bitboard the program
  * raycasts and `PART_HITBOXES` / `CORE` come out of the same `gen_hitboxes.py` pass — but
@@ -30,7 +32,7 @@
  * only SDK tables and the Worker may one day want to score a shot too. No DOM, no React.
  */
 
-import { CORE, PART_HITBOXES } from './hitboxes';
+import { CORE, PART_HITBOXES, type Rect } from './hitboxes';
 import { VENT_OPEN, type BossAccount } from './layout';
 import { BOSS_SPAWN, MAP_ENTRANCES, MAP_TILE, MAP_TILES, PIT_BOT, isWall } from './map';
 
@@ -85,15 +87,24 @@ export function landingOf(end: RayEnd, ventOpen: number): Landing {
   return end.core && ventOpen !== VENT_OPEN ? 'absorb' : 'hit';
 }
 
+/** A point the walk ended at: a wall sample, the last of the 64 steps, or a stop. */
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
 /**
- * Walk `(dx, dy)` from `(fromX, fromY)` and report where it stops.
+ * `shoot.rs::walk_ray`. Walk `(dx, dy)` from `(fromX, fromY)`, reporting every live part
+ * box (by index) and the core circle (`null`) each sample is inside — in ray order, and
+ * within one sample in table order — to `hit`, which answers whether to keep walking. A
+ * wall stops it regardless. Reports where the walk ended.
  *
  * `(dx, dy)` must be in the `i8` range the wire carries, so the normalisation runs over the
  * same integers the program's does. A destroyed part (0 HP) is transparent, exactly as on
  * chain: stripping the shell is what opens a lane to the core, and it falls out of the
  * geometry rather than out of a flag.
  */
-export function raycastShot(
+function walk(
   fromX: number,
   fromY: number,
   dx: number,
@@ -101,9 +112,10 @@ export function raycastShot(
   parts: readonly number[],
   bossX: number,
   bossY: number,
-): RayEnd {
+  hit: (part: number | null) => boolean,
+): Point {
   const u = unitQ12(dx, dy);
-  if (u === null) return { x: fromX, y: fromY, struck: false, core: false };
+  if (u === null) return { x: fromX, y: fromY };
   const [ux, uy] = u;
 
   let fx = fromX * Q;
@@ -117,7 +129,7 @@ export function raycastShot(
     x = Math.trunc(fx / Q);
     y = Math.trunc(fy / Q);
 
-    if (isWall(x, y)) return { x, y, struck: false, core: false };
+    if (isWall(x, y)) break;
 
     const lx = x - bossX;
     const ly = y - bossY;
@@ -129,18 +141,73 @@ export function raycastShot(
         lx >= r.x &&
         lx < r.x + r.w &&
         ly >= r.y &&
-        ly < r.y + r.h
+        ly < r.y + r.h &&
+        !hit(i)
       ) {
-        return { x, y, struck: true, core: false };
+        return { x, y };
       }
     }
 
     const cx = lx - CORE.x;
     const cy = ly - CORE.y;
-    if (cx * cx + cy * cy <= CORE.radiusSq) return { x, y, struck: true, core: true };
+    if (cx * cx + cy * cy <= CORE.radiusSq && !hit(null)) return { x, y };
   }
 
-  return { x, y, struck: false, core: false };
+  return { x, y };
+}
+
+/** `shoot.rs::raycast` — tiers 0 and 1: first hit wins, and that is where the arrow stops. */
+export function raycastShot(
+  fromX: number,
+  fromY: number,
+  dx: number,
+  dy: number,
+  parts: readonly number[],
+  bossX: number,
+  bossY: number,
+): RayEnd {
+  let struck = false;
+  let core = false;
+  const end = walk(fromX, fromY, dx, dy, parts, bossX, bossY, (part) => {
+    struck = true;
+    core = part === null;
+    return false;
+  });
+  return { x: end.x, y: end.y, struck, core };
+}
+
+/**
+ * What a super's beam did, for the renderer to flash and number. `end` is where the line
+ * is drawn to — a wall or the ray's full length, never the creature, because the beam does
+ * not stop there; `hits` is every live part it entered, once each, in ray order; `core` is
+ * whether it crossed the orb. Whether the core then TAKES it is the chain's vent rule,
+ * judged after the parts on this same beam fell (`shoot.rs::fire`), so a beam that reads
+ * `core` through a full shell may still open the vent for itself on the way in.
+ */
+export interface Beam {
+  readonly end: Point;
+  readonly hits: readonly number[];
+  readonly core: boolean;
+}
+
+/** `shoot.rs::raycast_beam` — tier 2: the whole line. Same steps, same wall, same tables. */
+export function raycastBeam(
+  fromX: number,
+  fromY: number,
+  dx: number,
+  dy: number,
+  parts: readonly number[],
+  bossX: number,
+  bossY: number,
+): Beam {
+  const hits: number[] = [];
+  let core = false;
+  const end = walk(fromX, fromY, dx, dy, parts, bossX, bossY, (part) => {
+    if (part === null) core = true;
+    else if (!hits.includes(part)) hits.push(part);
+    return true;
+  });
+  return { end, hits, core };
 }
 
 // ---------------------------------------------------------------------------
@@ -292,10 +359,44 @@ export function aimSelfCheck(): void {
   }
   ok(opened, 'a destroyed part still blocks the ray');
 
+  // 3b. The beam. On every angle of the sweep it agrees with the shot about the FIRST thing
+  //     on the line — a struck shot stops inside the beam's first hit's box, or on the core —
+  //     and then keeps going: its end is never on the creature. Somewhere in the sweep it
+  //     enters two parts, or the pierce is decorative. Each part is listed once, however
+  //     many samples fell inside it.
+  const inBox = (r: Rect, lx: number, ly: number): boolean =>
+    lx >= r.x && lx < r.x + r.w && ly >= r.y && ly < r.y + r.h;
+  const onCreature = (p: { readonly x: number; readonly y: number }): boolean => {
+    const lx = p.x - bx;
+    const ly = p.y - by;
+    const cx = lx - CORE.x;
+    const cy = ly - CORE.y;
+    return cx * cx + cy * cy <= CORE.radiusSq || PART_HITBOXES.some((r) => inBox(r, lx, ly));
+  };
+  let pierced = false;
+  for (let i = 0; i < 64; i++) {
+    const a = (i / 64) * Math.PI * 2;
+    const dx = Math.round(Math.cos(a) * AIM_MAX);
+    const dy = Math.round(Math.sin(a) * AIM_MAX);
+    const shot = raycastShot(fromX, fromY, dx, dy, parts, bx, by);
+    const beam = raycastBeam(fromX, fromY, dx, dy, parts, bx, by);
+    ok(shot.struck === (beam.hits.length > 0 || beam.core), 'the beam and the shot disagree about touching the boss');
+    if (shot.struck && !shot.core) {
+      ok(inBox(PART_HITBOXES[beam.hits[0]!]!, shot.x - bx, shot.y - by), "the shot did not stop in the beam's first hit");
+    }
+    if (shot.struck && shot.core) ok(beam.core, 'a shot on the core is a beam through the core');
+    ok(!onCreature(beam.end), 'the beam ended on the creature: it stopped');
+    ok(new Set(beam.hits).size === beam.hits.length, 'a part is on the beam once');
+    if (beam.hits.length >= 2) pierced = true;
+  }
+  ok(pierced, 'no angle from under the boss pierces two parts');
+
   // 4. The zero vector is the one input `unit_q12` refuses, and the caller must not crash
   //    on it — every aim path rejects it upstream, so this is the unreachable branch made safe.
   const nil = raycastShot(fromX, fromY, 0, 0, parts, bx, by);
   ok(nil.x === fromX && nil.y === fromY && !nil.struck, 'a zero aim vector must draw nothing');
+  const nilBeam = raycastBeam(fromX, fromY, 0, 0, parts, bx, by);
+  ok(nilBeam.hits.length === 0 && !nilBeam.core && nilBeam.end.x === fromX, 'a zero aim beam is nothing');
   ok(aimFromVector(0, 0) === null, 'the zero vector has no aim, and the chain refuses it');
   const scaled = aimFromVector(10, -40);
   ok(scaled !== null && scaled[0] === 32 && scaled[1] === -AIM_MAX, 'aim fills i8 on its longer axis');

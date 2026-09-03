@@ -23,6 +23,7 @@ import {
   isAddress,
   type Address,
   type KeyPairSigner,
+  type Signature,
 } from '@solana/kit';
 import {
   OUTCOME_UNDECIDED,
@@ -156,6 +157,29 @@ export function json(body: unknown, status = 200): Response {
 
 /** A 400 the caller is allowed to read. Everything else surfaces as an opaque 500. */
 export class BadRequest extends Error {}
+
+/**
+ * A 503 `try_again`: the infrastructure between "which arena" and "which seat" failed
+ * before anything was claimed, so nothing is half-done and the honest answer is a retry.
+ *
+ * The rejoin 500 was this shape every time. Exit hands the old arena to `matchLeave`'s
+ * background settle, Join arrives seconds later, and `openArena`, `ensureArena` or the
+ * pre-claim reads meet that arena mid-teardown and throw. Nothing about it is
+ * unexpected — it is two of our own routes overlapping — but it reached the player as
+ * `internal_error`, whose copy says the opposite of what they should do. The failure
+ * itself still goes to the log under the same `ref` the body carries (`index.ts`),
+ * because a rejoin that keeps failing is a real fault and the ref is how it gets found.
+ */
+export class TryAgain extends Error {}
+
+/** Everything a route does before the seat claim answers `try_again` when it throws. */
+async function preClaim<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    throw new TryAgain('infrastructure failed before the claim', { cause: error });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Per-request context
@@ -297,9 +321,16 @@ function rollForwardLater(
           timeoutMs: BASE_CONFIRM_MS,
         });
         console.log('rollForwardLater: rolled a settled win into its next incarnation');
-      } catch {
+      } catch (error) {
         // Two joiners race here every time a raid wins, and the loser's tag 15 is refused
-        // by `LOBBY -> LOBBY` being an illegal edge — the mutex working, not a failure.
+        // by `LOBBY -> LOBBY` being an illegal edge — `WrongPhase`, the mutex working, not
+        // a failure. That refusal used to justify swallowing everything, which meant a
+        // roll that genuinely never happened left nothing in the log to search for.
+        if (refusalCode(error) === WRONG_PHASE) {
+          console.log('rollForwardLater: lost the roll race; the other joiner rolled it');
+        } else {
+          console.error('rollForwardLater: roll failed', error);
+        }
       }
     })(),
   );
@@ -366,6 +397,21 @@ const ARENA_SCAN = 12;
 const GRIND_STEPS = 64;
 
 /**
+ * Ids read per wave of the scan. The reads are independent and read-only; the scan was
+ * serial only because it grew one `continue` at a time. Measured serially with
+ * `scripts/ops/joinprobe.ts`: 18 steps, 10.7 s to a confirmed seat — two round trips
+ * per id (router, then RPC), one id at a time.
+ *
+ * Why 8 and not the whole window at once. workerd keeps at most six outbound
+ * connections open per request and queues the rest, so a wave costs roughly its
+ * fetches divided by six — and every id read past the one that answers is overshoot,
+ * paid in full because the wave is awaited whole. Eight ids is sixteen fetches: enough
+ * to keep all six connections busy, small enough that the overshoot is at most seven
+ * ids. The measured 18-step join becomes three waves instead of eighteen serial steps.
+ */
+const SCAN_BATCH = 8;
+
+/**
  * Both child PDAs of this arena land on bump 255?
  *
  * `assert_pda` searches 255 downwards and costs ~1,500 CU per bump it rejects, so an
@@ -429,91 +475,121 @@ async function openArena(
   // The first id that is free and canonical: what the Worker will warm if nothing here is
   // joinable. Remembered rather than created, so the scan stays read-only.
   let firstFree: bigint | null = null;
-  for (let step = 0, occupied = 0; occupied < ARENA_SCAN && step < ARENA_SCAN + GRIND_STEPS; step++) {
-    const arenaId = head + BigInt(step);
-    const pdas = await matchPdas(c.programId, arenaId);
-    const { state, erFqdn } = await readArena(c, pdas.arena);
+  const span = ARENA_SCAN + GRIND_STEPS;
+  let occupied = 0;
+  for (let from = 0; from < span && occupied < ARENA_SCAN; from += SCAN_BATCH) {
+    // A wave, not a race. `allSettled` so one id's failed read cannot take the rest of
+    // the wave with it, and the results are walked in id order below: the rendezvous
+    // property — every caller stops at the same arena — is a property of the walk, not
+    // of the fetch, so reading eight at once does not disturb it.
+    const reads = await Promise.allSettled(
+      Array.from({ length: Math.min(SCAN_BATCH, span - from) }, async (_, i) => {
+        const pdas = await matchPdas(c.programId, head + BigInt(from + i));
+        return { pdas, ...(await readArena(c, pdas.arena)) };
+      }),
+    );
+    for (const [i, read] of reads.entries()) {
+      if (occupied >= ARENA_SCAN) break;
+      const arenaId = head + BigInt(from + i);
 
-    // Never played. `init_arena` will create it at incarnation 1 — the counter is
-    // per-arena, so a fresh chain always starts at the base fight.
-    //
-    // Creation is the one and only moment an `arena_id` gets chosen, so it is the one
-    // moment the child PDA bumps every later instruction pays for can be chosen. Declining
-    // an id here leaves a permanent hole — nothing records the skip — and that is exactly
-    // why the decision has to live inside this loop rather than in a grind helper that
-    // returns an id to create at. A helper would create at `head + 3`, leave `head`
-    // absent, and then answer the *next* player's request by walking off `head` again,
-    // finding `head + 3` taken, and starting a second lobby at `head + 7`. The scan's
-    // rendezvous property — every caller stops at the same arena — only survives if the
-    // holes stay on the scan's path and get walked over identically every time.
-    if (!state) {
-      // NEVER CREATED INLINE. Creating an arena is `init_arena` + `delegate` +
-      // `connectMatch`, which polls up to 600 times across two 30 s phases — 30-60 s of
-      // chain round trips billed to whichever player's click happened to land here, and
-      // uncaught, so any of it answers "the server hit an error it did not expect". That
-      // is three separate 500s now, all the same shape. The id is remembered and the
-      // Worker warms it in the background; this player is handed a warm arena or an
-      // honest "try again in a moment".
-      if (firstFree === null && (await childBumpsCanonical(c.programId, pdas.arena))) {
-        firstFree = arenaId;
+      if (read.status === 'rejected') {
+        // BUSY, never a throw. This was the rejoin 500: Exit hands the old arena to
+        // `matchLeave`'s background settle, Join arrives seconds later, and the scan
+        // walks straight through that arena mid-teardown — for the moment the account is
+        // between layers the router or the RPC answers with an error, and the throw went
+        // uncaught all the way to `internal_error`. An id whose state cannot be read is
+        // exactly as unjoinable as a fight in progress, so it costs one unit of the same
+        // budget, and the reason goes to the log rather than to the player.
+        console.warn(`openArena: ${arenaId} unreadable; counting it busy`, read.reason);
+        occupied++;
+        continue;
       }
-      continue;
-    }
+      const { pdas, state, erFqdn } = read.value;
 
-    if (state.phase === PHASE_LOBBY) return { arenaId, incarnation: state.incarnation };
-
-    if (state.phase === PHASE_SETTLED) {
-      // A won arena can roll into its next incarnation — but that is a transaction, and
-      // transactions do not belong on a join. This is the path a player takes immediately
-      // after killing the boss, so it is the one most likely to be walked by someone
-      // impatient, and `next_incarnation` plus a 30 s confirm is exactly the wait that
-      // produced the 500 they saw. Roll it in the background and keep looking for a room
-      // that is joinable right now.
-      if (rollable(state) && !rolling) {
-        rolling = true;
-        rollForwardLater(c, ctx, pdas);
-      }
-      // TERMINAL, and it must not spend the budget.
+      // Never played. `init_arena` will create it at incarnation 1 — the counter is
+      // per-arena, so a fresh chain always starts at the base fight.
       //
-      // A settled arena that cannot roll forward is a loss: `rollForward` refuses locally
-      // on `outcome !== OUTCOME_WIN`, with no transaction and no extra read, so this costs
-      // nothing to identify. It can never be joined again, and one is produced by every
-      // fight that ends in a wipe or an enrage — so counting it toward `occupied` makes the
-      // budget shrink by one per lost raid, permanently.
-      //
-      // That is the wall this file has now hit twice: at ARENA_SCAN 3, and again at 12 with
-      // ids 1788266869..80 dead and 1788266885 absent and perfectly usable one step past
-      // the horizon. Widening the budget only postpones it, because the accumulator is
-      // unbounded and the budget is not. Skipping for free removes the accumulator instead.
-      continue;
-    }
-
-    // STRANDED, and reapable. An arena still delegated in `SETTLING` has finished its
-    // fight and has nobody left to settle it — the only other caller of that route needs a
-    // live seated player, and if one existed this arena would not be here. Hand it to the
-    // background reaper (capped at one per request) and do not spend budget on it: it is
-    // as terminal as a settled loss, it is just still holding its rent and its slot.
-    //
-    // This is the backstop, not the mechanism. `matchLeave` clears these at the moment the
-    // last player goes; this catches the ones whose departure signal never arrived.
-    if (state.phase === PHASE_SETTLING && erFqdn !== undefined) {
-      if (!reaping) {
-        reaping = true;
-        reapOne(c, ctx, { arenaId, erFqdn });
+      // Creation is the one and only moment an `arena_id` gets chosen, so it is the one
+      // moment the child PDA bumps every later instruction pays for can be chosen.
+      // Declining an id here leaves a permanent hole — nothing records the skip — and
+      // that is exactly why the decision has to live inside this loop rather than in a
+      // grind helper that returns an id to create at. A helper would create at
+      // `head + 3`, leave `head` absent, and then answer the *next* player's request by
+      // walking off `head` again, finding `head + 3` taken, and starting a second lobby
+      // at `head + 7`. The scan's rendezvous property — every caller stops at the same
+      // arena — only survives if the holes stay on the scan's path and get walked over
+      // identically every time.
+      if (!state) {
+        // NEVER CREATED INLINE. Creating an arena is `init_arena` + `delegate` +
+        // `connectMatch`, which polls up to 600 times across two 30 s phases — 30-60 s
+        // of chain round trips billed to whichever player's click happened to land here,
+        // and uncaught, so any of it answers "the server hit an error it did not
+        // expect". That is three separate 500s now, all the same shape. The id is
+        // remembered and the Worker warms it in the background; this player is handed a
+        // warm arena or an honest "try again in a moment".
+        if (firstFree === null && (await childBumpsCanonical(c.programId, pdas.arena))) {
+          firstFree = arenaId;
+        }
+        continue;
       }
-      continue;
-    }
 
-    // Busy, but not forever: fighting, mustering, mid-settlement or mid-roll. These free up
-    // on their own, so they are what the budget is actually for — a bound on how many LIVE
-    // raids to walk past before answering "come back in a moment".
-    occupied++;
+      if (state.phase === PHASE_LOBBY) return { arenaId, incarnation: state.incarnation };
+
+      if (state.phase === PHASE_SETTLED) {
+        // A won arena can roll into its next incarnation — but that is a transaction,
+        // and transactions do not belong on a join. This is the path a player takes
+        // immediately after killing the boss, so it is the one most likely to be walked
+        // by someone impatient, and `next_incarnation` plus a 30 s confirm is exactly
+        // the wait that produced the 500 they saw. Roll it in the background and keep
+        // looking for a room that is joinable right now.
+        if (rollable(state) && !rolling) {
+          rolling = true;
+          rollForwardLater(c, ctx, pdas);
+        }
+        // TERMINAL, and it must not spend the budget.
+        //
+        // A settled arena that cannot roll forward is a loss: `rollForward` refuses
+        // locally on `outcome !== OUTCOME_WIN`, with no transaction and no extra read, so
+        // this costs nothing to identify. It can never be joined again, and one is
+        // produced by every fight that ends in a wipe or an enrage — so counting it
+        // toward `occupied` makes the budget shrink by one per lost raid, permanently.
+        //
+        // That is the wall this file has now hit twice: at ARENA_SCAN 3, and again at 12
+        // with ids 1788266869..80 dead and 1788266885 absent and perfectly usable one
+        // step past the horizon. Widening the budget only postpones it, because the
+        // accumulator is unbounded and the budget is not. Skipping for free removes the
+        // accumulator instead.
+        continue;
+      }
+
+      // STRANDED, and reapable. An arena still delegated in `SETTLING` has finished its
+      // fight and has nobody left to settle it — the only other caller of that route
+      // needs a live seated player, and if one existed this arena would not be here.
+      // Hand it to the background reaper (capped at one per request) and do not spend
+      // budget on it: it is as terminal as a settled loss, it is just still holding its
+      // rent and its slot.
+      //
+      // This is the backstop, not the mechanism. `matchLeave` clears these at the moment
+      // the last player goes; this catches the ones whose departure signal never arrived.
+      if (state.phase === PHASE_SETTLING && erFqdn !== undefined) {
+        if (!reaping) {
+          reaping = true;
+          reapOne(c, ctx, { arenaId, erFqdn });
+        }
+        continue;
+      }
+
+      // Busy, but not forever: fighting, mustering, mid-settlement or mid-roll. These
+      // free up on their own, so they are what the budget is actually for — a bound on
+      // how many LIVE raids to walk past before answering "come back in a moment".
+      occupied++;
+    }
   }
   // Every id in the window is occupied by a match nobody can join. That is a real
   // operational state, not a transient one, so name the range that was tried — a bare
   // null here previously turned into an unexplainable 503 on the player's screen.
   console.warn(
-    `openArena: ids ${head}..${head + BigInt(ARENA_SCAN + GRIND_STEPS - 1)} hold no joinable ` +
+    `openArena: ids ${head}..${head + BigInt(span - 1)} hold no joinable ` +
       `lobby; warming ${firstFree ?? 'nothing — no canonical id in range'}.`,
   );
   // Nothing to join *yet*. Warm the next one in the background so the retry lands, and
@@ -724,14 +800,14 @@ export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): P
   const identity = await identityFromDid(did);
 
   const c = await context(env);
-  const treasury = await treasuryTier(c);
+  const treasury = await preClaim(() => treasuryTier(c));
   if (treasury.tier === 4) return json({ error: 'treasury_low', tier: treasury.tier }, 503);
 
-  const open = await openArena(c, ctx);
+  const open = await preClaim(() => openArena(c, ctx));
   if (!open) return json({ error: 'no_open_arena' }, 503);
   const { arenaId, incarnation } = open;
   const pdas = await matchPdas(c.programId, arenaId);
-  const { er, erFqdn } = await ensureArena(c, arenaId, incarnation, pdas);
+  const { er, erFqdn } = await preClaim(() => ensureArena(c, arenaId, incarnation, pdas));
 
   // The next player must not pay what this one just might have. Background, never inline.
   prewarmNext(c, ctx, arenaId);
@@ -740,15 +816,17 @@ export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): P
   // browsers are racing on. The program is the authority: a seat taken between our read
   // and our write is rejected on chain, and the retry re-reads the roster.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const [arenaBytes, playersBytes] = await Promise.all([
-      accountData(er, pdas.arena),
-      accountData(er, pdas.players),
-    ]);
-    if (!arenaBytes || !playersBytes) throw new Error('match accounts vanished mid-join');
-
-    const arena = decodeArena(arenaBytes);
+    const { arena, roster } = await preClaim(async () => {
+      const [arenaBytes, playersBytes] = await Promise.all([
+        accountData(er, pdas.arena),
+        accountData(er, pdas.players),
+      ]);
+      // Undelegated between the scan and here: the arena changing hands, which is the
+      // one thing `try_again`'s copy describes.
+      if (!arenaBytes || !playersBytes) throw new Error('match accounts vanished mid-join');
+      return { arena: decodeArena(arenaBytes), roster: decodePlayers(playersBytes) };
+    });
     if (arena.phase !== PHASE_LOBBY) return json({ error: 'match_in_progress' }, 409);
-    const roster = decodePlayers(playersBytes);
 
     // Idempotent on `identity`: a returning player whose browser storage was cleared
     // gets their seat back with the new session key written over the old one. Privy
@@ -845,10 +923,10 @@ export async function matchStart(env: Env, body: unknown, ctx: RouteContext): Pr
   await verifyPrivyToken(token, env.PRIVY_APP_ID);
 
   const c = await context(env);
-  const treasury = await treasuryTier(c);
+  const treasury = await preClaim(() => treasuryTier(c));
   if (treasury.tier === 4) return json({ error: 'treasury_low', tier: treasury.tier }, 503);
 
-  const open = await openArena(c, ctx);
+  const open = await preClaim(() => openArena(c, ctx));
   if (!open) return json({ error: 'no_open_arena' }, 503);
   const { arenaId, incarnation } = open;
   if (requested !== arenaId) {
@@ -856,11 +934,14 @@ export async function matchStart(env: Env, body: unknown, ctx: RouteContext): Pr
   }
 
   const pdas = await matchPdas(c.programId, arenaId);
-  const { er, erFqdn } = await ensureArena(c, arenaId, incarnation, pdas);
+  const { er, erFqdn } = await preClaim(() => ensureArena(c, arenaId, incarnation, pdas));
 
-  const before = await accountData(er, pdas.arena);
-  if (!before) throw new Error('arena unreadable before start');
-  if (decodeArena(before).phase !== PHASE_LOBBY) {
+  const before = await preClaim(async () => {
+    const bytes = await accountData(er, pdas.arena);
+    if (!bytes) throw new Error('arena unreadable before start');
+    return decodeArena(bytes);
+  });
+  if (before.phase !== PHASE_LOBBY) {
     return json({ error: 'already_started' }, 409);
   }
 
@@ -928,6 +1009,133 @@ const WRONG_PHASE = 6;
 
 function refusalCode(error: unknown): number | undefined {
   return (error as { cause?: DecodedTransactionError } | null)?.cause?.code;
+}
+
+// ---------------------------------------------------------------------------
+// Bringing a settled match home
+// ---------------------------------------------------------------------------
+
+/**
+ * How long to wait for `settle`'s commit to land on the base layer before calling it
+ * unknown. The undelegation is the ER's to perform on its own schedule; ~25 s covered
+ * every one observed and a miss is reported as unknown, never as failed.
+ */
+const HOME_WAIT_MS = 25_000;
+
+/**
+ * The wall clock `matchLeave`'s background chain gets, and the one number it is budgeted to.
+ *
+ * Cloudflare cancels every `waitUntil` promise 30 s after the response is sent
+ * (runtime-apis/context: "If any Promises have not settled after 30 seconds, they are
+ * canceled") — and cancels by DROPPING it, so the `catch` below never runs and the only
+ * trace is the runtime's own "waitUntil() tasks did not complete" warning. The chain's
+ * declared bound is `ER_CONFIRM_MS` + `HOME_WAIT_MS` + `BASE_CONFIRM_MS` = 70 s, so it
+ * cannot be allowed to run to its own timeouts: the home wait gets what is left after the
+ * settle, and `write_leaderboard` is SENT the moment the arena is home — the head moves
+ * when that lands; the confirm only reports it — with whatever remains as its timeout.
+ * 26 s leaves ~4 s for the record's cold blockhash fetch and send (`context` builds the
+ * RPC client per request, so `connection.ts`'s blockhash cache is empty here) before the
+ * cap. The typical chain is 5–12 s (undelegations of 1,489 and 3,525 ms in
+ * `docs/spikes/sp1.md` and `sp-combat.md`); this is the tail, not the norm.
+ */
+const LEAVE_BUDGET_MS = 26_000;
+
+/**
+ * Wait for the accounts to come home, bounded. `null` is unknown, not failed.
+ *
+ * This replaces the SDK's `GetCommitmentSignature`, which scrapes two hardcoded English
+ * log prefixes and *throws* on every failure path — and a throw there means "unknown",
+ * never "failed". Ownership returning to our program is the state `write_leaderboard`
+ * actually needs, and unlike a log string it is unambiguous.
+ *
+ * `waitMs` is the observed bound by default; `matchLeave` passes what is left of its
+ * `waitUntil` budget instead, which can be less. The first read happens regardless, so a
+ * budget already spent still notices an arena that is home.
+ */
+async function awaitHome(
+  c: Ctx,
+  arena: Address,
+  waitMs = HOME_WAIT_MS,
+): Promise<ArenaAccount | null> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const base = await accountData(c.base, arena);
+    if (base) {
+      try {
+        return decodeArena(base);
+      } catch {
+        // Still a delegated husk: zero bytes owned by the delegation program.
+      }
+    }
+    if (Date.now() >= deadline) return null;
+    await sleep(1_000);
+  }
+}
+
+/**
+ * The leaderboard row — and with it the scan head.
+ *
+ * `write_leaderboard` is the ONLY thing that advances `Leaderboard.last_arena_id`, and
+ * `openArena` starts its walk there. Until `matchLeave` called this too, only a raid
+ * that ended through `/api/match/settle` moved the head: a raid whose last player
+ * pressed Exit was settled in the background and never recorded, so the head sat at
+ * 1788266869 while the live rooms were seventeen ids past it and every join re-walked
+ * the gap. One helper, two callers, so the two paths cannot record differently.
+ *
+ * Sent for EVERY settled outcome, undecided included. A fight cut short — a `Fighting`
+ * arena settled by the stall path, or by its last player pressing Exit — is the common
+ * case on this path: `leave_seat` is refused outside LOBBY/MUSTERING/FIGHTING, so the
+ * settle under it only ever sees a fight nobody finished, and `settle.rs` leaves that
+ * `OUTCOME_UNDECIDED` because an empty arena is not a wipe. `write_leaderboard` used to
+ * refuse that with `MatchNotOver`, which meant the head never followed an abandoned raid
+ * and every abandon added one dead id to every later join's walk. It now writes NO row
+ * for an undecided arena (a row whose outcome byte is 0 reads as unwritten) but moves
+ * `last_arena_id` past it — `settle.rs::mark_abandoned` — so this one send is what keeps
+ * the scan short. `leaderboardWritten` in `matchSettle`'s response still says whether a
+ * row exists; the head moving is not a row.
+ *
+ * Split in two because `matchLeave` cannot afford `ensureLeaderboard`: it is a second
+ * send-and-confirm inside a `waitUntil` budget of `LEAVE_BUDGET_MS`, and it is needed once
+ * per deployment, on the first settle — which reaches `matchSettle`, where wall time is
+ * the client's and unlimited.
+ */
+async function ensureLeaderboard(c: Ctx): Promise<void> {
+  const leaderboard = await leaderboardPda(c.programId);
+  if ((await accountData(c.base, leaderboard)) !== null) return;
+  // Once per deployment. Doing it here rather than in a deploy script means the very
+  // first settle in a fresh environment writes a row instead of 500ing on a missing
+  // account.
+  const ix = initLeaderboard({
+    programId: c.programId,
+    payer: c.treasury.address,
+    leaderboard,
+  });
+  await confirmSignature(c.base, await sendInstructions(c.base, c.treasury, [ix]), {
+    timeoutMs: BASE_CONFIRM_MS,
+  });
+}
+
+/** The row. `confirmMs` is the confirm's bound only — the send is what moves the head. */
+async function recordMatch(
+  c: Ctx,
+  pdas: { arena: Address; players: Address },
+  confirmMs = BASE_CONFIRM_MS,
+): Promise<Signature> {
+  const leaderboard = await leaderboardPda(c.programId);
+  // No argument block: the handler takes no `data` and reads `(arena_id, incarnation)`
+  // off the `Arena` account it is handed. Tag 10 is absent from `ZERO_ARG_TAGS`, so a
+  // trailing block would be ignored in silence rather than rejected — which is exactly
+  // why it must not be sent.
+  const ix = writeLeaderboard({
+    programId: c.programId,
+    payer: c.treasury.address,
+    leaderboard,
+    arena: pdas.arena,
+    players: pdas.players,
+  });
+  const baseSignature = await sendInstructions(c.base, c.treasury, [ix]);
+  await confirmSignature(c.base, baseSignature, { timeoutMs: confirmMs });
+  return baseSignature;
 }
 
 // ---------------------------------------------------------------------------
@@ -1027,16 +1235,45 @@ export async function matchLeave(env: Env, body: unknown, ctx: RouteContext): Pr
 
   ctx.waitUntil(
     (async () => {
+      // Taken before the first send: the platform's clock starts when the response goes
+      // out, which is the line after this `waitUntil`. See `LEAVE_BUDGET_MS`.
+      const budgetEnds = Date.now() + LEAVE_BUDGET_MS;
       try {
         const ix = settle({ programId: c.programId, payer: c.treasury.address, ...pdas });
         await confirmSignature(er, await sendInstructions(er, c.treasury, [ix]), {
           timeoutMs: ER_CONFIRM_MS,
         });
         console.log(`matchLeave: settled ${arenaId} after the last player left`);
+
+        // Then the half `matchSettle` always did and this path never did: bring the
+        // accounts home and record, so `last_arena_id` follows the room that just
+        // closed instead of every later join re-walking it from a stale head. This
+        // settles undecided every time (see `recordMatch`), and undecided is exactly the
+        // case the record exists for here: no row, but the head moves.
+        const homeWait = Math.min(HOME_WAIT_MS, budgetEnds - Date.now());
+        const settled = await awaitHome(c, pdas.arena, homeWait);
+        if (!settled) {
+          // Two different facts, so two different lines: the undelegation outran the
+          // bound every observed one fit inside, or it outran what the platform left us.
+          console.warn(
+            homeWait < HOME_WAIT_MS
+              ? `matchLeave: ${arenaId} not home when the ${LEAVE_BUDGET_MS} ms waitUntil budget ran out (${homeWait} ms were left after the settle); head unchanged`
+              : `matchLeave: ${arenaId} not home after ${HOME_WAIT_MS} ms; head unchanged`,
+          );
+          return;
+        }
+        // Sent now, confirmed with what is left. A confirm that runs out of budget throws
+        // with the signature in its message, so the log below still says it was sent.
+        await recordMatch(c, pdas, Math.max(0, budgetEnds - Date.now()));
+        console.log(
+          `matchLeave: recorded ${arenaId} (${settled.outcome === OUTCOME_UNDECIDED ? 'abandoned, no row' : 'decided'}); the scan head follows`,
+        );
       } catch (error) {
-        // Best effort by construction. If this fails the arena is exactly as stranded as
-        // it was before, and `openArena`'s reaper will find it on somebody else's join.
-        console.error(`matchLeave: settle ${arenaId} failed`, error);
+        // Best effort by construction. A settle that fails leaves the arena exactly as
+        // stranded as it was before, and `openArena`'s reaper finds it on somebody
+        // else's join; a record that fails leaves a settled arena the scan skips for
+        // free, with the head one room behind until the next recorded raid.
+        console.error(`matchLeave: closing ${arenaId} failed`, error);
       }
     })(),
   );
@@ -1156,26 +1393,7 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
     });
   }
 
-  // Wait for the accounts to come home. This replaces the SDK's
-  // `GetCommitmentSignature`, which scrapes two hardcoded English log prefixes and
-  // *throws* on every failure path — and a throw there means "unknown", never "failed".
-  // Ownership returning to our program is the state `write_leaderboard` actually needs,
-  // and unlike a log string it is unambiguous.
-  const deadline = Date.now() + 25_000;
-  let settled: ArenaAccount | null = null;
-  for (;;) {
-    const base = await accountData(c.base, pdas.arena);
-    if (base) {
-      try {
-        settled = decodeArena(base);
-        break;
-      } catch {
-        // Still a delegated husk: zero bytes owned by the delegation program.
-      }
-    }
-    if (Date.now() >= deadline) break;
-    await sleep(1_000);
-  }
+  const settled = await awaitHome(c, pdas.arena);
   // Unknown, not failed — 202, and the client polls. Re-entering this route is safe:
   // `settle` on an already-settled arena commits again and `write_leaderboard` no-ops
   // on a repeated `(arena_id, incarnation)`.
@@ -1184,54 +1402,18 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
   // A match that never produced a result has no row to write, and as of the muster that
   // state is REACHABLE: `MUSTERING → SETTLED` is the dead-crank recovery edge, and a
   // `Fighting` arena settled through the stall path above keeps `OUTCOME_UNDECIDED` too —
-  // "the fight was cut short" is the honest record. `write_leaderboard` now refuses such
-  // an arena outright (a row whose outcome byte is 0 is indistinguishable from an unwritten
-  // row), so sending tag 10 here would turn a correct settle into a `MatchNotOver` throw,
-  // a 500, and eight client retries against accounts that already came home. The accounts
-  // ARE settled; there is simply nothing to record.
-  if (settled.outcome === OUTCOME_UNDECIDED) {
-    return json({
-      committed: true,
-      leaderboardWritten: false,
-      outcome: settled.outcome,
-      arenaId: settled.arenaId.toString(),
-      incarnation: settled.incarnation,
-    });
-  }
-
-  const leaderboard = await leaderboardPda(c.programId);
-  if ((await accountData(c.base, leaderboard)) === null) {
-    // Once per deployment. Doing it here rather than in a deploy script means the very
-    // first settle in a fresh environment writes a row instead of 500ing on a missing
-    // account.
-    const ix = initLeaderboard({
-      programId: c.programId,
-      payer: c.treasury.address,
-      leaderboard,
-    });
-    await confirmSignature(c.base, await sendInstructions(c.base, c.treasury, [ix]), {
-      timeoutMs: BASE_CONFIRM_MS,
-    });
-  }
-
-  // No argument block: the handler takes no `data` and reads `(arena_id, incarnation)`
-  // off the `Arena` account it is handed. Tag 10 is absent from `ZERO_ARG_TAGS`, so a
-  // trailing block would be ignored in silence rather than rejected — which is exactly
-  // why it must not be sent. `incarnation` below is read state, not an argument.
-  const ix = writeLeaderboard({
-    programId: c.programId,
-    payer: c.treasury.address,
-    leaderboard,
-    arena: pdas.arena,
-    players: pdas.players,
-  });
-  const baseSignature = await sendInstructions(c.base, c.treasury, [ix]);
-  await confirmSignature(c.base, baseSignature, { timeoutMs: BASE_CONFIRM_MS });
+  // "the fight was cut short" is the honest record. Tag 10 is still sent: for an undecided
+  // arena `write_leaderboard` writes no row and moves the head past it (`mark_abandoned`),
+  // which is what keeps `openArena`'s walk from starting at the same dead id forever.
+  // `leaderboardWritten` reports the row, not the head.
+  // `incarnation` below is read state, not an argument — `recordMatch` sends none.
+  await ensureLeaderboard(c);
+  const baseSignature = await recordMatch(c, pdas);
 
   return json({
     committed: true,
     baseSignature,
-    leaderboardWritten: true,
+    leaderboardWritten: settled.outcome !== OUTCOME_UNDECIDED,
     // Read off the committed account rather than inferred, which is the whole reason
     // `outcome` is a second axis: after settlement `phase` is `Settled` for a raid that
     // killed the core and for one that wiped alike, and the end screen has to tell them

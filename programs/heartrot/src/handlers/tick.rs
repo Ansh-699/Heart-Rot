@@ -70,10 +70,10 @@ use crate::handlers::shoot::recompute_vent;
 use crate::hitboxes::{Muzzle, MUZZLES, N_MUZZLES};
 use crate::map;
 use crate::state::{
-    load_mut, Arena, Boss, Players, BOSS_CORE_HP, BULLET_ACTIVE, BULLET_FREE, CORE_HP_PER_RAIDER,
-    MAX_BULLETS, MAX_SEATS, NO_TARGET, OUTCOME_ENRAGE, OUTCOME_UNDECIDED, OUTCOME_WIN,
-    OUTCOME_WIPE, PHASE_FIGHTING, PHASE_MUSTERING, PHASE_ROLLING, SEED_BOSS, SEED_PLAYERS,
-    VOLLEY_INTERVAL_TICKS, ZONE_ARENA,
+    bullet_damage, load_mut, slam_damage, Arena, Boss, Players, BOSS_CORE_HP, BULLET_ACTIVE,
+    BULLET_FREE, CORE_HP_PER_RAIDER, FURY_VOLLEY_INTERVAL_TICKS, MAX_BULLETS, MAX_SEATS, NO_TARGET,
+    OUTCOME_ENRAGE, OUTCOME_UNDECIDED, OUTCOME_WIN, OUTCOME_WIPE, PHASE_FIGHTING, PHASE_MUSTERING,
+    PHASE_ROLLING, SEED_BOSS, SEED_PLAYERS, VOLLEY_INTERVAL_TICKS, ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
@@ -158,18 +158,29 @@ const BULLET_SPEED: i32 = BULLET_UNITS_PER_SEC * crate::state::TICK_MS as i32 / 
 /// squared radius; there is no `sqrt` in this program.
 const PLAYER_HIT_RADIUS: i32 = 12;
 
-/// Damage per bullet. Against the 100 HP a seat is spawned with this is 13 hits, so a
-/// player can eat a glancing volley and live but cannot stand in one.
-const BULLET_DAMAGE: u16 = 8;
+// Damage per bullet and per slam are `state::bullet_damage` / `state::slam_damage`, read
+// off `arena.raid_size` once per tick beside the vent threshold they were tuned against.
+// The flat 8 / 45 that used to sit here are those curves' full-raid endpoints: twenty
+// raiders take exactly the hits they always took, one takes a quarter and a third.
 
 /// Death lasts 3.2 s — 32 ticks at [`crate::state::TICK_MS`]. Counted in ticks, never
 /// milliseconds: the crank makes no wall-clock promise and a millisecond timer would run
 /// at a different speed on a slower validator.
 const RESPAWN_TICKS: u32 = crate::state::ticks_for(3_200);
 
-/// `bullets_per_volley = 3 + alive_players` — difficulty as bullet density, so twenty
-/// players make a visibly harder fight rather than a boss with a hidden HP multiplier.
-const BASE_VOLLEY_BULLETS: usize = 3;
+/// `bullets_per_volley = 1 + alive_players` (one more while furious, below) — difficulty
+/// as bullet density, so twenty players make a visibly harder fight rather than a boss
+/// with a hidden HP multiplier.
+///
+/// 1, down from 3. The base is what a solo raider eats regardless of anything else, and
+/// at 3 the solo volley was four bullets every 3.2 s against a fight that takes 12 s to
+/// win — with the flat 8 per bullet and 45 per slam that was a 5.7 s death standing
+/// still. Solo now sees two bullets (three furious); twenty see 21 (22).
+const BASE_VOLLEY_BULLETS: usize = 1;
+
+/// One more bullet per volley while [`Boss::is_furious`]. Named so the pool assert below
+/// and [`spawn_volley`] count the same bullet.
+const FURY_EXTRA_BULLETS: usize = 1;
 
 /// Fan width as a tangent denominator: the outermost bullet of a full 23-shot volley is
 /// offset by `11/24`, ≈ 25° off the aim line. Larger denominator, tighter fan.
@@ -225,10 +236,6 @@ const SLAM_PERIOD_TICKS: u32 = crate::state::ticks_for(6_000);
 /// connection.
 pub const SLAM_TELEGRAPH_TICKS: u32 = crate::state::ticks_for(1_500);
 
-/// 45 × 2 = 90, under the 100 HP a seat spawns with: two slams do not quite kill, a slam
-/// plus a volley does. It is a mechanic check, not a damage check.
-const SLAM_DAMAGE: u16 = 45;
-
 /// `Boss.parts` indices of the two hands (spec §2's table). The mace slams the lanes
 /// under its own x span and the claws slam theirs; destroy a hand and it stops, on the
 /// same `parts[i] != 0` gate [`spawn_volley`] uses for a thorn's muzzle.
@@ -275,11 +282,18 @@ const _: () = {
     // Longest possible flight is corner to corner. Alpha-max-plus-beta-min bounds that
     // diagonal by `ARENA_SIZE * 3 / 2` without a sqrt in a const context, and bounding
     // it *high* is the safe direction here.
+    //
+    // The interval that matters is the FURIOUS one: half the calm reload, so more volleys
+    // overlap, and each carries one more bullet. A 37-tick flight over 16-tick reloads is
+    // three volleys of 22 — 66 slots against 128 (the calm fight is two of 21).
     let travel = ARENA_SIZE * 3 / 2;
     let lifetime = (travel + BULLET_SPEED - 1) / BULLET_SPEED;
-    let interval = VOLLEY_INTERVAL_TICKS as i32;
+    let interval = FURY_VOLLEY_INTERVAL_TICKS as i32;
     let volleys_in_flight = (lifetime + interval - 1) / interval;
-    assert!(volleys_in_flight * (BASE_VOLLEY_BULLETS + MAX_SEATS) as i32 <= MAX_BULLETS as i32);
+    assert!(
+        volleys_in_flight * (BASE_VOLLEY_BULLETS + MAX_SEATS + FURY_EXTRA_BULLETS) as i32
+            <= MAX_BULLETS as i32
+    );
 
     // The lanes tile the arena exactly: no player x is outside every lane, and no two
     // lanes claim the same column.
@@ -625,7 +639,8 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // volley that scales 5.75× — which inverts the one requirement the whole design was
     // built on. Topping the core up per raider compressed that to 3.9×; the solo fight
     // was still 274 s of shell-stripping against a flat 35 % vent, which is what moving
-    // the threshold with the raid fixes (`state::ttk_s`: 166 s solo, 71 s at twenty).
+    // the threshold with the raid fixes (`state::ttk_s`: 12 s solo, 69 s at twenty after
+    // the 2026-09-03 solo retune; 166 s / 71 s before it).
     //
     // **Not `parts`.** `u16` saturation already caps the crown at incarnation 41 and a
     // raid multiplier on the shell would collapse that to incarnation ~2 at twenty
@@ -652,6 +667,11 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         boss.core_hp_max = required;
         boss.core_hp = boss.core_hp.saturating_add(top_up);
     }
+    // Incoming damage is the third raid-size knob, read off the same high-water mark as
+    // the vent threshold and the core, once per tick: `state.rs` owns both curves and
+    // their endpoints. Solo takes 2 / 15, twenty take the 8 / 45 the crank always dealt.
+    let per_bullet = bullet_damage(arena.raid_size);
+    let per_slam = slam_damage(arena.raid_size);
 
     // ---- 2. advance bullets, and collide ---------------------------------
     for index in 0..MAX_BULLETS {
@@ -736,7 +756,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
                 &mut pending_respawns,
                 i,
                 tick,
-                BULLET_DAMAGE,
+                per_bullet,
             );
             // One bullet, one hit — it is spent either way, so stop scanning.
             break;
@@ -792,7 +812,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
                     &mut pending_respawns,
                     i,
                     tick,
-                    SLAM_DAMAGE,
+                    per_slam,
                 )
             {
                 continue;
@@ -831,12 +851,26 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     boss.target_seat = best_seat;
 
     // ---- 7. the volley ----------------------------------------------------
+    //
+    // Fury: the last `FURY_PCT` of the fight (`Boss::is_furious`, derived from the shell
+    // and the core on every read — nothing is stored, `Boss` has no padding for it)
+    // reloads at half the interval and adds a bullet. Read on the tick the timer runs
+    // out, never clamped into a running countdown: the client draws the telegraph off
+    // `attack_timer`, and a timer that jumped from 30 to 16 on the tick the shell crossed
+    // the line would snap a wind-up mid-draw. So the volley that fires after the line is
+    // crossed already carries the extra bullet, and the reload it sets is the first
+    // furious one.
     if boss.attack_timer > 0 {
         boss.attack_timer -= 1;
     } else {
-        boss.attack_timer = VOLLEY_INTERVAL_TICKS;
+        let furious = boss.is_furious(arena.raid_size);
+        boss.attack_timer = if furious {
+            FURY_VOLLEY_INTERVAL_TICKS
+        } else {
+            VOLLEY_INTERVAL_TICKS
+        };
         if best_seat != NO_TARGET {
-            spawn_volley(arena, boss, target_xy, tick, live_n);
+            spawn_volley(arena, boss, target_xy, tick, live_n, furious);
         }
     }
 
@@ -972,14 +1006,21 @@ const _: () = {
     }
 };
 
-/// Claim up to `3 + alive` free pool slots and fire them at `target` from whichever
-/// thorn clusters are still standing.
+/// Claim up to `1 + alive` free pool slots — one more while `furious` — and fire them at
+/// `target` from whichever thorn clusters are still standing.
 ///
 /// Destroying thorn *n* removes one emitter, straight off `boss.parts` — there is no
 /// separate emitter list to keep in sync, which is why "shoot the thorns off and the
 /// volleys stop" is a property of the data rather than a rule someone has to remember.
 /// With every thorn gone the boss fires nothing at all.
-fn spawn_volley(arena: &mut Arena, boss: &Boss, target: (i32, i32), tick: u32, alive: usize) {
+fn spawn_volley(
+    arena: &mut Arena,
+    boss: &Boss,
+    target: (i32, i32),
+    tick: u32,
+    alive: usize,
+    furious: bool,
+) {
     let mut muzzles = [(0i32, 0i32); N_MUZZLES];
     let mut muzzle_n = 0usize;
     for &Muzzle { part, x, y } in MUZZLES.iter() {
@@ -994,9 +1035,9 @@ fn spawn_volley(arena: &mut Arena, boss: &Boss, target: (i32, i32), tick: u32, a
         return;
     }
 
-    // `3 + alive_players`: difficulty as bullet density. Bounded by the const assert
-    // above at 23, well under the 128-slot pool.
-    let wanted = BASE_VOLLEY_BULLETS + alive;
+    // `1 + alive_players`, plus one while furious: difficulty as bullet density. Bounded
+    // by the const assert above at 22, well under the 128-slot pool.
+    let wanted = BASE_VOLLEY_BULLETS + alive + if furious { FURY_EXTRA_BULLETS } else { 0 };
 
     // One entropy draw per tick, expanded per bullet. `affix_seed` is the incarnation's
     // roll (VRF in v1.1, `hashv([arena_key, incarnation])` today); mixing the tick in
@@ -1215,7 +1256,8 @@ mod tests {
     // are what the assertions read; the handler itself names none of the three — it writes
     // phases only through the `Arena` helpers, which is the point.
     use crate::state::{
-        Bullet, ENRAGE_TICKS, MUSTER_TICKS, N_PARTS, PHASE_SETTLING, ROLL_TIMEOUT_TICKS, ZONE_LOBBY,
+        Bullet, BULLET_DAMAGE_FULL, BULLET_DAMAGE_SOLO, ENRAGE_TICKS, MUSTER_TICKS, N_PARTS,
+        PHASE_SETTLING, ROLL_TIMEOUT_TICKS, SLAM_DAMAGE_FULL, SLAM_DAMAGE_SOLO, ZONE_LOBBY,
     };
     use bytemuck::Zeroable;
 
@@ -1453,7 +1495,7 @@ mod tests {
         seat_in_arena(&mut players, 7, px, far_y);
         arena.bullets[0] = shot;
         tick_once(&mut arena, &mut boss, &mut players);
-        assert_eq!(players.slots[3].hp, 100 - BULLET_DAMAGE);
+        assert_eq!(players.slots[3].hp, 100 - bullet_damage(arena.raid_size));
         assert_eq!(players.slots[7].hp, 100, "one bullet, one hit");
         assert_eq!(
             arena.bullets[0].active, BULLET_FREE,
@@ -1463,7 +1505,7 @@ mod tests {
 
         // Kill seat 3 outright. One seat down is not a wipe while seat 7 is standing, so
         // the fight carries on and the death is a respawn deadline rather than an ending.
-        players.slots[3].hp = BULLET_DAMAGE;
+        players.slots[3].hp = bullet_damage(arena.raid_size);
         arena.bullets[1] = shot;
         let died_on = arena.tick + 1;
         tick_once(&mut arena, &mut boss, &mut players);
@@ -1522,7 +1564,7 @@ mod tests {
         boss.parts = [0; N_PARTS];
         let (shot, px, py) = open_shot();
         seat_in_arena(&mut players, 0, px, py);
-        players.slots[0].hp = BULLET_DAMAGE;
+        players.slots[0].hp = bullet_damage(1);
         arena.bullets[0] = shot;
         let died_on = arena.tick + 1;
         tick_once(&mut arena, &mut boss, &mut players);
@@ -1614,7 +1656,7 @@ mod tests {
         // with your back to a wall partial immunity to fire aimed at you.
         assert_eq!(
             shot(step(1)),
-            (100 - BULLET_DAMAGE, BULLET_FREE),
+            (100 - bullet_damage(1), BULLET_FREE),
             "a player against a wall is not immune to fire aimed at them"
         );
         // A full step past the start, inside the wall the bullet died on: still cover.
@@ -1646,7 +1688,7 @@ mod tests {
         assert_eq!(boss.target_seat, 7);
     }
 
-    /// Volleys are the difficulty curve (`3 + alive_players`) and the counterplay
+    /// Volleys are the difficulty curve (`1 + alive_players`) and the counterplay
     /// (destroy the thorns, the volleys stop). Both live in `spawn_volley`.
     #[test]
     fn volleys_scale_with_players_and_stop_with_the_thorns() {
@@ -1664,7 +1706,7 @@ mod tests {
             .iter()
             .filter(|b| b.active == BULLET_ACTIVE)
             .count();
-        assert_eq!(fired, BASE_VOLLEY_BULLETS + 4, "3 + alive_players");
+        assert_eq!(fired, BASE_VOLLEY_BULLETS + 4, "1 + alive_players");
         assert!(
             arena
                 .bullets
@@ -1725,6 +1767,79 @@ mod tests {
                 .count(),
             BASE_VOLLEY_BULLETS + 1,
             "the volley lands on the tick the wind-up ends"
+        );
+    }
+
+    /// The last fifth of the fight (`Boss::is_furious`) reloads at half the interval and
+    /// fires one more bullet; one point above the line is a calm volley and a calm
+    /// reload. Derived on the tick the timer runs out — nothing is stored, so there is
+    /// nothing to reset when the line is crossed.
+    #[test]
+    fn a_furious_boss_reloads_at_half_and_fires_one_more() {
+        let in_flight = |arena: &Arena| {
+            arena
+                .bullets
+                .iter()
+                .filter(|b| b.active == BULLET_ACTIVE)
+                .count()
+        };
+        // Shell at the solo threshold exactly (98 of 100 per part, 882 of 900), so fight HP
+        // is 18 strippable shell + the core. The core sits at the solo floor already, or
+        // stage 1b would top it up under the test: max = 18 + 200 = 218, and a fifth of
+        // that is 43.6 — 43 left is furious, 44 is not.
+        let first_volley = |core_hp: u16| {
+            let (mut arena, mut boss, mut players) = fight();
+            boss.parts = [98; N_PARTS];
+            boss.core_hp_max = BOSS_CORE_HP;
+            boss.core_hp = core_hp;
+            // Fire on the first tick; the reload that fire sets is what the test reads.
+            boss.attack_timer = 0;
+            seat_in_arena(&mut players, 0, 400, 700);
+            tick_once(&mut arena, &mut boss, &mut players);
+            (arena, boss, players)
+        };
+
+        let (arena, boss, _) = first_volley(44);
+        assert!(
+            !boss.is_furious(arena.raid_size),
+            "one point above the line is calm"
+        );
+        assert_eq!(in_flight(&arena), BASE_VOLLEY_BULLETS + 1, "a calm volley");
+        assert_eq!(
+            boss.attack_timer, VOLLEY_INTERVAL_TICKS,
+            "and a calm reload"
+        );
+
+        let (mut arena, mut boss, mut players) = first_volley(43);
+        assert!(boss.is_furious(arena.raid_size), "on the line is furious");
+        assert_eq!(
+            in_flight(&arena),
+            BASE_VOLLEY_BULLETS + 1 + FURY_EXTRA_BULLETS,
+            "one more bullet"
+        );
+        assert_eq!(
+            boss.attack_timer, FURY_VOLLEY_INTERVAL_TICKS,
+            "reloaded at half"
+        );
+
+        // The half reload is a real wind-up, not a faster countdown of the old one:
+        // nothing new in the air until it runs out, then the next furious volley lands.
+        for b in arena.bullets.iter_mut() {
+            b.active = BULLET_FREE;
+        }
+        for t in 0..FURY_VOLLEY_INTERVAL_TICKS {
+            tick_once(&mut arena, &mut boss, &mut players);
+            assert_eq!(
+                in_flight(&arena),
+                0,
+                "tick {t} of the furious wind-up already fired"
+            );
+        }
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(
+            in_flight(&arena),
+            BASE_VOLLEY_BULLETS + 1 + FURY_EXTRA_BULLETS,
+            "the volley lands on the tick the half wind-up ends"
         );
     }
 
@@ -2013,7 +2128,9 @@ mod tests {
         seat_in_arena(&mut players, 2, hit_x, 512);
         seat_in_arena(&mut players, 5, hit_x, 512);
         seat_in_arena(&mut players, 9, safe_x, 512);
-        players.slots[5].hp = SLAM_DAMAGE;
+        // Three seats stand in the pit, so the slam is sized to a raid of three.
+        let per_slam = slam_damage(3);
+        players.slots[5].hp = per_slam;
 
         while arena.tick < SLAM_PERIOD_TICKS {
             tick_once(&mut arena, &mut boss, &mut players);
@@ -2021,7 +2138,7 @@ mod tests {
 
         assert_eq!(
             players.slots[2].hp,
-            100 - SLAM_DAMAGE,
+            100 - per_slam,
             "the hand lands on its lane"
         );
         assert_eq!(players.slots[9].hp, 100, "and on no other");
@@ -2047,6 +2164,49 @@ mod tests {
             players.slots[2].hp > 0,
             "two slams must not be a kill on their own"
         );
+    }
+
+    /// Incoming damage is the third raid-size knob: one raider takes the solo endpoint
+    /// from a bullet and from a slam, twenty take the flat numbers the crank always dealt.
+    /// Driven through the tick so the knob is read off the high-water mark the tick keeps,
+    /// not off a raid size a test handed in.
+    #[test]
+    fn incoming_damage_is_sized_to_the_raid() {
+        let bullet_hit = |occupants: usize| {
+            let (mut arena, mut boss, mut players) = fight();
+            boss.parts = [0; N_PARTS];
+            let (shot, px, py) = open_shot();
+            let far_y = if py < (ARENA_SIZE / 2) as i16 {
+                py + 300
+            } else {
+                py - 300
+            };
+            seat_in_arena(&mut players, 0, px, py);
+            for seat in 1..occupants {
+                seat_in_arena(&mut players, seat, px, far_y);
+            }
+            arena.bullets[0] = shot;
+            tick_once(&mut arena, &mut boss, &mut players);
+            100 - players.slots[0].hp
+        };
+        assert_eq!(bullet_hit(1), BULLET_DAMAGE_SOLO, "solo takes the solo bullet");
+        assert_eq!(bullet_hit(MAX_SEATS), BULLET_DAMAGE_FULL, "twenty take the full one");
+
+        let slam_hit = |occupants: usize| {
+            let (mut arena, mut boss, mut players) = hands_only();
+            let lane =
+                slam_lane(&arena.affix_seed, SLAM_PERIOD_TICKS, &boss).expect("a hand stands");
+            let hit_x = (lane * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
+            for seat in 0..occupants {
+                seat_in_arena(&mut players, seat, hit_x, 512);
+            }
+            while arena.tick < SLAM_PERIOD_TICKS {
+                tick_once(&mut arena, &mut boss, &mut players);
+            }
+            100 - players.slots[0].hp
+        };
+        assert_eq!(slam_hit(1), SLAM_DAMAGE_SOLO, "solo takes the solo slam");
+        assert_eq!(slam_hit(MAX_SEATS), SLAM_DAMAGE_FULL, "twenty take the full one");
     }
 
     /// More players must mean a harder fight, and one player must still be able to win

@@ -49,11 +49,14 @@ use pinocchio::{
     AccountView, Address, ProgramResult,
 };
 
+use crate::body::in_body;
 use crate::error::HeartrotError;
 use crate::guards::{
     assert_owned_by, assert_pda, assert_session_authority, assert_signer, assert_writable,
 };
-use crate::map::{GATE_MAX_X, GATE_MAX_Y, GATE_MIN_X, GATE_MIN_Y, PIT_BOT, PIT_TOP, WALLS};
+use crate::map::{
+    DAIS, GATE_MAX_X, GATE_MAX_Y, GATE_MIN_X, GATE_MIN_Y, PIT_BOT, PIT_TOP, WALLS,
+};
 use crate::state::{
     self, Arena, PlayerSlot, Players, MAX_SEATS, N_CLASSES, PHASE_FIGHTING, PHASE_LOBBY,
     PHASE_MUSTERING, SEED_PLAYERS, ZONE_ARENA, ZONE_LOBBY,
@@ -105,7 +108,13 @@ const LOBBY_SPACING: i16 = 24;
 
 /// Starting health. Balance number, not a layout number — `hp_max` is per-slot state
 /// so an incarnation could scale it later without touching this file.
-pub const PLAYER_HP_MAX: u16 = 100;
+///
+/// 150, up from 100, the last third of the solo pass. Under the flat 8-per-bullet / 45-
+/// per-slam volley a standing solo player died in 5.7 s of a 17 s kill; with the
+/// raid-scaled `state::bullet_damage` / `slam_damage` (solo ≈ 3.75 DPS) and this bar,
+/// standing still is ~40 s against a 12 s kill (`state::ttk_s`). A full raid takes the
+/// same hits it did; the extra 50 HP is two more of them.
+pub const PLAYER_HP_MAX: u16 = 150;
 
 /// Eight-way step, indexed by `facing`: 0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W, 7 NW,
 /// with y increasing downward. The diagonal component is `round(TILE / √2)` so a
@@ -235,7 +244,10 @@ fn on_gate(x: i16, y: i16) -> bool {
 /// before the part rectangles, so one solid tile between a player and the boss kills every
 /// shot in that column. The pit ceiling is a movement rule laid over open floor.
 ///
-/// - `PIT_TOP` stops a raider walking up into the boss's head.
+/// - `PIT_TOP` is the dais's crest. Since the pit became the whole dais it is the coarse
+///   half of the raider's rule; the fine half -- the dais tile by tile, and the boss's
+///   body -- is [`standable`], and it is what actually keeps a raider off the air beside
+///   the dais's shoulders and out of the creature.
 /// - `PIT_BOT` stops a raider retreating down the gate corridor. Not tidiness:
 ///   `tick::spawn_volley` aims at the nearest live player, so one camper at the corridor
 ///   mouth makes the boss spend every volley on a target the rim shields.
@@ -301,6 +313,52 @@ fn may_move_to(zone: u8, y: i16, ny: i16) -> bool {
     // is 0 everywhere inside the box, so once a seat is home `over(ny) == 0` is the only
     // clause that can hold and it can never step back out.
     box_overshoot(zone, y) > 0 || box_overshoot(zone, ny) == 0
+}
+
+/// May a raider stand on the tile containing this point? `crate::map::DAIS`, the drawn
+/// dais, indexed exactly as [`is_wall`] indexes `WALLS` -- and off-map answers *no*, the
+/// same fail-closed direction.
+fn on_dais(x: i16, y: i16) -> bool {
+    if x < 0 || y < 0 {
+        return false;
+    }
+    let tx = (x / TILE) as usize;
+    let ty = (y / TILE) as usize;
+    if tx >= MAP_TILES {
+        return false;
+    }
+    match DAIS.get(ty) {
+        Some(row) => row & (1u64 << tx) != 0,
+        None => false,
+    }
+}
+
+/// Where a seat in `zone` may stand, beyond what [`zone_box`] says: a raider on the dais
+/// and outside the boss's body; a lobby seat anywhere -- walls and the band are its whole
+/// rule, as they always were.
+///
+/// The *third* kind of barrier, and the one that let the pit become the whole dais. The
+/// raid used to be held below the creature's feet line by `PIT_TOP` alone, and the player
+/// asked to walk the circle instead. Two things then have to refuse a step that no wall
+/// can: the air beside the dais's shoulders (floor to a ray, because the dais narrows
+/// upward and a wall over a shoulder tile is a stand from which every upward shot dies --
+/// `map::DAIS` explains) and the boss's own body (`crate::body`, the hitbox table folded,
+/// because a wall under the boss kills every ray in its columns).
+fn standable(zone: u8, x: i16, y: i16) -> bool {
+    zone != ZONE_ARENA || (on_dais(x, y) && !in_body(x, y))
+}
+
+/// May a seat in `zone` step from `(x, y)` to `(nx, ny)`, as far as [`standable`] is
+/// concerned? The destination must be standable -- **or** the seat already is not.
+///
+/// The same shape as [`may_move_to`], for the same reason: this rule was laid under live
+/// accounts. The old pit's kerb fill made two tiles pit that the drawn dais does not cover,
+/// and a raider standing on one of them when the program was swapped is off the dais
+/// through no fault of their own; a bare destination test would freeze them there. Walls
+/// alone govern such a seat until it steps onto a standable unit, and from then on the
+/// only clause that can hold is the destination's, so it can never step back out.
+fn may_stand_step(zone: u8, (x, y): (i16, i16), (nx, ny): (i16, i16)) -> bool {
+    !standable(zone, x, y) || standable(zone, nx, ny)
 }
 
 /// The three refusals `enter_gate` owes a caller, as a pure function of the seat.
@@ -749,14 +807,19 @@ pub fn move_player(
     // generated grid predicted it would.
     let nx = slot.x.saturating_add(dx).clamp(0, MAP_MAX_XY);
     let ny = slot.y.saturating_add(dy).clamp(0, MAP_MAX_XY);
-    // Two barriers, one refusal. Walls are the real dungeon; the zone box is the pit
+    // Three barriers, one refusal. Walls are the real dungeon; the zone box is the pit
     // ceiling and floor, which cannot be walls without killing every ray in the column
-    // (see `zone_box`). They share `BlockedByWall` deliberately: the client mirrors
-    // `PIT_TOP`/`PIT_BOT` out of the same generated `map` module and predicts both
-    // refusals identically, so a second error code would distinguish nothing a client
-    // could not already see, and a legal-looking move the chain rejects is this project's
-    // signature misdiagnosis.
-    if is_wall(nx, ny) || !may_move_to(slot.zone, slot.y, ny) {
+    // (see `zone_box`); the dais and the boss's body are the same argument one level
+    // finer (see `standable`). They share `BlockedByWall` deliberately: the client
+    // mirrors `PIT_TOP`/`PIT_BOT` and `DAIS` out of the same generated `map` module and
+    // the body out of the same generated `hitboxes`, and predicts every refusal
+    // identically, so a second error code would distinguish nothing a client could not
+    // already see, and a legal-looking move the chain rejects is this project's signature
+    // misdiagnosis.
+    if is_wall(nx, ny)
+        || !may_move_to(slot.zone, slot.y, ny)
+        || !may_stand_step(slot.zone, (slot.x, slot.y), (nx, ny))
+    {
         return Err(HeartrotError::BlockedByWall.into());
     }
 
@@ -1378,8 +1441,11 @@ mod tests {
             for (dx, dy) in MOVE_STEP {
                 let nx = x.saturating_add(dx).clamp(0, MAP_MAX_XY);
                 let ny = y.saturating_add(dy).clamp(0, MAP_MAX_XY);
-                // Verbatim the pair of refusals in `move_player`.
-                if is_wall(nx, ny) || !may_move_to(ZONE_LOBBY, y, ny) {
+                // Verbatim the refusals in `move_player`.
+                if is_wall(nx, ny)
+                    || !may_move_to(ZONE_LOBBY, y, ny)
+                    || !may_stand_step(ZONE_LOBBY, (x, y), (nx, ny))
+                {
                     continue;
                 }
                 if !seen[idx(nx, ny)] {
@@ -1440,7 +1506,9 @@ mod tests {
             MOVE_STEP.iter().any(|(dx, dy)| {
                 let nx = x.saturating_add(*dx).clamp(0, MAP_MAX_XY);
                 let ny = y.saturating_add(*dy).clamp(0, MAP_MAX_XY);
-                !is_wall(nx, ny) && may_move_to(zone, y, ny)
+                !is_wall(nx, ny)
+                    && may_move_to(zone, y, ny)
+                    && may_stand_step(zone, (x, y), (nx, ny))
             })
         };
 
@@ -1532,11 +1600,14 @@ mod tests {
         assert!(!may_move_to(ZONE_ARENA, PIT_BOT, PIT_BOT + 1));
     }
 
-    /// The box may never be the reason a seat has no move: over every position on the map,
-    /// in both zones, `may_move_to` permits at least as many steps as `is_wall` does.
+    /// Neither the box nor the dais nor the body may ever be the reason a seat has no
+    /// move: over every position on the map, in both zones, the three together permit at
+    /// least as many steps as `is_wall` does.
     ///
     /// Exhaustive rather than sampled, because the defect this replaces was found by replay
-    /// and missed by a test that checked the y arithmetic without consulting the map.
+    /// and missed by a test that checked the y arithmetic without consulting the map. The
+    /// generator sweeps the box and the dais the same way; the body is a hitbox fact it
+    /// cannot see, so this is the only sweep that includes it.
     ///
     /// `walls_allow` is asserted true as well as equal, and that second assertion is not
     /// redundant: the equality alone is satisfied by `false == false`, which is a walkable
@@ -1552,16 +1623,18 @@ mod tests {
                 while x <= MAP_MAX_XY {
                     if !is_wall(x, y) {
                         let walls_allow = MOVE_STEP.iter().any(|(dx, dy)| !is_wall(x + dx, y + dy));
-                        let both_allow = MOVE_STEP.iter().any(|(dx, dy)| {
-                            !is_wall(x + dx, y + dy) && may_move_to(zone, y, y + dy)
+                        let all_allow = MOVE_STEP.iter().any(|(dx, dy)| {
+                            !is_wall(x + dx, y + dy)
+                                && may_move_to(zone, y, y + dy)
+                                && may_stand_step(zone, (x, y), (x + dx, y + dy))
                         });
                         assert!(
                             walls_allow,
                             "({x},{y}) is walkable floor sealed in on all eight sides"
                         );
                         assert_eq!(
-                            walls_allow, both_allow,
-                            "zone {zone} at ({x},{y}): the box removed the last legal move"
+                            walls_allow, all_allow,
+                            "zone {zone} at ({x},{y}): the box, the dais or the body removed the last legal move"
                         );
                     }
                     x += TILE;
@@ -1569,6 +1642,96 @@ mod tests {
                 y += TILE;
             }
         }
+    }
+
+    /// The boss's body is a barrier and nothing else is: a raider walks up to the feet
+    /// line and along it, is refused the step into the creature, and is refused it from
+    /// beside the body too. Every place the program puts a raider -- the four doors and all
+    /// twenty respawn ranks -- is outside it, or that seat would be born inside the boss
+    /// and governed by walls alone until it walked out.
+    ///
+    /// The body's extent is the folded hitbox table and the boss stands at `BOSS_SPAWN`,
+    /// so every position here is derived from those two rather than typed: redraw the
+    /// creature, re-run the generator, and the test moves with it.
+    #[test]
+    fn the_boss_body_refuses_a_step_into_it_and_nothing_beside_it() {
+        use crate::body::BOSS_BODY;
+        let (bx, by) = crate::map::BOSS_SPAWN;
+        let left = bx + BOSS_BODY.x as i16;
+        let bottom = by + BOSS_BODY.y as i16 + BOSS_BODY.h as i16;
+
+        // The feet line is the boss's own tile and it is outside the body: the hitboxes
+        // end above it, so a raider can stand where the creature stands. From there, north
+        // is into the body and refused; south and along the line are dais and accepted.
+        assert!(bottom <= by, "a hitbox reaches below the feet line -- the boss tile is inside the body");
+        assert!(standable(ZONE_ARENA, bx, by), "the feet line is not a stand");
+        assert!(!may_stand_step(ZONE_ARENA, (bx, by), (bx, by - STEP)), "north into the body");
+        assert!(!may_stand_step(ZONE_ARENA, (bx, by), (bx + STEP_DIAG, by - STEP_DIAG)));
+        assert!(may_stand_step(ZONE_ARENA, (bx, by), (bx, by + STEP)), "south along the dais");
+        assert!(may_stand_step(ZONE_ARENA, (bx, by), (bx + STEP, by)), "east along the feet line");
+        assert!(may_stand_step(ZONE_ARENA, (bx, by), (bx - STEP, by)), "west along the feet line");
+
+        // From beside the body, on the dais, one step east is inside it. `left` is the
+        // first unit of body, so `left - 1` is the last unit of floor beside it -- searched
+        // for a row where that floor is dais, which the drawn shoulders guarantee exists.
+        let beside_y = (0..=MAP_MAX_XY)
+            .step_by(TILE as usize)
+            .find(|&y| standable(ZONE_ARENA, left - 1, y) && in_body(left - 1 + STEP, y))
+            .expect("no dais unit beside the body");
+        assert!(!may_stand_step(ZONE_ARENA, (left - 1, beside_y), (left - 1 + STEP, beside_y)));
+        assert!(may_stand_step(ZONE_ARENA, (left - 1, beside_y), (left - 1, beside_y + STEP)));
+
+        // A seat inside the body -- none is born there, asserted next, but the rule is
+        // shaped so that one could never freeze -- moves under walls alone, out or deeper.
+        assert!(may_stand_step(ZONE_ARENA, (bx, by - STEP), (bx, by)));
+        assert!(may_stand_step(ZONE_ARENA, (bx, by - STEP), (bx, by - 2 * STEP)));
+
+        for (x, y) in crate::map::ENTRANCES {
+            assert!(standable(ZONE_ARENA, x, y), "door ({x}, {y}) is inside the boss or off the dais");
+        }
+        for seat in 0..MAX_SEATS {
+            let (x, y) = crate::handlers::tick::entrance_for(seat);
+            assert!(standable(ZONE_ARENA, x, y), "seat {seat} respawns at ({x}, {y}), inside the boss or off the dais");
+        }
+    }
+
+    /// The air beside the dais's shoulders is floor to a ray and refused to a step, and
+    /// only to a raider's step: the lobby never reads the dais.
+    ///
+    /// This is the property `map::DAIS` exists for. The dais narrows upward above its
+    /// widest row, so a shoulder tile has air over it; the alternative was wall there, and
+    /// wall there was a stand from which every upward shot died before any part box.
+    #[test]
+    fn the_air_beside_the_dais_is_open_to_rays_and_closed_to_raiders() {
+        // Every western edge of the dais, on every row of the band: the step west off it
+        // is refused, and on some rows -- above the widest one at least -- the tile it
+        // would have landed on is air rather than wall. Without the second count `DAIS`
+        // could be `WALLS` restated and this test would not know.
+        let (mut edges, mut air) = (0, 0);
+        let mut y = PIT_TOP;
+        while y <= PIT_BOT {
+            let mut x = TILE;
+            while x <= MAP_MAX_XY {
+                if standable(ZONE_ARENA, x, y) && !on_dais(x - STEP, y) {
+                    edges += 1;
+                    air += usize::from(!is_wall(x - STEP, y));
+                    assert!(
+                        !may_stand_step(ZONE_ARENA, (x, y), (x - STEP, y)),
+                        "a raider at ({x}, {y}) may step west off the dais",
+                    );
+                }
+                x += TILE;
+            }
+            y += TILE;
+        }
+        assert!(edges > 0, "the dais has no western edge");
+        assert!(air > 0, "no dais tile has air beside it: the dais table is the wall table");
+
+        // The lobby ignores the dais entirely. A lobby seat's rule is walls and the band.
+        assert!(may_stand_step(ZONE_LOBBY, (GATE_MIN_X, GATE_MIN_Y), (GATE_MIN_X, GATE_MIN_Y - STEP)));
+        assert!(may_stand_step(ZONE_LOBBY, (TILE, TILE), (2 * TILE, TILE)));
+        // Off-map is not dais, in the same fail-closed direction as `is_wall`.
+        assert!(!on_dais(-1, PIT_TOP) && !on_dais(0, -1) && !on_dais(MAP_MAX_XY + 1, PIT_TOP));
     }
 
     /// Releasing a seat is what makes leaving visible to everyone else.

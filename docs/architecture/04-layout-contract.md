@@ -236,7 +236,7 @@ The slot **index is the seat number**; there is no `seat` field to disagree with
 | Field | Type | Offset | Size | Meaning |
 |---|---|---|---|---|
 | `zone` | u8 | 0 | 1 | 0 lobby · 1 arena. The gate tile flips it |
-| `facing` | u8 | 1 | 1 | bits 0..2: octant 0..7, eight-way; bit 3: charged-shot flag (`CHARGED_SHOT_BIT`), set by a charged `shoot`, cleared by the next `move`. Readers mask `& 7` |
+| `facing` | u8 | 1 | 1 | bits 0..2: octant 0..7, eight-way; bit 3: charged-shot flag (`CHARGED_SHOT_BIT`), bit 4: super-shot flag (`SUPER_SHOT_BIT`), set by a tier 1 / tier 2 `shoot`, both cleared by the next `move` or a plain shot. Readers mask `& 7` |
 | `skin_id` | u8 | 2 | 1 | chosen at character select |
 | `_pad0` | u8 | 3 | 1 | align `x` |
 | `x` | i16 | 4 | 2 | position, same units as `Bullet` and `Boss` |

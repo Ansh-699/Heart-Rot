@@ -80,6 +80,11 @@ pub mod state;
 pub mod hitboxes;
 pub mod map;
 
+/// The boss's body folded out of `hitboxes` -- the movement barrier `handlers::player`
+/// refuses a step into, since the raid walks the whole dais around the creature and a wall
+/// under the boss would kill every ray in its columns.
+pub mod body;
+
 /// The handler modules live in `src/handlers/`, and `handlers/mod.rs` does not exist —
 /// an inline module declaration pushes the directory component instead, so each `mod`
 /// below resolves to `src/handlers/<name>.rs`. `pub` because `player.rs` reaches across

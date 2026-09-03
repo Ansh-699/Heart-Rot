@@ -16,13 +16,14 @@
  *
  * THE TWO SYSTEMS, deliberately separate:
  *
- *   cosmetic   breathing, eye glow, the open vent's pulse. Pure CSS keyframes on nodes
- *              React does not write. They run composited at 60 fps and NEVER stall waiting
- *              for a notification — the boss keeps breathing through a dead socket.
- *   derived    dead parts, vent state, enrage, death. Read from the snapshot. The resting
- *              appearance is an attribute (so a reload with no animation is still correct)
- *              and the one-shots are `Element.animate()` calls fired on a VALUE DIFF
- *              against the previous snapshot.
+ *   cosmetic   breathing, eye glow, the open vent's breathe, the fury glow. Pure CSS
+ *              keyframes on nodes React does not write. They run composited at 60 fps and
+ *              NEVER stall waiting for a notification — the boss keeps breathing through a
+ *              dead socket.
+ *   derived    dead parts, vent state, fury, enrage, death. Read from the snapshot. The
+ *              resting appearance is an attribute (so a reload with no animation is still
+ *              correct) and the one-shots are `Element.animate()` calls fired on a VALUE
+ *              DIFF against the previous snapshot.
  *
  * The diff is what survives the feed: 68.4% of notifications during a fight carry no
  * change and the Magic Router delivers every one of them twice. A duplicate diffs to
@@ -40,7 +41,9 @@
  *
  *     <g .hr-boss>          translate(boss.x, boss.y), `--shell`, state classes  <- React
  *       <g .hr-boss-breathe>                                        <- CSS keyframes only
- *         <g .hr-boss-shell>                          <- WAAPI, the death sequence only
+ *         <g .hr-boss-shell>    <- WAAPI `filter` for the death sequence; CSS `filter`
+ *                                  keyframes for the fury glow. Never both: fury is a
+ *                                  FIGHTING-only class and death starts on SETTLING.
  *           <g> translate(anchor) scale(BOSS_SCALE)   <- static, memoised, built once
  *             11 part groups                          <- WAAPI one-shots + .hr-dead
  *           .hr-boss-vent            the open vent's ring, over the painted orb. CSS only
@@ -62,6 +65,7 @@ import {
   PHASE_SETTLING,
   VENT_OPEN,
   VOLLEY_INTERVAL_MS,
+  isFurious,
   type ArenaAccount,
   type BossAccount,
 } from '@heartrot/client';
@@ -127,8 +131,13 @@ const CHARRED = 'grayscale(1) brightness(0.25)';
  * length: `CORE_R` is derived from `CORE.radiusSq` and a literal would go stale the moment
  * the chain retunes the vent. A stroke is centred on its path, so the ring's midline is
  * still the exact circle the chain raycasts.
+ *
+ * A sixth of the 0.15 it shipped at. At 0.15 with a 26 px glow and a scale pulse the ring
+ * was the brightest thing on screen, and the player's report called it "this flash light"
+ * and asked what it was for. Its only job is to mark the circle the chain raycasts once
+ * the vent is open; a hairline does that.
  */
-const RING_RATIO = 0.15;
+const RING_RATIO = 0.025;
 
 /** Checked at fire time, not held in state: it is always current and costs one line. */
 function reduced(): boolean {
@@ -150,7 +159,10 @@ const CSS = `
   transform-origin: 50% 75%;
   animation: hr-boss-breathe calc(3.4s * (0.5 + var(--shell, 1) * 0.5)) ease-in-out infinite;
 }
-.hr-enraged .hr-boss-breathe {
+/* Twice as fast under either red state: the six-minute timeout (.hr-enraged, ends the
+   fight) and fury (.hr-fury, the last fifth of the fight HP). Same breath, because a
+   player reads "faster" and not which rule made it so. */
+.hr-enraged .hr-boss-breathe, .hr-fury .hr-boss-breathe {
   animation-duration: calc(1.7s * (0.5 + var(--shell, 1) * 0.5));
 }
 /* Never below 1: the rig grows over the painted demon and shrinks back onto it, so the
@@ -164,10 +176,24 @@ const CSS = `
   animation: hr-boss-eye 1.9s ease-in-out infinite;
 }
 .hr-boss-eye:nth-of-type(2) { animation-delay: -0.35s; }
-.hr-enraged .hr-boss-eye { fill: #ff3a2a; }
+.hr-enraged .hr-boss-eye, .hr-fury .hr-boss-eye { fill: var(--ember, #ff5a4a); }
 @keyframes hr-boss-eye {
   0%, 100% { opacity: 0.55; transform: scale(1); }
   50%      { opacity: 1;    transform: scale(1.25); }
+}
+
+/* Fury: a red glow on the whole creature's silhouette, pulsing at the furious volley's
+   own beat (1.6 s). On .hr-boss-shell, not .hr-boss, so it sits UNDER the breathe scale
+   and inside the arena clip like the rest of the rig. A drop-shadow on the full rig
+   re-rasterises every frame — the vent's old 26 px glow paid the same cost and this one
+   replaces it rather than adding to it. The resting rule is what reduced motion keeps. */
+.hr-fury .hr-boss-shell {
+  filter: drop-shadow(0 0 14px var(--ember, #ff5a4a));
+  animation: hr-fury-glow 1.6s ease-in-out infinite;
+}
+@keyframes hr-fury-glow {
+  0%, 100% { filter: drop-shadow(0 0 10px var(--ember, #ff5a4a)); }
+  50%      { filter: drop-shadow(0 0 22px var(--ember, #ff5a4a)); }
 }
 
 /* A destroyed limb stays on the creature, dark and drained — and OPAQUE, because the room
@@ -176,30 +202,33 @@ const CSS = `
 .hr-boss-part.hr-dead { opacity: 1; filter: ${CHARRED}; }
 
 /* The vent. Sealed, it draws NOTHING: the painting's own orb is the sealed look, and any
-   ring here would sit on it a shade off. Open, the ring goes white-hot and pulses on the
-   exact circle the chain raycasts.
+   ring here would sit on it a shade off. Open, a thin half-opacity ring on the exact
+   circle the chain raycasts, with a small glow that reads as the orb lighting from
+   inside, breathing in opacity and never in size. It used to be a white-hot ring under a
+   26 px cyan glow scale-pulsing at 1.1 s, and the player asked "what is the motive of
+   this flash light": a marker had become a beacon. The fade-in is a transition on
+   stroke-opacity and the breathe is a keyframe on opacity, so the two never fight over
+   one property and the open edge still fades rather than snapping.
 
    Lengths: the vent is a direct child of .hr-boss-shell, which carries no scale, so the
-   blur radii here are arena units. Width is a ratio of the generated --core-r published
+   blur radius here is arena units. Width is a ratio of the generated --core-r published
    by the element, never a literal. */
 .hr-boss-vent {
-  transform-box: fill-box;
-  transform-origin: center;
   fill: none;
-  stroke: #eafeff;
+  stroke: var(--cyan, #6fe3ff);
   stroke-opacity: 0;
   stroke-width: calc(var(--core-r) * ${RING_RATIO});
   transition: stroke-opacity 0.4s ease-out;
 }
 .hr-vent-open .hr-boss-vent {
-  stroke-opacity: 1;
-  filter: drop-shadow(0 0 26px var(--cyan, #6fe3ff)) drop-shadow(0 0 9px #eafeff);
-  animation: hr-boss-vent 1.1s ease-in-out infinite;
+  stroke-opacity: 0.5;
+  filter: drop-shadow(0 0 6px var(--cyan, #6fe3ff));
+  animation: hr-boss-vent 2.8s ease-in-out infinite;
 }
-@keyframes hr-boss-vent { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+@keyframes hr-boss-vent { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .hr-boss-breathe, .hr-boss-eye, .hr-vent-open .hr-boss-vent { animation: none; }
+  .hr-boss-breathe, .hr-boss-eye, .hr-vent-open .hr-boss-vent, .hr-fury .hr-boss-shell { animation: none; }
 }
 `;
 
@@ -220,7 +249,12 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
   const shellRef = useRef<SVGGElement | null>(null);
   const partRefs = useRef<(SVGGElement | null)[]>([]);
   /** The last snapshot actually consumed. Every one-shot below is a diff against it. */
-  const prev = useRef<{ parts: number[]; phase: number; vent: number } | null>(null);
+  const prev = useRef<{ parts: number[]; phase: number; vent: number; fury: boolean } | null>(null);
+
+  // A chain fact, derived and never stored: `Boss::is_furious` on the same integers the
+  // crank halves the volley on. FIGHTING-gated so a settling corpse at 0 % fight HP and a
+  // mustering boss are never furious, whatever the shell reads.
+  const furious = arena.phase === PHASE_FIGHTING && isFurious(boss, arena.raidSize);
 
   // Eleven static cells. Built once, never re-rendered: the dead state, the flinches and
   // the death sequence are all applied imperatively to these nodes, so a 10 Hz account
@@ -265,7 +299,7 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
   );
 
   useEffect(() => {
-    const now = { parts: boss.parts.slice(0, N_PARTS), phase: arena.phase, vent: boss.ventOpen };
+    const now = { parts: boss.parts.slice(0, N_PARTS), phase: arena.phase, vent: boss.ventOpen, fury: furious };
     const was = prev.current;
     prev.current = now;
 
@@ -336,6 +370,10 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
 
     // The vent opening is one edge of one byte; the ring's own transition is the visual.
     if (was.vent !== VENT_OPEN && now.vent === VENT_OPEN) play('ventOpen');
+    // Fury is the same shape: one edge of one derived bit, the class is the visual and
+    // the roar is the one-shot. A reload onto a furious boss lands on the first-snapshot
+    // return above and shows the glow without the roar.
+    if (!was.fury && now.fury) play('fury');
 
     const shell = shellRef.current;
     if (shell === null) return;
@@ -380,7 +418,7 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
 
   return (
     <g
-      className={`hr-boss${boss.ventOpen === VENT_OPEN ? ' hr-vent-open' : ''}${enraged ? ' hr-enraged' : ''}`}
+      className={`hr-boss${boss.ventOpen === VENT_OPEN ? ' hr-vent-open' : ''}${enraged ? ' hr-enraged' : ''}${furious ? ' hr-fury' : ''}`}
       style={{ '--shell': shell } as React.CSSProperties}
       transform={`translate(${boss.x} ${boss.y})`}
     >

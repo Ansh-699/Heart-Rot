@@ -38,11 +38,11 @@ Read out of `handlers/tick.rs` at commit `ce9b743`, line numbers as they stand.
 | Interval | `VOLLEY_INTERVAL_TICKS = ticks_for(3_200) = 32` (`tick.rs:155`) |
 | **Real period** | **33 ticks = 3.3 s**, not 32 — see §1.5. |
 | Targeting | Nearest live player by squared distance, recomputed every tick (`tick.rs:520–534`). No threat table. `Boss.target_seat` is the cached answer. |
-| Bullet count | `3 + alive_count` (`BASE_VOLLEY_BULLETS = 3`, `tick.rs:159`), so 4 at one player and 23 at twenty. Const-asserted to fit the 128-slot pool. |
+| Bullet count | `1 + alive_count`, one more while furious (`BASE_VOLLEY_BULLETS = 1`, `FURY_EXTRA_BULLETS = 1`; was `3 + alive_count` until 2026-09-03), so 2 at one player and 21 at twenty. Const-asserted to fit the 128-slot pool at the furious interval, §1.2.1. |
 | Emitters | `hitboxes::MUZZLES`, four thorn centres, gated on `boss.parts[m.part] != 0`. Every thorn destroyed ⇒ the boss fires **nothing** (`tick.rs:685–693`). |
 | Spread | Symmetric fan; `k/SPREAD_DEN` with `SPREAD_DEN = 24` is the tangent of the offset; ±1 jitter per bullet from `mix64`. Outermost bullet of a 23-shot volley sits ≈25° off the aim line. |
 | Entropy | `mix64(affix_seed[0..8] ^ mix64(tick))` — one draw per tick, expanded per bullet. Pure function of state the client already holds, which is why the client can draw the volley locally the instant it sees the tick. |
-| Bullet damage | `BULLET_DAMAGE = 8` against `PLAYER_HP_MAX = 100` — 13 hits to kill. |
+| Bullet damage | `state::bullet_damage(raid_size)`: 2 solo → 8 at twenty, linear, read off `arena.raid_size` once per tick; the slam is `slam_damage(raid_size)`, 15 → 45. (Was the flat `BULLET_DAMAGE = 8` / `SLAM_DAMAGE = 45` until 2026-09-03 — those are now the full-raid endpoints.) Against `PLAYER_HP_MAX = 150`. |
 | Bullet speed | `BULLET_UNITS_PER_SEC = 120` ⇒ `BULLET_SPEED = 12` units/tick at `TICK_MS = 100`. |
 | Collision | Swept segment vs. a 12-unit player radius, `i64` closest-approach, no sqrt, no tunnelling. |
 | Death | 0 HP ⇒ `respawn_at_tick = tick + RESPAWN_TICKS` where `RESPAWN_TICKS = ticks_for(3_200) = 32` ticks. Respawn is at `entrance_for(seat)` — `map::ENTRANCES[seat % 4]`, fanned ±48 units along its wall. Respawns are **unlimited**. |
@@ -53,6 +53,23 @@ Read out of `handlers/tick.rs` at commit `ce9b743`, line numbers as they stand.
 (`init.rs:190`, `init.rs:521`). It is a **timeout, not an escalation**: nothing about the
 boss changes as it approaches. At `tick >= enrage_at_tick` with a live core,
 `step` calls `end_fight(OUTCOME_ENRAGE)` (`tick.rs:592`) and the match is over.
+
+### 1.2.1 Fury (added 2026-09-03)
+
+The HP-based escalation, distinct from the timeout above and named differently on purpose.
+`Boss::is_furious(raid_size)` is true when `Boss::fight_hp` — the shell a raid of that
+size still has to strip plus the core, `(left, max)` — reads `left × 100 ≤ max × FURY_PCT`
+with `FURY_PCT = 20` (`state.rs`; mirrored as `isFurious` / `fightHp` in `layout.ts`). It is
+**derived on every read and stored nowhere**: `Boss` has no padding left, and a cached flag
+would be the HP stored twice.
+
+`tick.rs` stage 7 reads it on the tick `attack_timer` runs out. Furious, the reload is
+`FURY_VOLLEY_INTERVAL_TICKS = VOLLEY_INTERVAL_TICKS / 2` (16 ticks, 1.6 s) and the volley
+carries `FURY_EXTRA_BULLETS = 1` more. It is never clamped into a running countdown — the
+client draws the telegraph off `attack_timer`, and a timer that jumped mid-wind-up would snap
+the drawing — so the first furious reload is the one set by the volley that fires after the
+line is crossed. The bullet-pool const-assert is written against the furious interval: a
+37-tick flight over 16-tick reloads is three volleys of `1 + 20 + 1` = 66 slots of 128.
 
 ### 1.3 The incarnation system
 

@@ -50,10 +50,26 @@
  * arrows at once (asserted below). Per frame the work is one `atan2` and one style write
  * per arrow actually in the air.
  *
- * A charged shot is the same arrow, bigger: `scale(1.6)` on the node and a second, wider
- * line trailing it inside the same `<g>` — both toggled once per launch, never per frame.
- * The local seat's charged hit is the one moment the whole picture answers: a 70 ms hit
- * stop and a 6-unit kick of the root, both `Arena.tsx`'s, both no-ops under reduced motion.
+ * A charged shot (tier 1) is the same arrow, bigger: `scale(1.6)` on the node and a second,
+ * wider line trailing it inside the same `<g>` — both toggled once per launch, never per
+ * frame. The local seat's charged hit is the one moment the whole picture answers: a 70 ms
+ * hit stop and a 6-unit kick of the root, both `Arena.tsx`'s, both no-ops under reduced
+ * motion.
+ *
+ * A super (tier 2) is THE BEAM. `shoot.rs` walks the whole ray and damages every part it
+ * enters (`raycastBeam` is the mirror), so what is drawn is the whole line: from the bow to
+ * the wall or the ray's full length — never to the creature, because the beam does not
+ * stop there — as a white stroke inside a cyan one, swelling and gone in {@link BEAM_MS}.
+ * Light is instant, so the strike is drawn at LAUNCH: a flash on every part the line
+ * entered, and on the orb, with the class's `superDamage` over each. The arrow still
+ * flies, along the beam, and lands as a miss at its end. Those per-part numbers are the
+ * one place this file estimates damage, and the chain's sum for that shot is consumed
+ * silently ({@link beamed}) — the sum landing on a wall 900 units past the creature is the
+ * only alternative, and it is wrong in the same place every time. The one exception is a
+ * super the chain REFUSED: `NotCharged`, a step still in flight, and `App.tsx` resends one
+ * tier down. The beam's numbers are then the wrong ones and the chain's is the only right
+ * one, so {@link beamDowngraded} hands that diff back to the counter, at the part the
+ * plain ray finds.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 
@@ -62,6 +78,8 @@ import {
   CLASS_PERIOD_MS,
   CORE,
   MAX_SEATS,
+  PART_HITBOXES,
+  VENT_OPEN,
   ZONE_ARENA,
   ZONE_LOBBY,
   aimSelfCheck,
@@ -69,11 +87,14 @@ import {
   classOf,
   decodeAim,
   landingOf,
+  raycastBeam,
   raycastShot,
+  superDamage,
   type BossAccount,
   type Landing,
   type PlayerSlot,
   type PlayersAccount,
+  type ShotTier,
 } from '@heartrot/client';
 
 import { hitStop, shake } from './Arena';
@@ -173,6 +194,22 @@ const TRAIL_LEN = 22;
 const HIT_STOP_MS = 70;
 const SHAKE_UNITS = 6;
 
+/**
+ * The beam: two `<line>`s per seat, `.hr-beam` (white) inside `.hr-beam-halo` (cyan,
+ * `styles.css`), both swelling from a thread to these widths a quarter of the way in and
+ * fading to nothing. Two lines rather than a `drop-shadow`: a filter re-rasterises a
+ * 1,000-unit stroke every frame of the swell, and the halo IS the second line. Under the
+ * 800 ms knight cooldown, so a seat's beam is always over before its next launch.
+ */
+const BEAM_MS = 450;
+const BEAM_W = 8;
+const BEAM_HALO_W = 24;
+/** The strike's colour — the white of the beam's core, so a flash reads as the beam's. */
+const BEAM_HIT = '#ffffff';
+/** Strike nodes, one per part the beam can enter; the last one is the orb. */
+const BEAM_SPOTS = PART_HITBOXES.length + 1;
+const BEAM_CORE_SPOT = PART_HITBOXES.length;
+
 // The scene's projectile cap is `sprites.ts`'s {@link VISIBLE_PROJECTILES}, imported above.
 // It used to be typed here a second time under this name and a third time in `Arena.tsx` as
 // `VISIBLE_BULLETS`, joined only by the `budget` prop — so halving one of them left the
@@ -192,8 +229,8 @@ interface Flight {
   hit: Landing;
   /** The terminus was the core — `coreHit` rather than `hitPart` when it lands. */
   core: boolean;
-  /** Drawn big, and the local seat's hit stops the frame. */
-  charged: boolean;
+  /** Tier 1 and up are drawn big, and the local seat's hit stops the frame. */
+  tier: ShotTier;
   /** Arrival has been played; the node is parked. */
   landed: boolean;
 }
@@ -207,8 +244,8 @@ export interface LocalShot {
   /** The exact `i8` pair that went on the wire (or would have, for a practice shot). */
   readonly dx: number;
   readonly dy: number;
-  /** The charged byte that went with it. */
-  readonly charged: boolean;
+  /** The tier byte that went with it. */
+  readonly tier: ShotTier;
 }
 
 /**
@@ -229,7 +266,18 @@ export function fireLocal(shot: LocalShot): void {
   sink?.(shot);
 }
 
+/**
+ * The local seat's last super was refused and is being resent as a charged or plain
+ * shot. Call it from `App.tsx`'s downgrade, before the resend: the chain's `damageDealt`
+ * diff for the shot that actually lands is then drawn, at the terminus the plain ray
+ * finds — not swallowed as the beam's sum, and not floated over the beam's wall.
+ */
+export function beamDowngraded(): void {
+  unbeam?.();
+}
+
 let sink: ((shot: LocalShot) => void) | null = null;
+let unbeam: (() => void) | null = null;
 
 // ---------------------------------------------------------------------------
 // The component
@@ -304,8 +352,8 @@ export function Shot({
   feedEpoch = 0,
   room,
 }: ShotProps) {
-  // Four node arrays, one entry per seat, filled by the `ref` callbacks below. Indexed by
-  // seat and never resized: the pool IS the seat table.
+  // Node arrays, one entry per seat, filled by the `ref` callbacks below. Indexed by seat
+  // and never resized: the pool IS the seat table.
   const muzzle = useRef<Array<SVGGElement | null>>([]);
   const arrow = useRef<Array<SVGGElement | null>>([]);
   const trail = useRef<Array<SVGLineElement | null>>([]);
@@ -313,12 +361,34 @@ export function Shot({
   const impact = useRef<Array<SVGGElement | null>>([]);
   const damage = useRef<Array<SVGGElement | null>>([]);
   const damageText = useRef<Array<SVGTextElement | null>>([]);
+  // The beam, per seat; the strike pool, per PART. A part flashes the same whichever seat's
+  // beam entered it, and two beams on one part inside {@link BEAM_MS} restart one flash —
+  // twenty seats striking is not twenty sparks per part, the same rule the sounds follow.
+  const beam = useRef<Array<SVGGElement | null>>([]);
+  const beamHalo = useRef<Array<SVGLineElement | null>>([]);
+  const beamCore = useRef<Array<SVGLineElement | null>>([]);
+  const beamAt = useRef<Array<SVGGElement | null>>([]);
+  const beamSpark = useRef<Array<SVGGElement | null>>([]);
+  const beamNum = useRef<Array<SVGGElement | null>>([]);
+  const beamText = useRef<Array<SVGTextElement | null>>([]);
 
   const flights = useRef<Array<Flight | null>>(Array.from({ length: MAX_SEATS }, () => null));
   /** Last drawn terminus per seat — where a damage number belongs. */
   const endAt = useRef<Array<{ x: number; y: number } | null>>(
     Array.from({ length: MAX_SEATS }, () => null),
   );
+  /**
+   * The seat's last launch was a beam, whose numbers were drawn per part at launch. The
+   * chain's `damageDealt` diff for it is then the SUM of every part it took, and the only
+   * point this file has for it is the arrow's terminus — a wall far past the creature. So
+   * that one diff advances the baseline and draws nothing. Cleared by the next launch of
+   * any tier, which is the next shot that can move the counter — or by
+   * {@link beamDowngraded}, when the chain refused the super and a lesser shot is the one
+   * that will move it.
+   */
+  const beamed = useRef<boolean[]>(Array.from({ length: MAX_SEATS }, () => false));
+  /** The local seat's last `fireLocal`, so a downgrade can re-aim its terminus. */
+  const localShot = useRef<LocalShot | null>(null);
 
   // The diff baselines. `null` means "not seeded yet": the first payload seeds and fires
   // nothing, which is what stops a mid-fight join replaying the last volley.
@@ -355,10 +425,10 @@ export function Shot({
    * hit stop and the kick are `Arena`'s, keyed here because this is where the arrival is
    * known. Remote arrivals are silent: twenty seats landing is not twenty cues.
    */
-  const land = (seat: number, hit: Landing, core: boolean, charged: boolean): void => {
+  const land = (seat: number, hit: Landing, core: boolean, tier: ShotTier): void => {
     if (seat === localSeat && hit === 'hit') {
       play(core ? 'coreHit' : 'hitPart');
-      if (charged) {
+      if (tier >= 1) {
         hitStop(HIT_STOP_MS);
         shake(SHAKE_UNITS);
       }
@@ -366,6 +436,11 @@ export function Shot({
     const el = impact.current[seat];
     if (el === null || el === undefined) return;
     el.style.color = hit === 'hit' ? SPARK_HIT : hit === 'absorb' ? SPARK_ABSORB : SPARK_WALL;
+    spark(el, hit);
+  };
+
+  /** The spark's one-shot, on whichever node is at the point: an arrow's, or a beam's. */
+  const spark = (el: SVGGElement, hit: Landing): void => {
     el.animate(
       hit === 'absorb'
         ? [
@@ -380,6 +455,78 @@ export function Shot({
     );
   };
 
+  /**
+   * The beam itself: both lines laid from the bow to the end, the group faded over
+   * {@link BEAM_MS} and — motion allowed — each stroke swelling from a thread to its width
+   * and back to nothing. Reduced motion keeps the fade and the rest widths `styles.css`
+   * gives the classes: the line is the information (where the beam went), the swell is not.
+   */
+  const drawBeam = (seat: number, x0: number, y0: number, x1: number, y1: number): void => {
+    const g = beam.current[seat];
+    const halo = beamHalo.current[seat];
+    const line = beamCore.current[seat];
+    if (!g || !halo || !line) return;
+    for (const l of [halo, line]) {
+      l.setAttribute('x1', `${x0}`);
+      l.setAttribute('y1', `${y0}`);
+      l.setAttribute('x2', `${x1}`);
+      l.setAttribute('y2', `${y1}`);
+    }
+    g.animate([{ opacity: 1 }, { opacity: 1, offset: 0.3 }, { opacity: 0 }], { duration: BEAM_MS, easing: 'ease-out' });
+    if (reducedRef.current) return;
+    for (const [l, w] of [[halo, BEAM_HALO_W], [line, BEAM_W]] as const) {
+      l.animate(
+        [{ strokeWidth: '1px' }, { strokeWidth: `${w}px`, offset: 0.25 }, { strokeWidth: '0px' }],
+        { duration: BEAM_MS, easing: 'ease-out' },
+      );
+    }
+  };
+
+  /**
+   * The beam's strike, drawn at launch because light is instant: a flash on every part the
+   * line entered and on the orb, each placed where the beam passes nearest the thing it
+   * struck, with the class's super damage over each part. The orb takes a number only when
+   * the vent stood open as the beam left — the same state {@link landingOf} judges an arrow
+   * by. Sealed, it takes the absorb ring and no number: the chain may open the vent on this
+   * very beam and score the core (`shoot.rs::fire` re-reads the vent after the parts fall),
+   * and that is a number this file cannot know. The local seat's strike is the one that is
+   * heard and felt, exactly as its arrow's landing is.
+   */
+  const strike = (
+    seat: number,
+    x: number,
+    y: number,
+    ex: number,
+    ey: number,
+    hits: readonly number[],
+    core: boolean,
+    cls: number,
+  ): void => {
+    const b = bossRef.current;
+    const open = b.ventOpen === VENT_OPEN;
+    const flash = (spot: number, cx: number, cy: number, hit: Landing): void => {
+      const [px, py] = onBeam(x, y, ex, ey, cx, cy);
+      const at = beamAt.current[spot];
+      if (at) at.style.transform = `translate(${px}px, ${py}px)`;
+      const sp = beamSpark.current[spot];
+      if (sp) {
+        sp.style.color = hit === 'hit' ? BEAM_HIT : SPARK_ABSORB;
+        spark(sp, hit);
+      }
+      if (hit === 'hit') rise(beamNum.current[spot], beamText.current[spot], px, py, superDamage(cls), cls);
+    };
+    for (const i of hits) {
+      const r = PART_HITBOXES[i]!;
+      flash(i, b.x + r.x + r.w / 2, b.y + r.y + r.h / 2, 'hit');
+    }
+    if (core) flash(BEAM_CORE_SPOT, b.x + CORE.x, b.y + CORE.y, open ? 'hit' : 'absorb');
+    if (seat === localSeat && (hits.length > 0 || (core && open))) {
+      play(core && open ? 'coreHit' : 'hitPart');
+      hitStop(HIT_STOP_MS);
+      shake(SHAKE_UNITS);
+    }
+  };
+
   /** What is left of {@link VISIBLE_PROJECTILES} once `Arena` has drawn its bullets. */
   const cap = Math.max(0, VISIBLE_PROJECTILES - budget);
 
@@ -391,7 +538,7 @@ export function Shot({
     dx: number,
     dy: number,
     cls: number,
-    charged: boolean,
+    tier: ShotTier,
   ): void => {
     if (seat < 0 || seat >= MAX_SEATS) return;
     if (!inRoom(seat)) return;
@@ -423,11 +570,29 @@ export function Shot({
     }
 
     const b = bossRef.current;
-    const end = raycastShot(x, y, dx, dy, b.parts, b.x, b.y);
-    // The chain's answer, not the ray's: a sealed vent absorbs the shot and scores nothing
-    // (`shoot.rs:492`), so it must not draw the hit spark. `ventOpen` is read at launch for
-    // the same reason the position is — this is the state the shot was fired into.
-    const hit = landingOf(end, b.ventOpen);
+    beamed.current[seat] = tier === 2;
+    let end: { readonly x: number; readonly y: number };
+    let hit: Landing;
+    let core: boolean;
+    if (tier === 2) {
+      // The beam does not stop on the creature, so its END is a wall or the ray's full
+      // length and the arrow's arrival there is a miss by construction; what it struck is
+      // drawn now, where it stands, because the light is already there.
+      const ray = raycastBeam(x, y, dx, dy, b.parts, b.x, b.y);
+      end = ray.end;
+      hit = 'miss';
+      core = false;
+      drawBeam(seat, x, y, end.x, end.y);
+      strike(seat, x, y, end.x, end.y, ray.hits, ray.core, cls);
+    } else {
+      const ray = raycastShot(x, y, dx, dy, b.parts, b.x, b.y);
+      end = ray;
+      // The chain's answer, not the ray's: a sealed vent absorbs the shot and scores nothing
+      // (`shoot.rs:492`), so it must not draw the hit spark. `ventOpen` is read at launch for
+      // the same reason the position is — this is the state the shot was fired into.
+      hit = landingOf(ray, b.ventOpen);
+      core = ray.core;
+    }
     endAt.current[seat] = { x: end.x, y: end.y };
 
     const cdx = end.x - x;
@@ -449,19 +614,21 @@ export function Shot({
       flash.style.transform = `translate(${x}px, ${y}px)`;
       flash.animate([{ opacity: 0.95 }, { opacity: 0 }], { duration: MUZZLE_MS });
     }
-    if (seat === localSeat) play(charged ? 'looseCharged' : 'loose');
+    if (seat === localSeat) play(tier === 2 ? 'looseSuper' : tier === 1 ? 'looseCharged' : 'loose');
 
-    // The charged dress, once per launch: the class colours the shaft and head (`styles.css`)
-    // and the trail is shown; the scale rides the per-frame transform.
-    if (node !== null && node !== undefined) node.classList.toggle('hr-arrow-charged', charged);
+    // The charged dress, once per launch and for every tier past a tap: the class colours
+    // the shaft and head (`styles.css`) and the trail is shown; the scale rides the
+    // per-frame transform. A super's arrow rides its beam in the same dress.
+    const big = tier >= 1;
+    if (node !== null && node !== undefined) node.classList.toggle('hr-arrow-charged', big);
     const tail = trail.current[seat];
-    if (tail !== null && tail !== undefined) tail.style.visibility = charged ? 'visible' : 'hidden';
+    if (tail !== null && tail !== undefined) tail.style.visibility = big ? 'visible' : 'hidden';
 
     if (reducedRef.current || range === 0 || ms === 0) {
       // No travel. The impact is the whole of the information and it appears at once.
       if (node !== null && node !== undefined) node.style.opacity = '0';
       flights.current[seat] = null;
-      land(seat, hit, end.core, charged);
+      land(seat, hit, core, tier);
       return;
     }
 
@@ -478,8 +645,8 @@ export function Shot({
       y1: end.y,
       ms,
       hit,
-      core: end.core,
-      charged,
+      core,
+      tier,
       landed: false,
     };
   };
@@ -492,11 +659,23 @@ export function Shot({
   useEffect(() => {
     sink = (shot) => {
       if (localSeat === undefined || shot.seat !== localSeat) return;
+      localShot.current = shot;
       const slot = players.slots[shot.seat];
-      launch(shot.seat, shot.x, shot.y, shot.dx, shot.dy, slot === undefined ? 0 : classOf(slot), shot.charged);
+      launch(shot.seat, shot.x, shot.y, shot.dx, shot.dy, slot === undefined ? 0 : classOf(slot), shot.tier);
+    };
+    unbeam = () => {
+      const shot = localShot.current;
+      if (localSeat === undefined || shot === null || !beamed.current[localSeat]) return;
+      beamed.current[localSeat] = false;
+      // The beam's arrow keeps flying to its wall; only the NUMBER moves, to where the
+      // shot the chain took stops — the same ray tiers 0 and 1 launch with.
+      const b = bossRef.current;
+      const ray = raycastShot(shot.x, shot.y, shot.dx, shot.dy, b.parts, b.x, b.y);
+      endAt.current[localSeat] = { x: ray.x, y: ray.y };
     };
     return () => {
       sink = null;
+      unbeam = null;
     };
   });
 
@@ -531,14 +710,17 @@ export function Shot({
       // arrow out of the same bow.
       if (slot.lastShotTick > lastShot && seat !== localSeat) {
         const aim = aimOf(slot);
-        // `chargedShot` is the bit the chain set on THIS loose; the next step clears it.
-        launch(seat, slot.x, slot.y, aim[0], aim[1], classOf(slot), slot.chargedShot);
+        // `superShot` / `chargedShot` are the bits the chain set on THIS loose; the next
+        // step clears them. Launched BEFORE the damage check below, so a remote beam's
+        // sum — which arrives in this same payload — is the diff `beamed` swallows.
+        launch(seat, slot.x, slot.y, aim[0], aim[1], classOf(slot), slot.superShot ? 2 : slot.chargedShot ? 1 : 0);
       }
 
-      // Chain-only, for EVERY seat including the local one: prediction owns no number.
-      // `dealt` is capped at the part's remaining HP on chain, so a finishing blow
-      // legitimately reads less than the class damage — shown as-is, never rounded up.
-      if (slot.damageDealt > lastDealt) {
+      // Chain-only, for EVERY seat including the local one: prediction owns no number,
+      // except the beam's, drawn per part at launch — see `beamed`. `dealt` is capped at
+      // the part's remaining HP on chain, so a finishing blow legitimately reads less than
+      // the class damage — shown as-is, never rounded up.
+      if (slot.damageDealt > lastDealt && !beamed.current[seat]) {
         showDamage(seat, slot.damageDealt - lastDealt, classOf(slot));
       }
     }
@@ -550,9 +732,6 @@ export function Shot({
    * reading, and `.hr-dmg-charged` (`styles.css`) draws it at 26 px in the vent's yellow.
    */
   const showDamage = (seat: number, amount: number, cls: number): void => {
-    const el = damage.current[seat];
-    const text = damageText.current[seat];
-    if (el === null || el === undefined || text === null || text === undefined) return;
     // R3 again: a number floating over the pit while you are still in the waiting area is
     // the same lie an arrow drawn there would be.
     if (!inRoom(seat)) return;
@@ -560,12 +739,25 @@ export function Shot({
       x: bossRef.current.x + CORE.x,
       y: bossRef.current.y + CORE.y,
     };
+    rise(damage.current[seat], damageText.current[seat], at.x, at.y, amount, cls);
+  };
+
+  /** The number's one-shot, on whichever node is at the point: a seat's, or a beam spot's. */
+  const rise = (
+    el: SVGGElement | null | undefined,
+    text: SVGTextElement | null | undefined,
+    x: number,
+    y: number,
+    amount: number,
+    cls: number,
+  ): void => {
+    if (!el || !text) return;
     text.textContent = `${amount}`;
     text.classList.toggle('hr-dmg-charged', amount >= chargedDamage(cls));
     el.animate(
       [
-        { opacity: 1, transform: `translate(${at.x}px, ${at.y}px)` },
-        { opacity: 0, transform: `translate(${at.x}px, ${at.y - DAMAGE_RISE}px)` },
+        { opacity: 1, transform: `translate(${x}px, ${y}px)` },
+        { opacity: 0, transform: `translate(${x}px, ${y - DAMAGE_RISE}px)` },
       ],
       { duration: DAMAGE_MS, easing: 'cubic-bezier(0.1, 0.8, 0.3, 1)' },
     );
@@ -590,7 +782,7 @@ export function Shot({
         if (t >= 1) {
           if (!f.landed) {
             f.landed = true;
-            land(seat, f.hit, f.core, f.charged);
+            land(seat, f.hit, f.core, f.tier);
           }
           flights.current[seat] = null;
           if (el !== null && el !== undefined && el.style.opacity !== '0') el.style.opacity = '0';
@@ -610,7 +802,7 @@ export function Shot({
         const ty = u * (f.cy - f.y0) + t * (f.y1 - f.cy);
         const deg = (Math.atan2(ty, tx) * 180) / Math.PI;
 
-        el.style.transform = `translate(${x}px, ${y}px) rotate(${deg}deg)${f.charged ? CHARGED_XFORM : ''}`;
+        el.style.transform = `translate(${x}px, ${y}px) rotate(${deg}deg)${f.tier >= 1 ? CHARGED_XFORM : ''}`;
         if (el.style.opacity !== '1') el.style.opacity = '1';
       }
     };
@@ -632,13 +824,21 @@ export function Shot({
   // at 20 seats); without the memo each one allocated and reconciled 261 elements AND handed
   // React 120 fresh `ref` closures, so every node in the pool was detached and re-attached —
   // the exact cost `Scene.tsx` measured at 11.2 ms/frame and paid to delete. The memo cannot
-  // go stale: every identifier in the tree below is a module constant, and the seven ref
-  // arrays are stable objects the callbacks fill once at mount.
+  // go stale: every identifier in the tree below is a module constant, and the ref arrays
+  // are stable objects the callbacks fill once at mount.
   return useMemo(
     () => (
       <g aria-hidden="true" style={{ pointerEvents: 'none' }}>
         {Array.from({ length: MAX_SEATS }, (_, seat) => (
           <g key={seat}>
+            {/* The beam, under everything else of the seat's: halo first, white core over
+                it. Endpoints are set per launch; widths are the classes' (`styles.css`)
+                until the swell overrides them. */}
+            <g ref={(el) => void (beam.current[seat] = el)} style={{ opacity: 0 }}>
+              <line ref={(el) => void (beamHalo.current[seat] = el)} className="hr-beam-halo" />
+              <line ref={(el) => void (beamCore.current[seat] = el)} className="hr-beam" />
+            </g>
+
             <g ref={(el) => void (muzzle.current[seat] = el)} style={{ opacity: 0 }}>
               <circle r={7} fill={HEAD} />
               <circle r={12} fill={HEAD} opacity={0.25} />
@@ -682,16 +882,28 @@ export function Shot({
             </g>
 
             <g ref={(el) => void (damage.current[seat] = el)} style={{ opacity: 0 }}>
-              <text
-                ref={(el) => void (damageText.current[seat] = el)}
-                textAnchor="middle"
-                fontSize={18}
-                fontWeight={700}
-                fill={HEAD}
-                stroke={PAL.outline}
-                strokeWidth={3}
-                paintOrder="stroke"
-              />
+              <text ref={(el) => void (damageText.current[seat] = el)} {...DMG_TEXT} />
+            </g>
+          </g>
+        ))}
+
+        {/* The beam's strike pool: one spot per part and one for the orb, shared by every
+            seat, each a spark and a number. Bigger than an arrow's spark — the beam is the
+            widest thing that ever crosses the room, and its mark should be. */}
+        {Array.from({ length: BEAM_SPOTS }, (_, spot) => (
+          <g key={spot}>
+            <g ref={(el) => void (beamAt.current[spot] = el)}>
+              <g
+                ref={(el) => void (beamSpark.current[spot] = el)}
+                className="hr-beam-hit"
+                style={{ opacity: 0, color: BEAM_HIT }}
+              >
+                <circle r={16} fill="currentColor" opacity={0.45} />
+                <circle r={6} fill="currentColor" />
+              </g>
+            </g>
+            <g ref={(el) => void (beamNum.current[spot] = el)} style={{ opacity: 0 }}>
+              <text ref={(el) => void (beamText.current[spot] = el)} {...DMG_TEXT} />
             </g>
           </g>
         ))}
@@ -700,6 +912,17 @@ export function Shot({
     [],
   );
 }
+
+/** The damage number's face — one set of attributes for a seat's number and a beam spot's. */
+const DMG_TEXT = {
+  textAnchor: 'middle',
+  fontSize: 18,
+  fontWeight: 700,
+  fill: HEAD,
+  stroke: PAL.outline,
+  strokeWidth: 3,
+  paintOrder: 'stroke',
+} as const;
 
 // ---------------------------------------------------------------------------
 // Pieces
@@ -748,6 +971,21 @@ function flightCut(
   return { live, oldest };
 }
 
+/**
+ * Where on the beam `(x0, y0) → (x1, y1)` a strike on the thing centred at `(px, py)` is
+ * drawn: the nearest point of the segment. `raycastBeam` reports WHICH parts the line
+ * entered and not where, and a flash at a box's centre can sit 60 units off a line that
+ * only clipped the crown's corner — the mark has to be on the light. Clamped to the ends,
+ * so a strike never floats in the air past the wall the beam died on.
+ */
+function onBeam(x0: number, y0: number, x1: number, y1: number, px: number, py: number): readonly [number, number] {
+  const bx = x1 - x0;
+  const by = y1 - y0;
+  const len2 = bx * bx + by * by;
+  const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, ((px - x0) * bx + (py - y0) * by) / len2));
+  return [x0 + t * bx, y0 + t * by];
+}
+
 // ---------------------------------------------------------------------------
 // Self-check
 //
@@ -793,7 +1031,7 @@ if (import.meta.env.DEV) {
     ms: 1,
     hit: 'miss',
     core: false,
-    charged: false,
+    tier: 0,
     landed: false,
   });
   const cut = flightCut([fake(30), null, fake(10), fake(20)], 0);
@@ -802,4 +1040,12 @@ if (import.meta.env.DEV) {
   ok(flightCut([fake(10), fake(30)], 0).oldest === 1, "the local seat's own arrow is never cut");
   const none = flightCut([null, null], 0);
   ok(none.live === 0 && none.oldest === -1, 'no arrows in the air is nothing to drop');
+
+  // A beam's strike is drawn ON the beam: a part beside the line projects onto it, a part
+  // past either end lands on that end, and a zero-length beam is its own point.
+  const on = onBeam(0, 0, 10, 0, 4, 3);
+  ok(on[0] === 4 && on[1] === 0, 'a strike beside the beam is drawn on the beam');
+  ok(onBeam(0, 0, 10, 0, -5, 2)[0] === 0 && onBeam(0, 0, 10, 0, 25, 2)[0] === 10, 'a strike clamps to the ends');
+  ok(onBeam(3, 3, 3, 3, 9, 9)[0] === 3, 'a zero-length beam strikes at the bow');
+  ok(BEAM_MS < CLASS_PERIOD_MS[0]!, "a beam outlives the cooldown — the seat's two lines cannot be one pair");
 }

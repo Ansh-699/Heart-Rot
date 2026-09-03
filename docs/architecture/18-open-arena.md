@@ -3,6 +3,22 @@
 **Status:** authoritative specification. Nothing here has been applied. `assets/map/arena.json`
 is unchanged on disk, no product code is modified, no deploy was run, no git command was run.
 
+> **Amended 2026-09-03.** Applied and then moved on: the pit is now the whole painted dais
+> (`PIT_TOP = 192`, row 12) and rows 1–23 are no longer "never walkable" — a raider stands on
+> `map::DAIS` (`P`/`E`/`B` tiles) and never inside the creature's body (`body.rs`); the `.`
+> tiles beside the dais's shoulders stay air for the ray. The tables below are the layout as
+> this pass designed it.
+
+> **Amended 2026-09-03, the Worker's scan head.** `openArena` walks arena ids from
+> `Leaderboard.last_arena_id`, and that head now follows a raid whose last player pressed
+> Exit too. `matchLeave` settles the arena, brings it home and records it; the settle only
+> ever sees a fight nobody finished (`leave_seat` is refused outside LOBBY/MUSTERING/FIGHTING,
+> and an empty arena is not a wipe), so the outcome is `OUTCOME_UNDECIDED` — and for that
+> `write_leaderboard` writes **no row** but moves the head past the arena
+> (`settle.rs::mark_abandoned`). Before that change the head sat at 1788266869 while fourteen
+> abandoned raids piled up after it; every join re-walked the gap and each abandon added a
+> step, and the scan's 76-id window would eventually have filled with nothing joinable.
+
 This document collapses four independent design passes — the grid pass, `docs/art/hall.md`,
 `docs/art/arena.md`, and the reach-and-fit pass — into one buildable thing. They disagreed on
 the pit depth, the gate width, the ray-reach limit and the layer order. §10 records every

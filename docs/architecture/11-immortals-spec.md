@@ -109,6 +109,13 @@ in one pass. That is the entire reason SCALE is a generator argument.
 
 ### 1.3 `PIT_TOP` / `PIT_BOT`: the arena box
 
+> **Since 2026-09-03** the band is one of three step barriers for `ZONE_ARENA`, and `PIT_TOP`
+> is the painted dais's top row, not the boss's feet line. A raider stands only on `map::DAIS`
+> (`P`/`E`/`B` tiles; the `.` air beside the dais's shoulders is open to rays and closed to
+> feet) and never inside the creature's body (`body.rs`, the fold of `PART_HITBOXES` at
+> `BOSS_SPAWN`). See `handlers::player::may_stand_step`. The rest of this section is the
+> design as first shipped.
+
 `handlers::player::move_player` rejects a step whose destination y is outside
 `PIT_TOP ..= PIT_BOT` **when `slot.zone == ZONE_ARENA`**. Two comparisons, no new account,
 no wall.

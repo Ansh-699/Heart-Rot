@@ -1,4 +1,4 @@
-//! `shoot(seat, dx, dy, charged)` — the player attack, hitscan, free aim.
+//! `shoot(seat, dx, dy, tier)` — the player attack, hitscan, free aim, three tiers.
 //!
 //! No projectile entity is ever allocated. The ray is walked here, in integer steps of
 //! one tile, and the damage lands in the same transaction that fired it. That is the
@@ -20,15 +20,28 @@
 //!   are 0 lamports and the ER runs no fee-payer validation at all, so nothing debits
 //!   a spammer (D16). `last_shot_tick` *is* the rate limiter; refunding it on a miss
 //!   would hand an attacker an unlimited-rate instruction.
-//! - **The charged shot is stateless, and its clock is the ER slot.** A `charged` shot
-//!   deals `state::charged_damage` (2.5×) only if the seat's last accepted step is at
-//!   least `state::CHARGE_SLOTS` ER slots old — `Clock::get()?.slot` against
-//!   `last_move_tick`, which `player::move_clock` stamps from that same sysvar. No
-//!   charge timer is stored, so a client cannot start one early, and a step cancels the
-//!   hold because it moves the stamp. It is **never** `arena.tick`: that is a crank tick
-//!   on another clock, and subtracting the two is the trap `state::SLOT_MS` names. A
+//! - **The held tiers are stateless, and their clock is the ER slot.** A [`Tier::Charged`]
+//!   shot deals `state::charged_damage` (2.5×) only if the seat's last accepted step is
+//!   at least `state::CHARGE_SLOTS` ER slots old, and a [`Tier::Super`] deals
+//!   `state::super_damage` (5×) only past `state::SUPER_SLOTS` — `Clock::get()?.slot`
+//!   against `last_move_tick`, which `player::move_clock` stamps from that same sysvar.
+//!   No charge timer is stored, so a client cannot start one early, and a step cancels
+//!   the hold because it moves the stamp. It is **never** `arena.tick`: that is a crank
+//!   tick on another clock, and subtracting the two is the trap `state::SLOT_MS` names. A
 //!   short hold is [`HeartrotError::NotCharged`], refused *before* the cooldown is spent,
-//!   so the client resends uncharged and the shot is not lost.
+//!   so the client resends one tier down and the shot is not lost.
+//!
+//! **The super is a pierce.** A tap or a charged shot stops at the first live part box or
+//! the core — one target per arrow. A super walks the whole ray: every live part whose
+//! box it enters takes the damage **once** (a 118-unit crown is sampled seven times and
+//! must not be hit seven times — [`Beam::parts`] is the mask), and the core takes it if
+//! the ray crossed its circle and the vent is open *as recomputed after those parts fell*.
+//! So a beam that strips the last of the shell and reaches the orb kills through it in
+//! the same transaction; that is what a 2.5 s stand in a bullet hell buys, and it is the
+//! one place where "the vent is derived state" pays out inside a single shot rather than
+//! across two. Both walks are [`walk_ray`], one loop — the same wall stop, the same
+//! [`SHELL_AABB`] gate, the same sample points — so the tiers cannot disagree about where
+//! the creature is.
 //!
 //! **Aim is free, not eight-way** (`11-immortals-spec.md` §4.1). With the boss fixed at
 //! top centre, a 45° quantisation step can only select a target whose angular size
@@ -95,9 +108,10 @@ use crate::handlers::player::octant;
 use crate::hitboxes::{Rect, CORE_RADIUS_SQ, CORE_X, CORE_Y, PART_HITBOXES};
 use crate::map::{MAP_TILES, TILE, WALLS};
 use crate::state::{
-    charged_damage, load_mut, vent_pct, Arena, Boss, PlayerSlot, Players, CHARGED_SHOT_BIT,
-    CHARGE_SLOTS, CLASS_COOLDOWN_TICKS as CLASS_COOLDOWN, CLASS_DAMAGE, OUTCOME_WIN,
-    PHASE_FIGHTING, SEED_BOSS, SEED_PLAYERS, ZONE_ARENA,
+    charged_damage, load_mut, super_damage, vent_pct, Arena, Boss, PlayerSlot, Players,
+    CHARGED_SHOT_BIT, CHARGE_SLOTS, CLASS_COOLDOWN_TICKS as CLASS_COOLDOWN, CLASS_DAMAGE,
+    N_PARTS, OUTCOME_WIN, PHASE_FIGHTING, SEED_BOSS, SEED_PLAYERS, SUPER_SHOT_BIT, SUPER_SLOTS,
+    ZONE_ARENA,
 };
 
 // ---------------------------------------------------------------------------
@@ -321,12 +335,39 @@ const SHELL_AABB: Rect = {
     }
 };
 
-/// What the ray struck first, as pure geometry. Whether a `Core` hit is *damageable*
-/// is a game rule (the vent must be open) and is decided by the caller, not here.
+/// One thing a ray sample is inside, as pure geometry. Whether a `Core` hit is
+/// *damageable* is a game rule (the vent must be open) and is decided by the caller, not
+/// here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Hit {
     Part(usize),
     Core,
+}
+
+/// Everything a ray collected, in the shape [`fire`] lands damage from: a bit per live
+/// part the ray entered, and whether it crossed the core circle. A tap or charged shot's
+/// is at most one bit *or* the core, whichever came first; a super's is the whole line.
+/// One shape for both, so there is one damage path and the tiers differ only in what the
+/// walk kept.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+struct Beam {
+    parts: u16,
+    core: bool,
+}
+
+// The mask is a `u16` because nine parts fit in one and `Boss.parts` is sized by the
+// same constant; a tenth limb past sixteen would silently drop off the beam.
+const _: () = assert!(N_PARTS <= u16::BITS as usize);
+
+impl Beam {
+    /// A first-hit ray's collection: what it stopped on, or nothing.
+    fn first(hit: Option<Hit>) -> Self {
+        match hit {
+            Some(Hit::Part(index)) => Beam { parts: 1 << index, core: false },
+            Some(Hit::Core) => Beam { parts: 0, core: true },
+            None => Beam::default(),
+        }
+    }
 }
 
 /// Normalise a raw aim vector to a Q12 unit vector, or `None` for the zero vector.
@@ -350,12 +391,15 @@ fn unit_q12(dx: i8, dy: i8) -> Option<(i32, i32)> {
     Some((vx * Q / approx_len, vy * Q / approx_len))
 }
 
-/// Walk the ray from `(from_x, from_y)` along the raw aim vector `(dx, dy)`; first hit
-/// wins, and a solid tile stops it.
+/// Walk the ray from `(from_x, from_y)` along the raw aim vector `(dx, dy)`, reporting
+/// every live part box and the core circle each sample is inside — in ray order, and
+/// within one sample in table order — to `hit`, which answers whether to keep walking. A
+/// solid tile stops it regardless. The two rays this file fires are both this loop:
+/// [`raycast`] stops at its first report, [`raycast_beam`] never stops.
 ///
 /// `(dx, dy)` is whatever the pointer produced — it is normalised here, once, to a Q12
 /// unit vector and then accumulated, so every direction costs the same and none is
-/// privileged. `(0, 0)` returns `None`; the caller has already rejected it through
+/// privileged. `(0, 0)` reports nothing; the caller has already rejected it through
 /// [`octant`], so that branch is unreachable rather than meaningful.
 ///
 /// A part with 0 HP is destroyed and detached, so the ray passes straight through it
@@ -373,9 +417,16 @@ fn unit_q12(dx: i8, dy: i8) -> Option<(i32, i32)> {
 /// All grazes; a square crossing cannot be skipped because gen_hitboxes.py refuses a box
 /// under TILE on either axis. Upgrade path if grazes ever matter: step TILE/2 while the
 /// sample is inside SHELL_AABB, which costs ~21 extra samples on the shots that hit.
-fn raycast(from_x: i16, from_y: i16, dx: i8, dy: i8, boss: &Boss) -> Option<Hit> {
+fn walk_ray(
+    from_x: i16,
+    from_y: i16,
+    dx: i8,
+    dy: i8,
+    boss: &Boss,
+    mut hit: impl FnMut(Hit) -> bool,
+) {
     let Some((ux, uy)) = unit_q12(dx, dy) else {
-        return None;
+        return;
     };
 
     let (boss_x, boss_y) = (boss.x as i32, boss.y as i32);
@@ -390,7 +441,7 @@ fn raycast(from_x: i16, from_y: i16, dx: i8, dy: i8, boss: &Boss) -> Option<Hit>
         // wall stops a shot exactly where it stops a player. It is also the early-out:
         // off the map and off a corridor are the same rejection.
         if is_wall(x, y) {
-            return None;
+            return;
         }
 
         let (local_x, local_y) = (x - boss_x, y - boss_y);
@@ -401,18 +452,43 @@ fn raycast(from_x: i16, from_y: i16, dx: i8, dy: i8, boss: &Boss) -> Option<Hit>
         }
 
         for (index, rect) in PART_HITBOXES.iter().enumerate() {
-            if boss.parts[index] != 0 && rect.contains(local_x, local_y) {
-                return Some(Hit::Part(index));
+            if boss.parts[index] != 0 && rect.contains(local_x, local_y) && !hit(Hit::Part(index)) {
+                return;
             }
         }
 
         let (core_dx, core_dy) = (local_x - CORE_X, local_y - CORE_Y);
-        if core_dx * core_dx + core_dy * core_dy <= CORE_RADIUS_SQ {
-            return Some(Hit::Core);
+        if core_dx * core_dx + core_dy * core_dy <= CORE_RADIUS_SQ && !hit(Hit::Core) {
+            return;
         }
     }
+}
 
-    None
+/// The tap and the charged shot: first hit wins. `None` is a miss — cover, the map edge,
+/// or the empty air behind the creature.
+fn raycast(from_x: i16, from_y: i16, dx: i8, dy: i8, boss: &Boss) -> Option<Hit> {
+    let mut first = None;
+    walk_ray(from_x, from_y, dx, dy, boss, |hit| {
+        first = Some(hit);
+        false
+    });
+    first
+}
+
+/// The super: the whole line. Each live part once, however many samples fall inside its
+/// box, and the core if any sample fell inside the circle — behind a part or not, because
+/// the beam does not stop at the part. Whether the core then *takes* it is [`fire`]'s
+/// vent rule, judged after the parts on this same beam have been damaged.
+fn raycast_beam(from_x: i16, from_y: i16, dx: i8, dy: i8, boss: &Boss) -> Beam {
+    let mut beam = Beam::default();
+    walk_ray(from_x, from_y, dx, dy, boss, |hit| {
+        match hit {
+            Hit::Part(index) => beam.parts |= 1 << index,
+            Hit::Core => beam.core = true,
+        }
+        true
+    });
+    beam
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +510,49 @@ const fn phase_takes_fire(phase: u8) -> bool {
     phase == PHASE_FIGHTING
 }
 
+/// The wire's `tier` byte, 0 / 1 / 2, as the three shots it names. Each held tier owns
+/// its hold and its damage here, beside each other, so the ladder the client descends on
+/// `NotCharged` — super, charged, plain — is the same ladder the chain judges by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tier {
+    Plain,
+    Charged,
+    Super,
+}
+
+impl Tier {
+    /// ER slots the seat must have stood still for, or `None` for the tap, which asks
+    /// nothing of the clock.
+    const fn hold_slots(self) -> Option<u32> {
+        match self {
+            Tier::Plain => None,
+            Tier::Charged => Some(CHARGE_SLOTS),
+            Tier::Super => Some(SUPER_SLOTS),
+        }
+    }
+
+    /// Damage per landing, per class. `state.rs` const-asserts every row is exact and
+    /// `u16`-safe, and that a super outdamages a charged shot.
+    fn damage(self, class: u8) -> u16 {
+        match self {
+            Tier::Plain => CLASS_DAMAGE[class as usize],
+            Tier::Charged => charged_damage(class),
+            Tier::Super => super_damage(class),
+        }
+    }
+
+    /// The flag this tier publishes in `PlayerSlot::facing` beside the octant: bit 3 for
+    /// charged, bit 4 for super, nothing for a tap. One bit each, so a client decodes two
+    /// booleans and never a tier number it would have to keep in step with this enum.
+    const fn facing_bits(self) -> u8 {
+        match self {
+            Tier::Plain => 0,
+            Tier::Charged => 1 << CHARGED_SHOT_BIT,
+            Tier::Super => 1 << SUPER_SHOT_BIT,
+        }
+    }
+}
+
 /// Everything a shot does to the world, given state that has already been proved to
 /// belong to this arena and this signer.
 ///
@@ -443,19 +562,20 @@ const fn phase_takes_fire(phase: u8) -> bool {
 /// only if it lives in a function that takes plain structs, and until this split the
 /// chain had never been executed anywhere, on chain or off (M4).
 ///
-/// `charged_at` is `Some(slot)` for a shot sent charged — the ER slot it executes in, read
-/// by [`process`] from the same sysvar `player::move_clock` stamps `last_move_tick` from —
-/// and `None` for an ordinary shot. One value rather than a flag and a slot, so an
-/// uncharged shot carries no fabricated slot number and [`process`] can skip the syscall
-/// for it. Threaded in rather than read here for the same reason the accounts are: this
-/// function takes plain structs and a syscall is not one.
+/// `slot_now` is the ER slot the shot executes in, read by [`process`] from the same
+/// sysvar `player::move_clock` stamps `last_move_tick` from — for the two held tiers only.
+/// A [`Tier::Plain`] shot never reads it (its arm below has no clock in it) and
+/// [`process`] passes 0 rather than paying the syscall. Threaded in rather than read here
+/// for the same reason the accounts are: this function takes plain structs and a syscall
+/// is not one.
 fn fire(
     arena: &mut Arena,
     boss: &mut Boss,
     slot: &mut PlayerSlot,
     dx: i8,
     dy: i8,
-    charged_at: Option<u32>,
+    tier: Tier,
+    slot_now: u32,
 ) -> Result<(), ProgramError> {
     // Aim first, because it is the only thing here that can be malformed rather than
     // merely refused. `octant` rejects `(0, 0)` — the one illegal aim vector — and is
@@ -486,18 +606,15 @@ fn fire(
     // reads 0 and has been standing still since it joined, which is the honest answer.
     //
     // Refused *before* the cooldown is spent, unlike a miss: the shot was not fired, the
-    // client resends it uncharged, and what it loses is a round trip rather than a shot.
-    // Landing it quietly at 1× instead would put a number on the HUD that disagrees with
-    // the boss bar, with no error anywhere.
-    let damage = match charged_at {
-        Some(slot_now) => {
-            if slot_now.wrapping_sub(slot.last_move_tick) < CHARGE_SLOTS {
-                return Err(HeartrotError::NotCharged.into());
-            }
-            charged_damage(class as u8)
+    // client resends it one tier down, and what it loses is a round trip rather than a
+    // shot. Landing it quietly at a lower tier instead would put a number on the HUD that
+    // disagrees with the boss bar, with no error anywhere.
+    if let Some(hold) = tier.hold_slots() {
+        if slot_now.wrapping_sub(slot.last_move_tick) < hold {
+            return Err(HeartrotError::NotCharged.into());
         }
-        None => CLASS_DAMAGE[class],
-    };
+    }
+    let damage = tier.damage(class as u8);
 
     // Rate limit, in ticks. `saturating_add` rather than `+`: a `last_shot_tick`
     // close to u32::MAX must fail the comparison, not wrap into "ready".
@@ -514,58 +631,67 @@ fn fire(
     // class on their first shot, with no error anywhere. That is why the write lives in
     // `state.rs` beside the field and not inlined here.
     //
-    // The charged flag rides bit 3 of the same `facing` byte: the whole byte is assigned,
-    // so an uncharged shot clears it, and `player::commit_move` assigns a bare octant, so
-    // a step clears it too. That is exactly the lifetime of the arrow a client draws from
-    // it, and it costs no field — the slot has none left to give.
-    slot.facing = facing | (u8::from(charged_at.is_some()) << CHARGED_SHOT_BIT);
+    // The tier's flag rides bits 3 and 4 of the same `facing` byte: the whole byte is
+    // assigned, so a plain shot clears both, and `player::commit_move` assigns a bare
+    // octant, so a step clears them too. That is exactly the lifetime of the arrow (or
+    // the beam) a client draws from it, and it costs no field — the slot has none left to
+    // give.
+    slot.facing = facing | tier.facing_bits();
     slot.set_aim(dx, dy);
 
-    let dealt = match raycast(slot.x, slot.y, dx, dy, boss) {
-        Some(Hit::Part(index)) => {
-            let part = &mut boss.parts[index];
-            // Credit only what was actually removed, or a finishing shot on a
-            // 1 HP part would score the full class damage on the leaderboard.
-            let dealt = (*part).min(damage);
-            // Reaching 0 *is* being destroyed: `raycast` skips a zeroed part, so the
-            // limb detaches and the lane behind it opens with no second flag to set.
-            *part = part.saturating_sub(damage);
-            recompute_vent(boss, arena.raid_size);
-            dealt
-        }
-
-        // The shell absorbs anything aimed at a sealed vent. The shot is spent, the
-        // cooldown is spent, the core is untouched — which is the pressure that makes
-        // stripping parts the only route to a kill.
-        Some(Hit::Core) if boss.vent_open != VENT_OPEN => 0,
-
-        Some(Hit::Core) => {
-            let dealt = boss.core_hp.min(damage);
-            boss.core_hp = boss.core_hp.saturating_sub(damage);
-            if boss.core_hp == 0 {
-                // The raid has won, and the win is *recorded*: `end_fight` writes
-                // `outcome = OUTCOME_WIN` and the phase together, so a settled match can
-                // still answer "did they win?" long after `phase` has moved on, and the
-                // VRF roll for the next incarnation has the `outcome == OUTCOME_WIN`
-                // it requires.
-                //
-                // The `bool` is deliberately dropped. It is `false` only when the fight
-                // was already over — `boss_tick` can reach the same conclusion in the
-                // same crank window — and the first writer is the true one. Losing that
-                // race is not an error: the core is dead either way, and returning `Err`
-                // here would roll back the damage that killed it.
-                arena.end_fight(OUTCOME_WIN);
-            }
-            dealt
-        }
-
-        // A miss. The cooldown above was already spent — that is deliberate.
-        None => 0,
+    // A miss collects nothing and the cooldown above was already spent — that is
+    // deliberate. A tap or a charged shot collects its first hit; a super, the line.
+    let beam = match tier {
+        Tier::Super => raycast_beam(slot.x, slot.y, dx, dy, boss),
+        Tier::Plain | Tier::Charged => Beam::first(raycast(slot.x, slot.y, dx, dy, boss)),
     };
 
-    slot.damage_dealt = slot.damage_dealt.saturating_add(dealt as u32);
+    let mut dealt = 0u32;
+    for (index, part) in boss.parts.iter_mut().enumerate() {
+        if beam.parts & (1 << index) != 0 {
+            dealt += drain(part, damage) as u32;
+        }
+    }
+    // On the same line that changed a part, and *before* the core is judged: a super that
+    // strips the last of the shell has opened the vent for its own core hit.
+    if beam.parts != 0 {
+        recompute_vent(boss, arena.raid_size);
+    }
+
+    // The shell absorbs anything aimed at a sealed vent. The shot is spent, the cooldown
+    // is spent, the core is untouched — which is the pressure that makes stripping parts
+    // the only route to a kill.
+    if beam.core && boss.vent_open == VENT_OPEN {
+        dealt += drain(&mut boss.core_hp, damage) as u32;
+        if boss.core_hp == 0 {
+            // The raid has won, and the win is *recorded*: `end_fight` writes
+            // `outcome = OUTCOME_WIN` and the phase together, so a settled match can
+            // still answer "did they win?" long after `phase` has moved on, and the
+            // VRF roll for the next incarnation has the `outcome == OUTCOME_WIN`
+            // it requires.
+            //
+            // The `bool` is deliberately dropped. It is `false` only when the fight
+            // was already over — `boss_tick` can reach the same conclusion in the
+            // same crank window — and the first writer is the true one. Losing that
+            // race is not an error: the core is dead either way, and returning `Err`
+            // here would roll back the damage that killed it.
+            arena.end_fight(OUTCOME_WIN);
+        }
+    }
+
+    slot.damage_dealt = slot.damage_dealt.saturating_add(dealt);
 
     Ok(())
+}
+
+/// Land `damage` on one HP pool and answer what was actually removed. Credit only that,
+/// or a finishing shot on a 1 HP part would score the full class damage on the
+/// leaderboard. Reaching 0 *is* being destroyed: [`walk_ray`] skips a zeroed part, so the
+/// limb detaches and the lane behind it opens with no second flag to set.
+fn drain(hp: &mut u16, damage: u16) -> u16 {
+    let dealt = (*hp).min(damage);
+    *hp = hp.saturating_sub(damage);
+    dealt
 }
 
 // ---------------------------------------------------------------------------
@@ -582,27 +708,32 @@ fn fire(
 /// | 3 | `authority` | signer, the browser's session key |
 ///
 /// Tag 7's argument block, parsed and validated as bytes:
-/// `[seat: u8, dx: i8, dy: i8, charged: u8 ∈ {0, 1}]` — 5 bytes on the wire with the tag,
-/// was 4. Pure, like `player::parse_join`, so the frozen ABI is testable without the four
+/// `[seat: u8, dx: i8, dy: i8, tier: u8 ∈ {0, 1, 2}]` — 5 bytes on the wire with the
+/// tag. Pure, like `player::parse_join`, so the frozen ABI is testable without the four
 /// `AccountView`s [`process`] needs.
 ///
-/// An old client sending the 3-byte block gets a clean length refusal here, which is the
-/// whole reason this is safe to ship: program and app must ship together, and they will
-/// fail loudly rather than read a missing byte as "uncharged". `charged` is range-checked
-/// and never masked — a 2 is client/program skew, and skew has to be loud — with the same
-/// `InvalidInstructionData` the length check uses, for the reason `error.rs` gives the
-/// class byte: it carries nothing a caller can act on differently.
+/// The byte was `charged ∈ {0, 1}` and 2 is the super; an old client's 0 and 1 mean what
+/// they meant, so this widening ships program-first with no skew. An old client sending
+/// the 3-byte block gets a clean length refusal here, which is the whole reason this is
+/// safe to ship: program and app must ship together, and they will fail loudly rather
+/// than read a missing byte as "plain". `tier` is range-checked and never masked — a 3 is
+/// client/program skew, and skew has to be loud — with the same `InvalidInstructionData`
+/// the length check uses, for the reason `error.rs` gives the class byte: it carries
+/// nothing a caller can act on differently.
 ///
 /// Every `(dx, dy)` except `(0, 0)` is a legal aim, so there is no range check on the
 /// pair; `fire` rejects the zero vector through `octant`.
-fn parse_shot(data: &[u8]) -> Result<(u8, i8, i8, bool), ProgramError> {
-    let &[seat, dx, dy, charged] = data else {
+fn parse_shot(data: &[u8]) -> Result<(u8, i8, i8, Tier), ProgramError> {
+    let &[seat, dx, dy, tier] = data else {
         return Err(ProgramError::InvalidInstructionData);
     };
-    if charged > 1 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    Ok((seat, dx as i8, dy as i8, charged == 1))
+    let tier = match tier {
+        0 => Tier::Plain,
+        1 => Tier::Charged,
+        2 => Tier::Super,
+        _ => return Err(ProgramError::InvalidInstructionData),
+    };
+    Ok((seat, dx as i8, dy as i8, tier))
 }
 
 /// `program_id` is the runtime's own value, threaded down from the entrypoint like every
@@ -616,7 +747,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
-    let (seat, dx, dy, charged) = parse_shot(data)?;
+    let (seat, dx, dy, tier) = parse_shot(data)?;
 
     // Pinocchio validates nothing, so every one of these is hand-written and every
     // one of them is load-bearing. They run before any state is touched.
@@ -682,18 +813,17 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
     assert_session_authority(slot, authority)?;
 
     // The ER slot, from the sysvar `player::move_clock` stamps `last_move_tick` with — the
-    // only clock the charge hold can be measured on (see the module docs). Read only for a
-    // charged shot, and after every guard: the syscall is the bulk of the feature's cost —
+    // only clock a hold can be measured on (see the module docs). Read only for a held
+    // tier, and after every guard: the syscall is the bulk of the feature's cost —
     // measured in mollusk against the pre-charge handler on identical fixtures, a plain
     // shot is +73..+93 CU and a charged one +202..+222, the 129 CU between them being this
     // one call — and the plain shot is the hot path, a raider holding fire while walking.
-    let charged_at = if charged {
-        Some(Clock::get()?.slot as u32)
-    } else {
-        None
+    let slot_now = match tier {
+        Tier::Plain => 0,
+        Tier::Charged | Tier::Super => Clock::get()?.slot as u32,
     };
 
-    fire(arena, boss, slot, dx, dy, charged_at)
+    fire(arena, boss, slot, dx, dy, tier, slot_now)
 }
 
 #[cfg(test)]
@@ -827,7 +957,8 @@ mod tests {
     /// archer's tests wait 1400 ms and the knight's 800 without a second helper.
     fn shoot_lane(s: &Survey, arena: &mut Arena, boss: &mut Boss, slot: &mut PlayerSlot) {
         arena.tick += CLASS_COOLDOWN[class_of(slot)] + 1;
-        fire(arena, boss, slot, s.aim.0, s.aim.1, None).expect("a live seat off cooldown may fire");
+        fire(arena, boss, slot, s.aim.0, s.aim.1, Tier::Plain, 0)
+            .expect("a live seat off cooldown may fire");
     }
 
     /// Invert [`encode_aim`]. Test-only, and it is the *specification* the TypeScript
@@ -1023,12 +1154,12 @@ mod tests {
         shoot_lane(&s, &mut arena, &mut boss, &mut slot);
         // Same tick, and one tick later: still inside the cooldown window.
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0).unwrap_err(),
             HeartrotError::RateLimited.into(),
         );
         arena.tick += 1;
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0).unwrap_err(),
             HeartrotError::RateLimited.into(),
         );
         assert_eq!(boss.parts[s.blocker], 60, "a refused shot deals nothing");
@@ -1038,11 +1169,12 @@ mod tests {
         // divided by TICK_MS, so a literal here would silently stop testing the boundary
         // the moment the tick rate moved — which is exactly what it did.
         arena.tick += CLASS_COOLDOWN[CLASS_KNIGHT] + 1;
-        fire(&mut arena, &mut boss, &mut slot, -s.aim.0, -s.aim.1, None).expect("off cooldown");
+        fire(&mut arena, &mut boss, &mut slot, -s.aim.0, -s.aim.1, Tier::Plain, 0)
+            .expect("off cooldown");
         assert_eq!(slot.last_shot_tick, arena.tick);
         assert_eq!(boss.parts[s.blocker], 60, "the miss dealt nothing");
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0).unwrap_err(),
             HeartrotError::RateLimited.into(),
         );
     }
@@ -1127,20 +1259,21 @@ mod tests {
         let mut dead = shooter(&s);
         dead.hp = 0;
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut dead, s.aim.0, s.aim.1, None).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut dead, s.aim.0, s.aim.1, Tier::Plain, 0).unwrap_err(),
             HeartrotError::PlayerDead.into(),
         );
 
         let mut in_lobby = shooter(&s);
         in_lobby.zone = crate::state::ZONE_LOBBY;
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut in_lobby, s.aim.0, s.aim.1, None).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut in_lobby, s.aim.0, s.aim.1, Tier::Plain, 0)
+                .unwrap_err(),
             HeartrotError::WrongZone.into(),
         );
 
         let mut live = shooter(&s);
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut live, 0, 0, None).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut live, 0, 0, Tier::Plain, 0).unwrap_err(),
             ProgramError::InvalidInstructionData,
         );
         assert_eq!(live.last_shot_tick, 0, "a malformed aim spends nothing");
@@ -1266,21 +1399,24 @@ mod tests {
             let mut slot = slot;
             let mut arena = arena_fighting();
             arena.tick = 1_000;
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).expect("first shot is free");
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0)
+                .expect("first shot is free");
             assert_eq!(slot.damage_dealt, CLASS_DAMAGE[class] as u32);
 
             // Every tick up to and including the cooldown is refused...
             for wait in 0..=CLASS_COOLDOWN[class] {
                 arena.tick = 1_000 + wait;
                 assert_eq!(
-                    fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).unwrap_err(),
+                    fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0)
+                        .unwrap_err(),
                     HeartrotError::RateLimited.into(),
                     "class {class} fired {wait} ticks early",
                 );
             }
             // ...and the next one is not.
             arena.tick = 1_000 + CLASS_COOLDOWN[class] + 1;
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).expect("off cooldown");
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0)
+                .expect("off cooldown");
             assert_eq!(slot.damage_dealt, 2 * CLASS_DAMAGE[class] as u32);
             ready_at[class] = CLASS_COOLDOWN[class] + 1;
         }
@@ -1392,7 +1528,8 @@ mod tests {
         // One slot short of the hold: refused, and nothing spent.
         let early = 5_000 + CHARGE_SLOTS - 1;
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Some(early)).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Charged, early)
+                .unwrap_err(),
             HeartrotError::NotCharged.into(),
         );
         assert_eq!(slot.last_shot_tick, 0, "a refused charge spends no cooldown");
@@ -1400,14 +1537,23 @@ mod tests {
         assert_eq!(boss.parts[s.blocker], 1_000);
 
         // The same shot, same tick, resent uncharged: lands at 70 — the client's recovery.
-        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).expect("uncharged");
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0)
+            .expect("uncharged");
         assert_eq!(boss.parts[s.blocker], 1_000 - 70);
         assert_eq!(slot.facing, aim, "an uncharged shot carries no flag");
 
         // Exactly the hold: 175, and the flag rides `facing` beside the octant.
         arena.tick += CLASS_COOLDOWN[CLASS_ARCHER] + 1;
-        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Some(5_000 + CHARGE_SLOTS))
-            .expect("charged");
+        fire(
+            &mut arena,
+            &mut boss,
+            &mut slot,
+            s.aim.0,
+            s.aim.1,
+            Tier::Charged,
+            5_000 + CHARGE_SLOTS,
+        )
+        .expect("charged");
         assert_eq!(charged_damage(CLASS_ARCHER as u8), 175);
         assert_eq!(boss.parts[s.blocker], 1_000 - 70 - 175);
         assert_eq!(slot.damage_dealt, 70 + 175);
@@ -1415,12 +1561,14 @@ mod tests {
 
         // The next uncharged shot clears it.
         arena.tick += CLASS_COOLDOWN[CLASS_ARCHER] + 1;
-        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, None).expect("uncharged");
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0)
+            .expect("uncharged");
         assert_eq!(slot.facing, aim);
 
         // Held long enough but on cooldown: the hold passes and the cooldown refuses.
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Some(9_999)).unwrap_err(),
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Charged, 9_999)
+                .unwrap_err(),
             HeartrotError::RateLimited.into(),
         );
 
@@ -1429,7 +1577,7 @@ mod tests {
         let mut knight = shooter(&s);
         let mut arena = arena_fighting();
         arena.tick = 100;
-        fire(&mut arena, &mut boss, &mut knight, s.aim.0, s.aim.1, Some(CHARGE_SLOTS))
+        fire(&mut arena, &mut boss, &mut knight, s.aim.0, s.aim.1, Tier::Charged, CHARGE_SLOTS)
             .expect("still since it joined");
         assert_eq!(knight.damage_dealt, 100);
 
@@ -1440,12 +1588,20 @@ mod tests {
         let mut arena = arena_fighting();
         arena.tick = 100;
         assert_eq!(
-            fire(&mut arena, &mut boss, &mut wrapped, s.aim.0, s.aim.1, Some(CHARGE_SLOTS - 6))
-                .unwrap_err(),
+            fire(
+                &mut arena,
+                &mut boss,
+                &mut wrapped,
+                s.aim.0,
+                s.aim.1,
+                Tier::Charged,
+                CHARGE_SLOTS - 6,
+            )
+            .unwrap_err(),
             HeartrotError::NotCharged.into(),
             "nineteen slots across the wrap is still short",
         );
-        fire(&mut arena, &mut boss, &mut wrapped, s.aim.0, s.aim.1, Some(CHARGE_SLOTS - 5))
+        fire(&mut arena, &mut boss, &mut wrapped, s.aim.0, s.aim.1, Tier::Charged, CHARGE_SLOTS - 5)
             .expect("twenty slots across the wrap");
     }
 
@@ -1476,20 +1632,188 @@ mod tests {
         }
     }
 
-    /// Tag 7's wire block, byte for byte: four bytes and only four, and `charged` is 0 or 1.
-    /// Every other length is a client on the wrong side of the deploy, and a 2 is skew that
+    /// The super: 5× — 350 for the archer, 200 for the knight — behind a hold of
+    /// `SUPER_SLOTS`, judged on the same slot clock as the charged hold and refused the same
+    /// way: `NotCharged`, before the cooldown is spent, with nothing written. A charged-length
+    /// hold is *not* enough, which is what makes the client's downgrade ladder a ladder. The
+    /// flag is bit 4 alone — never bit 3 beside it — and a plain shot clears it.
+    #[test]
+    fn a_super_needs_the_longer_hold_and_deals_five_times() {
+        let s = survey();
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        // A full raid, so the 35 % threshold keeps the vent sealed under the beam's own
+        // part damage and the core stays out of this arithmetic; the kill-through is the
+        // pierce test's.
+        arena.raid_size = MAX_SEATS as u8;
+        let mut boss = standing_boss();
+        boss.parts = [1_000; N_PARTS];
+        boss.parts_max = [1_000; N_PARTS];
+        let mut slot = archer(&s);
+        slot.last_move_tick = 5_000;
+        let aim = octant(s.aim.0, s.aim.1).unwrap();
+
+        // Held for a charged shot, and for one slot short of a super: refused, nothing spent.
+        for short in [CHARGE_SLOTS, SUPER_SLOTS - 1] {
+            assert_eq!(
+                fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Super, 5_000 + short)
+                    .unwrap_err(),
+                HeartrotError::NotCharged.into(),
+                "{short} slots is not a super's hold",
+            );
+        }
+        assert_eq!(slot.last_shot_tick, 0, "a refused super spends no cooldown");
+        assert_eq!(slot.facing, 0, "and writes nothing");
+        assert_eq!(slot.damage_dealt, 0);
+
+        // Exactly the hold: 350 into every live part on the lane — the survey's blocker
+        // first, and whatever the beam finds behind it, once each — and bit 4 alone.
+        let on_line = raycast_beam(slot.x, slot.y, s.aim.0, s.aim.1, &boss).parts.count_ones();
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Super, 5_000 + SUPER_SLOTS)
+            .expect("super");
+        assert_eq!(super_damage(CLASS_ARCHER as u8), 350);
+        assert_eq!(boss.parts[s.blocker], 1_000 - 350);
+        assert_eq!(slot.damage_dealt, 350 * on_line);
+        assert_eq!(slot.facing, aim | 1 << SUPER_SHOT_BIT);
+        assert_eq!(slot.facing & (1 << CHARGED_SHOT_BIT), 0, "a super is not also charged");
+        assert_eq!(slot.last_shot_tick, arena.tick, "the attempt spent the cooldown");
+
+        // The next plain shot clears it.
+        arena.tick += CLASS_COOLDOWN[CLASS_ARCHER] + 1;
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0).expect("plain");
+        assert_eq!(slot.facing, aim);
+
+        // The knight's row: 200 per part on the same line. Still since it joined, so any
+        // slot past the hold serves.
+        let mut knight = shooter(&s);
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        arena.raid_size = MAX_SEATS as u8;
+        fire(&mut arena, &mut boss, &mut knight, s.aim.0, s.aim.1, Tier::Super, SUPER_SLOTS)
+            .expect("still since it joined");
+        assert_eq!(knight.damage_dealt, 200 * on_line);
+    }
+
+    /// A stand and an aim whose beam enters at least two live parts and then the core, found
+    /// by search over the generated map and tables for the reason [`survey`] is: which parts
+    /// stack on which lane is generator output. Every floor tile is tried against the core
+    /// and against each part centre, so a redrawn boss moves the test rather than breaking it.
+    fn beam_lane() -> ((i16, i16), (i8, i8), Beam) {
+        let boss = standing_boss();
+        let (bx, by) = (boss.x as i32, boss.y as i32);
+        let half = TILE as i32 / 2;
+        let mut targets = vec![(bx + CORE_X, by + CORE_Y)];
+        targets.extend(PART_HITBOXES.iter().map(|r| (bx + r.x + r.w / 2, by + r.y + r.h / 2)));
+
+        for ty in 0..MAP_TILES as i32 {
+            for tx in 0..MAP_TILES as i32 {
+                let (x, y) = (tx * TILE as i32 + half, ty * TILE as i32 + half);
+                if is_wall(x, y) || SHELL_AABB.contains(x - bx, y - by) {
+                    continue;
+                }
+                for &(gx, gy) in &targets {
+                    let (dx, dy) = aim_at(gx - x, gy - y);
+                    let beam = raycast_beam(x as i16, y as i16, dx, dy, &boss);
+                    if beam.core && beam.parts.count_ones() >= 2 {
+                        return ((x as i16, y as i16), (dx, dy), beam);
+                    }
+                }
+            }
+        }
+        panic!(
+            "no floor tile has a beam through two parts and the core -- the map and the boss \
+             no longer agree; re-run tools/gen_map.py and tools/gen_hitboxes.py"
+        );
+    }
+
+    /// The pierce, end to end. On one beam through two parts and the orb: with a full raid's
+    /// threshold the parts each take the super once and the sealed vent absorbs the core;
+    /// with a solo threshold the same beam strips them, opens the vent *on that line*, and
+    /// kills through it — one transaction, a recorded win. And the same lane fired charged
+    /// still stops at the first part, so the pierce is the super's alone.
+    #[test]
+    fn a_super_pierces_every_part_on_the_line_and_the_core_through_the_vent_it_opened() {
+        let (stand, aim, beam) = beam_lane();
+        let hits = beam.parts.count_ones();
+        // The searched lane in [`survey`]'s shape, so [`archer`] seats the shooter on it.
+        let s = Survey {
+            stand,
+            aim,
+            blocker: beam.parts.trailing_zeros() as usize,
+            walled_out: 0,
+        };
+
+        // Twenty raiders: 35 % threshold. 1,000-HP parts each lose 350, once, the shell
+        // stays far above the line, and the beam's core crossing scores nothing.
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        arena.raid_size = MAX_SEATS as u8;
+        let mut boss = standing_boss();
+        boss.parts = [1_000; N_PARTS];
+        boss.parts_max = [1_000; N_PARTS];
+        let mut slot = archer(&s);
+        fire(&mut arena, &mut boss, &mut slot, aim.0, aim.1, Tier::Super, SUPER_SLOTS)
+            .expect("super");
+        for index in 0..N_PARTS {
+            let on_beam = beam.parts & (1 << index) != 0;
+            assert_eq!(boss.parts[index], if on_beam { 650 } else { 1_000 }, "part {index}");
+        }
+        assert_eq!(boss.vent_open, 0, "the shell is 90 % standing");
+        assert_eq!(boss.core_hp, 100, "a sealed vent absorbs the beam's core crossing");
+        assert_eq!(slot.damage_dealt, 350 * hits, "each part once, the core not at all");
+
+        // Solo: 98 % threshold, a full 100-HP shell, sealed. One beam takes every part on
+        // the line to 0, which opens the vent, and the same beam's core crossing then lands.
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        arena.raid_size = 1;
+        let mut boss = standing_boss();
+        recompute_vent(&mut boss, arena.raid_size);
+        assert_eq!(boss.vent_open, 0, "a full shell is sealed at every raid size");
+        let mut slot = archer(&s);
+        fire(&mut arena, &mut boss, &mut slot, aim.0, aim.1, Tier::Super, SUPER_SLOTS)
+            .expect("super");
+        for index in 0..N_PARTS {
+            let on_beam = beam.parts & (1 << index) != 0;
+            assert_eq!(boss.parts[index], if on_beam { 0 } else { 100 }, "part {index}");
+        }
+        assert_eq!(boss.vent_open, VENT_OPEN, "the beam opened the vent");
+        assert_eq!(boss.core_hp, 0, "and killed through it");
+        assert_eq!(arena.outcome, OUTCOME_WIN);
+        assert_eq!(arena.phase, PHASE_SETTLING);
+        // Credited what was removed: 100 per part on the line and 100 off the core, not 350s.
+        assert_eq!(slot.damage_dealt, 100 * hits + 100);
+
+        // The same lane, charged: first live part only, 175, and the core untouched.
+        let mut arena = arena_fighting();
+        arena.tick = 100;
+        arena.raid_size = 1;
+        let mut boss = standing_boss();
+        boss.parts = [1_000; N_PARTS];
+        boss.parts_max = [1_000; N_PARTS];
+        let mut slot = archer(&s);
+        fire(&mut arena, &mut boss, &mut slot, aim.0, aim.1, Tier::Charged, CHARGE_SLOTS)
+            .expect("charged");
+        assert_eq!(slot.damage_dealt, 175, "a charged shot stops at the first part");
+        assert_eq!(boss.parts.iter().filter(|&&hp| hp != 1_000).count(), 1);
+        assert_eq!(boss.core_hp, 100);
+    }
+
+    /// Tag 7's wire block, byte for byte: four bytes and only four, and `tier` is 0, 1 or 2.
+    /// Every other length is a client on the wrong side of the deploy, and a 3 is skew that
     /// must not be masked into a legal shot.
     #[test]
-    fn the_shot_block_is_four_bytes_with_a_binary_flag() {
-        assert_eq!(parse_shot(&[3, 5, 0xfa, 0]), Ok((3, 5, -6, false)));
-        assert_eq!(parse_shot(&[19, 0x80, 127, 1]), Ok((19, -128, 127, true)));
+    fn the_shot_block_is_four_bytes_with_a_tier_byte() {
+        assert_eq!(parse_shot(&[3, 5, 0xfa, 0]), Ok((3, 5, -6, Tier::Plain)));
+        assert_eq!(parse_shot(&[19, 0x80, 127, 1]), Ok((19, -128, 127, Tier::Charged)));
+        assert_eq!(parse_shot(&[7, 1, 1, 2]), Ok((7, 1, 1, Tier::Super)));
         let refused: [&[u8]; 7] = [
             &[],
             &[3],
             &[3, 5],
             &[3, 5, 0xfa],
             &[3, 5, 0xfa, 1, 0],
-            &[3, 5, 0xfa, 2],
+            &[3, 5, 0xfa, 3],
             &[3, 5, 0xfa, 0xff],
         ];
         for bad in refused {

@@ -46,7 +46,7 @@ export const HEARTROT_ERRORS: Readonly<Record<number, HeartrotErrorInfo>> = {
   17: { name: "MatchNotRecorded", message: "next_incarnation on an arena whose result has not reached the Leaderboard yet \u2014 last_arena_id / last_incarnation do not name this match." },
   18: { name: "NotVrfIdentity", message: "A VRF callback whose signer is not vrf::pda::scoped_vrf_identity(heartrot)." },
   19: { name: "NoRaiders", message: "begin_muster (tag 3) was sent while no seat is in ZONE_ARENA \u2014 nobody has walked through the gate, so there is nothing to muster for." },
-  20: { name: "NotCharged", message: "shoot (tag 7) was sent with charged = 1 fewer than state::CHARGE_SLOTS ER slots after the seat's last accepted step, so the hold has not accrued and the shot is not charged." },
+  20: { name: "NotCharged", message: "shoot (tag 7) was sent with charged = 1 fewer than state::CHARGE_SLOTS ER slots after the seat's last accepted step, or charged = 2 fewer than state::SUPER_SLOTS, so the hold has not accrued and the shot is not the tier it claims." },
 };
 
 /**

@@ -32,7 +32,8 @@ with its `_px` fields re-measured is a drop-in:
          boss tile: the crop's centre (the creature's feet line, which is why gen_boss pads
          the crop's height) lands on `BOSS_SPAWN`, and the painting is centred in x. Its
          bottom edge is then the pit RIM: the last pit row, the gate rows and the lobby's
-         first row all follow from it, which is how one authored tile fixes every row.
+         first row all follow from it, and the first pit row from the dais's crest, which
+         is how one authored tile fixes every row.
 
   lobby  fitted to the room's HEIGHT, `ROOM_H = LOBBY_HEAD + lobby band + LOBBY_FOOT`
          (the head and foot are read out of `viewport.ts`, the band is the rows the rim
@@ -42,17 +43,20 @@ with its `_px` fields re-measured is a drop-in:
          head is a floor that starts a row early.
 
 WALKABLE. A tile is floor when at least `COVER` of its 16 x 16 world area maps inside the
-shape (pit: the platform ellipse or the stairs; lobby: the floor rect; gate: the
+shape (pit: the WHOLE platform ellipse or the stairs; lobby: the floor rect; gate: the
 portcullis opening's x-span), sampled `SUB` x `SUB`. Then mirror-symmetrised -- a tile is
 floor only if its mirror about the centre line is too -- so a measurement a pixel off
-centre cannot ship an asymmetric arena. Everything else `gen_map.py` already proves
-(reachability, one run per row, spawn fans, the seam) is left to it.
+centre cannot ship an asymmetric arena. The boss's body is not cut out of the pit here:
+it is a movement barrier in `player.rs` (the fold of the hitbox table), never a wall,
+because a wall tile kills every ray in its column. Everything else `gen_map.py` already
+proves (reachability, one run per row, spawn fans, the seam) is left to it.
 """
 
 from __future__ import annotations
 
 import io
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -194,12 +198,36 @@ def layout(doc: dict, lobby_im: Image.Image, arena_im: Image.Image) -> dict:
         die(f"the arena painting's bottom edge lands at world y {rim:g}, not on a tile row: "
             "the rim must be a row edge (move boss_tile or re-measure boss_crop_px)")
     rim_row = int(rim) // tile
-    pit_rows = (by, rim_row - 1)
+    # The pit is the WHOLE painted dais, so its first row is the first row wholly under the
+    # ellipse's crest, and everything above that is the boss's air. Not the first row the
+    # ellipse *enters*: at the shipped numbers the crest is 8 px into row 11, which
+    # `covered` at COVER = 0.5 reads as a two-tile nub on the centre line -- and a pit row
+    # that is wall everywhere but a two-tile hole is a lid over the dais that every ray
+    # from the shoulders to the crown dies on (`shoot` tests `is_wall` before the part
+    # boxes). The pit used to start on the boss's feet row instead, which is what held the
+    # raid below the creature's feet line; the boss now stands INSIDE the band and its
+    # body is a movement barrier of its own (`player.rs`), which is why the feet row is
+    # asserted to be a pit row and no longer defines one.
+    ell = are["platform_ellipse_px"]
+    pit_rows = (math.ceil((arena.y + (ell["cy"] - ell["ry"]) * sa) / tile), rim_row - 1)
+    # The boss's air reaches down to the row above the dais's widest one, not merely to
+    # the row above the dais. Above its widest row the ellipse narrows upward, so every
+    # row's outermost tile has NO dais tile over it -- and a player standing on that tile's
+    # top-outer corner (a tile corner is where every cardinal step lands) fires every
+    # upward shot into whatever the tile above is. Wall there is a stand from which
+    # nothing can be hit (`gen_hitboxes.py`'s sweep: 8 such stands the first time this
+    # was tried); air is a shot that flies. Below the widest row the row above is always
+    # at least as wide, so there is nothing to keep open.
+    air_rows = (1, int((arena.y + ell["cy"] * sa) // tile) - 1)
     gate_rows = (rim_row, rim_row + GATE_ROWS - 1)
     lobby_rows = (rim_row + GATE_ROWS, n - 2)
-    if not (1 < pit_rows[0] <= pit_rows[1] < gate_rows[0] <= lobby_rows[0] <= lobby_rows[1]):
-        die(f"rows do not fit: pit {pit_rows}, gate {gate_rows}, lobby {lobby_rows} on a "
-            f"{n}-row map")
+    if not (1 < pit_rows[0] <= air_rows[1] < pit_rows[1] < gate_rows[0] <= lobby_rows[0]
+            <= lobby_rows[1]):
+        die(f"rows do not fit: pit {pit_rows}, air {air_rows}, gate {gate_rows}, lobby "
+            f"{lobby_rows} on a {n}-row map")
+    if not (pit_rows[0] <= by <= pit_rows[1]):
+        die(f"boss tile ({bx}, {by}) is on row {by}, outside the dais rows {pit_rows}: a "
+            "raider is clamped to those rows and could never stand level with the boss")
 
     # The lobby: fitted to the room's height, top edge on VIEW_LOBBY.y, centred in x.
     head, foot = viewport_tiles("LOBBY_HEAD"), viewport_tiles("LOBBY_FOOT")
@@ -210,7 +238,7 @@ def layout(doc: dict, lobby_im: Image.Image, arena_im: Image.Image) -> dict:
     return {
         "tile": tile, "n": n, "units": units,
         "arena": arena, "lobby": lobby,
-        "pit_rows": pit_rows, "gate_rows": gate_rows, "lobby_rows": lobby_rows,
+        "pit_rows": pit_rows, "air_rows": air_rows, "gate_rows": gate_rows, "lobby_rows": lobby_rows,
         "room_h": room_h, "head": head, "foot": foot,
         "boss": (bx * tile, by * tile),
     }
@@ -222,24 +250,28 @@ def build_grid(doc: dict, lay: dict) -> list[str]:
     arena, lobby = lay["arena"], lay["lobby"]
     grid = [[WALL] * n for _ in range(n)]
 
-    # The boss's air: open floor, or `shoot`'s raycast dies on it. See gen_map.py.
-    for ty in range(1, lay["pit_rows"][0]):
+    # The boss's air: open floor, or `shoot`'s raycast dies on it. See gen_map.py. It
+    # reaches down past the dais's crest to the row above its widest row (`layout`), and
+    # the dais is painted over it below: a `.` tile inside the pit rows is floor a ray
+    # crosses and no raider may stand on -- `gen_map.py` emits the dais as its own bitboard
+    # for `move_player` beside the wall table for `shoot`.
+    for ty in range(lay["air_rows"][0], lay["air_rows"][1] + 1):
         for tx in range(BORDER, n - BORDER):
             grid[ty][tx] = FLOOR
 
     ell, stairs = in_ellipse(are["platform_ellipse_px"]), in_rect(are["stairs_px"])
+    # The whole ellipse and nothing else. There used to be a kerb fill here -- every column
+    # filled bottom-up to the pit's first row -- because the pit began on the boss's feet
+    # row, where the dais is still widening, and a tile poking out under a narrower row had
+    # a wall capping its column: a pocket from whose corner every upward ray died
+    # (`gen_hitboxes.py`'s pit-reach sweep found (3, 23) and its mirror). Over the whole
+    # dais that fill would square the upper half off into floor the painting shows as
+    # temple flagstones beside a raised dais. The air above the widest row is what closes
+    # the pocket now, without adding a stand anywhere.
     pit = symmetric({(tx, ty)
                      for ty in range(lay["pit_rows"][0], lay["pit_rows"][1] + 1)
                      for tx in range(n)
                      if covered(tx, ty, tile, arena, lambda px, py: ell(px, py) or stairs(px, py))}, n)
-    # Every pit column runs unbroken up to the boss's air. The dais is widest below the
-    # boss's feet, so its top rows WIDEN downward and leave a wall tile capping the column
-    # above the tile that pokes out -- a pocket from whose corner every upward ray dies on
-    # the cap (`gen_hitboxes.py`'s pit-reach sweep found (3, 23) and its mirror). The cap
-    # is the dais's own kerb, so it is pit: filled bottom-up, which touches nothing where
-    # the dais narrows, because there the row above already contains the row below.
-    for ty in range(lay["pit_rows"][1] - 1, lay["pit_rows"][0] - 1, -1):
-        pit |= {(tx, ty) for tx in range(n) if (tx, ty + 1) in pit}
     span = in_xspan(lob["gate_px"])
     gate = symmetric({(tx, ty)
                       for ty in range(lay["gate_rows"][0], lay["gate_rows"][1] + 1)
@@ -459,7 +491,7 @@ export const VOID: Readonly<Record<'lobby' | 'arena', string>> = {{
 /** The painted lobby floor. Every walkable lobby tile lies wholly inside it (generator-proven). */
 export const LOBBY_FLOOR: WorldRect = {obj(shapes["floor"])};
 
-/** The painted platform the pit is cut from: the walkable pit is this ellipse's lower half. */
+/** The painted platform the pit is cut from: the walkable pit is this whole ellipse, less the boss. */
 export const ARENA_PLATFORM: WorldEllipse = {obj(shapes["platform"])};
 
 /**

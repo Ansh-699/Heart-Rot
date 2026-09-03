@@ -24,8 +24,9 @@ export const MAP_MAX_XY = MAP_TILES * MAP_TILE - 1;
  * One string per row, one character per tile: `#` wall, `.` floor, `P` pit floor,
  * `G` gate, `E` entrance, `B` the heart tile the boss spawns on. Row *y*, character *x*.
  *
- * Everything but `#` is walkable. A renderer that keys off `.` alone will draw the pit
- * and the gate as holes.
+ * Everything but `#` is floor to a ray. A raider stands only on the dais -- `P`, `E`,
+ * `B`, see {@link isDaisTile} -- and the `.` rows and shoulders around it are the boss's
+ * air. A renderer that keys off `.` alone will draw the pit and the gate as holes.
  */
 export const MAP_GRID: readonly string[] = [
   '################################################################',
@@ -40,18 +41,18 @@ export const MAP_GRID: readonly string[] = [
   '##............................................................##',
   '##............................................................##',
   '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '##............................................................##',
-  '###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPBPPPPPPPPPPPPPPPPPPPPPPPPPPPP###',
-  '###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###',
+  '##...................PPPPPPPPPPPPPPPPPPPPPP...................##',
+  '##...............PPPPPPPPPPPPPPPPPPPPPPPPPPPPPP...............##',
+  '##............PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP............##',
+  '##.........PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.........##',
+  '##.......PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.......##',
+  '##......PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP......##',
+  '##.....PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.....##',
+  '##....PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP....##',
+  '##...PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP...##',
+  '##..PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP..##',
+  '##..PPPPPPPPPPPPPPPPPPPPPPPPPPPPBPPPPPPPPPPPPPPPPPPPPPPPPPPP..##',
+  '##.PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP.##',
   '###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###',
   '###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###',
   '###PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###',
@@ -119,16 +120,17 @@ export const BOSS_SPAWN: readonly [number, number] = [512, 352]; // tile (32, 22
 
 /**
  * The raider box: a `ZONE_ARENA` player's y is confined to `PIT_TOP..=PIT_BOT`, the
- * bounding rows of the drawn `P` block (tile rows 22..37).
+ * bounding rows of the drawn `P` block (tile rows 12..37).
  *
  * The exact pair `map::PIT_TOP`/`map::PIT_BOT` hold on the chain, and `move_player`
  * compares a move's *destination* y against them. Client-side prediction must apply the
  * same clamp, on the same side of the move: a step the browser allows and the chain
  * refuses is a permanent snap-back on that tile, which reads as lag rather than as a
  * rule. And it is a rule, not a wall -- the rows above the pit are open floor, because
- * the chain's raycast dies on any wall tile between a player and the boss.
+ * the chain's raycast dies on any wall tile between a player and the boss. The band is
+ * the coarse half of that rule; {@link onDais} is the fine half.
  */
-export const PIT_TOP = 352;
+export const PIT_TOP = 192;
 export const PIT_BOT = 607;
 
 /**
@@ -191,4 +193,26 @@ export function isWallTile(tx: number, ty: number): boolean {
 export function isWall(x: number, y: number): boolean {
   if (x < 0 || y < 0) return true;
   return isWallTile(Math.floor(x / MAP_TILE), Math.floor(y / MAP_TILE));
+}
+
+/**
+ * May a raider stand on this tile? The `P`, `E` and `B` tiles -- the painted platform and
+ * its stairs -- exactly the bits of the chain's `map::DAIS`. Off-map is not dais.
+ *
+ * A second question from the same grid, because the two barriers differ: a `.` tile
+ * inside the pit rows is the boss's air beside the dais's shoulders -- floor to the
+ * chain's raycast (a wall there was a stand from which every upward shot died) and off
+ * limits to a step. `handlers::player::standable` refuses a raider a destination off the
+ * dais, and prediction mirrors it through {@link onDais}.
+ */
+export function isDaisTile(tx: number, ty: number): boolean {
+  if (tx < 0 || ty < 0 || tx >= MAP_TILES || ty >= MAP_TILES) return false;
+  const c = MAP_GRID[ty]![tx];
+  return c === 'P' || c === 'E' || c === 'B';
+}
+
+/** Is the tile containing this arena-space point dais? `handlers::player::on_dais`, byte for byte. */
+export function onDais(x: number, y: number): boolean {
+  if (x < 0 || y < 0) return false;
+  return isDaisTile(Math.floor(x / MAP_TILE), Math.floor(y / MAP_TILE));
 }

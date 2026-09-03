@@ -35,6 +35,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import {
   CLASS_ARCHER,
+  FURY_PCT,
   MAX_SEATS,
   MUZZLES,
   N_CLASSES,
@@ -49,7 +50,11 @@ import {
   PHASE_SETTLED,
   PHASE_SETTLING,
   TICK_MS,
+  VENT_PCT_FULL,
+  VENT_PCT_SOLO,
   ZONE_ARENA,
+  fightHp,
+  isFurious,
   ventPct,
 } from '@heartrot/client';
 
@@ -97,9 +102,11 @@ const LAST_THORN = 3;
 
 /*
  * `Boss.vent_open` flips when `sum(parts) * 100 < sum(parts_max) * vent_pct(raid_size)` —
- * 65 solo, 35 at a full raid, linear between. The percentage is `layout.ts`'s `ventPct`,
- * the same mirror `shoot.rs` recomputes against; this file used to hold a literal 35 and
- * would have taught a solo player a threshold thirty points below the real one.
+ * `VENT_PCT_SOLO` solo, `VENT_PCT_FULL` at a full raid, linear between. The percentage is
+ * `layout.ts`'s `ventPct`, the same mirror `shoot.rs` recomputes against; this file used
+ * to hold a literal 35 and would have taught a solo player a threshold sixty points below
+ * the real one. The self-check names the constants for the same reason: it held a literal
+ * 65 through two solo retunes and would have thrown on the first dev boot to run it.
  */
 
 /**
@@ -132,9 +139,13 @@ function clock(ticks: number, tickMs: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-/** Shell integrity, in the same integer arithmetic the program compares against. */
-function shellPercent(shell: number, shellMax: number): number {
-  return shellMax > 0 ? Math.floor((shell * 100) / shellMax) : 0;
+/**
+ * `part` of `whole` in percent, floored — the same integer arithmetic the program compares
+ * against, so the number on screen never rounds up across a threshold the chain has
+ * already crossed. Shell against the vent line, and fight HP against `FURY_PCT`.
+ */
+function floorPercent(part: number, whole: number): number {
+  return whole > 0 ? Math.floor((part * 100) / whole) : 0;
 }
 
 /**
@@ -283,17 +294,18 @@ function VitalsRow() {
   const slot = useSelect(mySeatSlot);
   const boss = useSelect((s) => s.boss);
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  const raidSize = useSelect((s) => s.arena?.raidSize ?? 0);
   const tick = useSelect((s) => s.arena?.tick ?? 0);
   const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
   if (!slot) return null;
 
   const dead = slot.hp === 0;
-  const shell =
-    boss && boss.partsMax.some((m) => m > 0)
-      ? Math.round(
-          (boss.parts.reduce((a, b) => a + b, 0) / boss.partsMax.reduce((a, b) => a + b, 0)) * 100,
-        )
-      : null;
+  // Fight HP, not shell: shell above the vent line never has to come off, so a solo bar
+  // read `shell 97%` three hits from a win. `fightHp` is the chain's own `Boss::fight_hp`
+  // and the floor is what keeps `boss 20%` and ENRAGED landing on the same tick — the
+  // label is `isFurious`'s, never the number's.
+  const hp = boss ? fightHp(boss, raidSize) : null;
+  const furious = phase === PHASE_FIGHTING && boss !== null && isFurious(boss, raidSize);
 
   return (
     <div className="hud-row hud-vitals">
@@ -302,8 +314,10 @@ function VitalsRow() {
           ? `down ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}`
           : `${slot.hp} hp`}
       </span>
-      {shell !== null && phase !== PHASE_LOBBY && phase !== PHASE_MUSTERING && (
-        <span className="fine tabular">shell {shell}%</span>
+      {hp !== null && hp.max > 0 && phase !== PHASE_LOBBY && phase !== PHASE_MUSTERING && (
+        <span className={`fine tabular${furious ? ' hud-enraged' : ''}`}>
+          {furious ? 'ENRAGED' : 'boss'} {floorPercent(hp.left, hp.max)}%
+        </span>
       )}
     </div>
   );
@@ -445,7 +459,7 @@ if (import.meta.env.DEV) {
   // The threshold the table below is written against: a full raid's 35 %. The solo end
   // and monotonicity are asserted too, because the bar prints `ventPct` for every size.
   const VENT_PERCENT = ventPct(MAX_SEATS);
-  if (ventPct(1) !== 65 || VENT_PERCENT !== 35) {
+  if (ventPct(1) !== VENT_PCT_SOLO || VENT_PERCENT !== VENT_PCT_FULL) {
     throw new Error(`Hud self-check: ventPct reads ${ventPct(1)} solo, ${VENT_PERCENT} full`);
   }
   for (let raid = 2; raid <= MAX_SEATS; raid += 1) {
@@ -468,7 +482,7 @@ if (import.meta.env.DEV) {
     [0, 0, 0, false],
   ];
   for (const [shell, max, percent, open] of shells) {
-    const shown = shellPercent(shell, max);
+    const shown = floorPercent(shell, max);
     if (shown !== percent) {
       throw new Error(`Hud self-check: ${shell}/${max} shows ${shown}%, expected ${percent}%`);
     }
@@ -480,6 +494,21 @@ if (import.meta.env.DEV) {
     if (open && shown >= VENT_PERCENT) {
       throw new Error(`Hud self-check: vent open but shell reads ${shown}%`);
     }
+  }
+
+  // The same rule for the fight-HP number beside ENRAGED: furious may never show more
+  // than `FURY_PCT`. Built on `fightHp`'s own `max` rather than the sheet's numbers so a
+  // vent or core retune moves the rows with it; the core ceiling is well above any
+  // `left` a 20 % line can produce, so the rows stay representable through a retune.
+  const solo = { partsMax: [1_000], coreHpMax: 1_000, parts: [1_000], coreHp: 1_000 };
+  const { max: fightMax } = fightHp(solo, 1);
+  const line = Math.floor((fightMax * FURY_PCT) / 100);
+  const at = (left: number) => ({ ...solo, parts: [Math.floor((1_000 * ventPct(1)) / 100)], coreHp: left });
+  if (isFurious(solo, 1) || !isFurious(at(line), 1) || isFurious(at(line + 1), 1)) {
+    throw new Error(`Hud self-check: fury does not flip at exactly ${FURY_PCT}% of ${fightMax}`);
+  }
+  if (floorPercent(line, fightMax) > FURY_PCT || floorPercent(fightMax, fightMax) !== 100) {
+    throw new Error(`Hud self-check: boss % reads ${floorPercent(line, fightMax)}% beside ENRAGED`);
   }
 
   // The part order is a wire fact, not a label choice: `MUZZLES[i].part` is emitted by
@@ -508,13 +537,15 @@ if (import.meta.env.DEV) {
   // The pill and the send pump must never disagree: the shipped copy of the cooldown read
   // 1 against the chain's 7, so SHOT READY went green 600 ms before a shot could be sent.
   // Asserting the predicate here is what stops a fourth copy appearing.
-  if (shotAllowed(7, 0) || !shotAllowed(8, 0)) {
+  // The `+ 1` past the cooldown is `controls.ts`'s `SHOT_MARGIN_TICKS`: the chain stamps its
+  // own tick, at or past the client's view, so the gate opens one tick after the cooldown.
+  if (shotAllowed(8, 0) || !shotAllowed(9, 0)) {
     throw new Error('Hud self-check: the shot gate is not controls.ts’s 800 ms cooldown');
   }
   // The archer row of the same table. Without this the class argument could be dropped on
   // the floor here and the pill would go green 600 ms early for an archer exactly the way
   // the hardcoded `1` did for a knight — the same defect, one class over.
-  if (shotAllowed(13, 0, CLASS_ARCHER) || !shotAllowed(14, 0, CLASS_ARCHER)) {
+  if (shotAllowed(14, 0, CLASS_ARCHER) || !shotAllowed(15, 0, CLASS_ARCHER)) {
     throw new Error('Hud self-check: the shot gate is not controls.ts’s 1400 ms archer cooldown');
   }
   // Not asserted here any more: `classOf` is `layout.ts`'s and is checked where it lives.

@@ -48,7 +48,7 @@ import {
   type InstructionWithData,
 } from '@solana/kit';
 
-import { MAX_SEATS, N_CLASSES } from './layout';
+import { MAX_SEATS, N_CLASSES, type ShotTier } from './layout';
 import {
   DELEGATION_PROGRAM_ID,
   MAGIC_CONTEXT_ID,
@@ -629,15 +629,17 @@ export function movePlayer(p: {
 
 /**
  * Tag 7 — hitscan raycast along the aim vector. ER, session-signed, the other hot path.
- * Args (4 B): seat u8 @0 · dx i8 @1 · dy i8 @2 · charged u8 @3 (0 or 1).
+ * Args (4 B): seat u8 @0 · dx i8 @1 · dy i8 @2 · tier u8 @3 (0, 1 or 2).
  *
- * **`charged` is a request, not a grant.** The chain deals `chargedDamage(cls)` (2.5x) only
- * if the seat's last accepted step is at least `CHARGE_MS` old — measured on chain as ER
- * slots, `Clock.slot - lastMoveTick`, never against `Arena.tick` — and otherwise refuses
- * with `HeartrotError.NotCharged` (20) *before* spending the cooldown. So a charged send
- * that loses the race with a step in flight costs a round trip, not the shot: resend it
- * uncharged once. Send `charged` only after standing still for `CHARGE_MS` plus a margin
- * for send latency; the margin lives in the client, the rule lives on chain.
+ * **`tier` is a request, not a grant.** The chain deals `chargedDamage(cls)` (2.5x) for
+ * tier 1 only if the seat's last accepted step is at least `CHARGE_MS` old, and
+ * `superDamage(cls)` (5x, and the PIERCE — every live part on the ray once, then the core
+ * through the vent those parts opened) for tier 2 only past `SUPER_MS` — measured on chain
+ * as ER slots, `Clock.slot - lastMoveTick`, never against `Arena.tick` — and otherwise
+ * refuses with `HeartrotError.NotCharged` (20) *before* spending the cooldown. So a held
+ * send that loses the race with a step in flight costs a round trip, not the shot: resend
+ * it one tier down, once per rung. Send a tier only after standing still for its hold plus
+ * a margin for send latency; the margin lives in the client, the rule lives on chain.
  *
  * **Free aim, not eight-way** — and this is a correctness property, not polish. With the
  * boss fixed at top centre a 45° quantisation can only select a target whose angular size
@@ -672,15 +674,15 @@ export function shoot(p: {
   /** Aim vector, y growing DOWN. Signs and ratio are read; magnitude is not. */
   dx: number;
   dy: number;
-  /** Ask for the 2.5x charged shot. Default `false`; see the note above on `NotCharged`. */
-  charged?: boolean;
+  /** 0 tap, 1 charged (2.5x), 2 super (5x, pierces). Default 0; see the note above on `NotCharged`. */
+  tier?: ShotTier;
 }): HeartrotInstruction {
   req(p.dx !== 0 || p.dy !== 0, 'aim (0, 0) has no direction');
   const { data, view } = alloc(IX_SHOOT, 4);
   data[1] = seatIndex(p.seat);
   view.setInt8(2, i8(p.dx, 'dx'));
   view.setInt8(3, i8(p.dy, 'dy'));
-  data[4] = p.charged ? 1 : 0;
+  data[4] = p.tier ?? 0;
   return {
     programAddress: p.programId,
     accounts: [
@@ -897,8 +899,9 @@ export function instructionsSelfCheck(): void {
   ok(up.data[0] === IX_SHOOT && up.data[1] === 19, 'tag then seat');
   const v = new DataView(up.data.buffer, up.data.byteOffset, up.data.byteLength);
   ok(v.getInt8(2) === -6 && v.getInt8(3) === -120, 'the aim pair survives as i8');
-  ok(up.data[4] === 0, 'a shot is uncharged unless asked');
-  ok(shoot({ ...common, seat: 19, dx: -6, dy: -120, charged: true }).data[4] === 1, 'charged is byte 4, exactly 1');
+  ok(up.data[4] === 0, 'a shot is a tap unless asked');
+  ok(shoot({ ...common, seat: 19, dx: -6, dy: -120, tier: 1 }).data[4] === 1, 'charged is byte 4, exactly 1');
+  ok(shoot({ ...common, seat: 19, dx: -6, dy: -120, tier: 2 }).data[4] === 2, 'super is byte 4, exactly 2');
   ok(up.accounts.length === 4, 'arena, boss, players, session');
 
   ok(threw(() => shoot({ ...common, seat: 0, dx: 0, dy: 0 })), '(0, 0) is not a direction');

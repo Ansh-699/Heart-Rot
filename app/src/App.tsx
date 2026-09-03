@@ -55,6 +55,7 @@ import {
   shoot,
   type HeartrotRpc,
   type SessionSigner,
+  type ShotTier,
 } from '@heartrot/client';
 
 import { attachControls, octantAim } from './input/controls';
@@ -65,7 +66,7 @@ import { subscribeMatch, type MatchSubscription } from './net/subscribe';
 import { chargeLocal } from './render/Knight';
 import { Passage } from './render/Passage';
 import { play } from './render/sfx';
-import { fireLocal } from './render/Shot';
+import { beamDowngraded, fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
 import { gateOpen } from './screens/Gate';
 import { Lobby } from './screens/Lobby';
@@ -546,28 +547,33 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
     const { post: notice, clear: clearNotice } = transientNotice(store);
 
     // `sendInstructions` runs `skipPreflight`, so a refused instruction returns a
-    // signature and then fails in silence — a player who is rate-limited or dead sees
-    // their dot simply not move and has no way to learn why. One confirm at a time
-    // samples that: `RateLimited` and `PlayerDead` are conditions that repeat every
-    // tick, so a sample catches them within a tick or two.
+    // signature and then fails in silence. One confirm at a time samples that, ~2 status
+    // polls a second, for the refusals that mean something is wrong and that nothing else
+    // will ever report: a rotated session key, a phase this client missed. Two refusals
+    // are read and dropped on purpose, because they are the mirrors' own traffic:
+    // `RateLimited` (7) is two moves in one ER slot — `controls.ts` paces at 45 ms, UNDER
+    // the 50 ms slot, deliberately, and prediction absorbs the refusal — and `PlayerDead`
+    // (8) is a send that was in flight when the roster said dead, which the `alive` gate
+    // stops from repeating. Both used to pop up mid-fight as a notice over a game that was
+    // behaving exactly as designed.
     //
-    // ponytail: one outstanding confirm per client, ~2 status polls a second. Confirm
-    // every send if a one-off rejection ever needs to be attributed exactly.
+    // ponytail: one outstanding confirm per client. Confirm every send if a one-off
+    // rejection ever needs to be attributed exactly.
     //
-    // The one send that is never sampled out is a charged shot, which carries `uncharged`:
-    // the chain refuses it with `NotCharged` (20) BEFORE spending the cooldown when a step
-    // was still in flight — the client cannot see that step land, so the refusal is the
-    // only signal — and the same shot uncharged is what the chain would have taken. Sent
-    // once; the resend carries no callback of its own.
+    // The one send that is never sampled out carries `downgrade`: a tiered shot, which the
+    // chain refuses with `NotCharged` (20) BEFORE spending the cooldown when a step was
+    // still in flight — the client cannot see that step land, so the refusal is the only
+    // signal — and the same shot one tier down is what the chain would have taken. The
+    // ladder is 2 -> 1 -> 0, one rung per refusal; the plain rung carries no callback.
     let confirming = false;
 
     const send = (
       instruction: Parameters<typeof sendInstructions>[2][number],
-      uncharged?: () => void,
+      downgrade?: () => void,
     ): void => {
       void sendInstructions(er, signer, [instruction])
         .then(async (signature) => {
-          if (confirming && uncharged === undefined) return;
+          if (confirming && downgrade === undefined) return;
           confirming = true;
           try {
             await confirmSignature(er, signature, { timeoutMs: 2_000, pollMs: 400 });
@@ -583,13 +589,14 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           // returns `code: undefined` and silently drops every refusal this confirm
           // exists to sample.
           const decoded = refusalOf(error);
-          if (decoded.code === 20 && uncharged !== undefined) {
-            uncharged();
+          if (decoded.code === 20 && downgrade !== undefined) {
+            downgrade();
             return;
           }
-          // `BlockedByWall` is expected traffic — one per tick from anyone holding a
-          // direction into a wall — and a timeout is the ER being slow, not a refusal.
-          if (decoded.code === 14 || decoded.code === undefined) return;
+          // `BlockedByWall` (14) is expected traffic — one per tick from anyone holding a
+          // direction into a wall — `RateLimited` (7) and `PlayerDead` (8) are the two
+          // above, and a timeout is the ER being slow, not a refusal.
+          if (decoded.code === 7 || decoded.code === 8 || decoded.code === 14 || decoded.code === undefined) return;
           // Not `setStatus('error')`: that status is held and the world feed cannot clear
           // it, so one refused datagram out of ten a second would brick the session. The
           // watchdog in `subscribe.ts` is what reports a feed that has actually stopped.
@@ -620,6 +627,9 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           // It picks the damage and the cooldown, so the pump has to read it or the
           // archer's trigger gates on the knight's 800 ms.
           cls: slot === null ? 0 : classOf(slot),
+          // The chain's own stamp of the last accepted shot, which can be later than the
+          // tick this client saw at the send: the pump paces against the later of the two.
+          lastShotTick: slot?.lastShotTick ?? 0,
         };
       },
       aim: () => {
@@ -647,7 +657,7 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         recordSend(seq);
         send(movePlayer({ ...common, session, seat: match.seat, dir, seq }));
       },
-      onTrigger: (dx, dy, charged) => {
+      onTrigger: (dx, dy, tier) => {
         // Every accepted trigger, live or practice, drawn at 0 ms from the exact pair that
         // went on the wire — the whole of "fix the person shooting mechanics I cannot see
         // anything". `shoot.rs` is hitscan and allocates no projectile, so there has never
@@ -656,9 +666,9 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         //
         // A practice shot reaches here and never reaches `onShoot`. That is the point: the
         // arrow answers "is the key bound", and only `damageDealt` answers "did it hurt".
-        fireLocal({ seat: match.seat, x: predictor.self.x, y: predictor.self.y, dx, dy, charged });
+        fireLocal({ seat: match.seat, x: predictor.self.x, y: predictor.self.y, dx, dy, tier });
       },
-      onShoot: (dx, dy, charged) => {
+      onShoot: (dx, dy, tier) => {
         // Free aim: the raw `(i8, i8)` the auto-aim picked, normalised on chain. Not an
         // octant — a top-centre boss on eight-way aim is measurably unwinnable (33.6% of
         // pit stands can hit anything at all, and the core never), and the client is not
@@ -667,17 +677,21 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // No `seq` on the wire for `shoot`, so it counts toward throughput and never
         // toward latency. Inventing a round trip for it would be a made-up number.
         recordSend();
-        const ix = (c: boolean) => shoot({ ...common, boss: match.boss, session, seat: match.seat, dx, dy, charged: c });
-        // A charged send that loses the race with a step in flight is refused for free;
-        // the answer is the same shot uncharged, once — see `send`.
-        send(ix(charged), charged ? () => send(ix(false)) : undefined);
+        const ix = (t: ShotTier) => shoot({ ...common, boss: match.boss, session, seat: match.seat, dx, dy, tier: t });
+        // A tiered send that loses the race with a step in flight is refused for free; the
+        // answer is the same shot one tier down, once per rung — see `send`. The beam
+        // already drawn estimated a super's damage per part; the number the chain reports
+        // for the lesser shot is the right one, so `Shot` is told to draw it after all.
+        const fire = (t: ShotTier): void =>
+          send(ix(t), t === 0 ? undefined : () => { beamDowngraded(); fire((t - 1) as ShotTier); });
+        fire(tier);
       },
-      onCharge: (on) => {
-        // The hold's edge, for the local archer only: the draw pose and the arc are
-        // `Knight`'s, the ready chime is played there when the arc closes, and the draw
-        // itself is cued here so the two cannot double up.
-        chargeLocal(on);
-        if (on) play('chargeStart');
+      onCharge: (hold) => {
+        // The hold's edge, for the local archer only: the draw pose, the arcs and the ready
+        // cues are `Knight`'s, played there as each tier lands; the draw itself is cued
+        // here, on the stand's first pump, so the two cannot double up.
+        chargeLocal(hold);
+        if (hold === 0) play('chargeStart');
       },
     });
 

@@ -2,7 +2,7 @@
  * Sound — every cue the game makes, synthesized from oscillators and filtered noise.
  *
  * No asset files: a sample sheet would be a second thing to keep in step with the art,
- * and sixteen cues of the kind a 90s cabinet made fit in a table of recipes shorter than
+ * and twenty cues of the kind a 90s cabinet made fit in a table of recipes shorter than
  * the manifest that would load them. One `AudioContext`, one master gain, one shared
  * second of white noise; every cue is a handful of nodes scheduled at `currentTime` and
  * garbage-collected when they stop.
@@ -22,8 +22,11 @@
 export type SfxName =
   | 'loose'
   | 'looseCharged'
+  | 'looseSuper'
   | 'chargeStart'
   | 'chargeReady'
+  | 'superReady'
+  | 'fury'
   | 'hitPart'
   | 'coreHit'
   | 'partBreak'
@@ -149,6 +152,39 @@ function noise(
   s.stop(t + dur + 0.02);
 }
 
+/**
+ * Wind: the noise second through a filter whose cutoff GLIDES `f0 → f1`, under a gain that
+ * swells for `rise` seconds before it tails off. {@link noise} cannot say this — its 5 ms
+ * attack is what makes a twang a twang, and a gust that starts at full volume is a slap.
+ */
+function gust(
+  c: AudioContext,
+  out: AudioNode,
+  t: number,
+  type: BiquadFilterType,
+  f0: number,
+  f1: number,
+  dur: number,
+  rise: number,
+  vol: number,
+  q = 1,
+): void {
+  const s = c.createBufferSource();
+  s.buffer = noiseBuf;
+  const f = c.createBiquadFilter();
+  f.type = type;
+  f.Q.value = q;
+  f.frequency.setValueAtTime(f0, t);
+  f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  const g = c.createGain();
+  g.gain.setValueAtTime(FLOOR, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + rise);
+  g.gain.exponentialRampToValueAtTime(FLOOR, t + dur);
+  s.connect(f).connect(g).connect(out);
+  s.start(t);
+  s.stop(t + dur + 0.02);
+}
+
 type Recipe = (c: AudioContext, out: AudioNode, t: number) => void;
 
 /** Loud things are low and long; a twang is a click of noise on a falling pitch. */
@@ -161,10 +197,30 @@ const RECIPES: Readonly<Record<SfxName, Recipe>> = {
     noise(c, o, t, 'lowpass', 1400, 0.16, 0.5);
     tone(c, o, t, 'sawtooth', 260, 55, 0.22, 0.35);
   },
+  // The beam is wind, not a bigger twang: a bandpass gust sweeping up through the whole
+  // audible middle, over a low airy whoosh. No oscillator anywhere — the moment a pitch
+  // is in it, it reads as a bowstring again.
+  looseSuper: (c, o, t) => {
+    gust(c, o, t, 'bandpass', 300, 2400, 0.55, 0.14, 0.7, 1.4);
+    gust(c, o, t, 'lowpass', 500, 500, 0.4, 0.08, 0.45);
+  },
   chargeStart: (c, o, t) => tone(c, o, t, 'sine', 180, 520, 0.3, 0.18),
   chargeReady: (c, o, t) => {
     tone(c, o, t, 'sine', 880, 880, 0.07, 0.25);
     tone(c, o, t + 0.08, 'sine', 1320, 1320, 0.12, 0.25);
+  },
+  // Above `chargeReady`, and rising where that one is level, so the two edges of one
+  // hold cannot be confused with the eyes shut.
+  superReady: (c, o, t) => {
+    tone(c, o, t, 'sine', 1320, 1980, 0.09, 0.22);
+    tone(c, o, t, 'sine', 1980, 2640, 0.09, 0.14);
+  },
+  // `slamWarn`'s beating growl, held three times as long, dropping in pitch, over a noise
+  // bed: a roar. Played once, on the false → true edge of fury (`Boss.tsx`).
+  fury: (c, o, t) => {
+    tone(c, o, t, 'sawtooth', 110, 82, 0.9, 0.3);
+    tone(c, o, t, 'sawtooth', 116, 88, 0.9, 0.3);
+    noise(c, o, t, 'lowpass', 420, 0.9, 0.35);
   },
   hitPart: (c, o, t) => {
     noise(c, o, t, 'bandpass', 1800, 0.05, 0.3, 1.5);

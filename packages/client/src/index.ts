@@ -45,3 +45,4 @@ export * from './signer';
 export * from './map';
 export * from './hitboxes';
 export * from './aim';
+export * from './body';

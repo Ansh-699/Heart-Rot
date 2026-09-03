@@ -45,7 +45,7 @@
 //! | `next_incarnation` before the settled match reached the leaderboard | [`HeartrotError::MatchNotRecorded`] | `init::next_incarnation` |
 //! | a VRF callback not signed by the scoped VRF identity | [`HeartrotError::NotVrfIdentity`] | `roll::consume_roll` |
 //! | `begin_muster` with no seat in `ZONE_ARENA` | [`HeartrotError::NoRaiders`] | `guards::assert_any_raider`, from `settle::begin_muster` |
-//! | `shoot` with `charged = 1` fewer than `state::CHARGE_SLOTS` ER slots after the seat's last accepted step | [`HeartrotError::NotCharged`] | `shoot::fire` |
+//! | `shoot` with `charged = 1` (`= 2`) fewer than `state::CHARGE_SLOTS` (`state::SUPER_SLOTS`) ER slots after the seat's last accepted step | [`HeartrotError::NotCharged`] | `shoot::fire` |
 //!
 //! ## Why the game loop added only two codes
 //!
@@ -276,9 +276,10 @@ heartrot_errors! {
     NoRaiders = 19,
 
     /// `shoot` (tag 7) was sent with `charged = 1` fewer than `state::CHARGE_SLOTS` ER slots
-    /// after the seat's last accepted step, so the hold has not accrued and the shot is not
-    /// charged. Refused **before** the cooldown is spent — nothing on the seat changes — so
-    /// the client resends the same shot uncharged and loses a round trip, not the shot. The
+    /// after the seat's last accepted step, or `charged = 2` fewer than `state::SUPER_SLOTS`,
+    /// so the hold has not accrued and the shot is not the tier it claims. Refused **before**
+    /// the cooldown is spent — nothing on the seat changes — so the client resends the same
+    /// shot one tier down (2 → 1 → 0) and loses a round trip per rung, not the shot. The
     /// alternative, landing it quietly at 1× damage, is a number on the HUD that disagrees
     /// with the boss bar, which is this project's signature silent failure.
     ///

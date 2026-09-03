@@ -34,7 +34,7 @@ import {
   MAP_TILES,
   PIT_BOT,
   PIT_TOP,
-  isWallTile,
+  isDaisTile,
 } from '@heartrot/client';
 
 import { ARENA_IMG, ARENA_PLATFORM, BOSS_CROP, VOID } from './rooms.gen';
@@ -102,10 +102,13 @@ if (import.meta.env.DEV) {
     `ARENA_IMG spans x ${ARENA_IMG.x}..${ARENA_IMG.x + ARENA_IMG.w}, narrower than the frame`,
   );
 
-  // Walkable == painted over the pit rows, both directions, against the platform ellipse
-  // the grid was cut from. The generator's rule is a coverage threshold plus a kerb fill,
-  // so the consumer's check is the pair of bounds that hold for ANY threshold: a walkable
-  // tile touches the platform, and a tile wholly inside the platform is walkable.
+  // Dais == painted over the pit rows, both directions, against the platform ellipse the
+  // grid was cut from. The generator's rule is a coverage threshold, so the consumer's
+  // check is the pair of bounds that hold for ANY threshold: a dais tile touches the
+  // platform, and a tile wholly inside the platform is dais. `isDaisTile`, not
+  // `!isWallTile`: since the pit became the whole ellipse the rows above the boss's feet
+  // hold air over the shoulders -- open to rays, closed to feet -- and that air is off the
+  // paint by construction (140 tiles failed the wall-based reading of this check).
   const { cx, cy, rx, ry } = ARENA_PLATFORM;
   const norm = (x: number, y: number): number => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
   const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
@@ -119,9 +122,9 @@ if (import.meta.env.DEV) {
       // clamp, so the tile meets the ellipse exactly when that point is inside it.
       const touches = norm(clamp(cx, x0, x1), clamp(cy, y0, y1)) <= 1;
       const within = norm(x0, y0) <= 1 && norm(x1, y0) <= 1 && norm(x0, y1) <= 1 && norm(x1, y1) <= 1;
-      const walkable = !isWallTile(tx, ty);
-      ok(!walkable || touches, `pit tile (${tx}, ${ty}) is walkable but off the painted platform`);
-      ok(!within || walkable, `pit tile (${tx}, ${ty}) is painted platform but a wall`);
+      const dais = isDaisTile(tx, ty);
+      ok(!dais || touches, `pit tile (${tx}, ${ty}) is dais but off the painted platform`);
+      ok(!within || dais, `pit tile (${tx}, ${ty}) is painted platform but not dais`);
     }
   }
 

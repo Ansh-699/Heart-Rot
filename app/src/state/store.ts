@@ -250,6 +250,7 @@ const MESSAGES: Record<string, string> = {
   rate_limited: 'Too many requests from this network. Wait a moment.',
   rate_limiter_unconfigured: 'The backend is misconfigured and is refusing to spend SOL.',
   no_open_arena: 'The lobby is between arenas. The next one opens in a few seconds — try again.',
+  try_again: 'The arena is changing hands. Try again in a moment.',
   no_such_match: 'That raid no longer exists. Take a new seat.',
   not_in_match: 'You do not hold a seat in that raid.',
   not_settleable: 'That raid has not finished yet.',
@@ -635,7 +636,9 @@ export function useSelect<T>(select: (state: State) => T): T {
 // ---------------------------------------------------------------------------
 
 if (import.meta.env.DEV) {
-  const slot = (zone: number): PlayerSlot => ({ zone }) as PlayerSlot;
+  // `occupied` is load-bearing: `mySeatSlot` answers null for a zeroed seat, and a fixture
+  // without it read as "released" and sent the through-the-gate case to the lobby.
+  const slot = (zone: number): PlayerSlot => ({ zone, occupied: true }) as PlayerSlot;
   const seated = (zone: number): Partial<State> => ({
     authenticated: true,
     match: { seat: 3 } as MatchInfo,

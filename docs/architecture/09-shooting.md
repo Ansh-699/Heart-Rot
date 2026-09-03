@@ -357,6 +357,26 @@ it — a keyboard shooter still sends the same pair every time. Closing it prope
 `u16` nonce, exactly as `move` has, and this is the edit that is already opening the file.
 Out of scope for this spec; note it so the implementer does not have to rediscover it.
 
+### 2.7 Shot tiers — tap, charged, super (shipped 2026-09-03)
+
+The wire's fourth byte is a **tier**: 0 tap, 1 charged (2.5×, `CHARGE_SLOTS` = 20 ER
+slots of stillness), 2 super (5×, `SUPER_SLOTS` = 50). A hold the chain does not see is
+`NotCharged` (20) *before* the cooldown is spent, and the client resends one tier down. All
+of it is stateless — the hold is `Clock.slot − last_move_tick`, never `Arena.tick`.
+
+**Tier 2 pierces.** `shoot.rs::walk_ray` is one loop with a stop rule: `raycast` (tiers 0
+and 1) stops at the first live part box or the core; `raycast_beam` never stops and returns
+a 9-bit part mask plus whether the core circle was crossed. `fire` lands the damage from
+that one shape for every tier — each masked part once, then `recompute_vent`, then the
+core if crossed **and the vent is open now** — so a beam that strips the last of the
+shell kills through the vent it opened, in one transaction. `damage_dealt` credits what was
+removed. The verdict rides `facing` bit 3 (charged) or bit 4 (super), never both.
+
+Client mirrors: `instructions.ts::shoot({ tier })`, `aim.ts::raycastBeam` (same integer
+steps as `raycastShot`, one shared walk) returning `{ end, hits, core }` for the renderer.
+Cost: a super is the same 64-step walk without the early return — bounded by the same
+`SHELL_AABB` gate — plus one `Clock` read, the 129 CU the charged shot already pays.
+
 ---
 
 ## 3. The pool at twenty shooters

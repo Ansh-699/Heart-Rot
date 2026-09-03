@@ -101,6 +101,7 @@ import {
   TICK_MS,
   ZONE_ARENA,
   ZONE_LOBBY,
+  isFurious,
   onGate,
   slamTelegraph,
   type ArenaAccount,
@@ -1113,6 +1114,18 @@ export function Arena({
           {veil}
         </g>
       </svg>
+      {/* The fury wash: a red vignette at the screen's edges while the boss is in its last
+          fifth (`isFurious`, the same integers the crank halves the volley on). A lens
+          effect like `.stage::after`'s vignette, so it lives on the lens — an HTML sibling
+          of the `<svg>`, not a world node — and it is MOUNTED ONCE and toggled by class:
+          mounting it on the edge would restart its keyframes on every duplicate
+          notification. Room B only, R3: a raider still in the waiting room cannot see the
+          creature, and a red screen with nothing red on it reads as a fault. Pointer-
+          transparent so aiming reaches the stage under it. */}
+      <div
+        className={`fury-wash${shown === 'arena' && arena.phase === PHASE_FIGHTING && isFurious(boss, arena.raidSize) ? ' is-on' : ''}`}
+        aria-hidden="true"
+      />
     </div>
   );
 }

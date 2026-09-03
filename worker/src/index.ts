@@ -22,6 +22,7 @@ import {
   matchSettle,
   matchStart,
   sessionInit,
+  TryAgain,
 } from './routes';
 
 /**
@@ -150,6 +151,14 @@ export default {
       // guessing, twice wrongly, because a body of `{"error":"internal_error"}` carries
       // nothing to search on. It leaks nothing — it is random and means nothing on its own.
       const ref = crypto.randomUUID().slice(0, 8);
+      // Same ref, same log, different verdict. `TryAgain` is the routes' own word for
+      // "the infrastructure before the seat claim failed and nothing is half-done": a
+      // 503 whose copy says retry, because retrying is the fix. Logged through `cause`
+      // — the wrapper's stack points at `preClaim`, the cause's at what actually broke.
+      if (error instanceof TryAgain) {
+        console.error(`[${ref}] ${pathname} try_again`, error.cause);
+        return json({ error: 'try_again', ref }, 503);
+      }
       console.error(`[${ref}] ${pathname}`, error);
       return json({ error: 'internal_error', ref }, 500);
     }

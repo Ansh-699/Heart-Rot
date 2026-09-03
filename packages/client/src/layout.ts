@@ -246,28 +246,151 @@ export function chargedDamage(cls: number): number {
 export const CHARGED_SHOT_BIT = 3;
 
 // ---------------------------------------------------------------------------
+// The super shot — `state.rs`'s super block. A longer hold, the same statelessness.
+// ---------------------------------------------------------------------------
+
+/**
+ * The three things a `shoot` can be — the `charged` byte on the wire: 0 tap, 1 charged
+ * ({@link CHARGE_MS} still), 2 super ({@link SUPER_MS} still, the beam). The chain grants a
+ * tier only if the hold accrued and refuses with `NotCharged` (20) otherwise, before the
+ * cooldown is spent — so a client resends one tier down and never drops the shot.
+ */
+export type ShotTier = 0 | 1 | 2;
+
+/**
+ * `state::SLOT_MS` — one ER slot, the clock `last_move_tick` is stamped in. A hold is
+ * judged in these; `Arena.tick` is a crank tick on another clock and must never be
+ * compared with one.
+ */
+export const SLOT_MS = 50;
+
+/** `state::SUPER_MS` — the hold for tier 2. Margin for send latency belongs in the client. */
+export const SUPER_MS = 2_500;
+
+/** `state::SUPER_SLOTS` — the same hold in ER slots, the unit the chain judges it in. */
+export const SUPER_SLOTS = SUPER_MS / SLOT_MS;
+
+/**
+ * `state::SUPER_NUM / SUPER_DEN` — a super deals 5x, on the same cooldown, and PIERCES:
+ * every part on the ray takes it once (`raycastBeam` in `aim.ts` mirrors the walk).
+ */
+export const SUPER_NUM = 5;
+export const SUPER_DEN = 1;
+
+/** `state::super_damage(class)` — 350 archer, 200 knight; the chain const-asserts it divides. */
+export function superDamage(cls: number): number {
+  return (CLASS_DAMAGE[cls]! * SUPER_NUM) / SUPER_DEN;
+}
+
+/**
+ * `state::SUPER_SHOT_BIT` — bit 4 of `PlayerSlot.facing` says the seat's last shot was a
+ * super. Beside {@link CHARGED_SHOT_BIT}, same lifetime: cleared by the next step or plain
+ * shot. Decoded into {@link PlayerSlot.superShot}; nothing should mask the byte at a call site.
+ */
+export const SUPER_SHOT_BIT = 4;
+
+// ---------------------------------------------------------------------------
 // The vent threshold — `state.rs`'s `vent_pct`
 // ---------------------------------------------------------------------------
 
 /**
  * `state::VENT_PCT_SOLO` / `VENT_PCT_FULL`: shell remaining, in percent, below which the
  * vent opens, for a raid of one and for a full raid. Shell HP is flat at every raid size;
- * the *threshold* is the raid-size knob, so solo strips 3 % of the shell before the core
+ * the *threshold* is the raid-size knob, so solo strips 2 % of the shell before the core
  * is reachable and twenty strip 65 %.
  */
-export const VENT_PCT_SOLO = 97;
+export const VENT_PCT_SOLO = 98;
 export const VENT_PCT_FULL = 35;
 
 /**
+ * `state::raid_n` — `raidSize` clamped into `1..=MAX_SEATS`, the domain every raid-size
+ * curve in this file is drawn over. 0, which every account that predates the field
+ * carries, reads as solo. Written once so {@link ventPct}, {@link bulletDamage} and
+ * {@link slamDamage} cannot disagree about what an uncounted raid is.
+ */
+function raidN(raidSize: number): number {
+  return Math.min(Math.max(raidSize, 1), MAX_SEATS);
+}
+
+/**
  * `state::vent_pct(raid_size)` — the threshold for `arena.raidSize`, linear between the two
- * endpoints and clamped into `1..=MAX_SEATS`: 0, which every account that predates the
- * field carries, reads as solo. The chain's comparison is
+ * endpoints and clamped by {@link raidN}. The chain's comparison is
  * `sum(parts) * 100 < sum(partsMax) * ventPct(arena.raidSize)`, in integers, so a HUD that
  * draws the line must call this rather than type a 35.
  */
 export function ventPct(raidSize: number): number {
-  const n = Math.min(Math.max(raidSize, 1), MAX_SEATS);
-  return VENT_PCT_SOLO - Math.floor(((VENT_PCT_SOLO - VENT_PCT_FULL) * (n - 1)) / (MAX_SEATS - 1));
+  return VENT_PCT_SOLO - Math.floor(((VENT_PCT_SOLO - VENT_PCT_FULL) * (raidN(raidSize) - 1)) / (MAX_SEATS - 1));
+}
+
+// ---------------------------------------------------------------------------
+// Incoming damage and fury — `state.rs`'s raid-scaled damage and `Boss::fight_hp`
+// ---------------------------------------------------------------------------
+
+/**
+ * `state::BULLET_DAMAGE_SOLO / FULL`, `SLAM_DAMAGE_SOLO / FULL` — what one boss bullet and
+ * one hand slam take off a raider, for a raid of one and for a full raid. Twenty take the
+ * flat 8 / 45 the crank always dealt; solo takes 2 / 15 against a 150 HP bar, ~40 s
+ * standing still for a 12 s kill. The chain deals it; a HUD that predicts a hit reads these.
+ */
+export const BULLET_DAMAGE_SOLO = 2;
+export const BULLET_DAMAGE_FULL = 8;
+export const SLAM_DAMAGE_SOLO = 15;
+export const SLAM_DAMAGE_FULL = 45;
+
+/** `state::raid_lerp` — linear from `solo` to `full` over `1..=MAX_SEATS`, rounding toward solo. */
+function raidLerp(solo: number, full: number, raidSize: number): number {
+  return solo + Math.floor(((full - solo) * (raidN(raidSize) - 1)) / (MAX_SEATS - 1));
+}
+
+/** `state::bullet_damage(raid_size)`. */
+export function bulletDamage(raidSize: number): number {
+  return raidLerp(BULLET_DAMAGE_SOLO, BULLET_DAMAGE_FULL, raidSize);
+}
+
+/** `state::slam_damage(raid_size)`. */
+export function slamDamage(raidSize: number): number {
+  return raidLerp(SLAM_DAMAGE_SOLO, SLAM_DAMAGE_FULL, raidSize);
+}
+
+/**
+ * `state::FURY_PCT` — fight HP at or below this percent of its max and the boss is furious:
+ * the volley reloads from {@link FURY_VOLLEY_INTERVAL_TICKS} with one extra bullet, and the
+ * creature is dressed as ENRAGED. Derived from the shell and the core on every read, never
+ * stored. Distinct from `OUTCOME_ENRAGE`, the six-minute timeout that ENDS the fight.
+ */
+export const FURY_PCT = 20;
+
+/**
+ * `Boss::fight_hp(raid_size)` — the fight as one number. Shell above the vent line never has
+ * to come off, so it is not fight HP: `threshold = shellMax * ventPct / 100`,
+ * `left = max(shell - threshold, 0) + coreHp`, `max = (shellMax - threshold) + coreHpMax`,
+ * integers throughout so the HUD's `boss NN%` and the chain's fury edge agree to the point.
+ * A solo bar that read `shell 97%` for a fight three hits from won is why this exists.
+ */
+export function fightHp(
+  boss: Pick<BossAccount, 'parts' | 'partsMax' | 'coreHp' | 'coreHpMax'>,
+  raidSize: number,
+): { left: number; max: number } {
+  const sum = (xs: readonly number[]): number => xs.reduce((a, b) => a + b, 0);
+  const shellMax = sum(boss.partsMax);
+  const threshold = Math.floor((shellMax * ventPct(raidSize)) / 100);
+  return {
+    left: Math.max(sum(boss.parts) - threshold, 0) + boss.coreHp,
+    max: shellMax - threshold + boss.coreHpMax,
+  };
+}
+
+/**
+ * `Boss::is_furious(raid_size)` — `max > 0 && left > 0 && left * 100 <= max * FURY_PCT`.
+ * `left > 0` keeps a dead boss out, `max > 0` keeps a zeroed account out, and exactly 20 %
+ * is furious.
+ */
+export function isFurious(
+  boss: Pick<BossAccount, 'parts' | 'partsMax' | 'coreHp' | 'coreHpMax'>,
+  raidSize: number,
+): boolean {
+  const { left, max } = fightHp(boss, raidSize);
+  return max > 0 && left > 0 && left * 100 <= max * FURY_PCT;
 }
 
 /**
@@ -529,6 +652,8 @@ export type PlayerSlot = {
   facing: number;
   /** Bit 3 of the same byte: the last shot was charged. Cleared by the next step. */
   chargedShot: boolean;
+  /** Bit 4 of the same byte: the last shot was a super (the beam). Same lifetime. */
+  superShot: boolean;
   skinId: number;
   /**
    * Class and last aim, packed — bit 7 class, bits 6..4 aim sector, bits 3..0 aim ratio.
@@ -694,6 +819,7 @@ export function decodePlayers(data: Uint8Array): PlayersAccount {
       zone: v.getUint8(s + p.zone),
       facing: facingByte & 7,
       chargedShot: ((facingByte >> CHARGED_SHOT_BIT) & 1) === 1,
+      superShot: ((facingByte >> SUPER_SHOT_BIT) & 1) === 1,
       skinId: v.getUint8(s + p.skin_id),
       classAim: v.getUint8(s + p.class_aim),
       x: v.getInt16(s + p.x, true),
@@ -809,6 +935,13 @@ export const VOLLEY_INTERVAL_TICKS = ticksFor(3_200);
 /** The same period as a duration, which is the form a renderer wants. */
 export const VOLLEY_INTERVAL_MS = VOLLEY_INTERVAL_TICKS * TICK_MS;
 
+/**
+ * `state::FURY_VOLLEY_INTERVAL_TICKS` — the volley period while {@link isFurious}: half the
+ * normal one, 1.6 s. A telegraph that keeps drawing the 3.2 s wind-up through fury is
+ * announcing every other volley.
+ */
+export const FURY_VOLLEY_INTERVAL_TICKS = Math.floor(VOLLEY_INTERVAL_TICKS / 2);
+
 /** Vertical strips the arena is cut into; a slam claims exactly one. */
 export const SLAM_LANES = 8;
 
@@ -824,9 +957,6 @@ export const SLAM_PERIOD_TICKS = ticksFor(6_000);
  * the slam is always dodgeable — which is only true if the client actually draws it.
  */
 export const SLAM_TELEGRAPH_TICKS = ticksFor(1_500);
-
-/** Damage a caught raider takes. Two slams do not quite kill; a slam plus a volley does. */
-export const SLAM_DAMAGE = 45;
 
 /** `Boss.parts` indices of the two hands. A destroyed hand does not slam. */
 export const PART_MACE = 7;
@@ -971,8 +1101,18 @@ export function layoutSelfCheck(): void {
       'an uncounted raid is a solo raid',
     );
     ok(ventPct(MAX_SEATS) === 35 && ventPct(255) === 35, 'a full raid, and anything past it');
+    // The bound is the slope rounded up, as the Rust test derives it: the endpoints have
+    // moved three times and the literal `2` this was permitted a 30-point curve, not a 63.
+    const slopeCeil = Math.ceil((VENT_PCT_SOLO - VENT_PCT_FULL) / (MAX_SEATS - 1));
     for (let n = 1; n < MAX_SEATS; n++) {
-      ok(ventPct(n) >= ventPct(n + 1) && ventPct(n) - ventPct(n + 1) <= 2, `ventPct is linear at ${n}`);
+      ok(ventPct(n) >= ventPct(n + 1) && ventPct(n) - ventPct(n + 1) <= slopeCeil, `ventPct is linear at ${n}`);
+    }
+    // Incoming damage: the third raid-size knob, the same clamp, monotone between.
+    ok(bulletDamage(0) === 2 && bulletDamage(1) === 2 && slamDamage(0) === 15, 'solo takes 2 / 15');
+    ok(bulletDamage(MAX_SEATS) === 8 && slamDamage(MAX_SEATS) === 45, 'twenty take the flat 8 / 45');
+    ok(bulletDamage(255) === 8 && slamDamage(255) === 45, 'and anything past twenty');
+    for (let n = 1; n < MAX_SEATS; n++) {
+      ok(bulletDamage(n) <= bulletDamage(n + 1) && slamDamage(n) <= slamDamage(n + 1), `damage rises at ${n}`);
     }
     ok(a.fightAtTick === 1_434, 'fightAtTick reads offset 1164');
     ok(a.rollRequestedTick === 111, 'fightAtTick did not eat rollRequestedTick');
@@ -998,6 +1138,24 @@ export function layoutSelfCheck(): void {
     ok(b.parts[PART_MACE] === 107 && b.parts[PART_CLAWS] === 108, 'mace 7 / claws 8');
     ok(b.partsMax[N_PARTS - 1] === 900 + N_PARTS - 1, 'parts_max does not overrun the account');
     ok(b.coreHp === 2_000, 'core hp');
+
+    // Fury, on the solo boss the chain's `fury_tests` use: 18,000 shell, 200 core, vent
+    // line at 17,640, so fight HP is 560 and the 20 % line is 112.
+    const solo = { parts: Array<number>(N_PARTS).fill(2_000), partsMax: Array<number>(N_PARTS).fill(2_000), coreHp: 200, coreHpMax: 200 };
+    const fh = fightHp(solo, 1);
+    ok(fh.left === 560 && fh.max === 560, 'fight HP is the strippable shell plus the core');
+    ok(fightHp(solo, MAX_SEATS).max === 11_900, 'twenty owe 65 % of the shell');
+    ok(fightHp(solo, 0).left === fightHp(solo, 1).left, 'an uncounted raid is a solo raid');
+    const stripped = { ...solo, parts: Array<number>(N_PARTS).fill(0) };
+    ok(fightHp(stripped, 1).left === 200, 'below the line only the core is left');
+    ok(!isFurious({ ...stripped, coreHp: 118 }, 1), '21 % is not furious');
+    ok(!isFurious({ ...stripped, coreHp: 113 }, 1), 'one point over the line is not furious');
+    ok(isFurious({ ...stripped, coreHp: 112 }, 1), '20 % is furious');
+    ok(!isFurious({ ...stripped, coreHp: 0 }, 1), 'a dead boss is not furious');
+    ok(!isFurious(solo, 1), 'a full shell is nowhere near');
+    const empty = { parts: Array<number>(N_PARTS).fill(0), partsMax: Array<number>(N_PARTS).fill(0), coreHp: 0, coreHpMax: 0 };
+    ok(fightHp(empty, 0).max === 0 && !isFurious(empty, 255), 'an empty boss is safe and calm');
+    ok(FURY_VOLLEY_INTERVAL_TICKS === 16 && FURY_VOLLEY_INTERVAL_TICKS * 2 === VOLLEY_INTERVAL_TICKS, 'fury halves the volley');
 
     // The slam, against the chain's algorithm. `mix64` is SplitMix64 and its output for
     // state 0 is a published vector, so this pins the mixer rather than restating it.
@@ -1037,6 +1195,8 @@ export function layoutSelfCheck(): void {
     const s = PLAYERS.offsets.slots + 19 * PLAYER_SLOT.size;
     v.setUint8(s + PLAYER_SLOT.offsets.zone, ZONE_ARENA);
     v.setUint8(s + PLAYER_SLOT.offsets.facing, 3 | (1 << CHARGED_SHOT_BIT)); // SE, charged
+    const s1 = PLAYERS.offsets.slots + 1 * PLAYER_SLOT.size;
+    v.setUint8(s1 + PLAYER_SLOT.offsets.facing, 6 | (1 << SUPER_SHOT_BIT)); // W, super
     v.setUint8(s + PLAYER_SLOT.offsets.skin_id, 2);
     v.setUint8(s + PLAYER_SLOT.offsets.class_aim, CLASS_MASK | 0x38); // archer, aiming (1, -2)
     v.setInt16(s + PLAYER_SLOT.offsets.x, 512, true);
@@ -1052,7 +1212,9 @@ export function layoutSelfCheck(): void {
     // renderer that indexed an eight-entry table with the raw byte would read past it on
     // every charged shot.
     ok(last.facing === 3 && last.chargedShot, 'facing is the octant, chargedShot is bit 3');
-    ok(p.slots[0]!.facing === 0 && !p.slots[0]!.chargedShot, 'a zeroed seat faces north, uncharged');
+    ok(!last.superShot, 'a charged shot is not a super');
+    ok(p.slots[1]!.facing === 6 && p.slots[1]!.superShot && !p.slots[1]!.chargedShot, 'superShot is bit 4, alone');
+    ok(p.slots[0]!.facing === 0 && !p.slots[0]!.chargedShot && !p.slots[0]!.superShot, 'a zeroed seat faces north, plain');
     ok(!p.slots[18]!.occupied, 'the stride did not smear into seat 18');
     ok(PLAYERS.offsets.slots + MAX_SEATS * PLAYER_SLOT.size <= PLAYERS.size, 'slots fit');
 
@@ -1118,7 +1280,17 @@ export function layoutSelfCheck(): void {
       ok(Number.isInteger(chargedDamage(c)) && chargedDamage(c) * CHARGED_DEN === CLASS_DAMAGE[c]! * CHARGED_NUM,
         `class ${c}: charged damage divides exactly, as the chain asserts`);
     }
-    ok(CHARGE_MS % 50 === 0 && CHARGE_MS / 50 === 20, 'the hold is a whole number of ER slots (20)');
+    ok(CHARGE_MS % SLOT_MS === 0 && CHARGE_MS / SLOT_MS === 20, 'the hold is a whole number of ER slots (20)');
+    // The super: 5x on both rows, exact, above the charged shot, and a longer hold in slots.
+    ok(superDamage(CLASS_ARCHER) === 350 && superDamage(CLASS_KNIGHT) === 200, '5x, both rows');
+    for (let c = 0; c < N_CLASSES; c++) {
+      ok(superDamage(c) * SUPER_DEN === CLASS_DAMAGE[c]! * SUPER_NUM && superDamage(c) > chargedDamage(c),
+        `class ${c}: super damage divides exactly and beats charged`);
+    }
+    ok(SUPER_MS % SLOT_MS === 0 && SUPER_SLOTS === 50 && SUPER_SLOTS > CHARGE_MS / SLOT_MS, 'the super hold is 50 slots, past the charge');
+    // `>` rather than `!==`: both are literal types, and tsc rejects an inequality it can
+    // already decide (TS2367). Above the charged bit and inside the byte is the same fact.
+    ok(SUPER_SHOT_BIT > CHARGED_SHOT_BIT && SUPER_SHOT_BIT < 8, 'the super bit is its own, off the octant');
   }
 
   // `mayMoveTo` — the movement rule, not a layout offset, and checked here because it is

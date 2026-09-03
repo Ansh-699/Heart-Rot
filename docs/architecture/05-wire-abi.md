@@ -275,7 +275,7 @@ Args, **4 bytes exactly** (`shoot::parse_shot`; was 3 before the charged shot, a
 | `[0]` | 1 | `seat` | u8 |
 | `[1]` | 1 | `dx` | **i8**, signed |
 | `[2]` | 1 | `dy` | **i8**, signed |
-| `[3]` | 1 | `charged` | u8, **0 or 1**; anything else is `InvalidInstructionData`, never masked |
+| `[3]` | 1 | `tier` | u8, **0 tap, 1 charged, 2 super**; anything else is `InvalidInstructionData`, never masked |
 
 **Free aim, and it is not a nicety.** Replayed over 110 pit stands with the boss at top
 centre: eight-way aim leaves 33.6% of stands able to hit anything at all and **can never
@@ -284,16 +284,24 @@ measures 0.2354° of worst-case direction error over 200,000 angles. The pair is
 **on chain** by `tick.rs::unit_velocity`; `(0, 0)` is rejected, and `facing` is stamped from
 `player::octant(dx, dy)` so remote sprites still turn.
 
-**`charged` is a request the chain grants or refuses.** With `charged = 1` the shot deals
+**`tier` is a request the chain grants or refuses.** With `tier = 1` the shot deals
 `state::charged_damage` (2.5×, 175 for the archer) **only if** the seat's last accepted
-step is at least `state::CHARGE_SLOTS` (20) ER slots old: the handler reads
+step is at least `state::CHARGE_SLOTS` (20) ER slots old; with `tier = 2` it deals
+`state::super_damage` (5×, 350) only past `state::SUPER_SLOTS` (50). The handler reads
 `Clock::get()?.slot` and compares it with `slots[seat].last_move_tick`, which `move`
 stamps from the same sysvar. Slot against slot — never `Arena.tick`, a crank tick on a
 different clock. A shorter hold is refused with **`HeartrotError::NotCharged` (`Custom(20)`)
-before the cooldown is spent**, so the client resends the same shot uncharged and loses a
-round trip, not the shot. No charge state is stored anywhere; a step cancels the hold by
-moving the stamp. The verdict is published in `PlayerSlot.facing` bit 3
-(`state::CHARGED_SHOT_BIT`) — see §6.
+before the cooldown is spent**, so the client resends the same shot one tier down and
+loses a round trip, not the shot. No charge state is stored anywhere; a step cancels the
+hold by moving the stamp. The verdict is published in `PlayerSlot.facing` bit 3
+(`state::CHARGED_SHOT_BIT`) or bit 4 (`state::SUPER_SHOT_BIT`) — see §6.
+
+**A super pierces.** Tiers 0 and 1 stop at the first live part box or the core. Tier 2
+walks the whole ray: every live part it enters takes the damage once, and the core takes
+it if the ray crossed the circle **and the vent is open as recomputed after those parts
+fell** — a beam can open the vent and kill through it in one transaction. `damage_dealt`
+credits the sum actually removed. The byte was `charged ∈ {0, 1}`; 0 and 1 mean what they
+meant, so the widening ships program-first.
 
 An old client sending 3 bytes gets a clean length refusal, so **program and app ship
 together**.
@@ -444,10 +452,10 @@ responsibility and none may be skipped:
   direction and is rejected. The destination is then clamped to the map and re-checked
   against the wall bitboard. They are a *request* for a displacement, never the
   displacement itself.
-- **`charged`** (tag 7) is checked `<= 1` and **rejected, never masked** — a 2 is version
-  skew and must be loud. It is a request, not a grant: whether the shot is charged is
-  decided from `last_move_tick` and the ER slot, so setting the byte buys an attacker
-  nothing a player standing still for a second does not already have.
+- **`tier`** (tag 7) is checked `<= 2` and **rejected, never masked** — a 3 is version
+  skew and must be loud. It is a request, not a grant: whether the shot is charged or a
+  super is decided from `last_move_tick` and the ER slot, so setting the byte buys an
+  attacker nothing a player standing still for the hold does not already have.
 - **Nothing here rate-limits.** ER fees are zero and the ER runs no fee-payer validation,
   so the per-seat tick counters written by the handlers (`last_move_tick`,
   `last_shot_tick`) are the only rate limit that exists anywhere.
@@ -462,7 +470,9 @@ two. Keep both derivations agreeing on the octant numbering
 and their shots leave in another.
 
 The octant is the **low three bits** of the byte. Bit 3 is the charged-shot flag
-(`state::CHARGED_SHOT_BIT`): tag 7 ORs it in when the shot was granted charged, and tag 6's
-bare-octant write clears it, so it lives exactly as long as the arrow. A client decodes the
-byte as two fields — `facing = byte & 7`, `chargedShot = byte >> 3 & 1` (`layout.ts` does)
-— and never indexes an eight-entry table with the raw byte.
+(`state::CHARGED_SHOT_BIT`) and bit 4 the super flag (`state::SUPER_SHOT_BIT`): tag 7 ORs
+in the one the shot was granted (never both), and tag 6's bare-octant write — or a plain
+shot — clears them, so they live exactly as long as the arrow or the beam. A client
+decodes the byte as three fields — `facing = byte & 7`, `chargedShot = byte >> 3 & 1`,
+`superShot = byte >> 4 & 1` (`layout.ts` does) — and never indexes an eight-entry table
+with the raw byte.
