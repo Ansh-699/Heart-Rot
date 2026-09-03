@@ -1310,3 +1310,24 @@ h3 {
     opacity: 0.8;
   }
 }
+
+/* The muster countdown over the gate (Arena.tsx). Amber like the gate mark it replaces,
+   keylined so it reads over the portcullis; the mark itself stands down while it shows. */
+.gate-clock-digits {
+  font: 34px var(--pixel);
+  fill: #ffe6b0;
+  stroke: #1a1008;
+  stroke-width: 3px;
+  paint-order: stroke;
+  letter-spacing: 0.04em;
+}
+.gate-clock-label {
+  font: 9px var(--pixel);
+  fill: var(--torch);
+  stroke: #1a1008;
+  stroke-width: 2px;
+  paint-order: stroke;
+  letter-spacing: 0.14em;
+}
+/* `visibility`, not opacity: the mark's bob keyframes animate opacity and would win. */
+.is-mustering .gate-mark { visibility: hidden; }

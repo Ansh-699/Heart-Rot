@@ -34,6 +34,7 @@ function arenaBytes(phase: number, tick: number, bullets: number) {
   v.setUint8(o.raid_size, 1);
   v.setUint32(o.tick, tick, true);
   v.setUint32(o.fight_at_tick, tick + 140, true);
+  if (phase === PHASE_FIGHTING) v.setUint32(o.enrage_at_tick, tick + 3480, true);
   v.setBigUint64(o.arena_id, 1n, true);
   for (let i = 0; i < bullets; i++) {
     const b = o.bullets + i * BULLET.size;

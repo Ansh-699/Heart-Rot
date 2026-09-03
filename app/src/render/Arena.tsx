@@ -552,6 +552,12 @@ export interface ArenaProps {
   className?: string;
 }
 
+/** `ticks` of the chain's clock as m:ss, floored at zero — the gate's muster countdown. */
+function clockOf(ticks: number): string {
+  const total = Math.max(0, Math.round((ticks * TICK_MS) / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
 export function Arena({
   arena,
   boss,
@@ -895,10 +901,31 @@ export function Arena({
             exists so `Passage` has one node to translate for the gate move and so
             `App.tsx`'s `aimOrigin` has one `getScreenCTM()` to aim through. No ref here:
             one writer, and it is not this one. */}
-        <g id="camera">
+        <g id="camera" className={arena.phase === PHASE_MUSTERING ? 'is-mustering' : undefined}>
           {/* Rows 1-6: the active room, whole. Exactly one is mounted — R3 depends on it,
               and so does the frame budget: two rooms is two full scene rasters. */}
           {shown === 'lobby' ? WAITING : BOSS_ARENA}
+
+          {/* The muster, on the gate itself, for whoever is still in the lobby: the raider
+              who walked through started a twenty-second clock the arena account carries,
+              and the one still here needs to see it where the decision is made — over the
+              gate, in digits, not in a corner. The static room's exclamation mark stands
+              down while this stands (`.is-mustering .gate-mark`). One `<text>` per tick,
+              ten times a second, on a node the static layer does not own. */}
+          {shown === 'lobby' && arena.phase === PHASE_MUSTERING && (
+            <g
+              className="gate-clock"
+              aria-hidden="true"
+              transform={`translate(${(GATE_MIN_X + GATE_MAX_X + 1) / 2} ${GATE_MIN_Y - 30})`}
+            >
+              <text className="gate-clock-label" y={-24} textAnchor="middle">
+                BOSS WAKES IN
+              </text>
+              <text className="gate-clock-digits" y={6} textAnchor="middle">
+                {clockOf(arena.fightAtTick - arena.tick)}
+              </text>
+            </g>
+          )}
 
           {/* The gate lighting up under your feet, room A only. Not part of the room
               element because it is the one part of that layer that is not static — the

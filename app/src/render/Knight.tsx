@@ -40,7 +40,9 @@
  */
 import { memo, useEffect, useRef, useState, type Ref } from 'react';
 
-import { MAP_TILE, type PlayerSlot, type ShotTier } from '@heartrot/client';
+import { MAP_TILE, type PlayerSlot, type ShotTier,
+  ZONE_ARENA,
+} from '@heartrot/client';
 
 import { holdMsFor } from '../input/controls';
 import {
@@ -539,8 +541,13 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
   const waiting = dead && slot.respawnAtTick > tick && span > 0;
   const progress = waiting ? Math.max(0, Math.min(1, 1 - (slot.respawnAtTick - tick) / span)) : 0;
 
+  // Your own bar is always on in the pit ("show our hp when inside boss"): the top-centre
+  // bar is where the number lives, but in a fight the eyes are on the archer, and the bar
+  // over its head is the one that is read. Every other seat's bar still appears only once
+  // it is hurt — twenty always-on bars is twenty pieces of chrome over the boss art.
   const damaged = slot.hpMax > 0 && slot.hp < slot.hpMax && !dead;
-  const hp = damaged ? Math.max(0, Math.min(1, slot.hp / slot.hpMax)) : 0;
+  const barShown = damaged || (mine && !dead && slot.hpMax > 0 && slot.zone === ZONE_ARENA);
+  const hp = barShown ? Math.max(0, Math.min(1, slot.hp / slot.hpMax)) : 0;
 
   return (
     <>
@@ -645,7 +652,7 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
 
       {/* Twenty always-on bars is twenty pieces of chrome over the area the boss art
           occupies. One comparison removes most of them for most of the fight. */}
-      {damaged && (
+      {barShown && (
         <>
           <rect x={-HP_BAR_W / 2} y={-26} width={HP_BAR_W} height={4} fill={PAL.hpBack} opacity={0.6} />
           <rect x={-HP_BAR_W / 2} y={-26} width={HP_BAR_W * hp} height={4} fill={PAL.hpFill} />

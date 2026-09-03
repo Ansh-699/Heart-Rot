@@ -229,6 +229,10 @@ const HUD_CSS = `
    not, which is the same rule the boss's own eyes follow. The mark on the boss bar is the
    enrage line at FURY_PCT. */
 .hud-vitals { display: grid; gap: 6px; }
+.hud-clock { display: flex; align-items: baseline; justify-content: center; gap: 10px; margin: 0 0 6px; }
+.hud-clock-digits { font-family: var(--pixel); font-size: 30px; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.hud-clock-label { font-family: var(--pixel); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.hud-urgent .hud-clock-digits, .hud-urgent .hud-clock-label { color: var(--ember); }
 .hud-bar-row { display: grid; grid-template-columns: 68px 1fr 64px; align-items: center; gap: 10px; }
 .hud-bar-label { font-family: var(--pixel); font-size: 10px; letter-spacing: 0.1em; color: var(--muted); }
 .hud-bar-num { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
@@ -290,6 +294,7 @@ export function Hud() {
           cluster stays top left; the bars are the one thing a raider reads from the far
           side of the room, so they sit where every raid game puts them. */}
       <div className="hud hud-tc">
+        <FightClock />
         <VitalsRow />
       </div>
       <Verdict />
@@ -383,7 +388,6 @@ function PhaseCluster() {
     <div className="hud hud-tl">
       <div className="hud-row">
         <span className="pill">{PHASE_NAMES[phase] ?? `PHASE ${phase}`}</span>
-        <FightClock />
         <span className="fine tabular">tick {tick}</span>
         <span className={`dot dot-${status}`} aria-hidden="true" />
         <span className="fine">{status}</span>
@@ -429,14 +433,25 @@ function FightClock() {
   const fightAt = useSelect((s) => s.arena?.fightAtTick ?? 0);
   const enrageAt = useSelect((s) => s.arena?.enrageAtTick ?? 0);
   const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
+  // BIG DIGITS, top centre, over the bars ("show boss timer in big digits"): the clock is
+  // the one number a raid plans around, and 11 px in a corner was not a number anyone
+  // planned around.
   if (phase === PHASE_MUSTERING) {
-    return <span className="fine tabular">wakes in {clock(fightAt - tick, tickMs)}</span>;
+    return (
+      <div className="hud-clock">
+        <span className="hud-clock-label">boss wakes in</span>
+        <span className="hud-clock-digits">{clock(fightAt - tick, tickMs)}</span>
+      </div>
+    );
   }
   if (phase === PHASE_FIGHTING && enrageAt !== 0) {
     const left = enrageAt - tick;
     const urgent = left * tickMs <= 30_000;
     return (
-      <span className={`fine tabular${urgent ? ' hud-urgent' : ''}`}>{clock(left, tickMs)} left</span>
+      <div className={`hud-clock${urgent ? ' hud-urgent' : ''}`}>
+        <span className="hud-clock-digits">{clock(left, tickMs)}</span>
+        <span className="hud-clock-label">left</span>
+      </div>
     );
   }
   return null;
