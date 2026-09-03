@@ -235,7 +235,10 @@ const HUD_CSS = `
 .hud-bar-num { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
 .hud-bar { position: relative; height: 9px; background: color-mix(in srgb, var(--line) 55%, transparent); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
 .hud-bar-boss { height: 12px; }
-.hud-bar-fill { height: 100%; background: var(--ok); transition: width 0.25s ease-out, background-color 0.3s; }
+/* The fill is a full-width box SCALED, not a box whose width changes: width is a layout
+   property and the bar re-renders on every notification that moves hp, so a width
+   transition re-laid-out the whole cluster ten times a second. scaleX is compositor-only. */
+.hud-bar-fill { height: 100%; width: 100%; transform-origin: left center; background: var(--ok); transition: transform 0.25s ease-out, background-color 0.3s; }
 .hud-bar-boss .hud-bar-fill { background: var(--cyan); }
 .hud-bar-fill.is-low, .is-down .hud-bar-fill, .hud-enraged .hud-bar-fill { background: var(--ember); }
 .hud-bar-mark { position: absolute; top: -1px; bottom: -1px; width: 1px; background: var(--ember); opacity: 0.8; }
@@ -343,7 +346,7 @@ function VitalsRow() {
         <div className="hud-bar" role="meter" aria-label="your health" aria-valuenow={slot.hp} aria-valuemax={slot.hpMax}>
           <div
             className={`hud-bar-fill${ownPct <= 30 ? ' is-low' : ''}`}
-            style={{ width: `${ownPct}%` }}
+            style={{ transform: `scaleX(${ownPct / 100})` }}
           />
         </div>
         <span className="hud-bar-num">
@@ -354,7 +357,7 @@ function VitalsRow() {
         <div className={`hud-bar-row hud-boss${furious ? ' hud-enraged' : ''}`}>
           <span className="hud-bar-label">{furious ? 'ENRAGED' : 'BOSS'}</span>
           <div className="hud-bar hud-bar-boss" role="meter" aria-label="boss health" aria-valuenow={bossPct} aria-valuemax={100}>
-            <div className="hud-bar-fill" style={{ width: `${bossPct}%` }} />
+            <div className="hud-bar-fill" style={{ transform: `scaleX(${bossPct / 100})` }} />
             <div className="hud-bar-mark" style={{ left: `${FURY_PCT}%` }} aria-hidden="true" />
           </div>
           <span className="hud-bar-num">{bossPct}%</span>
