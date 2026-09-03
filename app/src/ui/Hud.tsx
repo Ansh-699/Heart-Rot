@@ -47,6 +47,8 @@ import {
   PHASE_FIGHTING,
   PHASE_LOBBY,
   PHASE_MUSTERING,
+  PHASE_SETTLED,
+  PHASE_SETTLING,
   TICK_MS,
   VENT_PCT_FULL,
   VENT_PCT_SOLO,
@@ -173,21 +175,16 @@ function usePlayOnRise(when: boolean, name: SfxName): void {
  * `pointerdown` to `#stage`, and an overlay that does not hit-test is not in the way.
  */
 const HUD_CSS = `
-/* THE HUD IS NOT A PANEL. Two boxed, bordered, translucent clusters covered the top of
-   the room; this is what is left after "fully professional and small ... as minimal as
-   possible". No backgrounds, no borders: every element is drawn straight onto the scene
-   under a hard 1 px shadow, which is what keeps it legible over the cyan orb and the
-   fury glow alike. What survived, and why:
-     - two icons top right (sound, leave), at half opacity until hovered
-     - top centre, in the pit only: the clock as bare digits, one 6 px boss bar with its
-       name and percentage on the bar's own ends, and a row of 5 px seat dots that
-       exists only when there is more than one seat to show
-   Gone: the phase pill, the tick counter and the feed word (telemetry has them), the
-   HP bar (it is over your archer's head), the muster label in the lobby (the gate
-   carries it), the seat dots in a solo fight.
-   The whole layer fades to 60 % after four quiet seconds and returns on any input or
-   hit; H hides it. \`.hud\` — the box — now dresses the end-of-match verdict alone.
-   (No backticks in this block beyond the escaped pair above: it is a template literal.) */
+/* ONE SMALL CARD, ONE BARE BAR, TWO ICONS. The brief: keep fight state, timer, tick, live
+   status, sound, exit, player HP and boss HP; improve hierarchy, spacing, alignment and
+   contrast; add nothing. So: a restrained card top left with a thin border and 80 %
+   panel — state and timer on the first line, tick and feed on the second in muted mono,
+   HP as a 4 px bar with its count — the boss bar alone at the top centre, drawn straight
+   onto the scene where the eyes already are, and sound / leave as two icons top right,
+   half opacity until hovered. Seat dots appear under the HP bar only when there is more
+   than one seat to show. The layer fades to 60 % after four quiet seconds and returns on
+   any input or hit; H hides it. \`.hud\` — the boxed style — dresses the verdict alone.
+   (No unescaped backticks in this block: it is a template literal.) */
 .hud-layer {
   position: fixed;
   inset: 0;
@@ -201,6 +198,55 @@ const HUD_CSS = `
 
 /* Top right: the wordmark owns the top left and telemetry's cue owns the bottom right. */
 .hud-corner { position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; }
+
+/* Under the wordmark, which owns the top-left row: the first row of the screen reads
+   wordmark / boss bar / icons, and the card hangs below it. */
+.hud-card {
+  position: absolute;
+  top: 44px;
+  left: 12px;
+  width: 236px;
+  padding: 8px 10px 9px;
+  display: grid;
+  gap: 6px;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.hud-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.hud-state {
+  font: 10px var(--pixel);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hud-state.is-muster { color: var(--torch); }
+.hud-state.is-enraged { color: var(--ember); }
+.hud-timer {
+  font: 18px var(--pixel);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.hud-urgent .hud-timer { color: var(--ember); }
+.hud-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 10px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.hud-meta .dot { flex: none; }
+.hud-hp { display: grid; grid-template-columns: 18px 1fr 52px; align-items: center; gap: 8px; }
+.hud-hp-label { font: 9px var(--pixel); letter-spacing: 0.14em; color: var(--muted); }
+.hud-hp-bar { position: relative; height: 4px; background: rgb(0 0 0 / 0.5); overflow: hidden; }
+.hud-hp-fill { height: 100%; width: 100%; transform-origin: left center; background: var(--ok); transition: transform 0.25s ease-out, background-color 0.3s; }
+.hud-hp-fill.is-low, .is-down .hud-hp-fill { background: var(--ember); }
+.is-down .hud-hp-label { color: var(--ember); }
+.hud-hp-num { font: 11px var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .hud-hp-fill { transition: none; } }
 .hud-icon {
   width: 24px;
   height: 24px;
@@ -220,21 +266,10 @@ const HUD_CSS = `
 
 .hud-top {
   position: absolute;
-  top: 10px;
+  top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(460px, 38vw);
-  display: grid;
-  justify-items: center;
-  gap: 5px;
-}
-.hud-digits {
-  font: 26px var(--pixel);
-  line-height: 1;
-  letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-  text-shadow: 0 1px 0 #000, 0 0 8px rgb(0 0 0 / 0.9);
+  width: min(440px, 36vw);
 }
 .hud-tag {
   font: 9px var(--pixel);
@@ -243,8 +278,6 @@ const HUD_CSS = `
   color: var(--muted);
   text-shadow: 0 1px 0 #000, 0 0 6px rgb(0 0 0 / 0.9);
 }
-.hud-urgent .hud-digits { color: var(--ember); }
-
 .hud-boss {
   width: 100%;
   display: grid;
@@ -273,7 +306,7 @@ const HUD_CSS = `
 .hud-enraged .hud-tag { color: var(--ember); }
 @media (prefers-reduced-motion: reduce) { .hud-boss-fill { transition: none; } }
 
-.hud-seats { display: flex; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.hud-seats { display: flex; gap: 3px; margin: 1px 0 0; padding: 0; list-style: none; }
 .hud-seat { width: 5px; height: 5px; border-radius: 50%; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.6); }
 
 /* The end-of-match verdict is the one boxed thing left: it is a result, not chrome. */
@@ -307,8 +340,9 @@ export function Hud() {
     <>
       <style>{HUD_CSS}</style>
       <div className={`hud-layer${calm ? ' is-calm' : ''}${hidden ? ' is-hidden' : ''}`}>
-        <Corner />
+        <Card />
         <Top />
+        <Corner />
       </div>
       <Verdict />
     </>
@@ -416,12 +450,21 @@ function ExitIcon() {
   );
 }
 
+const PHASE_NAMES: Readonly<Record<number, string>> = {
+  [PHASE_LOBBY]: 'LOBBY',
+  [PHASE_MUSTERING]: 'MUSTERING',
+  [PHASE_FIGHTING]: 'FIGHTING',
+  [PHASE_SETTLING]: 'SETTLING',
+  [PHASE_SETTLED]: 'SETTLED',
+};
+
 /**
- * Top centre, in the pit only. The lobby shows nothing here: the gate carries the muster
- * countdown in the world, and there is no boss to bar.
+ * The card: state and timer, tick and feed, HP, seats. Everything the old two clusters
+ * said, on four short lines with one typographic scale each — state in small caps, the
+ * timer as the only large thing, tick and feed as one muted line, the count beside its bar.
  */
-function Top() {
-  const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
+function Card() {
+  const slot = useSelect(mySeatSlot);
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
   const tick = useSelect((s) => s.arena?.tick ?? 0);
   const fightAt = useSelect((s) => s.arena?.fightAtTick ?? 0);
@@ -429,60 +472,93 @@ function Top() {
   const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
   const raidSize = useSelect((s) => s.arena?.raidSize ?? 0);
   const boss = useSelect((s) => s.boss);
+  const status = useSelect((s) => s.status);
   const players = useSelect((s) => s.players);
   const seat = useSelect((s) => s.match?.seat ?? -1);
-  if (!inPit) return null;
+  if (!slot) return null;
 
-  // Fight HP, not shell: shell above the vent line never has to come off, so a solo bar
-  // read 97 % three hits from a win. `fightHp` is the chain's own `Boss::fight_hp`, and
-  // the floor keeps 20 % and ENRAGED landing on the same tick.
-  const hp = boss ? fightHp(boss, raidSize) : null;
   const furious = phase === PHASE_FIGHTING && boss !== null && isFurious(boss, raidSize);
-  const bossShown = hp !== null && hp.max > 0 && phase !== PHASE_LOBBY;
-  const pct = bossShown ? floorPercent(hp.left, hp.max) : 0;
-  const occupied = players?.slots.filter((x) => x.occupied).length ?? 0;
+  const mustering = phase === PHASE_MUSTERING;
   const left = enrageAt - tick;
-  const urgent = phase === PHASE_FIGHTING && left * tickMs <= 30_000;
+  const timer = mustering ? clock(fightAt - tick, tickMs) : phase === PHASE_FIGHTING && enrageAt !== 0 ? clock(left, tickMs) : null;
+  const urgent = phase === PHASE_FIGHTING && enrageAt !== 0 && left * tickMs <= 30_000;
+  const dead = slot.hp === 0;
+  const pct = slot.hpMax > 0 ? floorPercent(slot.hp, slot.hpMax) : 0;
+  const occupied = players?.slots.filter((x) => x.occupied).length ?? 0;
 
   return (
-    <div className={`hud-top${furious ? ' hud-enraged' : ''}${urgent ? ' hud-urgent' : ''}`}>
-      {phase === PHASE_MUSTERING && (
-        <>
-          <span className="hud-digits">{clock(fightAt - tick, tickMs)}</span>
-          <span className="hud-tag">boss wakes in</span>
-        </>
-      )}
-      {phase === PHASE_FIGHTING && enrageAt !== 0 && <span className="hud-digits">{clock(left, tickMs)}</span>}
-      {bossShown && (
-        <div className="hud-boss">
-          <span className="hud-tag">{furious ? 'ENRAGED' : 'BOSS'}</span>
-          <div className="hud-boss-bar" role="meter" aria-label="boss health" aria-valuenow={pct} aria-valuemax={100}>
-            <div className="hud-boss-fill" style={{ transform: `scaleX(${pct / 100})` }} />
-            <div className="hud-boss-mark" style={{ left: `${FURY_PCT}%` }} aria-hidden="true" />
-          </div>
-          <span className="hud-boss-pct">{pct}%</span>
+    <div className={`hud-card${urgent ? ' hud-urgent' : ''}${dead ? ' is-down' : ''}`}>
+      <div className="hud-card-head">
+        <span className={`hud-state${furious ? ' is-enraged' : mustering ? ' is-muster' : ''}`}>
+          {furious ? 'ENRAGED' : (PHASE_NAMES[phase] ?? `PHASE ${phase}`)}
+        </span>
+        {timer !== null && <span className="hud-timer">{timer}</span>}
+      </div>
+      <div className="hud-meta">
+        <span>tick {tick}</span>
+        <span aria-hidden="true">·</span>
+        <span className={`dot dot-${status}`} aria-hidden="true" />
+        <span>{status}</span>
+      </div>
+      <div className="hud-hp">
+        <span className="hud-hp-label">HP</span>
+        <div className="hud-hp-bar" role="meter" aria-label="your health" aria-valuenow={slot.hp} aria-valuemax={slot.hpMax}>
+          <div className={`hud-hp-fill${pct <= 30 ? ' is-low' : ''}`} style={{ transform: `scaleX(${pct / 100})` }} />
         </div>
-      )}
+        <span className="hud-hp-num">
+          {dead ? clock(Math.max(0, slot.respawnAtTick - tick), tickMs) : `${slot.hp}/${slot.hpMax}`}
+        </span>
+      </div>
       {occupied > 1 && (
         <ol className="hud-seats">
           {Array.from({ length: MAX_SEATS }, (_, i) => {
-            const slot = players?.slots[i];
-            if (!slot?.occupied) return null;
+            const other = players?.slots[i];
+            if (!other?.occupied) return null;
             return (
               <li
                 key={i}
                 className="hud-seat"
                 aria-current={i === seat ? 'true' : undefined}
-                aria-label={`seat ${i}${slot.zone === ZONE_ARENA ? ', in the pit' : ', in the lobby'}`}
+                aria-label={`seat ${i}${other.zone === ZONE_ARENA ? ', in the pit' : ', in the lobby'}`}
                 style={{
-                  background: SKIN_COLORS[slot.skinId] ?? 'var(--dim)',
-                  opacity: slot.zone === ZONE_ARENA ? 1 : 0.45,
+                  background: SKIN_COLORS[other.skinId] ?? 'var(--dim)',
+                  opacity: other.zone === ZONE_ARENA ? 1 : 0.45,
                 }}
               />
             );
           })}
         </ol>
       )}
+    </div>
+  );
+}
+
+/** Top centre, in the pit only: the boss bar, bare, where the eyes already are. */
+function Top() {
+  const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
+  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  const raidSize = useSelect((s) => s.arena?.raidSize ?? 0);
+  const boss = useSelect((s) => s.boss);
+  if (!inPit || boss === null || phase === PHASE_LOBBY) return null;
+
+  // Fight HP, not shell: shell above the vent line never has to come off, so a solo bar
+  // read 97 % three hits from a win. `fightHp` is the chain's own `Boss::fight_hp`, and
+  // the floor keeps 20 % and ENRAGED landing on the same tick.
+  const hp = fightHp(boss, raidSize);
+  if (hp.max <= 0) return null;
+  const furious = phase === PHASE_FIGHTING && isFurious(boss, raidSize);
+  const pct = floorPercent(hp.left, hp.max);
+
+  return (
+    <div className={`hud-top${furious ? ' hud-enraged' : ''}`}>
+      <div className="hud-boss">
+        <span className="hud-tag">{furious ? 'ENRAGED' : 'BOSS'}</span>
+        <div className="hud-boss-bar" role="meter" aria-label="boss health" aria-valuenow={pct} aria-valuemax={100}>
+          <div className="hud-boss-fill" style={{ transform: `scaleX(${pct / 100})` }} />
+          <div className="hud-boss-mark" style={{ left: `${FURY_PCT}%` }} aria-hidden="true" />
+        </div>
+        <span className="hud-boss-pct">{pct}%</span>
+      </div>
     </div>
   );
 }
