@@ -223,6 +223,7 @@ const HUD_CSS = `
 .hud-keys { color: var(--dim); }
 .hud-keys b { font-family: var(--pixel); font-weight: 400; color: var(--ink); }
 .hud-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hud-urgent { color: var(--ember); }
 .hud-seats { display: flex; gap: 3px; margin: 2px 0 0; padding: 0; list-style: none; }
 .hud-seat {
   width: 7px;
@@ -334,6 +335,7 @@ function PhaseCluster() {
     <div className="hud hud-tl">
       <div className="hud-row">
         <span className="pill">{PHASE_NAMES[phase] ?? `PHASE ${phase}`}</span>
+        <FightClock />
         <span className="fine tabular">tick {tick}</span>
         <span className={`dot dot-${status}`} aria-hidden="true" />
         <span className="fine">{status}</span>
@@ -361,6 +363,36 @@ function PhaseCluster() {
       </ol>
     </div>
   );
+}
+
+/**
+ * The two clocks a raid runs on, in the one cluster that survived the popup cull: how long
+ * until the boss wakes (`fight_at_tick`, stamped by `begin_muster`) and, once it has, how
+ * long before the six-minute enrage ends the fight (`enrage_at_tick`, stamped at the
+ * MUSTERING → FIGHTING flip and 0 before it). Both are chain ticks against the chain's own
+ * `tick`, never a wall clock — the muster card that used to show the first of these went
+ * with the panels, and nothing else in the fight said how long was left.
+ *
+ * Ember under thirty seconds of the fight, because that is the number that changes what a
+ * raid does: it is the difference between stripping one more limb and going for the core.
+ */
+function FightClock() {
+  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  const tick = useSelect((s) => s.arena?.tick ?? 0);
+  const fightAt = useSelect((s) => s.arena?.fightAtTick ?? 0);
+  const enrageAt = useSelect((s) => s.arena?.enrageAtTick ?? 0);
+  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
+  if (phase === PHASE_MUSTERING) {
+    return <span className="fine tabular">wakes in {clock(fightAt - tick, tickMs)}</span>;
+  }
+  if (phase === PHASE_FIGHTING && enrageAt !== 0) {
+    const left = enrageAt - tick;
+    const urgent = left * tickMs <= 30_000;
+    return (
+      <span className={`fine tabular${urgent ? ' hud-urgent' : ''}`}>{clock(left, tickMs)} left</span>
+    );
+  }
+  return null;
 }
 
 /**
