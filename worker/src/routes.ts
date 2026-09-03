@@ -400,14 +400,30 @@ async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number
       continue;
     }
 
-    occupied++;
     if (state.phase === PHASE_LOBBY) return { arenaId, incarnation: state.incarnation };
 
     if (state.phase === PHASE_SETTLED) {
       const rolled = await rollForward(c, pdas, state);
       if (rolled !== null) return { arenaId, incarnation: rolled };
+      // TERMINAL, and it must not spend the budget.
+      //
+      // A settled arena that cannot roll forward is a loss: `rollForward` refuses locally
+      // on `outcome !== OUTCOME_WIN`, with no transaction and no extra read, so this costs
+      // nothing to identify. It can never be joined again, and one is produced by every
+      // fight that ends in a wipe or an enrage — so counting it toward `occupied` makes the
+      // budget shrink by one per lost raid, permanently.
+      //
+      // That is the wall this file has now hit twice: at ARENA_SCAN 3, and again at 12 with
+      // ids 1788266869..80 dead and 1788266885 absent and perfectly usable one step past
+      // the horizon. Widening the budget only postpones it, because the accumulator is
+      // unbounded and the budget is not. Skipping for free removes the accumulator instead.
+      continue;
     }
-    // Mid-fight, mid-settlement, or a chain that ended: the next id is untouched.
+
+    // Busy, but not forever: fighting, mustering, mid-settlement or mid-roll. These free up
+    // on their own, so they are what the budget is actually for — a bound on how many LIVE
+    // raids to walk past before answering "come back in a moment".
+    occupied++;
   }
   // Every id in the window is occupied by a match nobody can join. That is a real
   // operational state, not a transient one, so name the range that was tried — a bare
