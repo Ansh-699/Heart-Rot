@@ -12,6 +12,8 @@ import { createRoot } from 'react-dom/client';
 
 import App from '../../../app/src/App';
 import { StoreProvider, setAuthSource, useStore } from '../../../app/src/state/store';
+import { fireLocal } from '../../../app/src/render/Shot';
+import { chargeLocal } from '../../../app/src/render/Knight';
 import {
   ARENA, BOSS, BOSS_SPAWN, BULLET, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
   LAYOUT_VERSION, MAX_SEATS, N_PARTS, CLASS_MASK,
@@ -29,6 +31,7 @@ function arenaBytes(phase: number, tick: number, bullets: number) {
   const { d, v } = blank(ARENA.size, DISC_ARENA);
   const o = ARENA.offsets;
   v.setUint8(o.phase, phase);
+  v.setUint8(o.raid_size, 1);
   v.setUint32(o.tick, tick, true);
   v.setUint32(o.fight_at_tick, tick + 140, true);
   v.setBigUint64(o.arena_id, 1n, true);
@@ -44,16 +47,24 @@ function arenaBytes(phase: number, tick: number, bullets: number) {
   return decodeArena(d);
 }
 
-function bossBytes(hurt: boolean) {
+/**
+ * `vent`: the shell sits just under the solo threshold (98 %) so the vent is open and the
+ * quiet ring shows. `fury`: the same plus a core at 300 of 2,000 — with 90 shell to strip
+ * the effective pool is 2,090 and 300 is under 20 % of it, so `isFurious` reads true.
+ */
+function bossBytes(hurt: boolean, vent = false, fury = false) {
   const { d, v } = blank(BOSS.size, DISC_BOSS);
   const o = BOSS.offsets;
   v.setInt16(o.x, BOSS_SPAWN[0], true);
   v.setInt16(o.y, BOSS_SPAWN[1], true);
+  const open = vent || fury;
   for (let i = 0; i < N_PARTS; i++) {
     v.setUint16(o.parts_max + i * 2, 500, true);
-    v.setUint16(o.parts + i * 2, hurt && i === 7 ? 0 : 500, true);
+    const hp = hurt && i === 7 ? 0 : open && i === 0 ? 400 : 500;
+    v.setUint16(o.parts + i * 2, hp, true);
   }
-  v.setUint16(o.core_hp, 2000, true);
+  v.setUint8(o.vent_open, open ? 1 : 0);
+  v.setUint16(o.core_hp, fury ? 300 : 2000, true);
   v.setUint16(o.core_hp_max, 2000, true);
   return decodeBoss(d);
 }
@@ -116,7 +127,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return realFetch(input as RequestInfo, init);
 }) as typeof fetch;
 
-interface SceneOpts { hurt?: boolean; bullets?: number; seats?: number; phase?: number; at?: number[][] }
+interface SceneOpts { hurt?: boolean; vent?: boolean; fury?: boolean; bullets?: number; seats?: number; phase?: number; at?: number[][] }
 
 function Bridge() {
   const store = useStore();
@@ -129,11 +140,15 @@ function Bridge() {
       store.setWorld({
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,
           arena ? (opts.bullets ?? 10) : 0),
-        boss: bossBytes(!!opts.hurt),
+        boss: bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury),
         players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, opts.at),
       });
     };
     w.__PHASE = { PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING };
+    // The local seat's own feedback, driven directly: a practice loose at any tier and the
+    // hold's edge, so the beam and the draw can be photographed without a chain.
+    w.__fire = fireLocal;
+    w.__charge = chargeLocal;
     w.__ready = true;
   }, [store]);
   return null;
