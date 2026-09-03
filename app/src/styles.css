@@ -1315,3 +1315,60 @@ h3 {
 }
 /* `visibility`, not opacity: the mark's bob keyframes animate opacity and would win. */
 .is-mustering .gate-mark { visibility: hidden; }
+
+/* controls sign — the plaque over the lobby spawn row (WaitingRoom.tsx). The HUD card's
+   own plate (`--panel` at 80 %, one `--line` hairline) so the two read as one vocabulary;
+   sizes are world units, like the gate clock's, so the plate scales with the room. Labels
+   muted, keys in ink: the key is the thing to find. */
+.ctl-sign-plate {
+  fill: color-mix(in srgb, var(--panel) 80%, transparent);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.ctl-sign text {
+  font: 8px var(--pixel);
+  fill: var(--muted);
+  letter-spacing: 0.06em;
+}
+.ctl-sign tspan {
+  fill: var(--ink);
+}
+
+/* --------------------------------------------------------------------------
+   beam — the 50 % phase's sweep (`Arena.tsx`, `beamAt`)
+
+   The one telegraph coloured from a stylesheet class rather than inline attributes: it
+   is the first scene shape in `--ember`, the HUD's state red, and `PAL` has no ember —
+   the tokens do. Three rules, all colour and weight; every position, size and seek is
+   `Arena.tsx`'s, in world units, where the lanes are. Restraint is the design: a tint
+   the floor still shows through, a 2 px keyline, one drop-shadow on the beam itself
+   for the soft edge, and nothing else glowing.
+
+   No reduced-motion rule here: both animations are WAAPI, created and seeked by
+   `Arena.tsx` with the preference resolved once in JS — under it the tint is drawn at
+   rest and the beam steps a lane per tick, the same information without the glide
+   (the governing rule in the reduced-motion block above).
+   -------------------------------------------------------------------------- */
+
+/* The doomed lanes: the whole half during the warning, the lanes still to come during
+   the sweep. 0.14 sits under the slam lane's 0.5 claim on purpose — the slam is one
+   lane to leave, this is four lanes to have left already. */
+.beam-lane {
+  fill: var(--ember);
+  fill-opacity: 0.14;
+}
+
+/* The lane the sweep starts from, keylined, and the chevron saying which way it runs. */
+.beam-warn-edge,
+.beam-warn-chevron {
+  fill: none;
+  stroke: var(--ember);
+  stroke-width: 2px;
+}
+
+/* The beam: ember core, one 6 px shadow for the soft edge. */
+.beam-sweep {
+  fill: var(--ember);
+  fill-opacity: 0.85;
+  filter: drop-shadow(0 0 6px var(--ember));
+}

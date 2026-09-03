@@ -1,5 +1,5 @@
 /**
- * HEARTROT's backend: four cold-path routes and nothing else.
+ * HEARTROT's backend: four cold-path match routes, two public reads, and nothing else.
  *
  * `run_worker_first: ["/api/*"]` in wrangler.jsonc means this script is the only thing
  * that ever sees an `/api/*` request, and *nothing else* ever reaches this script — the
@@ -18,6 +18,7 @@ import {
   BadRequest,
   faucetStatus,
   json,
+  leaderboard,
   matchLeave,
   matchSettle,
   matchStart,
@@ -129,6 +130,9 @@ export default {
     try {
       if (request.method === 'GET' && pathname === '/api/faucet/status') {
         return await faucetStatus(env);
+      }
+      if (request.method === 'GET' && pathname === '/api/leaderboard') {
+        return await leaderboard(env);
       }
 
       // Resolved before the body is touched, so a typo'd URL answers `not_found`

@@ -19,6 +19,17 @@ is unchanged on disk, no product code is modified, no deploy was run, no git com
 > abandoned raids piled up after it; every join re-walked the gap and each abandon added a
 > step, and the scan's 76-id window would eventually have filled with nothing joinable.
 
+> **Amended 2026-09-04, warming.** `no_open_arena` and `try_again` are no longer errors the
+> player retries by hand. Both mean "not yet": `prewarmNext` is creating and delegating the
+> next arena in `ctx.waitUntil` (30–60 s of devnet round trips) and the scan will find it on a
+> later call. The client's `join` (`app/src/state/store.ts`) now enters `status: 'warming'` on
+> either refusal and re-asks every 3 s, up to 20 times, before showing the refusal's own copy;
+> the select screen shows `ARENA WARMING…` / `Preparing your arena…` for the duration. 3 s is
+> not a taste: the Worker rate-limits 30 requests a minute per IP per path, so 20 a minute is
+> the fastest loop that cannot turn `no_open_arena` into `rate_limited`. The routes take a guest
+> proof in place of `privyToken` since the same pass (`routes.ts::resolveIdentity`); the scan is
+> identity-agnostic and nothing here changes for it.
+
 This document collapses four independent design passes — the grid pass, `docs/art/hall.md`,
 `docs/art/arena.md`, and the reach-and-fit pass — into one buildable thing. They disagreed on
 the pit depth, the gate width, the ray-reach limit and the layer order. §10 records every

@@ -16,6 +16,7 @@ import { fireLocal } from '../../../app/src/render/Shot';
 import { chargeLocal } from '../../../app/src/render/Knight';
 import {
   ARENA, BOSS, BOSS_SPAWN, BULLET, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
+  BEAM_LANE_TICKS, BEAM_PERIOD_TICKS, BEAM_WARN_TICKS,
   LAYOUT_VERSION, MAX_SEATS, N_PARTS, CLASS_MASK,
   PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING, ZONE_ARENA, ZONE_LOBBY,
   decodeArena, decodeBoss, decodePlayers,
@@ -27,10 +28,13 @@ const blank = (size: number, disc: number) => {
   return { d, v: new DataView(d.buffer) };
 };
 
-function arenaBytes(phase: number, tick: number, bullets: number) {
+function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, incarnation = 0) {
   const { d, v } = blank(ARENA.size, DISC_ARENA);
   const o = ARENA.offsets;
   v.setUint8(o.phase, phase);
+  // results-win: a settled WIN at incarnation N, so the verdict names N + 1.
+  v.setUint8(o.outcome, outcome);
+  v.setUint16(o.incarnation, incarnation, true);
   v.setUint8(o.raid_size, 1);
   v.setUint32(o.tick, tick, true);
   v.setUint32(o.fight_at_tick, tick + 140, true);
@@ -52,26 +56,29 @@ function arenaBytes(phase: number, tick: number, bullets: number) {
  * `vent`: the shell sits just under the solo threshold (98 %) so the vent is open and the
  * quiet ring shows. `fury`: the same plus a core at 300 of 2,000 — with 90 shell to strip
  * the effective pool is 2,090 and 300 is under 20 % of it, so `isFurious` reads true.
+ * `beam`: the same open shell with the core at 1,000 — under half of 2,090 and over a
+ * fifth, so `isPhase2` reads true and `isFurious` false: the beam without the fury wash.
  */
-function bossBytes(hurt: boolean, vent = false, fury = false) {
+function bossBytes(hurt: boolean, vent = false, fury = false, beam = false) {
   const { d, v } = blank(BOSS.size, DISC_BOSS);
   const o = BOSS.offsets;
   v.setInt16(o.x, BOSS_SPAWN[0], true);
   v.setInt16(o.y, BOSS_SPAWN[1], true);
-  const open = vent || fury;
+  const open = vent || fury || beam;
   for (let i = 0; i < N_PARTS; i++) {
     v.setUint16(o.parts_max + i * 2, 500, true);
     const hp = (hurt && i === 7) || (fury && (i === 7 || i === 8 || i === 3)) ? 0 : open && i === 0 ? 400 : 500;
     v.setUint16(o.parts + i * 2, hp, true);
   }
   v.setUint8(o.vent_open, open ? 1 : 0);
-  v.setUint16(o.core_hp, fury ? 300 : 2000, true);
+  v.setUint16(o.core_hp, fury ? 300 : beam ? 1000 : 2000, true);
   v.setUint16(o.core_hp_max, 2000, true);
   return decodeBoss(d);
 }
 
-/** 20 seats spread over the room named by `zone`, mixed skins and classes. */
-function playersBytes(zone: number, tick: number, seats: number, at?: number[][]) {
+/** 20 seats spread over the room named by `zone`, mixed skins and classes. `damage` is
+ *  per seat, for the results panel's placing; the default is a spread nobody ties on. */
+function playersBytes(zone: number, tick: number, seats: number, at?: number[][], damage?: number[]) {
   const { d, v } = blank(PLAYERS.size, DISC_PLAYERS);
   if (at) {
     // art-judge: explicit world placements [x, y, skin, isArcher]. Everything else matches
@@ -88,6 +95,7 @@ function playersBytes(zone: number, tick: number, seats: number, at?: number[][]
       v.setUint16(s + PLAYER_SLOT.offsets.hp, 100, true);
       v.setUint16(s + PLAYER_SLOT.offsets.hp_max, 100, true);
       v.setUint32(s + PLAYER_SLOT.offsets.last_shot_tick, 0, true);
+      v.setUint32(s + PLAYER_SLOT.offsets.damage_dealt, damage?.[seat] ?? seat * 137, true);
     });
     return decodePlayers(d);
   }
@@ -106,7 +114,7 @@ function playersBytes(zone: number, tick: number, seats: number, at?: number[][]
     v.setUint16(s + PLAYER_SLOT.offsets.hp, seat === 7 ? 34 : 100, true);
     v.setUint16(s + PLAYER_SLOT.offsets.hp_max, 100, true);
     v.setUint32(s + PLAYER_SLOT.offsets.last_shot_tick, tick > 4 ? tick - 1 : 0, true);
-    v.setUint32(s + PLAYER_SLOT.offsets.damage_dealt, seat * 137, true);
+    v.setUint32(s + PLAYER_SLOT.offsets.damage_dealt, damage?.[seat] ?? seat * 137, true);
   }
   return decodePlayers(d);
 }
@@ -128,7 +136,24 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return realFetch(input as RequestInfo, init);
 }) as typeof fetch;
 
-interface SceneOpts { hurt?: boolean; vent?: boolean; fury?: boolean; bullets?: number; seats?: number; phase?: number; at?: number[][] }
+interface SceneOpts {
+  hurt?: boolean; vent?: boolean; fury?: boolean; bullets?: number; seats?: number; phase?: number; at?: number[][];
+  outcome?: number; incarnation?: number; damage?: number[];
+  /** The 50 % phase: drop the boss under half and freeze on a tick in the named stage. */
+  beam?: 'warn' | 'sweep';
+  /** An explicit tick, over the defaults below — e.g. one tick on from `beam: 'sweep'`. */
+  tick?: number;
+}
+
+/**
+ * The beam is stateless in the tick, so a stage is a tick. Period 12 (tick 960) is one
+ * where no slam telegraph overlaps the warning or the sweep, so the shot is the beam
+ * alone: 0.7 s into the warning, and one tick into the sweep's second lane.
+ */
+const BEAM_TICK = {
+  warn: 12 * BEAM_PERIOD_TICKS + 7,
+  sweep: 12 * BEAM_PERIOD_TICKS + BEAM_WARN_TICKS + BEAM_LANE_TICKS + 1,
+};
 
 function Bridge() {
   const store = useStore();
@@ -137,12 +162,12 @@ function Bridge() {
     w.__store = store;
     w.__scene = (which: 'lobby' | 'arena', opts: SceneOpts = {}) => {
       const arena = which === 'arena';
-      const tick = arena ? 900 : 0;
+      const tick = opts.tick ?? (arena ? (opts.beam ? BEAM_TICK[opts.beam] : 900) : 0);
       store.setWorld({
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,
-          arena ? (opts.bullets ?? 10) : 0),
-        boss: bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury),
-        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, opts.at),
+          arena ? (opts.bullets ?? 10) : 0, opts.outcome ?? 0, opts.incarnation ?? 0),
+        boss: bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, !!opts.beam),
+        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, opts.at, opts.damage),
       });
     };
     w.__PHASE = { PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING };

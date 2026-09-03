@@ -18,6 +18,7 @@ import {
   address,
   createKeyPairSignerFromPrivateKeyBytes,
   getAddressEncoder,
+  getBase58Decoder,
   getBase58Encoder,
   getProgramDerivedAddress,
   isAddress,
@@ -26,6 +27,7 @@ import {
   type Signature,
 } from '@solana/kit';
 import {
+  LEADERBOARD_CAP,
   OUTCOME_UNDECIDED,
   OUTCOME_WIN,
   PHASE_FIGHTING,
@@ -64,7 +66,7 @@ import {
   DELEGATION_PROGRAM_ID,
 } from '@heartrot/client';
 
-import { identityFromDid, verifyPrivyToken } from './auth';
+import { identityFromDid, identityFromGuest, verifyPrivyToken } from './auth';
 import type { Env } from './index';
 
 const COMPUTE_BUDGET_PROGRAM = address('ComputeBudget111111111111111111111111111111');
@@ -752,6 +754,28 @@ function field(body: unknown, name: string): string {
   return value;
 }
 
+/**
+ * Who is asking, as the 32-byte on-chain identity. The one place every route resolves it.
+ *
+ * Two proofs, one field each: `privyToken` (a wallet sign-in, `auth.ts::verifyPrivyToken`)
+ * or `guest` (the session key's signature over a timestamped challenge,
+ * `auth.ts::identityFromGuest`). `guest` wins when present so a client never has to
+ * carry both. Shape errors are `BadRequest` here, like every other field; only a proof
+ * that is well-formed and *wrong* is `Unauthorized`, which is the response the client
+ * has a repair for.
+ */
+async function resolveIdentity(body: unknown, env: Env): Promise<Uint8Array> {
+  const guest = (body as Record<string, unknown> | null)?.guest;
+  if (guest === undefined) {
+    return identityFromDid(await verifyPrivyToken(field(body, 'privyToken'), env.PRIVY_APP_ID));
+  }
+  const ts = (guest as Record<string, unknown> | null)?.ts;
+  if (typeof ts !== 'number' || !Number.isSafeInteger(ts)) {
+    throw new BadRequest('missing or malformed field: guest.ts');
+  }
+  return identityFromGuest({ pubkey: field(guest, 'pubkey'), ts, signature: field(guest, 'signature') });
+}
+
 /** u64 as a decimal string, the shape every `arenaId` crosses the wire in. */
 function arenaIdField(body: unknown): bigint {
   const raw = field(body, 'arenaId');
@@ -834,7 +858,6 @@ function prewarmNext(c: Ctx, ctx: RouteContext, after: bigint): void {
 }
 
 export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): Promise<Response> {
-  const token = field(body, 'privyToken');
   const sessionPubkey = field(body, 'sessionPubkey');
   if (!isAddress(sessionPubkey)) throw new BadRequest('sessionPubkey is not a valid address');
 
@@ -858,8 +881,7 @@ export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): P
     throw new BadRequest('classId out of range');
   }
 
-  const did = await verifyPrivyToken(token, env.PRIVY_APP_ID);
-  const identity = await identityFromDid(did);
+  const identity = await resolveIdentity(body, env);
 
   const c = await context(env);
   const treasury = await preClaim(() => treasuryTier(c));
@@ -979,10 +1001,9 @@ export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): P
  * devnet round trips, and pretending otherwise produces a loader that looks broken.
  */
 export async function matchStart(env: Env, body: unknown, ctx: RouteContext): Promise<Response> {
-  const token = field(body, 'privyToken');
   const requested = arenaIdField(body);
 
-  await verifyPrivyToken(token, env.PRIVY_APP_ID);
+  await resolveIdentity(body, env);
 
   const c = await context(env);
   const treasury = await preClaim(() => treasuryTier(c));
@@ -1229,11 +1250,9 @@ async function recordMatch(
  * a chain round trip it will never see the result of — a closing tab least of all.
  */
 export async function matchLeave(env: Env, body: unknown, ctx: RouteContext): Promise<Response> {
-  const token = field(body, 'privyToken');
   const arenaId = arenaIdField(body);
 
-  const did = await verifyPrivyToken(token, env.PRIVY_APP_ID);
-  const identity = await identityFromDid(did);
+  const identity = await resolveIdentity(body, env);
 
   const c = await context(env);
   const pdas = await matchPdas(c.programId, arenaId);
@@ -1368,11 +1387,9 @@ export async function matchLeave(env: Env, body: unknown, ctx: RouteContext): Pr
  * to end.
  */
 export async function matchSettle(env: Env, body: unknown): Promise<Response> {
-  const token = field(body, 'privyToken');
   const arenaId = arenaIdField(body);
 
-  const did = await verifyPrivyToken(token, env.PRIVY_APP_ID);
-  const identity = await identityFromDid(did);
+  const identity = await resolveIdentity(body, env);
 
   const c = await context(env);
   const pdas = await matchPdas(c.programId, arenaId);
@@ -1514,4 +1531,53 @@ export async function faucetStatus(env: Env): Promise<Response> {
     estimatedMatches: matches,
     tier,
   });
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/leaderboard
+// ---------------------------------------------------------------------------
+
+/** Rows a response carries. The ring keeps `LEADERBOARD_CAP` (128); the screen shows fifty. */
+const LEADERBOARD_TOP = 50;
+
+/**
+ * The ring on base, ranked — the one public read.
+ *
+ * Read here and not in the browser because the browser has no base-layer RPC of its own:
+ * `BASE_RPC_URL` is the paid provider and its token is a Worker secret, and the public
+ * devnet endpoint refuses workerd outright (`Env.BASE_RPC_URL`). It is also the one route
+ * that is not `no-store`: the ring changes once per settle, so thirty seconds at the edge
+ * turns twenty tabs on the landing into one read of a 12 KB account rather than twenty.
+ *
+ * `raider` is eight base58 characters of the identity, never the whole hash. The identity
+ * is `sha256(did)` or `sha256("guest:" + pubkey)` and a full digest on a public route is a
+ * key anyone could join back to a Privy DID or a session key.
+ *
+ * Rows the ring has not reached decode as zeros, so only `min(totalWritten, CAP)` of it are
+ * real; sorting makes the ring's write order irrelevant. Ties share a rank, as the results
+ * panel's placing does (`ui/Hud.tsx`).
+ */
+export async function leaderboard(env: Env): Promise<Response> {
+  const c = await context(env);
+  const data = await accountData(c.base, await leaderboardPda(c.programId));
+  const board = data === null ? null : decodeLeaderboard(data);
+  const written =
+    board === null ? [] : board.entries.slice(0, Math.min(board.totalWritten, LEADERBOARD_CAP));
+  const top = written.sort((a, b) => b.damageDealt - a.damageDealt).slice(0, LEADERBOARD_TOP);
+  const base58 = getBase58Decoder();
+  const rows = top.map((entry) => {
+    const identity = base58.decode(entry.identity);
+    return {
+      rank: top.findIndex((other) => other.damageDealt === entry.damageDealt) + 1,
+      raider: `${identity.slice(0, 4)}…${identity.slice(-4)}`,
+      damage: entry.damageDealt,
+      outcome: entry.outcome,
+      incarnation: entry.incarnation,
+      // A bigint: `JSON.stringify` throws on it rather than rendering it.
+      arenaId: entry.arenaId.toString(),
+    };
+  });
+  const response = json({ rows });
+  response.headers.set('cache-control', 'public, max-age=30');
+  return response;
 }

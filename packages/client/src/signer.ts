@@ -25,9 +25,23 @@
  * are signed by this and by nothing else. The Worker never uses it; it signs with the
  * treasury key (see `worker/src/routes.ts`), and gameplay must not route through the
  * Worker.
+ *
+ * It signs one thing that is not a transaction: the guest proof (`guestProof`). A guest
+ * has no Privy token, and the session key is the only secret the tab holds, so the
+ * cold-path routes accept a signature by it over a timestamped challenge instead. The
+ * challenge text lives here — `guestChallenge` — and the Worker imports it from this
+ * package to verify, because a proof format written twice is the one-fact-twice defect
+ * this repo keeps paying for.
  */
 
-import type { Address, SignatureBytes, TransactionPartialSigner } from '@solana/kit';
+import {
+  createSignableMessage,
+  getBase64Decoder,
+  type Address,
+  type MessagePartialSigner,
+  type SignatureBytes,
+  type TransactionPartialSigner,
+} from '@solana/kit';
 import type { Session, SessionKey } from './session';
 
 interface SigningSubtle {
@@ -36,8 +50,11 @@ interface SigningSubtle {
 
 const subtle = (globalThis as unknown as { crypto: { subtle: SigningSubtle } }).crypto.subtle;
 
-/** Kit's partial signer, exported under the name the app knows it by. */
-export type SessionSigner = TransactionPartialSigner;
+/**
+ * Kit's partial signers — transactions for gameplay, messages for the guest proof —
+ * exported under the name the app knows it by.
+ */
+export type SessionSigner = TransactionPartialSigner & MessagePartialSigner;
 
 /**
  * One signer per `Session`. `loadOrCreateSession` is single-flight per page, so this
@@ -61,22 +78,54 @@ export function createSessionSigner(session: Session): SessionSigner {
   if (signer !== undefined) return signer;
 
   const { address, keyPair } = session;
+  const sign = async (bytes: ArrayBufferView): Promise<Readonly<Record<Address, SignatureBytes>>> => {
+    const signature = await subtle.sign({ name: 'Ed25519' }, keyPair.privateKey, bytes);
+    return Object.freeze({ [address]: new Uint8Array(signature) as SignatureBytes });
+  };
   signer = {
     address,
-    signTransactions(transactions) {
-      return Promise.all(
-        transactions.map(async (transaction) => {
-          const signature = await subtle.sign(
-            { name: 'Ed25519' },
-            keyPair.privateKey,
-            transaction.messageBytes,
-          );
-          return Object.freeze({ [address]: new Uint8Array(signature) as SignatureBytes }) as
-            Readonly<Record<Address, SignatureBytes>>;
-        }),
-      );
-    },
+    signTransactions: (transactions) =>
+      Promise.all(transactions.map((transaction) => sign(transaction.messageBytes))),
+    signMessages: (messages) => Promise.all(messages.map((message) => sign(message.content))),
   };
   signers.set(session, signer);
   return signer;
+}
+
+// ---------------------------------------------------------------------------
+// Guest proof
+// ---------------------------------------------------------------------------
+
+/**
+ * What a guest sends in place of `privyToken`: the session pubkey, a millisecond
+ * timestamp, and the key's Ed25519 signature (base64) over `guestChallenge(pubkey, ts)`.
+ * The Worker (`worker/src/auth.ts::identityFromGuest`) verifies the signature, bounds
+ * `ts` to a five-minute window, and derives the identity from the pubkey alone — so a
+ * captured proof is worth five minutes of being that guest and no more.
+ */
+export type GuestProof = {
+  readonly pubkey: string;
+  readonly ts: number;
+  readonly signature: string;
+};
+
+/**
+ * The text a guest signs, UTF-8 on both sides. Prefixed so that no transaction the
+ * session key ever signs can be replayed as a proof, and no proof can be a transaction:
+ * a message whose first byte is `h` (0x68) declares 104 required signatures, which no
+ * packet-sized transaction can carry.
+ */
+export function guestChallenge(pubkey: string, ts: number): string {
+  return `heartrot-guest:${pubkey}:${ts}`;
+}
+
+/** A fresh proof for right now. Built per request; it is cheaper than reasoning about expiry. */
+export async function guestProof(session: Session): Promise<GuestProof> {
+  const ts = Date.now();
+  const [signatures] = await createSessionSigner(session).signMessages([
+    createSignableMessage(guestChallenge(session.address, ts)),
+  ]);
+  const signature = signatures?.[session.address];
+  if (!signature) throw new Error('The session key produced no signature.');
+  return { pubkey: session.address, ts, signature: getBase64Decoder().decode(signature) };
 }

@@ -714,7 +714,8 @@ Base path `/api`. `run_worker_first: ["/api/*"]` means nothing else reaches the 
 ```jsonc
 // request
 {
-  "privyToken":     "eyJ…",              // ES256 JWT, verified against JWKS
+  "privyToken":     "eyJ…",              // ES256 JWT, verified against JWKS — or, for a guest,
+                                         // "guest": { pubkey, ts, signature } (routes.ts::resolveIdentity)
   "sessionPubkey":  "base58",            // browser-generated Ed25519 public key
   "skinId":         0
 }
@@ -755,7 +756,7 @@ durable record; the session key is not. `[session-keys.md]`
 **`POST /api/match/start`**
 
 ```jsonc
-// request  { "privyToken": "eyJ…", "arenaId": "1847…" }
+// request  { "privyToken": "eyJ…", "arenaId": "1847…" }   — or { "guest": {…}, "arenaId" } as above
 // 200
 {
   "arenaId":     "1847…",
@@ -1172,7 +1173,7 @@ Cold visitor to leaderboard.
 | 1 | Browser | Loads the SPA. HTML/JS/inline SVG served as **static assets — free, unmetered, no Worker invocation** | CF edge | — | — |
 | 2 | Browser | Privy sign-in (email/social). Returns a DID and an ES256 access token | Privy | — | — |
 | 3 | Browser | `crypto.subtle.generateKey({name:'Ed25519'}, false, …)` → non-extractable CryptoKeyPair → IndexedDB. **No SOL is ever sent to this key** | local | — | — |
-| 4 | Browser | `POST /api/session/init { privyToken, sessionPubkey, skinId }` | Worker | — | — |
+| 4 | Browser | `POST /api/session/init { privyToken, sessionPubkey, skinId }` — a guest sends `guest: { pubkey, ts, signature }` (the session key's signature over `heartrot-guest:<pubkey>:<ts>`) instead of `privyToken` | Worker | — | — |
 | 5 | Worker | `jwtVerify` against the public Privy JWKS; `identity = sha256(did)` | — | — | — |
 | 6 | Worker | Finds the open arena, allocates a free seat from `seat_occupied` | base RPC | — | — |
 | 7 | Worker | `claim_seat(seat, session_pubkey, identity, skin_id)` | **ER** | treasury (read-only signer) | nothing — ER fees are 0 |

@@ -1,19 +1,17 @@
 /**
- * Onboarding — two cards, one action.
+ * The landing — the first screen, and there is no login wall on it.
  *
- * Card 1 connects a browser wallet. Card 2 is the wait while the seat is created. That is
- * the whole of it.
+ * One clip, one sentence, two buttons and a link. `Play now` is the primary action and it
+ * needs nothing from the visitor: the session key is generated in this tab and is the
+ * whole identity (`store.playAsGuest`), and the routes accept its signature in place of a
+ * Privy token. A wallet used to be the price of seeing the game at all, and a visitor
+ * without Phantom installed was told so in ninety words on a card; the clip is now what
+ * says what the game is, and the sentence says what makes it unusual.
  *
- * **Wallet detection only.** `main.tsx` configures Privy with `loginMethods: ['wallet']`
- * and embedded-wallet creation off on both chains, so there is no email path, no social
- * path and no seed-phrase-less onboarding to offer. A visitor with no Solana wallet
- * extension cannot play, and this card has to say so plainly rather than open a modal that
- * dead-ends in an empty list.
- *
- * **The funding card is deleted and must not come back.** ER transaction fees are zero and
- * the ER's vendored SVM has no `validate_transaction_fee_payer` at all, so the session
- * keypair needs no SOL on either layer. A card asking a first-time player to acquire devnet
- * SOL would be asking them to solve a problem that does not exist.
+ * `Sign in` keeps the Privy path exactly as it was — a Solana wallet proves who you are
+ * once, and the DID is the durable identity across browsers and cleared storage. A guest's
+ * identity is the key's, so it lasts as long as IndexedDB keeps the key and no longer,
+ * which is why the verdict offers a guest one raid and then a sign-in (`ui/Hud.tsx`).
  *
  * **Privy is identity only, and that is a constraint rather than a preference.** It hands
  * back a DID and a JWT; it never signs a transaction. Its headless path runs
@@ -24,6 +22,10 @@
  * survivable. Every gameplay signature comes from the non-extractable WebCrypto key
  * `store.signIn()` resolves alongside the token, and the wallet is never asked again.
  *
+ * **The funding card is deleted and must not come back.** ER transaction fees are zero and
+ * the ER's vendored SVM has no `validate_transaction_fee_payer` at all, so the session
+ * keypair needs no SOL on either layer.
+ *
  * This is the only file in `app/src` besides `main.tsx` that imports the Privy SDK, and it
  * imports exactly one hook: the connect modal is the one thing the store's `AuthSource`
  * seam — "give me a token" — cannot express.
@@ -33,6 +35,22 @@ import { useEffect } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 
 import { useSelect, useStore } from '../state/store';
+
+/**
+ * The card is 560 px everywhere else; the clip earns a wider one so that it reads as
+ * gameplay and not as a thumbnail. The box is fixed at 16:9 and painted before the first
+ * frame arrives, so nothing under it moves when the poster lands and again when the
+ * video does. The link is a button in the accessibility tree and a link to the eye: it
+ * changes the screen and nothing else, and a bordered third button would give three
+ * actions equal weight when only one is the offer.
+ */
+const LANDING_CSS = `
+.card.landing { max-width: 720px; }
+.landing video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--line); }
+.landing .row { align-items: center; }
+.landing .link { margin-left: auto; padding: 0; border: 0; background: none; cursor: pointer; font: 10px var(--pixel); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.landing .link:hover, .landing .link:focus-visible { color: var(--ink); outline: none; }
+`;
 
 export function Onboarding() {
   const store = useStore();
@@ -65,28 +83,41 @@ export function Onboarding() {
   };
 
   return (
-    <section className="card">
-      <p className="eyebrow">A co-op raid that lives entirely on chain</p>
-      <h2>Twenty of you. One boss. No health bar.</h2>
+    <section className="card landing">
+      <style>{LANDING_CSS}</style>
+      {/* Six seconds of the fury phase with a charged shot, recorded off the harness.
+          React sets `muted` as a property and not as an attribute, and Chrome's autoplay
+          policy reads the attribute at parse time — the ref is what makes the loop actually
+          start. Decorative: the sentence below is the accessible content. */}
+      <video
+        ref={(video) => {
+          if (video) video.muted = true;
+        }}
+        src="/clip.webm"
+        poster="/clip.jpg"
+        autoPlay
+        muted
+        loop
+        playsInline
+        aria-hidden="true"
+      />
       <p className="lede">
-        The boss is a shell, not a number. Break its crown, its heads and its thorn clusters
-        — the thorns are what fire at you — and when enough of it is gone the chest vent
-        opens and the core underneath becomes killable.
-      </p>
-      <p className="fine">
-        You need a Solana wallet extension in this browser — Phantom, Solflare or Backpack.
-        There is no email or guest sign-in. The wallet proves who you are once and is never
-        asked again: your play key is generated inside this browser, holds zero SOL, signs
-        every move locally, and never leaves the tab.
+        A co-op boss raid where every move and every arrow is a Solana transaction.
       </p>
       <div className="row">
-        <button className="btn btn-primary" onClick={connect} disabled={!ready || busy}>
-          {busy ? 'Signing in…' : 'Connect your Solana wallet'}
+        <button className="btn btn-primary" onClick={() => void store.playAsGuest()} disabled={busy}>
+          {busy ? 'Taking a seat…' : 'Play now'}
+        </button>
+        <button className="btn" onClick={connect} disabled={!ready || busy}>
+          Sign in
+        </button>
+        <button className="link" onClick={() => store.showLeaderboard()}>
+          Leaderboard
         </button>
       </div>
       <p className="fine">
-        Devnet only. No token, no NFT, nothing to buy, no transaction to approve after this
-        one connect.
+        Play now takes a seat as a guest, for one raid. Signing in with a Solana wallet keeps
+        your name across raids. Devnet only; nothing to buy and nothing to approve.
       </p>
     </section>
   );
@@ -106,7 +137,7 @@ export function Onboarding() {
  * arena. An unlabelled spinner that long reads as broken rather than as slow.
  */
 const SEAT_STEPS = [
-  'Checking your wallet sign-in',
+  'Checking your sign-in',
   'Finding the open arena, or paying for a new one',
   'Delegating it to the rollup and claiming your seat',
 ] as const;
@@ -127,6 +158,41 @@ export function SeatLoader() {
         Around three seconds, sometimes longer. Devnet is slow; the rollup the raid actually
         runs on answers in about 200 ms.
       </p>
+    </section>
+  );
+}
+
+/**
+ * Card 3 — the wait while the Worker creates the next arena.
+ *
+ * `join` was refused with `no_open_arena` or `try_again` and is retrying every 3 s
+ * (`store.ts::WARMING`). The Worker is spending 30–60 s of devnet round trips in the
+ * background of that refusal, and a join that lands in the window used to print "The lobby
+ * is between arenas … try again" and hand the player the retry to do by hand. Two lines
+ * and one blinking dot: the dot is the only motion, and it stops under reduced motion
+ * because the ellipsis already says the same thing.
+ *
+ * `App.tsx` shows this in place of the character select, not beside it: the seat has
+ * already been asked for, and a second "Take a seat" under a "preparing" line is a second
+ * retry loop.
+ */
+const WARMING_CSS = `
+.warming { min-width: 300px; gap: 8px; }
+.warming .label { margin: 0; font: 10px var(--pixel); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.warming .dot { display: inline-block; width: 6px; height: 6px; margin-left: 8px; vertical-align: 1px; background: var(--torch); animation: warming-blink 1.2s steps(1) infinite; }
+@keyframes warming-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .warming .dot { animation: none; } }
+`;
+
+export function ArenaWarming() {
+  return (
+    <section className="card warming" role="status" aria-live="polite" aria-busy="true">
+      <style>{WARMING_CSS}</style>
+      <p className="label">
+        Arena warming…
+        <span className="dot" aria-hidden="true" />
+      </p>
+      <p className="fine">Preparing your arena…</p>
     </section>
   );
 }

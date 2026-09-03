@@ -2,12 +2,13 @@
  * The shell: four screens, one linear flow, no router — plus the two seams that make the
  * rest of `app/` reachable.
  *
- * Onboarding → character select → lobby → arena, and the only way back is a settled
- * match. A route table would buy history, deep links and code splitting for a flow with
+ * Landing → character select → lobby → arena, and the only way back is a settled match;
+ * the leaderboard is a detour off the landing, a flag in the store rather than a fifth
+ * step. A route table would buy history, deep links and code splitting for a flow with
  * no branches, no shareable URLs and one bundle — so the "route" is `screenOf(state)`,
  * which reads the seat's `zone` straight off the chain.
  *
- * This file draws the chrome (identity, the match clock, the result) and owns two things
+ * This file draws the chrome (the wordmark, the error bar, the void card) and owns two things
  * nothing else can own, because nothing else sees both the store and the match:
  *
  *   **In** — `useMatchLink` pins the ER with `connectMatch`, opens `subscribeMatch` and
@@ -69,8 +70,9 @@ import { play } from './render/sfx';
 import { beamDowngraded, fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
 import { gateOpen } from './screens/Gate';
+import { Leaderboard } from './screens/Leaderboard';
 import { Lobby } from './screens/Lobby';
-import { Onboarding } from './screens/Onboarding';
+import { ArenaWarming, Onboarding } from './screens/Onboarding';
 import { mySeatSlot, screenOf, useSelect, useStore } from './state/store';
 import { Hud } from './ui/Hud';
 
@@ -151,16 +153,10 @@ export default function App() {
    */
   useEffect(() => {
     const release = (): void => {
-      const { match } = store.getState();
-      if (!match || typeof navigator.sendBeacon !== 'function') return;
-      void store.tokenForBeacon().then((privyToken) => {
-        if (!privyToken) return;
-        navigator.sendBeacon(
-          '/api/match/leave',
-          new Blob([JSON.stringify({ privyToken, arenaId: match.arenaId })], {
-            type: 'application/json',
-          }),
-        );
+      if (typeof navigator.sendBeacon !== 'function') return;
+      void store.leaveBeaconBody().then((body) => {
+        if (body === null) return;
+        navigator.sendBeacon('/api/match/leave', new Blob([body], { type: 'application/json' }));
       });
     };
     // ONLY a real teardown, and `persisted` is the whole of the difference.
@@ -244,7 +240,14 @@ export default function App() {
             React never touches what is inside it. */}
         {hasStage && <div id="stage" className="stage" role="presentation" ref={setStage} />}
         {screen === 'onboarding' && <Onboarding />}
-        {screen === 'select' && <CharacterSelect />}
+        {/* The landing's one detour: a flag in the store, not a step, so `Back` returns to
+            whatever screen the seat and the sign-in already say. */}
+        {screen === 'leaderboard' && <Leaderboard />}
+        {/* Warming replaces the select rather than sitting beside it: the seat was already
+            asked for, and a second "Take a seat" under a "preparing" line is a second
+            retry loop. The guest path lands here too — `playAsGuest` joins from the
+            landing and `authenticated` already reads `'select'`. */}
+        {screen === 'select' && (status === 'warming' ? <ArenaWarming /> : <CharacterSelect />)}
         {screen === 'lobby' && <Lobby />}
       </main>
       <World host={hasStage ? stage : null} link={link} feedEpoch={feedEpoch} />
@@ -253,15 +256,9 @@ export default function App() {
           shot indicator in the waiting area, the one screen the dead spacebar lived on
           (spec §9.2). */}
       {hasStage && <Hud />}
-      {/* `hasStage`, not `screen === 'arena'`: a seat that never crossed the gate is still
-          in the match the chain just settled, and gating this on the arena screen left
-          that player on `GatePrompt`'s "Hold here" forever with no verdict and no button —
-          `leaveMatch` has no other caller in the app. The card is the way out for both
-          sides of the gate. */}
-      {hasStage && phase === PHASE_SETTLED && <Result />}
-      {/* Mutually exclusive with the verdict, which is the only other `.overlay` and would
-          otherwise stack with it in the window where `Arena` says SETTLED and `Boss` has
-          not landed yet. */}
+      {/* Not while settled: the verdict (`Hud.tsx`) is the results panel and the way out,
+          on both sides of the gate, and this card would otherwise stack over it in the
+          window where `Arena` says SETTLED and `Boss` has not landed yet. */}
       {hasStage && phase !== PHASE_SETTLED && <WorldPending />}
       <ErrorBar />
       <DevPanel />
@@ -330,49 +327,12 @@ function ErrorBar() {
 // ---------------------------------------------------------------------------
 // Screen 4 — arena
 //
-// There is no `ArenaScreen` any more. It was the 320 px panel and the result card; the
-// panel is deleted (spec §9.1) and `Hud`'s fixed clusters replace it on both sides of the
-// gate, so the only thing left was one conditional render and `App` already holds both
-// values it tested.
+// There is no `ArenaScreen` any more, and no result card here either. The 320 px panel is
+// deleted (spec §9.1), `Hud`'s fixed clusters replace it on both sides of the gate, and
+// the verdict in `ui/Hud.tsx` is the results panel: it carries the way out (`Raid again`),
+// so a second full-screen `.overlay` over it — which is what the old `Result` was — hid
+// the button it was meant to be.
 // ---------------------------------------------------------------------------
-
-/**
- * The match is over and the leaderboard row is written. Nothing here is on chain twice.
- *
- * Shown on both sides of the gate, so the line under the verdict has to be honest about a
- * seat that never left the waiting room: `0 damage dealt · survived` reads as a fight that
- * went badly rather than a match that was never joined.
- */
-function Result() {
-  const store = useStore();
-  const slot = useSelect(mySeatSlot);
-  const coreHp = useSelect((s) => s.boss?.coreHp ?? 0);
-  const won = coreHp === 0;
-  const watched = slot !== null && slot.zone === ZONE_LOBBY;
-
-  return (
-    <div className="overlay">
-      <div className="card">
-        <p className="eyebrow">{won ? 'The core stopped' : 'The raid broke'}</p>
-        <h2>{won ? 'It is dead. It will be back, larger.' : 'Wiped.'}</h2>
-        <p className="lede tabular">
-          {slot === null
-            ? ''
-            : watched
-              ? 'You watched this one from the waiting room — the gate is open from the first tick of the next raid.'
-              : `${slot.damageDealt} damage dealt · ${slot.hp === 0 ? 'died' : 'survived'}`}
-        </p>
-        <p className="fine">
-          The arena has been committed back to the base layer and your row is on the
-          leaderboard. The next incarnation has fifteen percent more shell per part.
-        </p>
-        <button className="btn btn-primary" onClick={() => store.leaveMatch()}>
-          Back to the lobby
-        </button>
-      </div>
-    </div>
-  );
-}
 
 /**
  * The gap between "seated" and "drawable" — the void.
@@ -440,7 +400,7 @@ function WorldPending() {
             {/* Otherwise this is a second dead end: `useMatchLink` treats a failed
                 `connectMatch` as fatal for the match on purpose, and without a way out the
                 player sits on this card for the life of the tab. `leaveMatch` drops the
-                seat and the next join takes a fresh one — the same exit `Result` uses. */}
+                seat and the next join takes a fresh one — the verdict's own exit. */}
             <button className="btn btn-primary" onClick={() => store.leaveMatch()}>
               Back to the lobby
             </button>

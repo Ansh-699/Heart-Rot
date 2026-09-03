@@ -49,6 +49,7 @@ import {
   PHASE_MUSTERING,
   PHASE_SETTLED,
   PHASE_SETTLING,
+  SHELL_PCT_PER_INCARNATION,
   TICK_MS,
   VENT_PCT_FULL,
   VENT_PCT_SOLO,
@@ -56,6 +57,7 @@ import {
   fightHp,
   isFurious,
   ventPct,
+  type PlayerSlot,
 } from '@heartrot/client';
 
 import { shotAllowed } from '../input/controls';
@@ -309,7 +311,10 @@ const HUD_CSS = `
 .hud-seats { display: flex; gap: 3px; margin: 1px 0 0; padding: 0; list-style: none; }
 .hud-seat { width: 5px; height: 5px; border-radius: 50%; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.6); }
 
-/* The end-of-match verdict is the one boxed thing left: it is a result, not chrome. */
+/* The end-of-match verdict is the one boxed thing left: it is a result, not chrome. On a
+   WIN it is three more lines — placing, damage, the next incarnation — and one button; on
+   a WIPE or ENRAGE the sentence and the button. Nothing the settle does not also write
+   to the leaderboard row. */
 .hud {
   position: fixed;
   z-index: 30;
@@ -323,7 +328,12 @@ const HUD_CSS = `
   border-radius: 3px;
   box-shadow: 0 8px 26px -10px rgb(0 0 0 / 0.75);
 }
-.hud-ml { top: 50%; left: 12px; transform: translateY(-50%); max-width: min(340px, 30vw); }
+.hud-ml { top: 50%; left: 12px; transform: translateY(-50%); width: min(300px, 30vw); }
+.verdict { gap: 10px; padding: 14px 16px; }
+.verdict-line { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+.verdict-next { font: 11px var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+/* The one thing in the box that takes a click; the box itself stays click-through. */
+.verdict .btn { pointer-events: auto; margin-top: 4px; }
 `;
 
 /** Quiet seconds before the layer fades. Long enough that it never fades mid-dodge. */
@@ -563,32 +573,101 @@ function Top() {
   );
 }
 
-const VERDICTS: Readonly<Record<number, { readonly label: string; readonly line: string }>> = {
-  [OUTCOME_WIN]: {
-    label: 'WIN',
-    line: 'The core stopped. It comes back with fifteen percent more shell on every part.',
-  },
+/**
+ * `tone` is the `styles.css` colour hook (`.verdict-win .verdict-label` and friends) and
+ * stays keyed by outcome, not by label — the label reads VICTORY now and the class does not.
+ * A WIN's `line` is short because three result lines follow it; a WIPE's or an ENRAGE's
+ * is the whole verdict.
+ */
+const VERDICTS: Readonly<
+  Record<number, { readonly label: string; readonly tone: string; readonly line: string }>
+> = {
+  [OUTCOME_WIN]: { label: 'VICTORY', tone: 'win', line: 'Heartrot fell' },
   [OUTCOME_WIPE]: {
     label: 'WIPE',
+    tone: 'wipe',
     line: 'Every raider standing in the arena was down on the same tick.',
   },
   [OUTCOME_ENRAGE]: {
     label: 'ENRAGE',
+    tone: 'enrage',
     line: 'The enrage tick passed with the core still alive. Not a wipe — you ran out of clock.',
   },
 };
 
+/**
+ * Your rank by damage among the occupied seats — ties share a rank, so two raiders on
+ * 1,240 are both 2nd and nobody is 3rd — and your share of the raid's total, floored like
+ * every other percentage here. `damageDealt` is on every live `PlayerSlot`, so this reads
+ * the roster the Card already renders from; the settle writes the same number to the
+ * leaderboard row a moment later.
+ */
+function standing(slots: readonly PlayerSlot[], seat: number) {
+  const seated = slots.filter((s) => s.occupied);
+  const damage = slots[seat]?.damageDealt ?? 0;
+  const total = seated.reduce((sum, s) => sum + s.damageDealt, 0);
+  return {
+    rank: 1 + seated.filter((s) => s.damageDealt > damage).length,
+    of: seated.length,
+    damage,
+    share: floorPercent(damage, total),
+  };
+}
+
+/** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th, 20th. `MAX_SEATS` is 20, so the teens are the whole trick. */
+function ordinal(n: number): string {
+  const teen = n % 100 >= 11 && n % 100 <= 13;
+  return `${n}${teen ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th')}`;
+}
+
 function Verdict() {
+  const store = useStore();
   const outcome = useSelect((s) => s.arena?.outcome ?? OUTCOME_UNDECIDED);
+  const incarnation = useSelect((s) => s.arena?.incarnation ?? 0);
+  const players = useSelect((s) => s.players);
+  const seat = useSelect((s) => s.match?.seat ?? -1);
+  const guest = useSelect((s) => s.guest === true);
   const row = VERDICTS[outcome];
   // The verdict is the HUD's own event — the byte lands here and nowhere else draws it.
   usePlayOnRise(outcome === OUTCOME_WIN, 'win');
   usePlayOnRise(outcome === OUTCOME_WIPE || outcome === OUTCOME_ENRAGE, 'lose');
   if (!row) return null;
+  const won = outcome === OUTCOME_WIN;
+  // Only a WIN rolls a next incarnation (`OUTCOME_WIN`'s own doc), so only a WIN names one.
+  const next = incarnation + 1;
+  const stand = won && players !== null ? standing(players.slots, seat) : null;
   return (
-    <div className={`hud hud-ml verdict verdict-${row.label.toLowerCase()}`} role="status">
+    <div className={`hud hud-ml verdict verdict-${row.tone}`} role="status">
       <span className="verdict-label">{row.label}</span>
-      <span className="fine">{row.line}</span>
+      <span className={won ? 'verdict-line' : 'fine'}>{row.line}</span>
+      {stand !== null && (
+        <>
+          <span className="verdict-line">
+            You placed {ordinal(stand.rank)} of {stand.of}
+          </span>
+          <span className="verdict-line">
+            {stand.damage.toLocaleString('en-US')} damage · {stand.share}%
+          </span>
+          {/* Cumulative, not "+15%": the rule (`SHELL_PCT_PER_INCARNATION`) is linear on
+              the incarnation-0 shell, so +15% is true of the base and false of the boss
+              just fought — 2 → 3 is +11.5 % on it. */}
+          <span className="verdict-next">
+            Next: Incarnation {next} · shell +{next * SHELL_PCT_PER_INCARNATION}%
+          </span>
+        </>
+      )}
+      <button
+        className="btn btn-primary"
+        onClick={() => {
+          // Release, then join — and wait for the release: `leaveMatch` posts the seat
+          // back, and a `join` fired alongside it would race the Worker for a seat under
+          // the same identity in the arena it is still leaving. A guest gets one raid;
+          // the next one starts at sign-in, which `signOut` returns them to.
+          void (guest ? store.signOut() : store.leaveMatch().then(() => store.join()));
+        }}
+      >
+        {guest ? 'Sign in to raid again' : 'Raid again'}
+      </button>
     </div>
   );
 }
@@ -678,7 +757,25 @@ if (import.meta.env.DEV) {
   }
   const labels = new Set(Object.values(VERDICTS).map((v) => v.label));
   if (labels.size !== 3) {
-    throw new Error('Hud self-check: WIN, WIPE and ENRAGE must stay three distinct labels');
+    throw new Error('Hud self-check: VICTORY, WIPE and ENRAGE must stay three distinct labels');
+  }
+
+  // Standing is the only arithmetic the results panel adds, and its silent failures are a
+  // tie printed as two ranks, a released seat's stale damage counted into the total, and
+  // a share rounded up past the raid's. Seats 0 and 3 tie on 1,240 of 4,480: both 2nd,
+  // nobody 3rd, 27 % each; the zeroed seat 4 carries 9,999 and counts for nothing.
+  const raid = [1_240, 2_000, 0, 1_240, 9_999].map(
+    (damageDealt, i) => ({ seat: i, occupied: i !== 4, damageDealt }) as PlayerSlot,
+  );
+  const [a, b, c, d] = [0, 1, 2, 3].map((i) => standing(raid, i));
+  if (!a || !b || !c || !d || a.of !== 4 || a.rank !== 2 || d.rank !== 2 || b.rank !== 1 || c.rank !== 4) {
+    throw new Error('Hud self-check: standing ranks the tie wrong');
+  }
+  if (a.share !== 27 || b.share !== 44 || c.share !== 0 || a.damage !== 1_240) {
+    throw new Error(`Hud self-check: standing shares ${a.share}/${b.share}/${c.share}`);
+  }
+  for (const [n, s] of [[1, '1st'], [2, '2nd'], [3, '3rd'], [4, '4th'], [11, '11th'], [12, '12th'], [13, '13th'], [20, '20th']] as const) {
+    if (ordinal(n) !== s) throw new Error(`Hud self-check: ordinal(${n}) reads ${ordinal(n)}`);
   }
 
   // The pill and the send pump must never disagree: the shipped copy of the cooldown read

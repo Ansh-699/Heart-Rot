@@ -350,7 +350,7 @@ here and nowhere else:
 
 | Bytes | Consumer | Rule |
 |---|---|---|
-| `[0..8]` | per-tick bullet entropy | `mix64(u64::from_le_bytes(seed[0..8]) ^ mix64(tick))` — already implemented in `tick.rs::spawn_volley`, already reproducible in the browser with `BigInt.asUintN(64, …)` |
+| `[0..8]` | per-tick entropy: the volley, the hand slam, the 50 % beam | `seed64 = u64::from_le_bytes(seed[0..8])`, read once by `tick.rs::seed64` (`le64` in `layout.ts`). Volley: `mix64(seed64 ^ mix64(tick))` in `spawn_volley`. Slam: `mix64(seed64 ^ mix64(tick / SLAM_PERIOD_TICKS))` in `slam_lane`. Beam: `mix64(seed64 ^ mix64(tick / BEAM_PERIOD_TICKS ^ 0xBEA1))` in `beam_at` — the constant keeps the beam's draw off the slam's where their cycle indices coincide. All three reproducible in the browser with `BigInt.asUintN(64, …)`; the slam and the beam are mirrored in `layout.ts` and the beam is pinned to one vector on both sides |
 | `[8..12]` | affix roll A | u32 LE |
 | `[12..16]` | affix roll B | u32 LE |
 | `[16..20]` | affix roll C | u32 LE |

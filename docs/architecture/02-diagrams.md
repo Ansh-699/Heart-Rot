@@ -109,7 +109,7 @@ sequenceDiagram
 
     Note over B: Card 2 — loader. There is no funding card.
     B->>B: crypto.subtle.generateKey Ed25519<br/>extractable false, stored in IndexedDB
-    B->>W: POST /api/session/init<br/>privyToken, sessionPubkey, skinId
+    B->>W: POST /api/session/init<br/>privyToken (or guest proof), sessionPubkey, skinId
 
     W->>P: fetch JWKS, jwtVerify ES256, iss privy.io, aud appId
     P-->>W: ok, sub = did:privy:...

@@ -33,7 +33,7 @@ Read out of `handlers/tick.rs` at commit `ce9b743`, line numbers as they stand.
 
 | | |
 |---|---|
-| Attacks | **One.** An aimed spread volley. There is no second attack, no melee, no phase change. |
+| Attacks | **Three, and one phase change.** The aimed spread volley; the hand slam (`slam_lane`: one of eight lanes every `SLAM_PERIOD_TICKS` = 6 s, telegraphed 1.5 s, stateless — derived from `affix_seed` and the tick, zero bytes); and from 50 % fight HP the sweeping beam, §1.2.2. Fight structure: **100 % normal → 50 % beam → 20 % fury → 0 win.** |
 | Clock | `Boss.attack_timer`, a `u8` counted down one per tick (`tick.rs:539`). |
 | Interval | `VOLLEY_INTERVAL_TICKS = ticks_for(3_200) = 32` (`tick.rs:155`) |
 | **Real period** | **33 ticks = 3.3 s**, not 32 — see §1.5. |
@@ -70,6 +70,34 @@ client draws the telegraph off `attack_timer`, and a timer that jumped mid-wind-
 the drawing — so the first furious reload is the one set by the volley that fires after the
 line is crossed. The bullet-pool const-assert is written against the furious interval: a
 37-tick flight over 16-tick reloads is three volleys of `1 + 20 + 1` = 66 slots of 128.
+
+### 1.2.2 The 50 % beam (added 2026-09-04)
+
+The mid-fight escalation, so the fight reads **100 % normal → 50 % beam → 20 % fury → 0
+win**. `Boss::is_phase2(raid_size)` is `left × 100 ≤ max × PHASE2_PCT` over the same
+`fight_hp` fury reads, `PHASE2_PCT = 50` (`state.rs`, const-asserted above `FURY_PCT`;
+mirrored as `isPhase2` in `layout.ts`). Fury is inside phase 2, not instead of it: the beam
+keeps sweeping through the last fifth.
+
+Stateless, on the slam's scaffolding, for the slam's reason (`Boss` has no padding; the
+layout is frozen). `tick.rs::beam_at(affix_seed, tick) -> Beam { half, outward, stage,
+lane, k, strikes }` is the whole derivation and the client mirrors it line for line as
+`beamAt`; the two are pinned to one vector (`[7; 32]`, sweeps 0–2) in both test suites.
+`BEAM_PERIOD_TICKS = ticks_for(8_000)`; `t = tick % period`, `sweep = tick / period`;
+`r = mix64(seed64 ^ mix64(sweep ^ 0xBEA1))` — the `0xBEA1` separates it from the slam's
+`mix64(cycle)`, whose bit 0 picks the hand while the beam's picks the half, and the mace's
+lanes are half 0 and the claws' half 1. `half = r & 1` (lanes 0..4 or 4..8),
+`outward = (r >> 1) & 1` (from the centre line to the wall, or the wall in). Stage:
+`t < BEAM_WARN_TICKS` (= `SLAM_TELEGRAPH_TICKS`, 1.5 s) is the warning; then four lane steps
+of `BEAM_LANE_TICKS = ticks_for(400)` each — one lane width at walking speed — sweeping the
+half; then quiet floor. Const-asserted: warning + 4 lanes + ≥ 2 s idle fits the period.
+
+Damage is `tick.rs` stage 4b, after the slam and before the alive count, for the slam's
+reasons. On the first tick of each lane step every live raider whose `x` is in that lane
+takes `slam_damage(raid_size)` through the same `strike_lane` the slam uses — once per lane
+step, no vent-lane exemption (a skipped lane would be a safe column inside a wall of fire).
+No field is read or written for any of it. An 80-tick period against the slam's 60, so the
+two beats coincide once every 24 s.
 
 ### 1.3 The incarnation system
 
@@ -624,8 +652,8 @@ hazard system reads `tick` and `alive_count` and writes pool slots and `core_hp`
 touches `parts`, `parts_max`, `affix_seed`, `next_affix_seed`, `incarnation` or `phase`.
 
 Hazards are also deliberately **not** incarnation-scaled. Incarnation difficulty is the
-shell (+15 % per incarnation, compounding to the saturation point); headcount difficulty is
-hazard density. One axis each, exactly as `phase` and `outcome` are one axis each.
+shell (+15 % of the base per incarnation, linear, to the `u16` saturation point); headcount
+difficulty is hazard density. One axis each, exactly as `phase` and `outcome` are one axis each.
 
 ### 7.2 One addition worth making: enrage as an escalation
 

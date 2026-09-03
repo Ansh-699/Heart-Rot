@@ -6,6 +6,8 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   root: __dirname,
+  // The landing's clip and poster live in the app's public dir; without this they 404 here.
+  publicDir: __dirname + '/../../../app/public',
   cacheDir: '/tmp/looksright-cache',
   plugins: [react()],
   resolve: { alias: { '@heartrot/client': __dirname + '/../../../packages/client/src/index.ts' } },

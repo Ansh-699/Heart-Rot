@@ -75,12 +75,7 @@ export function CharacterSelect() {
         ))}
       </div>
 
-      <p className="fine">
-        The colour is cosmetic: every raider has the same bow, the same reach, the same speed
-        and the same health, and what changes the fight is which part of the boss the raid
-        agrees to break first. Your own archer carries a marker above it so you can find
-        yourself in a crowd, and the colour above is what the roster shows.
-      </p>
+      <p className="fine">Colour is cosmetic.</p>
 
       <button className="btn btn-primary" onClick={() => void store.join()}>
         Take a seat

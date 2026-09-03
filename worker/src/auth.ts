@@ -1,5 +1,6 @@
 /**
- * Privy identity, verified as a plain JWT. No Privy SDK.
+ * Who is asking: Privy identity verified as a plain JWT, or a guest proof verified as an
+ * Ed25519 signature. No Privy SDK either way.
  *
  * The Privy access token is an ES256 JWT signed by a key published at a **public**
  * JWKS endpoint — no API key, no auth header, no server SDK. `@privy-io/server-auth`
@@ -9,8 +10,16 @@
  * Privy is identity only. It never signs a Solana transaction for HEARTROT — its
  * fastest signing path is a cross-origin iframe round trip and signatures are metered
  * at $0.01 above 50K/month, neither of which survives a 400 ms tick.
+ *
+ * A guest has no token at all. The landing lets a visitor raid once without a wallet,
+ * and the only secret their tab holds is the session key that signs gameplay — so the
+ * proof is that key's signature over a timestamped challenge (`guestChallenge`, from
+ * `@heartrot/client`, so the browser and this file cannot disagree on the bytes).
+ * WebCrypto verifies it here; no library.
  */
 
+import { getBase58Encoder, getBase64Encoder, isAddress } from '@solana/kit';
+import { guestChallenge, type GuestProof } from '@heartrot/client';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 /**
@@ -73,7 +82,57 @@ export async function verifyPrivyToken(token: string, appId: string): Promise<st
  * stable key across devices, cleared browser storage and rotated session keypairs.
  * `/session/init` is idempotent on exactly this value.
  */
-export async function identityFromDid(did: string): Promise<Uint8Array> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(did));
-  return new Uint8Array(digest);
+export function identityFromDid(did: string): Promise<Uint8Array> {
+  return sha256(did);
+}
+
+/**
+ * How far a guest proof's `ts` may sit from this Worker's clock, either way. Five minutes
+ * covers a phone whose clock is a little off and the retry loop `join` runs while an arena
+ * warms (20 × 3 s), and it is the whole lifetime of a captured proof.
+ */
+const GUEST_MAX_SKEW_MS = 5 * 60_000;
+
+/**
+ * `sha256("guest:" + pubkey)` for a proof that verifies, or `Unauthorized`.
+ *
+ * The identity is the pubkey's, not the DID's, so it is stable for as long as the browser
+ * keeps the key (IndexedDB) and disjoint from every Privy identity by the prefix: no wallet
+ * sign-in can ever collide with a guest, and a guest who later signs in is a new player —
+ * which is the deal the landing offers, one raid and then a name.
+ *
+ * The shape is the caller's to check (`routes.ts::resolveIdentity`); this only decides.
+ * The skew test is written as `!(… <= …)` so a `NaN` timestamp fails it rather than
+ * slipping past a `>`.
+ */
+export async function identityFromGuest({ pubkey, ts, signature }: GuestProof): Promise<Uint8Array> {
+  if (!isAddress(pubkey) || !(Math.abs(Date.now() - ts) <= GUEST_MAX_SKEW_MS)) {
+    throw new Unauthorized('guest proof is malformed or stale');
+  }
+  let valid = false;
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      getBase58Encoder().encode(pubkey) as Uint8Array,
+      { name: 'Ed25519' },
+      false,
+      ['verify'],
+    );
+    valid = await crypto.subtle.verify(
+      'Ed25519',
+      key,
+      getBase64Encoder().encode(signature) as Uint8Array,
+      new TextEncoder().encode(guestChallenge(pubkey, ts)),
+    );
+  } catch (error) {
+    // A non-base64 signature or a pubkey off the curve throws inside WebCrypto; both are
+    // "not a proof", and the reason goes to the log rather than the response.
+    console.error('guest proof rejected', error);
+  }
+  if (!valid) throw new Unauthorized('invalid guest proof');
+  return sha256(`guest:${pubkey}`);
+}
+
+async function sha256(text: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
 }

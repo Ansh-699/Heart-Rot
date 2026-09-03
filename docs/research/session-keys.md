@@ -647,8 +647,8 @@ ONBOARDING (cold, one time, base layer)
   browser        ──▶ crypto.subtle.generateKey Ed25519, extractable=false
                      store CryptoKeyPair in IndexedDB
                      export public key ──▶ sessionPubkey (32 bytes)
-  POST /session/init { privyToken, sessionPubkey }
-       Worker verifies Privy token
+  POST /session/init { privyToken, sessionPubkey }      (a guest: { guest: {pubkey, ts, signature} } instead)
+       Worker verifies Privy token, or the guest proof's Ed25519 signature
        Worker (treasury signs, treasury pays):
          AddEntity ─ InitializeComponent × N ─ set PlayerMeta.session_pubkey
          ─ delegate all player components to the ER

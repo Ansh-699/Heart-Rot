@@ -206,6 +206,12 @@ pub const VOLLEY_INTERVAL_TICKS: u8 = ticks_for(3_200) as u8;
 /// the two never get merged by a grep.
 pub const FURY_PCT: u32 = 20;
 
+/// Fight HP at or below this percent and the boss is in PHASE 2: `tick.rs` sweeps the beam
+/// (`beam_at`) from here until the core dies. The mid-fight escalation, so the fight reads
+/// 100 % normal → 50 % beam → 20 % fury → 0 win; the const-assert below is that ordering.
+/// Derived like [`FURY_PCT`], for the same reason: nothing on `Boss` can hold a flag.
+pub const PHASE2_PCT: u32 = 50;
+
 /// The volley period while furious: half of [`VOLLEY_INTERVAL_TICKS`], 1.6 s. Declared
 /// beside the number it halves so the two cannot drift, `u8` because `tick.rs` writes it
 /// into `Boss::attack_timer`.
@@ -213,6 +219,8 @@ pub const FURY_VOLLEY_INTERVAL_TICKS: u8 = VOLLEY_INTERVAL_TICKS / 2;
 
 const _: () = {
     assert!(FURY_PCT > 0 && FURY_PCT < 100);
+    // The beam is the *mid*-fight escalation: it must start before fury and after 100 %.
+    assert!(PHASE2_PCT > FURY_PCT && PHASE2_PCT < 100);
     // Faster, and still a real reload: 0 would fire every tick.
     assert!(FURY_VOLLEY_INTERVAL_TICKS > 0 && FURY_VOLLEY_INTERVAL_TICKS < VOLLEY_INTERVAL_TICKS);
 };
@@ -1000,6 +1008,16 @@ impl Boss {
     pub fn is_furious(&self, raid_size: u8) -> bool {
         let (left, max) = self.fight_hp(raid_size);
         max > 0 && left > 0 && left * 100 <= max * FURY_PCT
+    }
+
+    /// Is the boss at or below [`PHASE2_PCT`] of [`Self::fight_hp`] — the half of the fight
+    /// the beam sweeps through? The same guards and the same cross-multiplied `≤` as
+    /// [`Self::is_furious`], mirrored as `isPhase2` in `layout.ts`: exactly 50 % is phase 2,
+    /// a dead boss is not, and a zeroed account is not. Fury is *inside* phase 2, not
+    /// instead of it — the beam keeps sweeping through the last fifth.
+    pub fn is_phase2(&self, raid_size: u8) -> bool {
+        let (left, max) = self.fight_hp(raid_size);
+        max > 0 && left > 0 && left * 100 <= max * PHASE2_PCT
     }
 }
 
@@ -2106,11 +2124,31 @@ mod fury_tests {
     }
 
     #[test]
+    fn phase_two_begins_at_exactly_half() {
+        let mut boss = solo_boss();
+        boss.parts = [0; N_PARTS];
+        // max = 560, so the line is 280.
+        boss.core_hp = 281;
+        assert!(!boss.is_phase2(1), "one point over the line is not phase 2");
+        boss.core_hp = 280;
+        assert!(boss.is_phase2(1), "50 % is phase 2");
+        boss.core_hp = 112;
+        assert!(
+            boss.is_phase2(1) && boss.is_furious(1),
+            "fury is inside phase 2, not instead of it"
+        );
+        boss.core_hp = 0;
+        assert!(!boss.is_phase2(1), "a dead boss sweeps nothing");
+        assert!(!solo_boss().is_phase2(1), "a full shell is nowhere near");
+    }
+
+    #[test]
     fn an_empty_boss_is_safe_and_calm() {
         let boss = Boss::zeroed();
         assert_eq!(boss.fight_hp(0), (0, 0));
         assert_eq!(boss.fight_hp(MAX_SEATS as u8), (0, 0));
         assert!(!boss.is_furious(0) && !boss.is_furious(u8::MAX));
+        assert!(!boss.is_phase2(0) && !boss.is_phase2(u8::MAX));
     }
 }
 

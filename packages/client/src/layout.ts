@@ -394,6 +394,34 @@ export function isFurious(
 }
 
 /**
+ * `state::PHASE2_PCT` — fight HP at or below this percent and the boss is in phase 2: the
+ * beam sweeps ({@link beamAt}) from here until the core dies. The fight reads 100 % normal
+ * → 50 % beam → 20 % fury → 0 win; fury is inside phase 2, not instead of it.
+ */
+export const PHASE2_PCT = 50;
+
+/**
+ * `init.rs::scale_for_incarnation` — part HP at incarnation `n` is `base × (100 + 15 × n)
+ * / 100`: LINEAR in `n` on the incarnation-0 shell, not compounding, so the cumulative
+ * number is the honest one and incarnation 3 is `+45%`. The program's `u16` saturation
+ * (incarnation 41 and up) is a ceiling, not a rule a display could show.
+ */
+export const SHELL_PCT_PER_INCARNATION = 15;
+
+/**
+ * `Boss::is_phase2(raid_size)` — the same guards and the same cross-multiplied `<=` as
+ * {@link isFurious}, so exactly 50 % is phase 2 and a dead or zeroed boss is not. This is
+ * the gate a renderer puts on the beam; {@link beamAt} itself never looks at the boss.
+ */
+export function isPhase2(
+  boss: Pick<BossAccount, 'parts' | 'partsMax' | 'coreHp' | 'coreHpMax'>,
+  raidSize: number,
+): boolean {
+  const { left, max } = fightHp(boss, raidSize);
+  return max > 0 && left > 0 && left * 100 <= max * PHASE2_PCT;
+}
+
+/**
  * The direction a seat last fired, as a vector whose **major axis is 1** — the exact
  * inverse of `PlayerSlot::set_aim`, and the thing a drawn arrow points along.
  *
@@ -1037,6 +1065,82 @@ export function slamTelegraph(
 }
 
 // ---------------------------------------------------------------------------
+// The beam — `tick.rs`'s 50 % escalation, on the slam's scaffolding
+// ---------------------------------------------------------------------------
+
+/**
+ * One sweep every 8 s — `tick.rs::BEAM_PERIOD_TICKS`. `tick % BEAM_PERIOD_TICKS` is where
+ * in the cycle a tick falls; a warning seeks its animation off that, exactly as the slam's
+ * wind-up seeks off `ticksToImpact`.
+ */
+export const BEAM_PERIOD_TICKS = ticksFor(8_000);
+
+/** The warning is the slam's telegraph: 1.5 s, the same latency budget, 3.75 lanes of escape. */
+export const BEAM_WARN_TICKS = SLAM_TELEGRAPH_TICKS;
+
+/** Ticks the beam spends on each lane. 0.4 s, which is one lane width at walking speed. */
+export const BEAM_LANE_TICKS = ticksFor(400);
+
+/** Lanes one sweep crosses: half the floor. The dodge is "get to the other half". */
+export const BEAM_SWEEP_LANES = SLAM_LANES / 2;
+
+/**
+ * One sweep, as `tick.rs::Beam` publishes it. `half` is which four lanes are doomed (0 =
+ * lanes `0..4`, 1 = lanes `4..8`); `outward` is whether the sweep runs from the centre line
+ * to the wall or from the wall in; `k` is the lane step `0..4` and `lane` the lane it is on
+ * — during the warning, the lane it will start from. `strikes` is the first tick of a lane
+ * step: the one tick in four the chain deals damage on.
+ */
+export type BeamState = {
+  half: number;
+  outward: boolean;
+  stage: 'warning' | 'sweeping';
+  lane: number;
+  k: number;
+  strikes: boolean;
+};
+
+/**
+ * The beam on `tick`, or `null` while the floor is quiet — the mirror of
+ * `handlers::tick::beam_at`, line for line, and pinned to the same vector in
+ * {@link layoutSelfCheck}.
+ *
+ * Pure in the seed and the tick, like {@link slamLane}: it does not know whether the boss
+ * is in phase 2, and the chain's damage stage asks `Boss::is_phase2` *before* it asks this.
+ * A renderer gates on {@link isPhase2} and `PHASE_FIGHTING` the same way, or it draws a
+ * sweep over a floor that is not burning. Unlike the slam there is no cycle-index trap: the
+ * warning and the sweep it announces divide to the same `tick / BEAM_PERIOD_TICKS`, so the
+ * tick being rendered is the tick to ask about.
+ *
+ * `0xBEA1` is the chain's domain separation from the slam's draw — see `beam_at` for the
+ * correlation it prevents. A mirror that drops it agrees with the chain on every tick
+ * where the two cycle indices differ and disagrees on every tick where they coincide.
+ */
+export function beamAt(affixSeed: Uint8Array, tick: number): BeamState | null {
+  const t = tick % BEAM_PERIOD_TICKS;
+  const sweepEnd = BEAM_WARN_TICKS + BEAM_SWEEP_LANES * BEAM_LANE_TICKS;
+  if (t >= sweepEnd) return null;
+
+  const r = mix64(le64(affixSeed) ^ mix64(BigInt(Math.floor(tick / BEAM_PERIOD_TICKS)) ^ 0xbea1n));
+  const half = Number(r & 1n);
+  const outward = ((r >> 1n) & 1n) === 1n;
+
+  const into = t - BEAM_WARN_TICKS;
+  const k = into < 0 ? 0 : Math.floor(into / BEAM_LANE_TICKS);
+  // Distance from the centre line, in lanes: outward walks 0 → wall, inward walks wall →
+  // 0. Lanes 3 and 4 flank the centre, so half 0 counts down from 3 and half 1 up from 4.
+  const dist = outward ? k : BEAM_SWEEP_LANES - 1 - k;
+  return {
+    half,
+    outward,
+    stage: into < 0 ? 'warning' : 'sweeping',
+    lane: half === 0 ? BEAM_SWEEP_LANES - 1 - dist : BEAM_SWEEP_LANES + dist,
+    k,
+    strikes: into >= 0 && into % BEAM_LANE_TICKS === 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Self-check
 // ---------------------------------------------------------------------------
 
@@ -1156,6 +1260,12 @@ export function layoutSelfCheck(): void {
     const empty = { parts: Array<number>(N_PARTS).fill(0), partsMax: Array<number>(N_PARTS).fill(0), coreHp: 0, coreHpMax: 0 };
     ok(fightHp(empty, 0).max === 0 && !isFurious(empty, 255), 'an empty boss is safe and calm');
     ok(FURY_VOLLEY_INTERVAL_TICKS === 16 && FURY_VOLLEY_INTERVAL_TICKS * 2 === VOLLEY_INTERVAL_TICKS, 'fury halves the volley');
+    // Phase 2, on the same boss: max 560, so the line is 280.
+    ok(!isPhase2({ ...stripped, coreHp: 281 }, 1), 'one point over half is not phase 2');
+    ok(isPhase2({ ...stripped, coreHp: 280 }, 1), '50 % is phase 2');
+    ok(isPhase2({ ...stripped, coreHp: 112 }, 1), 'fury is inside phase 2, not instead of it');
+    ok(!isPhase2({ ...stripped, coreHp: 0 }, 1) && !isPhase2(solo, 1) && !isPhase2(empty, 255), 'dead, full and empty bosses are calm');
+    ok(PHASE2_PCT > FURY_PCT, 'the beam comes before fury');
 
     // The slam, against the chain's algorithm. `mix64` is SplitMix64 and its output for
     // state 0 is a published vector, so this pins the mixer rather than restating it.
@@ -1184,6 +1294,32 @@ export function layoutSelfCheck(): void {
     ok(tel !== null && tel.lane === lane, 'the telegraph announces the slam that lands');
     ok(tel !== null && tel.ticksToImpact === SLAM_TELEGRAPH_TICKS, 'the wind-up is 1.5 s long');
     ok(slamTelegraph({ ...arena, tick: windUp - 1 }, b) === null, 'nothing is drawn before it');
+
+    // The beam, against the chain's `beam_at`. Three sweeps of the `[7; 32]` seed are pinned
+    // to the values `the_beam_is_a_pure_function_of_the_seed_and_the_tick` asserts in
+    // `tick.rs`, so a mirror off by a bit — the `0xBEA1`, the LE read, a lane sign — fails
+    // on both sides rather than drawing a sweep over the half the chain is not burning.
+    const beamSeed = new Uint8Array(32).fill(7);
+    const draws = [0, 1, 2].map((s) => beamAt(beamSeed, s * BEAM_PERIOD_TICKS)).map((b) => b && [b.half, b.outward]);
+    ok(JSON.stringify(draws) === JSON.stringify([[0, false], [1, true], [1, false]]), 'beamAt draws the halves and directions the chain draws');
+    const sweepTicks = BEAM_SWEEP_LANES * BEAM_LANE_TICKS;
+    const warn = beamAt(beamSeed, 0)!;
+    ok(warn.stage === 'warning' && warn.k === 0 && !warn.strikes, 'tick 0 of a period is the warning');
+    const first = beamAt(beamSeed, BEAM_WARN_TICKS)!;
+    ok(first.stage === 'sweeping' && first.k === 0 && first.strikes && first.lane === warn.lane,
+      'the sweep starts on the lane the warning named, and strikes at once');
+    ok(!beamAt(beamSeed, BEAM_WARN_TICKS + 1)!.strikes, 'one strike per lane step');
+    const second = beamAt(beamSeed, BEAM_WARN_TICKS + BEAM_LANE_TICKS)!;
+    ok(second.k === 1 && second.strikes && Math.abs(second.lane - first.lane) === 1, 'the next step is the adjacent lane');
+    const centreLane = warn.half === 0 ? BEAM_SWEEP_LANES - 1 : BEAM_SWEEP_LANES;
+    const wallLane = warn.half === 0 ? 0 : SLAM_LANES - 1;
+    ok(first.lane === (warn.outward ? centreLane : wallLane), 'outward starts at the centre line, inward at the wall');
+    const last = beamAt(beamSeed, BEAM_WARN_TICKS + sweepTicks - 1)!;
+    ok(last.k === BEAM_SWEEP_LANES - 1 && last.lane === (warn.outward ? wallLane : centreLane), 'and ends on the far lane of the half');
+    ok(Math.floor(last.lane / BEAM_SWEEP_LANES) === warn.half, 'a sweep never leaves its half');
+    ok(beamAt(beamSeed, BEAM_WARN_TICKS + sweepTicks) === null, 'the floor is quiet after the fourth lane');
+    ok(beamAt(beamSeed, BEAM_PERIOD_TICKS)?.stage === 'warning', 'and the next period warns again');
+    ok(BEAM_WARN_TICKS + sweepTicks + ticksFor(2_000) <= BEAM_PERIOD_TICKS, 'the sweep fits its period with 2 s to breathe');
   }
 
   // PlayerSlot — `class_aim` is the one field added this slice, and it is the reinterpreted

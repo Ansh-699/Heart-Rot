@@ -79,6 +79,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
+  BEAM_LANE_TICKS,
+  BEAM_PERIOD_TICKS,
+  BEAM_SWEEP_LANES,
+  BEAM_WARN_TICKS,
   BOSS_SPAWN,
   CORE,
   GATE_MAX_X,
@@ -101,10 +105,13 @@ import {
   TICK_MS,
   ZONE_ARENA,
   ZONE_LOBBY,
+  beamAt,
   isFurious,
+  isPhase2,
   onGate,
   slamTelegraph,
   type ArenaAccount,
+  type BeamState,
   type BossAccount,
   type Bullet,
   type PlayerSlot,
@@ -453,6 +460,36 @@ function volleyTelegraph(
 }
 
 /**
+ * The beam on this tick, gated the way `tick.rs` gates its damage: `PHASE_FIGHTING` and
+ * `Boss::is_phase2` first, `beamAt` second. `beamAt` is pure in the seed and the tick and
+ * describes a sweep for every period of every fight — the 50 % line is the whole of what
+ * this adds, asked here once so the drawing, the two cues and the self-check agree on
+ * when there is a beam at all. Unlike the slam there is no cycle trap: a warning and the
+ * sweep it announces share a period index, so the tick rendered is the tick asked about.
+ */
+function beamTelegraph(arena: ArenaAccount, boss: BossAccount): BeamState | null {
+  if (arena.phase !== PHASE_FIGHTING || !isPhase2(boss, arena.raidSize)) return null;
+  return beamAt(arena.affixSeed, arena.tick);
+}
+
+/**
+ * Which way along x a sweep travels, +1 toward the right wall. Read off `beamAt`'s lane
+ * rule — half 0 is lanes 0..3 with the centre at 3, half 1 is 4..7 with the centre at 4 —
+ * so "outward" is −x on the left half and +x on the right, and inward is the reverse.
+ * Checked against `beamAt` itself in the self-check rather than restated by hand.
+ */
+function sweepDir(beam: BeamState): 1 | -1 {
+  return beam.outward === (beam.half === 1) ? 1 : -1;
+}
+
+/** A `>` the size of a knight's head at the start lane's centre, pointing along `dir`. */
+function chevronPath(lane: number, dir: 1 | -1): string {
+  const cx = lane * SLAM_LANE_W + SLAM_LANE_W / 2;
+  const cy = PIT_TOP + LANE_H / 2;
+  return `M${cx - 6 * dir} ${cy - 10} L${cx + 6 * dir} ${cy} L${cx - 6 * dir} ${cy + 10}`;
+}
+
+/**
  * The predicted seat's slot: authoritative in every field except the three the prediction
  * already owns.
  *
@@ -795,6 +832,45 @@ export function Arena({
   const volleyElapsed = volley === null || reduced ? null : (SLAM_TELEGRAPH_TICKS - volley.ticksToImpact) * tickMs;
   useSeeked(volleyRef, VOLLEY_KEYFRAMES, windupMs, volleyElapsed);
 
+  // ---- the beam ---------------------------------------------------------
+  //
+  // Two more seeked animations on the same contract, and neither touches the rAF loop.
+  // Both seek off where in its period the tick falls — `beamAt`'s own `t` — so they can
+  // no more drift from the chain than the slam can. The warning brightens the doomed half
+  // over `BEAM_WARN_TICKS`; the sweep is one glide of the beam rect across three lane
+  // widths, held on the fourth (`sweepKeyframes`), so at every strike tick the rect
+  // is centred on the lane `strike_lane` is hitting and between strikes it is leaving one
+  // lane for the next. Room B only, like the slam.
+  const beam = shown === 'arena' ? beamTelegraph(arena, boss) : null;
+  const beamT = arena.tick % BEAM_PERIOD_TICKS;
+  const beamDir = beam === null ? 1 : sweepDir(beam);
+  // The lane the sweep ends on. With the current lane it bounds the tint: the whole half
+  // during the warning, only the lanes still to come during the sweep.
+  const beamFar = beam === null ? 0 : beam.lane + beamDir * (BEAM_SWEEP_LANES - 1 - beam.k);
+  const beamWarnRef = useRef<SVGGElement | null>(null);
+  useSeeked(
+    beamWarnRef,
+    BEAM_WARN_KEYFRAMES,
+    BEAM_WARN_TICKS * tickMs,
+    beam?.stage === 'warning' && !reduced ? beamT * tickMs : null,
+  );
+  const beamRef = useRef<SVGRectElement | null>(null);
+  const sweepFrames = useMemo(() => sweepKeyframes(beamDir), [beamDir]);
+  useSeeked(
+    beamRef,
+    sweepFrames,
+    BEAM_SWEEP_LANES * BEAM_LANE_TICKS * tickMs,
+    beam?.stage === 'sweeping' && !reduced ? (beamT - BEAM_WARN_TICKS) * tickMs : null,
+  );
+  // The two cues on the stage edges, as the slam's are: the hum when a warning appears,
+  // the roar when its sweep starts. The floor is quiet for ≥ 4.9 s between sweeps, so
+  // every period is a fresh pair of edges, and a duplicate delivery has no edge in it.
+  const beamStage = beam?.stage ?? null;
+  useEffect(() => {
+    if (beamStage === 'warning') play('beamWarn');
+    else if (beamStage === 'sweeping') play('beamSweep');
+  }, [beamStage]);
+
   // How far through the wind-up we are, 0..1 — only read on the reduced-motion path, where
   // a telegraph becomes a shape that FILLS by attribute rather than one that animates.
   // "No information may exist only in motion" is the rule that forces this to exist.
@@ -987,6 +1063,52 @@ export function Arena({
                 strokeDasharray="12 10"
                 opacity={0.85}
               />
+            </g>
+          )}
+
+          {/* The 50 % phase's beam, row 10 with the slam. The warning tints the doomed
+              half, keylines the lane the sweep starts from and points a chevron the way it
+              will run — the dodge is "the other half", and the picture has to say which
+              half in its first frame. The sweep is ONE bright lane gliding across the
+              half while the tint retreats to the lanes still to come, so a swept lane
+              reads as safe again. Under reduced motion the same shapes at rest: the tint
+              at full, the rect stepping a lane per tick. Nothing outside phase 2 — that
+              gate is `beamTelegraph`'s. */}
+          {beam !== null && (
+            <g aria-hidden="true">
+              <g ref={beamWarnRef} opacity={beam.stage === 'warning' && !reduced ? 0 : 1}>
+                <rect
+                  className="beam-lane"
+                  x={Math.min(beam.lane, beamFar) * SLAM_LANE_W}
+                  y={PIT_TOP}
+                  width={(Math.abs(beamFar - beam.lane) + 1) * SLAM_LANE_W}
+                  height={LANE_H}
+                />
+                {beam.stage === 'warning' && (
+                  <>
+                    <rect
+                      className="beam-warn-edge"
+                      x={beam.lane * SLAM_LANE_W + 1}
+                      y={PIT_TOP + 1}
+                      width={SLAM_LANE_W - 2}
+                      height={LANE_H - 2}
+                    />
+                    <path className="beam-warn-chevron" d={chevronPath(beam.lane, beamDir)} />
+                  </>
+                )}
+              </g>
+              {beam.stage === 'sweeping' && (
+                <rect
+                  ref={beamRef}
+                  className="beam-sweep"
+                  // Non-reduced: parked on the sweep's FIRST lane and carried by the seeked
+                  // translate; reduced: on the lane the chain is on, stepped by React.
+                  x={(reduced ? beam.lane : beam.lane - beamDir * beam.k) * SLAM_LANE_W}
+                  y={PIT_TOP}
+                  width={SLAM_LANE_W}
+                  height={LANE_H}
+                />
+              )}
             </g>
           )}
 
@@ -1184,6 +1306,26 @@ const SLAM_KEYFRAMES: Keyframe[] = [
 
 /** The aim lines brighten into the shot. */
 const VOLLEY_KEYFRAMES: Keyframe[] = [{ opacity: 0.1 }, { opacity: 0.8 }];
+
+/** The doomed half goes from a hint to a claim as the warning runs, like the slam's lane. */
+const BEAM_WARN_KEYFRAMES: Keyframe[] = [{ opacity: 0.35 }, { opacity: 1 }];
+
+/**
+ * The sweep: `BEAM_SWEEP_LANES − 1` lane widths in as many lane steps, then held on the
+ * last lane for its step. Linear, so the rect is centred on lane `k` exactly at the tick
+ * `beam_at` strikes it. Held rather than run off the end: an inward sweep gliding past its
+ * last lane would cross the centre line into the half the raid was told was safe. Built
+ * per direction and memoised in the component — a fresh array at notification rate for
+ * a value that changes once in 8 s is what `SEAT_STYLE` exists to avoid.
+ */
+function sweepKeyframes(dir: 1 | -1): Keyframe[] {
+  const end = `translateX(${dir * (BEAM_SWEEP_LANES - 1) * SLAM_LANE_W}px)`;
+  return [
+    { transform: 'translateX(0px)' },
+    { transform: end, offset: (BEAM_SWEEP_LANES - 1) / BEAM_SWEEP_LANES },
+    { transform: end },
+  ];
+}
 
 /**
  * A SEEKED animation: built once at its true duration, played, and re-seeked from a chain
@@ -1452,7 +1594,7 @@ if (import.meta.env.DEV) {
     partsMax: [1000, 1000, 1000, 1000, 4000, 2500, 2500, 2500, 2500],
   };
   const fakeArena = (tick: number): ArenaAccount =>
-    ({ phase: PHASE_FIGHTING, tick, affixSeed: seed }) as unknown as ArenaAccount;
+    ({ phase: PHASE_FIGHTING, tick, affixSeed: seed, raidSize: 1 }) as unknown as ArenaAccount;
   const landing = slamTelegraph(fakeArena(59), shell);
   if (landing === null) throw new Error('Arena self-check: a slam is telegraphed on the tick before it lands');
   for (let t = 60 - SLAM_TELEGRAPH_TICKS; t < 60; t++) {
@@ -1487,4 +1629,28 @@ if (import.meta.env.DEV) {
     volleyTelegraph({ ...fakeArena(100), phase: PHASE_LOBBY }, aiming, one({})) === null,
     'nothing is telegraphed outside a fight',
   );
+
+  // The beam is drawn exactly when the chain deals its damage: FIGHTING and at or under
+  // half of fight HP. Above the line it is a sweep over a floor that is not burning; below
+  // it a raider takes slam damage from nothing. `shell` is at full; with its shell gone
+  // and one core point left, the same boss is as deep into phase 2 as a boss can be.
+  const burning: BossAccount = { ...shell, parts: shell.parts.map(() => 0), coreHp: 1 };
+  ok(beamTelegraph(fakeArena(0), shell) === null, 'no beam above half fight HP');
+  ok(beamTelegraph({ ...fakeArena(0), phase: PHASE_LOBBY }, burning) === null, 'no beam outside a fight');
+  ok(beamTelegraph(fakeArena(0), burning)?.stage === 'warning', "a burning boss warns on the period's first tick");
+  ok(beamTelegraph(fakeArena(BEAM_WARN_TICKS), burning)?.stage === 'sweeping', 'and sweeps once the warning is up');
+
+  // `sweepDir` is read off `beamAt`'s lane rule and this is the only thing that holds the
+  // two together: the lane on the last step must be `BEAM_SWEEP_LANES − 1` lanes along from
+  // the first, in the direction the chevron points — for every half and direction the
+  // seed draws, so the loop runs until it has seen all four.
+  const dealt = new Set<number>();
+  for (let s = 0; dealt.size < 4 && s < 64; s++) {
+    const first = beamAt(seed, s * BEAM_PERIOD_TICKS + BEAM_WARN_TICKS);
+    const last = beamAt(seed, s * BEAM_PERIOD_TICKS + BEAM_WARN_TICKS + (BEAM_SWEEP_LANES - 1) * BEAM_LANE_TICKS);
+    if (first === null || last === null) throw new Error('Arena self-check: a sweep has a first and a last lane');
+    ok(last.lane === first.lane + sweepDir(first) * (BEAM_SWEEP_LANES - 1), `sweep ${s} runs the way its chevron points`);
+    dealt.add(first.half * 2 + Number(first.outward));
+  }
+  ok(dealt.size === 4, 'the seed drew every half and direction, so every branch of sweepDir was checked');
 }

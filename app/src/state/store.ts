@@ -32,9 +32,11 @@ import { recordWorld } from '../net/metrics';
 import {
   CLASS_ARCHER,
   ZONE_ARENA,
+  guestProof,
   loadOrCreateSession,
   type ArenaAccount,
   type BossAccount,
+  type GuestProof,
   type PlayerSlot,
   type PlayersAccount,
   type Session,
@@ -44,8 +46,12 @@ import {
 // Shape
 // ---------------------------------------------------------------------------
 
-/** The four screens. One linear flow, so this is a union and not a router. */
-export type Screen = 'onboarding' | 'select' | 'lobby' | 'arena';
+/**
+ * The four screens of one linear flow, plus the leaderboard — a detour off the landing
+ * and back, which is why it is a flag (`State.leaderboard`) and not a step. Still a
+ * union and not a router.
+ */
+export type Screen = 'onboarding' | 'select' | 'lobby' | 'arena' | 'leaderboard';
 
 /**
  * How much of the world we can currently believe.
@@ -58,6 +64,8 @@ export type Screen = 'onboarding' | 'select' | 'lobby' | 'arena';
 export type ConnectionStatus =
   | 'idle'
   | 'joining'
+  /** `join` was told "not yet" (`WARMING`) and is retrying on its own. See `join`. */
+  | 'warming'
   | 'connecting'
   | 'live'
   | 'stale'
@@ -84,8 +92,19 @@ export type MatchInfo = {
 };
 
 export type State = {
-  /** A Privy sign-in has succeeded at least once this page load. */
+  /**
+   * An identity this tab can prove: a Privy sign-in has succeeded at least once this
+   * page load, or the tab is a guest and the session key itself is the proof.
+   */
   authenticated: boolean;
+  /**
+   * Playing without a wallet. The routes get `guestProof` instead of a Privy token, the
+   * identity is the session key's, and the verdict's button reads "Sign in to raid
+   * again" — one raid, then a name (`ui/Hud.tsx`).
+   */
+  guest: boolean;
+  /** The leaderboard is open. Set from the landing, cleared by its Back link. */
+  leaderboard: boolean;
   /** The non-extractable WebCrypto keypair. Holds zero SOL, forever. */
   sessionKey: Session | null;
   skinId: number;
@@ -117,8 +136,23 @@ export type Store = {
   subscribe(listener: () => void): () => void;
   /** Prove identity. Resolves the session keypair at the same time. */
   signIn(): Promise<void>;
+  /**
+   * Take a seat without a wallet. The session key is created as for `signIn` and is the
+   * whole identity; `join` follows immediately, because a guest has nothing to choose —
+   * the colour is cosmetic and the landing's one button promised play, not a form.
+   */
+  playAsGuest(): Promise<void>;
+  showLeaderboard(): void;
+  hideLeaderboard(): void;
   setSkin(skinId: number): void;
-  /** `POST /api/session/init` — identity in, a seat and a routing bundle out. */
+  /**
+   * `POST /api/session/init` — identity in, a seat and a routing bundle out.
+   *
+   * Refused with `no_open_arena` or `try_again`, it does not fail: the Worker creates and
+   * delegates the next arena in the background of the refusal (`routes.ts::prewarmNext`,
+   * 30–60 s of devnet round trips), so the honest state is `warming` and the honest
+   * action is to ask again. Every 3 s, up to 20 times, then the refusal's own copy.
+   */
   join(): Promise<void>;
   /**
    * `POST /api/match/start` — delegate, arm the crank and open the muster window.
@@ -145,14 +179,15 @@ export type Store = {
   leaveMatch(): Promise<void>;
 
   /**
-   * A Privy token for the closing-tab beacon, or `null` if one cannot be had.
+   * The JSON body of `/api/match/leave` for the held seat, for the closing-tab beacon —
+   * or `null` when there is no seat or no proof can be had.
    *
-   * Separate from the internal `token()` because that one throws — correct everywhere
-   * else, useless in a `pagehide` handler where there is nobody left to show an error to
-   * and the page is already being destroyed. Never clears `authenticated` on failure for
-   * the same reason: a tab being torn down must not decide the player is signed out.
+   * Separate from `credentials()` because that one throws — correct everywhere else,
+   * useless in a `pagehide` handler where there is nobody left to show an error to and
+   * the page is already being destroyed. Never clears `authenticated` on failure for the
+   * same reason: a tab being torn down must not decide the player is signed out.
    */
-  tokenForBeacon(): Promise<string | null>;
+  leaveBeaconBody(): Promise<string | null>;
 
   /**
    * Disconnect the wallet and forget everything derived from it.
@@ -287,6 +322,25 @@ function readable(error: unknown): string {
 }
 
 /**
+ * Refusals of `/api/session/init` that mean "not yet" rather than "no".
+ *
+ * `no_open_arena` is the scan finding nothing joinable while the next arena is still
+ * being created; `try_again` is `routes.ts::preClaim` — the infrastructure before the
+ * seat claim failed and nothing is half-done. Both are answered by asking again once the
+ * background prewarm has landed. Everything else (`arena_full`, `treasury_low`, a 401)
+ * is a fact a retry cannot change and reaches the error bar as before.
+ */
+const WARMING: ReadonlySet<string> = new Set(['no_open_arena', 'try_again']);
+
+/**
+ * 3 s × 20 is a minute of patience, and 20 requests a minute sits under the Worker's rate
+ * limit of 30 per minute per IP per path (`index.ts`) — a faster loop would spend the
+ * budget and turn `no_open_arena` into `rate_limited`.
+ */
+const WARM_RETRY_MS = 3_000;
+const WARM_RETRIES = 20;
+
+/**
  * Refusals of `/api/match/start` that mean the muster is open, just not by us.
  *
  * Every knight through the gate arms it and nineteen of twenty lose the race — that is
@@ -313,6 +367,8 @@ const HELD: readonly ConnectionStatus[] = ['error', 'joining', 'settling'];
 
 const INITIAL: State = {
   authenticated: false,
+  guest: false,
+  leaderboard: false,
   sessionKey: null,
   skinId: 0,
   classId: CLASS_ARCHER,
@@ -379,11 +435,23 @@ export function createStore(): Store {
     }
   };
 
-  /** Every route wants a token and most want the arena id. One place to get both wrong. */
-  const credentials = async (): Promise<{ privyToken: string; arenaId: string }> => {
+  /**
+   * The identity half of every route body: a Privy token, or for a guest the session
+   * key's signature over a fresh timestamped challenge (`guestProof`). Fresh per request
+   * — the proof is good for five minutes and a request is never that old.
+   */
+  const identity = async (): Promise<{ privyToken: string } | { guest: GuestProof }> => {
+    const { guest, sessionKey } = state;
+    return guest && sessionKey
+      ? { guest: await guestProof(sessionKey) }
+      : { privyToken: await token() };
+  };
+
+  /** Every match route wants the identity and the arena id. One place to get both wrong. */
+  const credentials = async (): Promise<Record<string, unknown>> => {
     const { match } = state;
     if (!match) throw new Error('no match joined');
-    return { privyToken: await token(), arenaId: match.arenaId };
+    return { ...(await identity()), arenaId: match.arenaId };
   };
 
   /**
@@ -405,10 +473,39 @@ export function createStore(): Store {
     set({ match: null, arena: null, boss: null, players: null, status: 'idle', error: null });
     if (!held) return;
     try {
-      await postJson('/api/match/leave', { privyToken: await token(), arenaId: held.arenaId });
+      await postJson('/api/match/leave', { ...(await identity()), arenaId: held.arenaId });
     } catch {
       // Best effort by design. A failed release is the Worker's reaper to catch on the
       // next join, not an error to put in front of someone who has already left.
+    }
+  };
+
+  const join = async (): Promise<void> => {
+    const { sessionKey, skinId, classId } = state;
+    set({ status: 'joining', error: null });
+    try {
+      if (!sessionKey) throw new Error('Sign in before taking a seat.');
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const match = await postJson<MatchInfo>('/api/session/init', {
+            ...(await identity()),
+            sessionPubkey: sessionKey.address,
+            skinId,
+            classId,
+          });
+          // `connecting`, not `live`: a seat is not a subscription. The world stays null
+          // until the sync layer has taken its `getMultipleAccounts` snapshot, because
+          // subscribing alone delivers nothing until the next write.
+          set({ match, status: 'connecting' });
+          return;
+        } catch (error) {
+          if (attempt === WARM_RETRIES || !WARMING.has(code(error))) throw error;
+        }
+        set({ status: 'warming' });
+        await new Promise((resolve) => setTimeout(resolve, WARM_RETRY_MS));
+      }
+    } catch (error) {
+      fail(error);
     }
   };
 
@@ -429,35 +526,37 @@ export function createStore(): Store {
         // neither needs the other. `loadOrCreateSession` is single-flight per page, so
         // React 19's double-invoked effects cannot race two keys into existence.
         const [sessionKey] = await Promise.all([loadOrCreateSession(), token()]);
-        set({ authenticated: true, sessionKey, status: 'idle' });
+        set({ authenticated: true, guest: false, sessionKey, status: 'idle' });
       } catch (error) {
         fail(error);
       }
+    },
+
+    async playAsGuest() {
+      set({ status: 'joining', error: null });
+      try {
+        const sessionKey = await loadOrCreateSession();
+        set({ authenticated: true, guest: true, sessionKey, status: 'idle' });
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      await join();
+    },
+
+    showLeaderboard() {
+      set({ leaderboard: true });
+    },
+
+    hideLeaderboard() {
+      set({ leaderboard: false });
     },
 
     setSkin(skinId) {
       set({ skinId });
     },
 
-    async join() {
-      const { sessionKey, skinId, classId } = state;
-      set({ status: 'joining', error: null });
-      try {
-        if (!sessionKey) throw new Error('Sign in before taking a seat.');
-        const match = await postJson<MatchInfo>('/api/session/init', {
-          privyToken: await token(),
-          sessionPubkey: sessionKey.address,
-          skinId,
-          classId,
-        });
-        // `connecting`, not `live`: a seat is not a subscription. The world stays null
-        // until the sync layer has taken its `getMultipleAccounts` snapshot, because
-        // subscribing alone delivers nothing until the next write.
-        set({ match, status: 'connecting' });
-      } catch (error) {
-        fail(error);
-      }
-    },
+    join,
 
     async startMatch() {
       if (starting) return;
@@ -551,9 +650,13 @@ export function createStore(): Store {
 
     leaveMatch: release,
 
-    async tokenForBeacon() {
+    async leaveBeaconBody() {
+      const { match } = state;
+      if (!match) return null;
       try {
-        return await authSource();
+        // `identity()`, not `authSource()` directly: a guest has no token to fetch, and
+        // `token()` only clears `authenticated` when no seat is held — there is one here.
+        return JSON.stringify({ ...(await identity()), arenaId: match.arenaId });
       } catch {
         return null;
       }
@@ -561,7 +664,16 @@ export function createStore(): Store {
 
     async signOut() {
       await release();
-      set({ authenticated: false, sessionKey: null, skinId: 0, status: 'idle', error: null });
+      // `guest` goes with it: the guest's one raid is over, and the landing's "Play now"
+      // is the same offer again, while "Sign in" makes the next raid a named one.
+      set({
+        authenticated: false,
+        guest: false,
+        sessionKey: null,
+        skinId: 0,
+        status: 'idle',
+        error: null,
+      });
     },
   };
 }
@@ -591,6 +703,7 @@ export function mySeatSlot(state: State): PlayerSlot | null {
  * flips it, and the screen follows on the next notification. Nothing local decides it.
  */
 export function screenOf(state: State): Screen {
+  if (state.leaderboard) return 'leaderboard';
   if (!state.authenticated) return 'onboarding';
   if (!state.match) return 'select';
   return mySeatSlot(state)?.zone === ZONE_ARENA ? 'arena' : 'lobby';
@@ -647,6 +760,7 @@ if (import.meta.env.DEV) {
 
   const cases: readonly (readonly [string, Partial<State>, Screen])[] = [
     ['signed out', {}, 'onboarding'],
+    ['leaderboard from the landing', { leaderboard: true }, 'leaderboard'],
     ['no seat yet', { authenticated: true }, 'select'],
     // A seat with no roster yet is still the lobby, not the arena: `mySeatSlot` is null
     // until the first `Players` notification lands, and guessing "arena" there would drop
