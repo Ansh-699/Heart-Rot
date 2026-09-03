@@ -113,6 +113,8 @@ import {
   CLASS_KNIGHT,
   CLASS_PERIOD_MS,
   PHASE_FIGHTING,
+  PHASE_MUSTERING,
+  PHASE_LOBBY,
   SUPER_MS,
   TICK_MS,
   ZONE_ARENA,
@@ -318,6 +320,11 @@ export function octantAim(dir: number): readonly [number, number] {
  * The two cadence gates, pulled out of the pump so they can be asserted without a DOM.
  * They are the whole reason this module exists and both fail silently when wrong.
  */
+/** `player.rs::assert_playable`: the three phases a move or a shot can land in. */
+function playable(phase: number): boolean {
+  return phase === PHASE_LOBBY || phase === PHASE_MUSTERING || phase === PHASE_FIGHTING;
+}
+
 function moveAllowed(now: number, lastMoveAt: number): boolean {
   // One rule for every phase, because the chain now has one rule for every phase. The
   // budget is wall clock rather than the observed tick: the gate it mirrors is the ER
@@ -476,7 +483,10 @@ export function attachControls(cfg: ControlsConfig): () => void {
     }
 
     const dir = heldDirection();
-    if (dir !== null) {
+    // A step needs a phase the chain will take it in — LOBBY, MUSTERING, FIGHTING
+    // (`player.rs::assert_playable`). Holding a key on the results screen used to send one
+    // move per slot into a SETTLED arena and paint the WrongPhase refusal on the screen.
+    if (dir !== null && playable(phase)) {
       // One rule in every phase, on the wall clock, because the gate it mirrors is the ER
       // slot and the browser cannot see slots. This comment used to say a fight gates on
       // `arena.tick`; it has not since the chain moved both phases onto the slot.

@@ -556,7 +556,17 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           // `BlockedByWall` (14) is expected traffic — one per tick from anyone holding a
           // direction into a wall — `RateLimited` (7) and `PlayerDead` (8) are the two
           // above, and a timeout is the ER being slow, not a refusal.
-          if (decoded.code === 7 || decoded.code === 8 || decoded.code === 14 || decoded.code === undefined) return;
+          // `WrongPhase` (6) is the end of a match: a send that left before the SETTLED
+          // notification arrived, or a key still held on the results screen.
+          if (
+            decoded.code === 6 ||
+            decoded.code === 7 ||
+            decoded.code === 8 ||
+            decoded.code === 14 ||
+            decoded.code === undefined
+          ) {
+            return;
+          }
           // Not `setStatus('error')`: that status is held and the world feed cannot clear
           // it, so one refused datagram out of ten a second would brick the session. The
           // watchdog in `subscribe.ts` is what reports a feed that has actually stopped.

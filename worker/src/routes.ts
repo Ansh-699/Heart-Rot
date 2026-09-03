@@ -1137,17 +1137,30 @@ const LEAVE_BUDGET_MS = 26_000;
  */
 async function awaitHome(
   c: Ctx,
-  arena: Address,
+  pdas: { arena: Address; players: Address },
   waitMs = HOME_WAIT_MS,
 ): Promise<ArenaAccount | null> {
+  // ALL of what the record reads must be home, not just the arena. `write_leaderboard`
+  // asserts the program owns `players` as well as `arena` (settle.rs), and the delegation
+  // program hands the three accounts back one at a time: on devnet the arena was ours and
+  // decodable while `players` was still its husk, so the record failed, `confirmSignature`
+  // threw, and the client saw a 500 seconds after every kill. Eight won arenas in a row
+  // sat unrecorded with the head parked behind them; the same route replayed a minute
+  // later succeeded. Home means: owned by us and decodable, for both.
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const base = await accountData(c.base, arena);
-    if (base) {
+    const [arena, players] = await Promise.all([
+      c.base.getAccountInfo(pdas.arena, { encoding: 'base64' }).send(),
+      c.base.getAccountInfo(pdas.players, { encoding: 'base64' }).send(),
+    ]);
+    const ours = (v: { owner: Address } | null): boolean => v !== null && v.owner === c.programId;
+    if (ours(arena.value) && ours(players.value)) {
       try {
-        return decodeArena(base);
+        const state = decodeArena(bytesOf(arena.value!.data[0]));
+        decodePlayers(bytesOf(players.value!.data[0]));
+        return state;
       } catch {
-        // Still a delegated husk: zero bytes owned by the delegation program.
+        // Ours but not yet in shape: the commit is still landing. Keep polling.
       }
     }
     if (Date.now() >= deadline) return null;
@@ -1332,7 +1345,7 @@ export async function matchLeave(env: Env, body: unknown, ctx: RouteContext): Pr
         // settles undecided every time (see `recordMatch`), and undecided is exactly the
         // case the record exists for here: no row, but the head moves.
         const homeWait = Math.min(HOME_WAIT_MS, budgetEnds - Date.now());
-        const settled = await awaitHome(c, pdas.arena, homeWait);
+        const settled = await awaitHome(c, pdas, homeWait);
         if (!settled) {
           // Two different facts, so two different lines: the undelegation outran the
           // bound every observed one fit inside, or it outran what the platform left us.
@@ -1472,7 +1485,7 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
     });
   }
 
-  const settled = await awaitHome(c, pdas.arena);
+  const settled = await awaitHome(c, pdas);
   // Unknown, not failed — 202, and the client polls. Re-entering this route is safe:
   // `settle` on an already-settled arena commits again and `write_leaderboard` no-ops
   // on a repeated `(arena_id, incarnation)`.
@@ -1486,8 +1499,20 @@ export async function matchSettle(env: Env, body: unknown): Promise<Response> {
   // which is what keeps `openArena`'s walk from starting at the same dead id forever.
   // `leaderboardWritten` reports the row, not the head.
   // `incarnation` below is read state, not an argument — `recordMatch` sends none.
-  await ensureLeaderboard(c);
-  const baseSignature = await recordMatch(c, pdas);
+  // The record is the one send left on this route, and a failure here is NOT a 500: the
+  // settle has landed, the accounts are home, and the client's loop retries a 202 by
+  // design (the route is idempotent on `(arena_id, incarnation)`). A transient refusal
+  // — a blockhash that expired, a base RPC hiccup, an account the previous poll saw home
+  // and this send did not — used to surface as `internal_error` on the results screen
+  // with the raid already won.
+  let baseSignature: Signature;
+  try {
+    await ensureLeaderboard(c);
+    baseSignature = await recordMatch(c, pdas);
+  } catch (error) {
+    console.warn(`matchSettle: record for ${arenaId} did not land; the client retries`, error);
+    return json({ committed: false, retryAfterMs: 2_500 }, 202);
+  }
 
   return json({
     committed: true,
