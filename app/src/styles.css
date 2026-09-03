@@ -1212,3 +1212,26 @@ h3 {
   border-color: color-mix(in srgb, var(--ink) 42%, transparent);
   color: var(--ink);
 }
+
+/* The gate marker — the one piece of instruction left, and it lives in the world.
+   Amber against the cavern's cold blue so it reads as an objective rather than scenery,
+   and animated in CSS because the scene layer mounts once and React never walks it again. */
+.gate-mark-halo {
+  fill: color-mix(in srgb, var(--torch) 26%, transparent);
+  stroke: color-mix(in srgb, var(--torch) 55%, transparent);
+  stroke-width: 1.5;
+}
+.gate-mark-ink {
+  fill: #ffe6b0;
+}
+.gate-mark {
+  animation: gate-bob 1.9s ease-in-out infinite;
+  transform-box: view-box;
+}
+@keyframes gate-bob {
+  0%, 100% { translate: 0 0; opacity: 0.85; }
+  50% { translate: 0 -5px; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gate-mark { animation: none; opacity: 1; }
+}

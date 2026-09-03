@@ -197,6 +197,9 @@ pub fn process_instruction(
         14 => handlers::roll::consume_roll(program_id, accounts, data),
 
         15 => handlers::init::next_incarnation(program_id, accounts),
+        // Release a seat. The other half of tag 4: without it a player who leaves stays
+        // occupied forever, visible to everyone else and blocking the wipe check.
+        16 => handlers::player::leave_seat(program_id, accounts, data),
 
         _ => Err(ProgramError::InvalidInstructionData),
     }
@@ -239,9 +242,10 @@ mod tests {
             );
         }
 
-        // Everything above the highest issued tag is unknown, and stays unknown.
+        // Everything above the highest issued tag is unknown, and stays unknown. 16 is
+        // `leave_seat` now; 17 is the first that is not.
         assert_eq!(
-            process_instruction(&id, &mut none, &[16]).unwrap_err(),
+            process_instruction(&id, &mut none, &[17]).unwrap_err(),
             ProgramError::InvalidInstructionData,
         );
     }

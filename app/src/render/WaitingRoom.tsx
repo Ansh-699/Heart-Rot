@@ -87,8 +87,40 @@ export const WAITING: ReactElement = (
     {/* The portcullis, cut out of the painting (which has the throat painted dark under
         it), so the passage's LIFT shows the doorway open. One node, by contract. */}
     <g id="gate-portcullis">{painting(GATE_IMG)}</g>
+    <GateMark />
   </g>
 );
+
+/**
+ * The "go here" marker over the gate.
+ *
+ * It replaces three paragraphs. The lobby used to explain itself in text — a muster card,
+ * a "N tiles to the gate" prompt and a control legend — which between them covered a third
+ * of the room the art exists to show. A quest marker says the same thing in one glyph and
+ * says it *in the world*, where the player is already looking.
+ *
+ * Centred on the gate block from the generated map, so it cannot drift from the doorway it
+ * points at; `GATE_MIN_Y` is the top of the walkable gate tiles, and the mark floats a
+ * little above that, clear of the portcullis art.
+ *
+ * Motion is a slow bob and pulse, CSS only, on a node nothing else writes — the scene layer
+ * mounts once and never re-renders, so this must not need React to animate. Under reduced
+ * motion it holds still and stays perfectly legible.
+ */
+function GateMark() {
+  const cx = (GATE_MIN_X + GATE_MAX_X + 1) / 2;
+  const y = GATE_MIN_Y - 26;
+  return (
+    <g className="gate-mark" aria-hidden="true" transform={`translate(${cx} ${y})`}>
+      {/* Halo first, so the glyph reads against both the lit arch and the dark throat. */}
+      <circle r={13} className="gate-mark-halo" />
+      {/* The bar and the dot of an exclamation, drawn rather than typed: a <text> glyph
+          would depend on a webfont that may not have loaded when the scene mounts once. */}
+      <rect x={-2.5} y={-9} width={5} height={11} rx={1.6} className="gate-mark-ink" />
+      <circle cx={0} cy={6} r={2.6} className="gate-mark-ink" />
+    </g>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Boot check

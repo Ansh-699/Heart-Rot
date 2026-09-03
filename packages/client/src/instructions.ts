@@ -75,6 +75,7 @@ const IX_MOVE = 6;
 const IX_SHOOT = 7;
 const IX_SETTLE = 9;
 const IX_WRITE_LEADERBOARD = 10;
+const IX_LEAVE_SEAT = 16;
 const IX_COMMIT = 11;
 const IX_COMMIT_AND_UNDELEGATE = 12;
 const IX_REQUEST_ROLL = 13;
@@ -468,6 +469,43 @@ export const startMatch = beginMuster;
  * rotating it mid-match would let a player fire the archer's 70 and take the next shot on
  * the knight's 800 ms. Render the class off the roster slot, not off what was sent.
  */
+/**
+ * Tag 16 — release a seat. Args (33 B): `seat u8` @0, `identity [u8;32]` @1.
+ *
+ * The other half of `claimSeat`, and the reason a player who leaves stops existing for
+ * everyone else. Without it a seat stayed `occupied` and `ZONE_ARENA` forever: the other
+ * raiders kept seeing a motionless archer, `arena_occupants` never fell so the wipe check
+ * could not fire, and the leaver could not rejoin because their identity still sat in an
+ * arena that was no longer a lobby.
+ *
+ * Treasury-signed like `claimSeat` — seats are administered, not self-served — and the
+ * identity is passed so the program can refuse to release a seat that is not the caller's,
+ * even though the treasury is what signs. Idempotent on chain: a seat already free, or
+ * holding someone else, answers Ok, because this arrives from a closing tab that will
+ * never see a refusal.
+ */
+export function leaveSeat(p: {
+  programId: Address;
+  arena: Address;
+  players: Address;
+  treasury: Address;
+  seat: number;
+  identity: Uint8Array;
+}): HeartrotInstruction {
+  const { data, view } = alloc(IX_LEAVE_SEAT, 33);
+  view.setUint8(1, seatIndex(p.seat));
+  data.set(raw32(p.identity, 'identity'), 2);
+  return {
+    programAddress: p.programId,
+    accounts: [
+      { address: p.arena, role: AccountRole.WRITABLE },
+      { address: p.players, role: AccountRole.WRITABLE },
+      { address: p.treasury, role: AccountRole.READONLY_SIGNER },
+    ],
+    data,
+  };
+}
+
 export function claimSeat(p: {
   programId: Address;
   arena: Address;

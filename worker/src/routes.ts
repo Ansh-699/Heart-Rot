@@ -25,6 +25,16 @@ import {
   type KeyPairSigner,
 } from '@solana/kit';
 import {
+  OUTCOME_UNDECIDED,
+  OUTCOME_WIN,
+  PHASE_FIGHTING,
+  PHASE_LOBBY,
+  PHASE_ROLLING,
+  PHASE_SETTLED,
+  PHASE_SETTLING,
+  SEED_BOSS,
+  SEED_PLAYERS,
+  TICK_MS,
   beginMuster,
   claimSeat,
   confirmSignature,
@@ -39,26 +49,17 @@ import {
   initArena,
   initLeaderboard,
   leaderboardPda,
+  leaveSeat,
   matchPdas,
   nextIncarnation,
-  OUTCOME_UNDECIDED,
-  OUTCOME_WIN,
-  PHASE_FIGHTING,
-  PHASE_LOBBY,
-  PHASE_ROLLING,
-  PHASE_SETTLED,
-  PHASE_SETTLING,
   rollDeadlineTick,
   rollSeed,
-  SEED_BOSS,
-  SEED_PLAYERS,
   sendInstructions,
   settle,
-  TICK_MS,
-  writeLeaderboard,
   type ArenaAccount,
   type DecodedTransactionError,
   type HeartrotRpc,
+  writeLeaderboard,
 } from '@heartrot/client';
 
 import { identityFromDid, verifyPrivyToken } from './auth';
@@ -257,46 +258,72 @@ async function treasuryTier(c: Ctx): Promise<{ lamports: bigint; matches: number
 // ---------------------------------------------------------------------------
 
 /**
- * Roll a settled arena forward to incarnation N+1, in place, and report the new number.
- * `null` means this raid chain ends here and a fresh arena id is the way on.
+ * Can this settled arena roll into its next incarnation? Pure, local, no network.
  *
- * A next incarnation exists only for a win whose VRF roll actually landed. A wipe, an
- * enrage, and a win the oracle never answered for are all the same answer — the loop
- * stops loudly rather than continuing under a seed nobody verified.
- *
- * Tag 15 reuses the same three accounts, so this costs one base-layer transaction and no
- * rent, and the arena keeps the address the whole chain has been played on.
+ * Split out of the old `rollForward` so the scan can ask the question without paying for
+ * the answer: only a win with a seed can roll, and both facts are already in the bytes the
+ * scan just read.
  */
-async function rollForward(
-  c: Ctx,
-  pdas: { arena: Address; boss: Address; players: Address },
-  settled: ArenaAccount,
-): Promise<number | null> {
-  if (settled.outcome !== OUTCOME_WIN || rollSeed(settled) === null) return null;
+function rollable(settled: ArenaAccount): boolean {
+  return settled.outcome === OUTCOME_WIN && rollSeed(settled) !== null;
+}
 
-  const ix = nextIncarnation({
-    programId: c.programId,
-    // The program checks this against `init::TREASURY`, so the Worker is the only
-    // thing that can advance a chain — a player cannot re-roll a boss on demand.
-    payer: c.treasury.address,
-    ...pdas,
-    leaderboard: await leaderboardPda(c.programId),
-  });
-  try {
-    await confirmSignature(c.base, await sendInstructions(c.base, c.treasury, [ix]), {
-      timeoutMs: BASE_CONFIRM_MS,
-    });
-  } catch {
-    // Two joiners race here every time a raid wins, and the loser's tag 15 is refused by
-    // `LOBBY -> LOBBY` being an illegal edge — which is the mutex working, not a failure.
-    // `MatchNotRecorded` (a settle whose leaderboard write never landed) arrives as the
-    // same `WrongPhase`, so the answer is not in the error: re-read the account.
-  }
-  const { state } = await readArena(c, pdas.arena);
-  if (!state || state.phase !== PHASE_LOBBY || state.incarnation <= settled.incarnation) {
-    return null;
-  }
-  return state.incarnation;
+/**
+ * Roll a won arena into its next incarnation, in the background.
+ *
+ * This used to run inline inside `openArena`, which meant the first player to join after a
+ * boss died paid for a `next_incarnation` transaction and its confirmation — up to 30 s,
+ * uncaught — and got "the server hit an error it did not expect" if any of it slipped.
+ * They are simply handed a different room now; this one becomes joinable for whoever comes
+ * next.
+ */
+function rollForwardLater(
+  c: Ctx,
+  ctx: RouteContext,
+  pdas: { arena: Address; boss: Address; players: Address },
+): void {
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const ix = nextIncarnation({
+          programId: c.programId,
+          // The program checks this against `init::TREASURY`, so the Worker is the only
+          // thing that can advance a chain — a player cannot re-roll a boss on demand.
+          payer: c.treasury.address,
+          ...pdas,
+          leaderboard: await leaderboardPda(c.programId),
+        });
+        await confirmSignature(c.base, await sendInstructions(c.base, c.treasury, [ix]), {
+          timeoutMs: BASE_CONFIRM_MS,
+        });
+        console.log('rollForwardLater: rolled a settled win into its next incarnation');
+      } catch {
+        // Two joiners race here every time a raid wins, and the loser's tag 15 is refused
+        // by `LOBBY -> LOBBY` being an illegal edge — the mutex working, not a failure.
+      }
+    })(),
+  );
+}
+
+/**
+ * Create and delegate an arena in the background so the next request finds it warm.
+ *
+ * The counterpart to the scan being read-only: something still has to build the room, and
+ * this is the only place that does it. Reuses `ensureArena`, which is idempotent — it
+ * checks for the account and the delegation record before sending either transaction.
+ */
+function warmArena(c: Ctx, ctx: RouteContext, arenaId: bigint): void {
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const pdas = await matchPdas(c.programId, arenaId);
+        await ensureArena(c, arenaId, 1, pdas);
+        console.log(`warmArena: ${arenaId} is warm`);
+      } catch (error) {
+        console.error(`warmArena: ${arenaId} failed`, error);
+      }
+    })(),
+  );
 }
 
 /**
@@ -396,8 +423,12 @@ async function openArena(
   // ARENA_SCAN budget: how many unusable *matches* to walk past before giving up. `step`
   // additionally bounds the ids declined for their bumps, which are not matches at all
   // and must not be able to starve the scan of its match budget.
-  // One reap per request. A backlog is somebody else's join to pay for, not this one's.
+  // One reap and one roll per request. A backlog is somebody else's join to pay for.
   let reaping = false;
+  let rolling = false;
+  // The first id that is free and canonical: what the Worker will warm if nothing here is
+  // joinable. Remembered rather than created, so the scan stays read-only.
+  let firstFree: bigint | null = null;
   for (let step = 0, occupied = 0; occupied < ARENA_SCAN && step < ARENA_SCAN + GRIND_STEPS; step++) {
     const arenaId = head + BigInt(step);
     const pdas = await matchPdas(c.programId, arenaId);
@@ -416,15 +447,32 @@ async function openArena(
     // rendezvous property — every caller stops at the same arena — only survives if the
     // holes stay on the scan's path and get walked over identically every time.
     if (!state) {
-      if (await childBumpsCanonical(c.programId, pdas.arena)) return { arenaId, incarnation: 1 };
+      // NEVER CREATED INLINE. Creating an arena is `init_arena` + `delegate` +
+      // `connectMatch`, which polls up to 600 times across two 30 s phases — 30-60 s of
+      // chain round trips billed to whichever player's click happened to land here, and
+      // uncaught, so any of it answers "the server hit an error it did not expect". That
+      // is three separate 500s now, all the same shape. The id is remembered and the
+      // Worker warms it in the background; this player is handed a warm arena or an
+      // honest "try again in a moment".
+      if (firstFree === null && (await childBumpsCanonical(c.programId, pdas.arena))) {
+        firstFree = arenaId;
+      }
       continue;
     }
 
     if (state.phase === PHASE_LOBBY) return { arenaId, incarnation: state.incarnation };
 
     if (state.phase === PHASE_SETTLED) {
-      const rolled = await rollForward(c, pdas, state);
-      if (rolled !== null) return { arenaId, incarnation: rolled };
+      // A won arena can roll into its next incarnation — but that is a transaction, and
+      // transactions do not belong on a join. This is the path a player takes immediately
+      // after killing the boss, so it is the one most likely to be walked by someone
+      // impatient, and `next_incarnation` plus a 30 s confirm is exactly the wait that
+      // produced the 500 they saw. Roll it in the background and keep looking for a room
+      // that is joinable right now.
+      if (rollable(state) && !rolling) {
+        rolling = true;
+        rollForwardLater(c, ctx, pdas);
+      }
       // TERMINAL, and it must not spend the budget.
       //
       // A settled arena that cannot roll forward is a loss: `rollForward` refuses locally
@@ -465,9 +513,12 @@ async function openArena(
   // operational state, not a transient one, so name the range that was tried — a bare
   // null here previously turned into an unexplainable 503 on the player's screen.
   console.warn(
-    `openArena: ids ${head}..${head + BigInt(ARENA_SCAN + GRIND_STEPS - 1)} are all unusable; ` +
-      'every one is mid-fight, mid-settlement, or a settled loss that cannot roll forward.',
+    `openArena: ids ${head}..${head + BigInt(ARENA_SCAN + GRIND_STEPS - 1)} hold no joinable ` +
+      `lobby; warming ${firstFree ?? 'nothing — no canonical id in range'}.`,
   );
+  // Nothing to join *yet*. Warm the next one in the background so the retry lands, and
+  // answer with the 503 the client already has copy for rather than a 500 it does not.
+  if (firstFree !== null) warmArena(c, ctx, firstFree);
   return null;
 }
 
@@ -934,6 +985,31 @@ export async function matchLeave(env: Env, body: unknown, ctx: RouteContext): Pr
   // Everyone else. `occupied` is the authority (`session_pubkey != 0`), not `hp` — a
   // player waiting out a respawn has not left, and ending their raid because they happen
   // to be dead at this instant would be the same defect from the other direction.
+  // RELEASE THE SEAT, always and first. This is the half that was missing: settling only
+  // when the leaver was the last one out meant that with anyone else still in, the seat
+  // stayed occupied and `ZONE_ARENA` forever — the other raiders kept seeing a motionless
+  // archer they could not kill, and the leaver could not rejoin because their identity was
+  // still sitting in an arena that was no longer a lobby.
+  const release = leaveSeat({
+    programId: c.programId,
+    arena: pdas.arena,
+    players: pdas.players,
+    treasury: c.treasury.address,
+    seat: mine.seat,
+    identity,
+  });
+  try {
+    await confirmSignature(er, await sendInstructions(er, c.treasury, [release]), {
+      timeoutMs: ER_CONFIRM_MS,
+    });
+  } catch (error) {
+    // The seat is the thing that matters and it did not come free. Say so rather than
+    // reporting a release that did not happen — the client has already cleared its own
+    // state, so a retry is the player pressing Exit again or the reaper catching it.
+    console.error(`matchLeave: releasing seat ${mine.seat} of ${arenaId} failed`, error);
+    return json({ released: false, reason: 'release_failed' }, 202);
+  }
+
   const othersHold = roster.slots.some((slot) => slot.occupied && slot.seat !== mine.seat);
   if (othersHold) return json({ released: true, settled: false, reason: 'others_hold_seats' });
 

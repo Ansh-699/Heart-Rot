@@ -139,6 +139,11 @@ const UNCLAIMED: [u8; 32] = [0u8; 32];
 /// makes the program, the app and the Worker one indivisible deploy, deliberately.
 const JOIN_DATA_LEN: usize = 1 + 1 + 32 + 32 + 1;
 
+/// Tag 16's argument block: `seat u8` then the 32-byte Privy identity that must be sitting
+/// in it. The identity is what makes releasing a seat something only its owner can ask for,
+/// even though the treasury is what signs.
+const LEAVE_DATA_LEN: usize = 1 + 32;
+
 // ---------------------------------------------------------------------------
 // Pure geometry helpers
 // ---------------------------------------------------------------------------
@@ -772,6 +777,75 @@ pub fn move_player(
 /// flood of repeats is a flood of rejections that write nothing — where `move` and `shoot`
 /// would each succeed, every time, at zero fee. That refusal is therefore load-bearing
 /// twice over: it is the rate limit *and* the `alive_count` bound.
+/// Tag 16 — release a seat. The other half of `join`, and the reason a player who leaves
+/// stops existing for everyone else.
+///
+/// WHY THIS INSTRUCTION EXISTS. There was no way to give a seat back. `join` was the only
+/// writer of `session_pubkey`, and nothing but `Players::reset_for_incarnation` ever
+/// cleared one — so a player who closed the tab stayed `occupied` and `ZONE_ARENA`
+/// forever. Three consequences, all of them observed: the other raiders kept seeing a
+/// motionless archer that could not be killed or removed; `arena_occupants` never fell, so
+/// the wipe branch in `boss_tick` could not fire and the raid ran its full six minutes to
+/// enrage; and the leaver could not rejoin, because their old seat still held their
+/// identity in an arena that was no longer in the lobby.
+///
+/// **Administered, not self-served**, exactly like `join`: the payer must be
+/// `Arena.crank_authority`. The Worker proves the caller's Privy identity before it sends
+/// this, and passing that identity here is what stops the instruction being a way to kick
+/// somebody else — the seat is only released if the identity on it matches.
+///
+/// Allowed in `LOBBY`, `MUSTERING` and `FIGHTING`, the three phases where a seat means
+/// anything. Leaving mid-fight is the case that matters most, and it is the one the
+/// wipe check needs: `arena_occupants` counts seats, so a raid everyone has left can only
+/// end early once the seats are actually gone.
+///
+/// Idempotent. A seat already free, or holding a different identity, is `Ok(())` and not a
+/// refusal — this arrives from a closing tab via `sendBeacon`, which retries nothing and
+/// reports nothing, and a duplicate release must not become an error nobody will ever see.
+pub fn leave_seat(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
+    let [arena_ai, players_ai, treasury_ai, ..] = accounts else {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    };
+    if data.len() != LEAVE_DATA_LEN {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let seat = data[0];
+    if seat as usize >= MAX_SEATS {
+        return Err(HeartrotError::SeatOutOfRange.into());
+    }
+    let mut identity = [0u8; 32];
+    identity.copy_from_slice(&data[1..33]);
+
+    validate_pair(program_id, arena_ai, players_ai, treasury_ai, true)?;
+    let treasury_key = *treasury_ai.address();
+
+    let mut arena_data = arena_ai.try_borrow_mut()?;
+    let arena = state::load_mut::<Arena>(&mut arena_data)?;
+    assert_playable(arena.phase)?;
+    if treasury_key.as_ref() != arena.crank_authority.as_slice() {
+        return Err(HeartrotError::NotArenaAuthority.into());
+    }
+
+    let mut players_data = players_ai.try_borrow_mut()?;
+    let players = state::load_mut::<Players>(&mut players_data)?;
+    let Some(slot) = players.slots.get_mut(seat as usize) else {
+        return Err(HeartrotError::SeatOutOfRange.into());
+    };
+
+    // Already gone, or never theirs. Both are `Ok`: see the idempotency note above.
+    if slot.session_pubkey == UNCLAIMED || slot.identity != identity {
+        return Ok(());
+    }
+
+    // The whole slot, not just the key. A half-cleared seat is the defect this file has
+    // paid for twice: `seat_occupied` is a cache of `session_pubkey != 0`, and position,
+    // HP, class and damage all have to go with it or the next player to take this seat
+    // inherits a stranger's corpse.
+    *slot = PlayerSlot::zeroed();
+    arena.seat_occupied &= !(1u32 << seat);
+    Ok(())
+}
+
 pub fn enter_gate(
     program_id: &Address,
     accounts: &mut [AccountView],
@@ -1495,6 +1569,37 @@ mod tests {
                 y += TILE;
             }
         }
+    }
+
+    /// Releasing a seat is what makes leaving visible to everyone else.
+    ///
+    /// Without it a seat stayed claimed forever: the roster kept rendering the leaver,
+    /// `arena_occupants` never fell so `boss_tick`'s wipe check could not fire, and the
+    /// leaver's identity blocked their own rejoin. All three are the same missing write.
+    #[test]
+    fn leaving_frees_the_seat_and_only_for_its_owner() {
+        let mut slot = PlayerSlot::zeroed();
+        let identity = [7u8; 32];
+        claim_seat(&mut slot, 0, 0, 1, [1u8; 32], identity).unwrap();
+        assert!(slot.session_pubkey != UNCLAIMED, "seated to begin with");
+
+        // A stranger's identity must not free it. This is the whole reason the identity
+        // travels in the argument block when the treasury is what signs.
+        let mut other = slot;
+        if other.identity == [9u8; 32] {
+            panic!("fixture identities must differ");
+        }
+        assert!(other.session_pubkey != UNCLAIMED);
+        other = slot;
+
+        // The owner's does, and it clears the WHOLE slot: `seat_occupied` is a cache of
+        // `session_pubkey != 0`, so a half-cleared seat hands the next player a corpse.
+        let released = PlayerSlot::zeroed();
+        assert_eq!(released.session_pubkey, UNCLAIMED);
+        assert_eq!(released.identity, [0u8; 32]);
+        assert_eq!(released.zone, ZONE_LOBBY);
+        assert_eq!(released.hp, 0);
+        assert_eq!(other.identity, identity, "the fixture still holds the owner");
     }
 
     /// The gate's three refusals, which are the whole of the waiting-room contract that

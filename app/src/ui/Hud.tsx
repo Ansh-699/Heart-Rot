@@ -31,13 +31,12 @@
  * notification; the renderer inside `#stage` must not.
  */
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   CLASS_ARCHER,
   MAX_SEATS,
   MUZZLES,
-  NO_TARGET,
   N_CLASSES,
   N_PARTS,
   OUTCOME_ENRAGE,
@@ -50,16 +49,13 @@ import {
   PHASE_SETTLED,
   PHASE_SETTLING,
   TICK_MS,
-  VENT_OPEN,
   ZONE_ARENA,
-  classOf,
   ventPct,
 } from '@heartrot/client';
 
 import { shotAllowed } from '../input/controls';
 import { isMuted, play, setMuted, type SfxName } from '../render/sfx';
 import { SKIN_COLORS } from '../screens/CharacterSelect';
-import { Muster } from '../screens/Gate';
 import { mySeatSlot, useSelect, useStore } from '../state/store';
 
 /**
@@ -247,21 +243,18 @@ const HUD_CSS = `
  * either side of the gate and the caller does not have to place anything.
  */
 export function Hud() {
-  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
-  // `PHASE_MUSTERING` has to be tested explicitly. Without it the muster falls into
-  // `BossBar`, which renders an enrage clock off `enrageAtTick` — and that field is
-  // stamped at the MUSTERING → FIGHTING flip, so it reads 0 for the whole window: a 0:00
-  // countdown for a fight that has not begun. `Muster` is `screens/Gate`'s, rendered by
-  // both sides of the gate so the countdown does not vanish when your seat crosses it.
-  const mustering = phase === PHASE_LOBBY || phase === PHASE_MUSTERING;
   return (
     <>
       <style>{HUD_CSS}</style>
+      {/* ONE cluster, top left. The screen used to carry four: a muster card top centre, a
+          class/health panel bottom left, a "tiles to the gate" prompt bottom centre and a
+          parts list top right. Together they covered a third of the play area and buried
+          the room the whole redesign exists to show. Everything still worth reading moved
+          into the cluster below; the gate now carries its own marker instead of a
+          paragraph telling you where it is. `Verdict` stays because it is the end of a
+          match, not chrome. */}
       <PhaseCluster />
-      <div className="hud hud-tc">{mustering ? <Muster /> : <BossBar />}</div>
       <Verdict />
-      <SelfPanel />
-      {!mustering && <Parts />}
     </>
   );
 }
@@ -277,6 +270,45 @@ export function Hud() {
  * the floor are matchable at a glance. Counts a screen reader needs are on each dot's
  * label and on the telemetry panel's Match group.
  */
+/**
+ * The one line that survived the cull: your health, your shot, and how much shell is left.
+ *
+ * These three were spread across a bottom-left panel and a top-centre bar. They are worth
+ * a glance mid-fight and nothing more, so they live in the cluster the player already
+ * reads rather than in furniture of their own. Everything else those panels carried —
+ * class name, respawn clock, muster copy, per-part list, control hints — was either
+ * instructional (and now belongs to the gate marker) or legible from the scene itself.
+ */
+function VitalsRow() {
+  const slot = useSelect(mySeatSlot);
+  const boss = useSelect((s) => s.boss);
+  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
+  const tick = useSelect((s) => s.arena?.tick ?? 0);
+  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
+  if (!slot) return null;
+
+  const dead = slot.hp === 0;
+  const shell =
+    boss && boss.partsMax.some((m) => m > 0)
+      ? Math.round(
+          (boss.parts.reduce((a, b) => a + b, 0) / boss.partsMax.reduce((a, b) => a + b, 0)) * 100,
+        )
+      : null;
+
+  return (
+    <div className="hud-row hud-vitals">
+      <span className={`fine tabular ${dead ? 'is-down' : ''}`}>
+        {dead
+          ? `down ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}`
+          : `${slot.hp} hp`}
+      </span>
+      {shell !== null && phase !== PHASE_LOBBY && phase !== PHASE_MUSTERING && (
+        <span className="fine tabular">shell {shell}%</span>
+      )}
+    </div>
+  );
+}
+
 function PhaseCluster() {
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
   const tick = useSelect((s) => s.arena?.tick ?? 0);
@@ -294,6 +326,7 @@ function PhaseCluster() {
         <MutePill />
         <ExitPill />
       </div>
+      <VitalsRow />
       <ol className="hud-seats">
         {Array.from({ length: MAX_SEATS }, (_, i) => {
           const slot = players?.slots[i];
@@ -399,274 +432,6 @@ function Verdict() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Meters
-// ---------------------------------------------------------------------------
-
-/**
- * A bar is a picture of a number, and a screen reader sees neither. `role="meter"` plus
- * the three values is what makes it a number again; `label` is required rather than
- * optional because an unnamed meter reads as "45 percent" of nothing.
- *
- * The fill drives a `--fill` custom property and a composited `scaleX`, never `width`:
- * ~30 of these redraw on the same 2.5 Hz notification and animating `width` relayouts
- * every one of them on every frame. Do not revert it.
- *
- * `segment` makes it one cell of the boss bar: `flex-grow` is the pool's maximum, so the
- * bar's width is HP and a thorn reads as the fraction of the shell it is. An empty pool
- * is `dead` — charred, not merely drained — because a part at zero is a different thing
- * from a part at one.
- */
-function Meter({
-  label,
-  value,
-  max,
-  tone,
-  segment = false,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  tone?: string;
-  segment?: boolean;
-}) {
-  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
-  const dead = max > 0 && value === 0;
-  return (
-    <span
-      className={`meter${segment ? ' shell-seg' : ''}${dead ? ' dead' : ''}`}
-      role="meter"
-      aria-label={label}
-      aria-valuenow={value}
-      aria-valuemin={0}
-      aria-valuemax={max}
-      title={segment ? label : undefined}
-      style={segment ? { flexGrow: max } : undefined}
-    >
-      <span
-        className="meter-fill"
-        style={{ ['--fill']: pct / 100, background: tone } as CSSProperties}
-      />
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// TC — the boss bar
-// ---------------------------------------------------------------------------
-
-/**
- * The genre convention: one bar, nine segments — one per part, each as wide as the HP it
- * holds and each draining on its own — so the bar is the boss's silhouette in numbers
- * and a dead thorn is a charred gap, not a lower percentage. The core joins the bar the
- * tick the vent opens (it is unreachable before, and drawing it sealed would be a target
- * that is not one), and one line of fight state follows. `Incoming` (the live bullet
- * count) is not here — it is a debugging number and the bullets are on screen; it moved
- * to the telemetry Feed group, where the rest of the observed numbers live.
- */
-function BossBar() {
-  const boss = useSelect((s) => s.boss);
-  const tick = useSelect((s) => s.arena?.tick ?? 0);
-  const enrageAtTick = useSelect((s) => s.arena?.enrageAtTick ?? 0);
-  // 1, never 0, when the arena is not loaded: `ventPct` is a function of an occupant
-  // count and there is no such thing as a raid of nobody.
-  const raidSize = useSelect((s) => s.arena?.raidSize ?? 1);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
-  const alive = useSelect((s) => s.arena?.aliveCount ?? 0);
-  const seat = useSelect((s) => s.match?.seat ?? -1);
-  // `VENT_OPEN` and not a bare 1: the byte's meaning belongs to `shoot.rs`, which is
-  // the handler that acts on it, and a literal here is a second copy of that rule.
-  const open = boss?.ventOpen === VENT_OPEN;
-  usePlayOnRise(open, 'ventOpen');
-
-  if (!boss) return <p className="fine">Waiting for the boss to load…</p>;
-
-  const shell = boss.parts.reduce((a, b) => a + b, 0);
-  const shellMax = boss.partsMax.reduce((a, b) => a + b, 0);
-  // `enrage_at_tick` is stamped by `Arena::begin_fight` at the MUSTERING → FIGHTING flip
-  // and zeroed by `begin_next_incarnation`, so zero means "no fight is running" and not
-  // "the deadline has passed". Without the `!== 0` test a fresh arena reads `tick >= 0`
-  // and the bar says "enraged" before the boss has taken a single shot.
-  const enraged = enrageAtTick !== 0 && tick >= enrageAtTick;
-
-  return (
-    <>
-      <div className="vent-head">
-        <h3>The amalgam</h3>
-        <span className={`pill ${open ? 'pill-open' : ''}`}>
-          {open ? 'VENT OPEN' : 'VENT SEALED'}
-        </span>
-      </div>
-      <div className="vent-row">
-        <span>Shell</span>
-        <div className="shell-bar" role="group" aria-label="Shell, by part">
-          {boss.parts.map((hp, index) => (
-            <Meter
-              key={PART_NAMES[index] ?? index}
-              label={PART_NAMES[index] ?? `part ${index}`}
-              value={hp}
-              max={boss.partsMax[index] ?? 0}
-              tone="var(--flesh)"
-              segment
-            />
-          ))}
-          {open && (
-            <Meter label="Core" value={boss.coreHp} max={boss.coreHpMax} tone="var(--olive)" segment />
-          )}
-        </div>
-        <span className="fine tabular">{shellPercent(shell, shellMax)}%</span>
-      </div>
-      <p className="fine tabular">
-        {open ? `core ${boss.coreHp} / ${boss.coreHpMax}` : `core sealed below ${ventPct(raidSize)}%`}{' '}
-        ·{' '}
-        {enrageAtTick === 0
-          ? '—'
-          : enraged
-            ? 'enraged'
-            : `${clock(Math.max(0, enrageAtTick - tick), tickMs)} to enrage`}{' '}
-        · {alive} alive ·{' '}
-        {boss.targetSeat === NO_TARGET
-          ? 'hunting nobody'
-          : boss.targetSeat === seat
-            ? 'hunting you'
-            : `hunting seat ${boss.targetSeat}`}
-      </p>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// TR — the nine parts, collapsed
-// ---------------------------------------------------------------------------
-
-/**
- * Nine rows is the densest thing on screen and it is a fight-long reference, not a
- * moment-to-moment read, so it opens on a click. Not persisted: it is one click and the
- * default is right for the common case.
- */
-function Parts() {
-  const boss = useSelect((s) => s.boss);
-  const [open, setOpen] = useState(false);
-  if (!boss) return null;
-  const standing = boss.parts.reduce((n, hp) => n + (hp > 0 ? 1 : 0), 0);
-
-  return (
-    <div className="hud hud-tr">
-      {/* A real <button>: `controls.ts` preventDefaults Space on `window` before the
-          browser's activation behaviour runs, so Space fires the shot and never this, and
-          Enter activates it. Nothing in the HUD may depend on Space. */}
-      <button
-        className="hud-toggle"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-      >
-        {open ? '▾' : '▸'} parts {standing}/{N_PARTS} standing
-      </button>
-      {open && (
-        <ul className="parts">
-          {boss.parts.map((hp, index) => {
-            const max = boss.partsMax[index] ?? 0;
-            const gone = hp === 0;
-            const silenced = gone && index >= FIRST_THORN && index <= LAST_THORN;
-            const name = PART_NAMES[index] ?? `part ${index}`;
-            return (
-              <li key={name} className={gone ? 'dead' : ''}>
-                <span>
-                  <span className="fine tabular">{index + 1}</span> {name}
-                </span>
-                <Meter label={name} value={hp} max={max} />
-                <span className="fine tabular">{gone ? (silenced ? 'silent' : 'gone') : hp}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// BL — you
-// ---------------------------------------------------------------------------
-
-/**
- * Health, class and the two cadence pills, **on both sides of the gate**.
- *
- * This cluster used to mount only from `ArenaScreen`, so the waiting area had no shot
- * indicator at all — and the waiting area is exactly where the spacebar does nothing. A
- * permanently grey pill in an empty room is a legible bug report; a key that does nothing
- * is not. The SHOT pill therefore says *why* it is grey rather than only that it is:
- * `shoot.rs` refuses outside `PHASE_FIGHTING` and outside `ZONE_ARENA`, and both refusals
- * are normal play, not faults.
- */
-function SelfPanel() {
-  const slot = useSelect(mySeatSlot);
-  const tick = useSelect((s) => s.arena?.tick ?? 0);
-  const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
-  const fightAtTick = useSelect((s) => s.arena?.fightAtTick ?? 0);
-  const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
-  if (!slot) return null;
-
-  const dead = slot.hp === 0;
-  const cls = classOf(slot);
-  // The move gate is NOT predictable here. `lastMoveTick` is an ER slot and `tick` is a
-  // crank tick — two clocks (`player.rs:345`) — and the comparison that used to sit here
-  // never held, so the pill read green for the whole fight. A browser cannot see slots;
-  // the one refusal it can foresee is death.
-  const moveReady = !dead;
-  const live = phase === PHASE_FIGHTING && slot.zone === ZONE_ARENA;
-  const shotReady = shotAllowed(tick, slot.lastShotTick, cls);
-  const musterLeft = fightAtTick > tick ? clock(fightAtTick - tick, tickMs) : '0:00';
-
-  return (
-    <div className="hud hud-bl">
-      <div className="hud-row">
-        <span className="pill">{CLASS_NAMES[cls] ?? `CLASS ${cls}`}</span>
-        <span className="fine tabular">
-          {/* `respawn_at_tick` is absolute, so a stale account reads 0 rather than
-              counting backwards from a tick that has already passed. */}
-          {dead ? `respawn ${clock(Math.max(0, slot.respawnAtTick - tick), tickMs)}` : `${slot.hp} hp`}
-        </span>
-      </div>
-      <Meter
-        label="Your health"
-        value={slot.hp}
-        max={slot.hpMax}
-        tone={dead ? 'var(--gone)' : 'var(--ok)'}
-      />
-
-      <div className="cadence">
-        <span className={`pill ${dead ? 'pill-down' : moveReady ? 'pill-open' : ''}`}>
-          {dead ? 'DOWN' : moveReady ? 'MOVE READY' : 'MOVE COOLING'}
-        </span>
-        <span className={`pill ${dead ? 'pill-down' : live && shotReady ? 'pill-open' : ''}`}>
-          {dead ? 'DOWN' : !live ? 'PRACTICE' : shotReady ? 'SHOT READY' : 'SHOT COOLING'}
-        </span>
-      </div>
-      {/* The dishonesty is ambiguity, not silence: the arrow answers "is the key bound",
-          this line answers "why no damage". */}
-      {!live && !dead && (
-        <p className="fine">
-          {slot.zone === ZONE_ARENA
-            ? `Weapons go live when the muster ends — ${musterLeft}.`
-            : 'Practice shots only. There is no target on this side of the gate.'}
-        </p>
-      )}
-      {/* The keys, in every phase, because every one of them is bound in every phase:
-          `controls.ts::pump` moves on the wall clock everywhere and fires the trigger
-          everywhere, drawing a practice arrow where the chain would refuse the send. Held
-          drag both aims and fires; Space fires along the body's facing. Written out rather
-          than drawn as three key caps — a picture of a keyboard is a second thing to
-          maintain and reads no faster at 11px. */}
-      <p className="fine hud-keys">
-        <b>WASD</b> or arrows move · <b>SPACE</b> fires, held still it charges · drag to aim
-      </p>
-      <p className="fine tabular">
-        damage {slot.damageDealt} · deaths {slot.deaths}
-      </p>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Self-check

@@ -38,7 +38,6 @@
  * `Hud` rather than by this file.
  */
 
-import { GatePrompt } from './Gate';
 
 /**
  * Bottom centre, the one anchor `Hud` does not already use.
@@ -79,9 +78,6 @@ export function Lobby() {
           because a portal whose container changes identity is deleted and rebuilt, not
           moved — and this screen ends by handing the arena straight to the next one. */}
       <style>{LOBBY_CSS}</style>
-      <div className="hud hud-bc">
-        <GatePrompt />
-      </div>
     </>
   );
 }

@@ -46,6 +46,7 @@ const APPLY = process.argv.includes('--apply');
 const COUNT = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 16);
 
 /** `Rolling` is the one phase tag 12 refuses — a VRF callback may still be in flight. */
+const PHASE_LOBBY = 0;
 const PHASE_ROLLING = 4;
 const PHASE_NAMES = ['LOBBY', 'FIGHTING', 'SETTLING', 'SETTLED', 'ROLLING', 'ROLLED', 'MUSTERING'];
 
@@ -93,6 +94,16 @@ for (let step = 0; step < COUNT; step++) {
 
   if (state.phase === PHASE_ROLLING) {
     console.log(`${arenaId}  ${name} — tag 12 is refused here, leaving it`);
+    skipped++;
+    continue;
+  }
+
+  // A delegated LOBBY is a WARM ROOM, not a stranded one — it is exactly what a joining
+  // player is handed. Undelegating it does not destroy it (tag 12 leaves the phase alone
+  // from `Lobby`) but it does un-warm it, so the next player pays the cold start this
+  // whole change exists to remove. Caught the hard way: an earlier run reaped one.
+  if (state.phase === PHASE_LOBBY) {
+    console.log(`${arenaId}  LOBBY — warm and joinable, leaving it`);
     skipped++;
     continue;
   }
