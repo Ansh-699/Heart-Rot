@@ -61,7 +61,7 @@ function bossBytes(hurt: boolean, vent = false, fury = false) {
   const open = vent || fury;
   for (let i = 0; i < N_PARTS; i++) {
     v.setUint16(o.parts_max + i * 2, 500, true);
-    const hp = hurt && i === 7 ? 0 : open && i === 0 ? 400 : 500;
+    const hp = (hurt && i === 7) || (fury && (i === 7 || i === 8 || i === 3)) ? 0 : open && i === 0 ? 400 : 500;
     v.setUint16(o.parts + i * 2, hp, true);
   }
   v.setUint8(o.vent_open, open ? 1 : 0);

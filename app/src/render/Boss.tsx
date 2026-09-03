@@ -125,7 +125,15 @@ const BREAK_PX = 7;
  * the resting class, the break-off's end frame and the death sequence, so the three
  * cannot disagree about what dead looks like.
  */
-const CHARRED = 'grayscale(1) brightness(0.25)';
+/**
+ * ASH, not char. This was `grayscale(1) brightness(0.25)`, and on this art it was a hole:
+ * the limbs average 40 of 255 (measured over the atlas — mace 39, claws 42, crown 44), so
+ * a quarter of that is black, and once the fury glow outlined the creature every dead
+ * limb read as a missing piece of it ("fix missing pixel"). Dead is now petrified: drained
+ * of colour, LIFTED rather than darkened so the texture survives, a little sepia so it is
+ * bone rather than steel. Still opaque, for the reason the class rule gives.
+ */
+const CHARRED = 'grayscale(1) brightness(1.15) contrast(0.85) sepia(0.35)';
 
 /**
  * The open vent's ring width, as a ratio of the generated `CORE_R`. A ratio and never a
@@ -197,7 +205,7 @@ const CSS = `
   50%      { filter: drop-shadow(0 0 22px var(--ember, #ff5a4a)); }
 }
 
-/* A destroyed limb stays on the creature, dark and drained — and OPAQUE, because the room
+/* A destroyed limb stays on the creature, ashen and drained — and OPAQUE, because the room
    under it still carries the living limb. Removing it outright, or fading it, loses the
    read the whole rig is for: which gun you killed. */
 .hr-boss-part.hr-dead { opacity: 1; filter: ${CHARRED}; }

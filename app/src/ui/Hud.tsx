@@ -205,6 +205,11 @@ const HUD_CSS = `
 .hud p { margin: 0; }
 .hud-tl { top: 8px; left: 8px; }
 .hud-tc { top: 8px; left: 50%; transform: translateX(-50%); width: min(520px, 46vw); }
+/* Two clusters, one row: the phase cluster ends near x=345 and the centre one begins at
+   (vw - 520) / 2, so below ~1210 px they overlap and SOUND/EXIT sit under the centre
+   panel, greyed. Seen on two half-screen windows side by side. Below that width the
+   centre cluster drops under the phase cluster instead. */
+@media (max-width: 1210px) { .hud-tc { top: 66px; } }
 .hud-ml { top: 50%; left: 12px; transform: translateY(-50%); max-width: min(340px, 30vw); }
 .hud-bl { left: 8px; bottom: 8px; min-width: 232px; }
 /* Spec §1.3 puts the parts cluster bottom-right; telemetry's anchor is right 12px /
