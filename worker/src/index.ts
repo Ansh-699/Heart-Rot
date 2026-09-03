@@ -13,10 +13,12 @@
  */
 
 import { Unauthorized } from './auth';
+import type { RouteContext } from './routes';
 import {
   BadRequest,
   faucetStatus,
   json,
+  matchLeave,
   matchSettle,
   matchStart,
   sessionInit,
@@ -93,14 +95,20 @@ const REQUIRED: readonly (keyof Env)[] = [
  * on `__proto__` or `constructor` yields an inherited value that is truthy and not one
  * of ours. A `Map` has no inherited keys to find.
  */
-const POST_ROUTES = new Map<string, (env: Env, body: unknown) => Promise<Response>>([
+const POST_ROUTES = new Map<
+  string,
+  (env: Env, body: unknown, ctx: RouteContext) => Promise<Response>
+>([
   ['/api/session/init', sessionInit],
   ['/api/match/start', matchStart],
   ['/api/match/settle', matchSettle],
+  // Departure. Sent by the Exit button and by `navigator.sendBeacon` on a closing tab,
+  // and it is what stops an abandoned raid stranding its arena forever.
+  ['/api/match/leave', matchLeave],
 ]);
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const { pathname } = new URL(request.url);
 
     // Fail closed, and say which binding is missing. The names are ops signal, not a
@@ -127,7 +135,7 @@ export default {
       const route = request.method === 'POST' ? POST_ROUTES.get(pathname) : undefined;
       if (!route) return json({ error: 'not_found' }, 404);
 
-      return await route(env, await readJson(request));
+      return await route(env, await readJson(request), ctx);
     } catch (error) {
       if (error instanceof BadRequest) return json({ error: error.message }, 400);
       if (error instanceof Unauthorized) return json({ error: 'unauthorized' }, 401);
@@ -135,8 +143,15 @@ export default {
       // A malformed address, a Privy outage, a devnet transaction that failed on chain
       // and a delegation timeout all land here. The message goes to the log, never to
       // the caller: these strings carry RPC URLs, account addresses and provider errors.
-      console.error(pathname, error);
-      return json({ error: 'internal_error' }, 500);
+      //
+      // The `ref` is the exception: an opaque token that appears in BOTH the log line and
+      // the response body, so a player can read one off their screen and an operator can
+      // find the stack that produced it. Three of these 500s have now been diagnosed by
+      // guessing, twice wrongly, because a body of `{"error":"internal_error"}` carries
+      // nothing to search on. It leaks nothing — it is random and means nothing on its own.
+      const ref = crypto.randomUUID().slice(0, 8);
+      console.error(`[${ref}] ${pathname}`, error);
+      return json({ error: 'internal_error', ref }, 500);
     }
   },
 } satisfies ExportedHandler<Env>;

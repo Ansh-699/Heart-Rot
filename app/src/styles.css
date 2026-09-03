@@ -1187,3 +1187,28 @@ h3 {
   color: var(--muted);
 }
 
+
+/* The way out, and the way to a different wallet.
+   `hud-exit` is a real button inside a `.hud` cluster, which works because the cluster
+   re-enables pointer events on its own children — `hud-mute` is the standing proof.
+   Both are deliberately quiet: they are escapes, not calls to action, and neither should
+   compete with "Take a seat" or read as the thing to press. */
+.hud-exit {
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  color: color-mix(in srgb, var(--ember) 70%, var(--ink));
+}
+.hud-exit:hover {
+  border-color: var(--ember);
+  color: var(--ember);
+}
+
+.btn-quiet {
+  margin-top: 8px;
+  background: transparent;
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+  color: color-mix(in srgb, var(--ink) 62%, transparent);
+}
+.btn-quiet:hover {
+  border-color: color-mix(in srgb, var(--ink) 42%, transparent);
+  color: var(--ink);
+}

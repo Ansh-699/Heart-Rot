@@ -47,6 +47,7 @@ import {
   PHASE_LOBBY,
   PHASE_ROLLING,
   PHASE_SETTLED,
+  PHASE_SETTLING,
   rollDeadlineTick,
   rollSeed,
   SEED_BOSS,
@@ -126,6 +127,20 @@ const sleep = (ms: number): Promise<void> =>
 // ---------------------------------------------------------------------------
 // Responses
 // ---------------------------------------------------------------------------
+
+/**
+ * The slice of Cloudflare's `ExecutionContext` the routes use.
+ *
+ * `waitUntil` is what keeps arena lifecycle off the player's request. Creating and
+ * delegating an arena, and settling an abandoned one, are chain round trips measured in
+ * tens of seconds; doing them inline is what produced "the server hit an error it did not
+ * expect" — `connectMatch` alone polls up to 600 times across two 30 s phases. Handed to
+ * `waitUntil` they run after the response is sent, on Cloudflare's clock rather than the
+ * player's, and a failure costs a log line instead of a 500.
+ */
+export interface RouteContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
 
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -366,7 +381,10 @@ async function childBumpsCanonical(programId: Address, arena: Address): Promise<
  * chain that has ended — a wipe, an enrage, or a roll the oracle never answered — moves
  * the scan on, and a raid already running on an id leaves the next one untouched.
  */
-async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number } | null> {
+async function openArena(
+  c: Ctx,
+  ctx: RouteContext,
+): Promise<{ arenaId: bigint; incarnation: number } | null> {
   const board = await accountData(c.base, await leaderboardPda(c.programId));
   // A leaderboard that exists but has recorded nothing reads `last_arena_id == 0`, which
   // is not an arena id at all — `arenaIdField` rejects 0 on the way in, so returning it
@@ -378,10 +396,12 @@ async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number
   // ARENA_SCAN budget: how many unusable *matches* to walk past before giving up. `step`
   // additionally bounds the ids declined for their bumps, which are not matches at all
   // and must not be able to starve the scan of its match budget.
+  // One reap per request. A backlog is somebody else's join to pay for, not this one's.
+  let reaping = false;
   for (let step = 0, occupied = 0; occupied < ARENA_SCAN && step < ARENA_SCAN + GRIND_STEPS; step++) {
     const arenaId = head + BigInt(step);
     const pdas = await matchPdas(c.programId, arenaId);
-    const { state } = await readArena(c, pdas.arena);
+    const { state, erFqdn } = await readArena(c, pdas.arena);
 
     // Never played. `init_arena` will create it at incarnation 1 — the counter is
     // per-arena, so a fresh chain always starts at the base fight.
@@ -417,6 +437,22 @@ async function openArena(c: Ctx): Promise<{ arenaId: bigint; incarnation: number
       // ids 1788266869..80 dead and 1788266885 absent and perfectly usable one step past
       // the horizon. Widening the budget only postpones it, because the accumulator is
       // unbounded and the budget is not. Skipping for free removes the accumulator instead.
+      continue;
+    }
+
+    // STRANDED, and reapable. An arena still delegated in `SETTLING` has finished its
+    // fight and has nobody left to settle it — the only other caller of that route needs a
+    // live seated player, and if one existed this arena would not be here. Hand it to the
+    // background reaper (capped at one per request) and do not spend budget on it: it is
+    // as terminal as a settled loss, it is just still holding its rent and its slot.
+    //
+    // This is the backstop, not the mechanism. `matchLeave` clears these at the moment the
+    // last player goes; this catches the ones whose departure signal never arrived.
+    if (state.phase === PHASE_SETTLING && erFqdn !== undefined) {
+      if (!reaping) {
+        reaping = true;
+        reapOne(c, ctx, { arenaId, erFqdn });
+      }
       continue;
     }
 
@@ -549,7 +585,66 @@ function arenaIdField(body: unknown): bigint {
  * account holding silently stale data — no error, no notifications, a motionless boss
  * that reads as a game bug rather than a config one.
  */
-export async function sessionInit(env: Env, body: unknown): Promise<Response> {
+/**
+ * The backstop for a departure signal that never arrived.
+ *
+ * `matchLeave` is the primary cleanup and it covers Exit and a closing tab. It cannot
+ * cover a browser crash, a killed process or a lost network — `sendBeacon` is best effort
+ * by definition. Without something behind it those arenas strand exactly as before, which
+ * is the bug this whole change exists to remove.
+ *
+ * Deliberately NOT a timer. It is background work attached to a request the Worker is
+ * already serving, capped at one arena so a join never pays for a backlog, and it runs in
+ * `waitUntil` so the player's response has already gone. No cron, no polling, no schedule.
+ */
+function reapOne(c: Ctx, ctx: RouteContext, dead: { arenaId: bigint; erFqdn: string }): void {
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const pdas = await matchPdas(c.programId, dead.arenaId);
+        const er = createRpc(dead.erFqdn);
+        const ix = settle({ programId: c.programId, payer: c.treasury.address, ...pdas });
+        await confirmSignature(er, await sendInstructions(er, c.treasury, [ix]), {
+          timeoutMs: ER_CONFIRM_MS,
+        });
+        console.log(`reapOne: settled stranded arena ${dead.arenaId}`);
+      } catch (error) {
+        console.error(`reapOne: ${dead.arenaId} failed`, error);
+      }
+    })(),
+  );
+}
+
+/**
+ * Make sure the arena AFTER the one we just handed out is created and delegated, so the
+ * next player only has to claim a seat.
+ *
+ * This is the whole answer to the cold-start 500. `sessionInit` used to run `init_arena`,
+ * `delegate` and `connectMatch` inline on the click of whichever player happened to arrive
+ * when the scan reached fresh ground; that player paid ~30-60 s of chain round trips and
+ * up to 600 polls inside one request, and any of it could time out or blow the subrequest
+ * budget. Moved here, the cost lands on Cloudflare's background clock and the player who
+ * triggered it has already been served.
+ */
+function prewarmNext(c: Ctx, ctx: RouteContext, after: bigint): void {
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const arenaId = after + 1n;
+        const pdas = await matchPdas(c.programId, arenaId);
+        if ((await accountData(c.base, pdas.arena)) !== null) return; // already there
+        if (!(await childBumpsCanonical(c.programId, pdas.arena))) return; // ids the scan skips
+        await ensureArena(c, arenaId, 1, pdas);
+        console.log(`prewarmNext: ${arenaId} is warm`);
+      } catch (error) {
+        // Never fatal: the inline fallback in sessionInit still creates on demand.
+        console.error(`prewarmNext: after ${after} failed`, error);
+      }
+    })(),
+  );
+}
+
+export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): Promise<Response> {
   const token = field(body, 'privyToken');
   const sessionPubkey = field(body, 'sessionPubkey');
   if (!isAddress(sessionPubkey)) throw new BadRequest('sessionPubkey is not a valid address');
@@ -581,11 +676,14 @@ export async function sessionInit(env: Env, body: unknown): Promise<Response> {
   const treasury = await treasuryTier(c);
   if (treasury.tier === 4) return json({ error: 'treasury_low', tier: treasury.tier }, 503);
 
-  const open = await openArena(c);
+  const open = await openArena(c, ctx);
   if (!open) return json({ error: 'no_open_arena' }, 503);
   const { arenaId, incarnation } = open;
   const pdas = await matchPdas(c.programId, arenaId);
   const { er, erFqdn } = await ensureArena(c, arenaId, incarnation, pdas);
+
+  // The next player must not pay what this one just might have. Background, never inline.
+  prewarmNext(c, ctx, arenaId);
 
   // Two attempts, because seat allocation is a read-then-write against state twenty
   // browsers are racing on. The program is the authority: a seat taken between our read
@@ -631,6 +729,16 @@ export async function sessionInit(env: Env, body: unknown): Promise<Response> {
         timeoutMs: ER_CONFIRM_MS,
       });
     } catch (error) {
+      // Translate the chain's own answer instead of calling it an unexpected server error.
+      //
+      // `matchStart` has always done this; this loop never did, so every on-chain refusal
+      // of `claim_seat` — a seat taken between our read and our write, a match that
+      // started in the same window — reached the player as "the server hit an error it did
+      // not expect". A refusal is not a fault: it is the program working, and the copy for
+      // it already exists.
+      const code = refusalCode(error);
+      if (code === SEAT_OCCUPIED && attempt === 1) return json({ error: 'seat_contended' }, 409);
+      if (code === WRONG_PHASE) return json({ error: 'match_in_progress' }, 409);
       if (attempt === 1) throw error;
       continue;
     }
@@ -679,7 +787,7 @@ export async function sessionInit(env: Env, body: unknown): Promise<Response> {
  * Budget 5–15 s for this route and show it in the UI. It is three sequential groups of
  * devnet round trips, and pretending otherwise produces a loader that looks broken.
  */
-export async function matchStart(env: Env, body: unknown): Promise<Response> {
+export async function matchStart(env: Env, body: unknown, ctx: RouteContext): Promise<Response> {
   const token = field(body, 'privyToken');
   const requested = arenaIdField(body);
 
@@ -689,7 +797,7 @@ export async function matchStart(env: Env, body: unknown): Promise<Response> {
   const treasury = await treasuryTier(c);
   if (treasury.tier === 4) return json({ error: 'treasury_low', tier: treasury.tier }, 503);
 
-  const open = await openArena(c);
+  const open = await openArena(c, ctx);
   if (!open) return json({ error: 'no_open_arena' }, 503);
   const { arenaId, incarnation } = open;
   if (requested !== arenaId) {
@@ -763,8 +871,101 @@ const HEARTROT_NO_RAIDERS = 19;
  * precisely this. Anything else (a timeout, an RPC fault) has no `code` and falls through
  * to the 500, which is the right answer for it.
  */
+/** `errors.ts` codes this route can answer for. Generated table, so these are its names. */
+const SEAT_OCCUPIED = 4;
+const WRONG_PHASE = 6;
+
 function refusalCode(error: unknown): number | undefined {
   return (error as { cause?: DecodedTransactionError } | null)?.cause?.code;
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/match/leave
+// ---------------------------------------------------------------------------
+
+/**
+ * A player is leaving — the Exit button, or their tab closing via `sendBeacon`.
+ *
+ * THIS IS THE FIX FOR THE LEAK THAT MADE THE GAME UNJOINABLE. Nothing on chain notices a
+ * player walking away: their seat keeps `zone == ZONE_ARENA`, so `arena_occupants` stays
+ * non-zero forever (`tick.rs`), and the wipe branch needs `live_n == 0 && pending_respawns
+ * == 0` — which a dead seat never satisfies, because it re-stamps its own respawn every
+ * cycle. So an abandoned raid runs the full six minutes to `OUTCOME_ENRAGE`, lands in
+ * `SETTLING`, and stays there: the only other caller of `settle` requires a live seated
+ * player, and that player is the one who left. Twelve of those in a row is a game nobody
+ * can join, which is exactly what happened on devnet.
+ *
+ * Departure-driven, not a timer. The cleanup happens at the moment the last player goes.
+ *
+ * **Only when they are the last one out.** If any other seat is still claimed the raid
+ * belongs to those players and this route does nothing — a leaver must never be able to
+ * end a fight nineteen other people are in. That check is what lets us skip
+ * `matchSettle`'s `STALL_PROOF_MS` crank-liveness window: this is not "the crank looks
+ * dead", it is "there is nobody left to play", which is a fact about the roster and does
+ * not need to be proven over five seconds.
+ *
+ * The settle runs in `ctx.waitUntil`, so the player's browser is not held open waiting for
+ * a chain round trip it will never see the result of — a closing tab least of all.
+ */
+export async function matchLeave(env: Env, body: unknown, ctx: RouteContext): Promise<Response> {
+  const token = field(body, 'privyToken');
+  const arenaId = arenaIdField(body);
+
+  const did = await verifyPrivyToken(token, env.PRIVY_APP_ID);
+  const identity = await identityFromDid(did);
+
+  const c = await context(env);
+  const pdas = await matchPdas(c.programId, arenaId);
+  const { state, erFqdn } = await readArena(c, pdas.arena);
+  // Already gone, or already home: nothing to release. Not an error — a beacon that
+  // arrives after someone else settled is the common case, not a fault.
+  if (!state || erFqdn === undefined) return json({ released: false, reason: 'not_live' });
+
+  const er = createRpc(erFqdn);
+  const rosterBytes = await accountData(er, pdas.players);
+  if (!rosterBytes) return json({ released: false, reason: 'not_live' });
+  const roster = decodePlayers(rosterBytes);
+
+  const mine = roster.slots.find(
+    (slot) => slot.occupied && slot.identity.every((byte, i) => byte === identity[i]),
+  );
+  if (!mine) return json({ error: 'not_in_match' }, 403);
+
+  // Everyone else. `occupied` is the authority (`session_pubkey != 0`), not `hp` — a
+  // player waiting out a respawn has not left, and ending their raid because they happen
+  // to be dead at this instant would be the same defect from the other direction.
+  const othersHold = roster.slots.some((slot) => slot.occupied && slot.seat !== mine.seat);
+  if (othersHold) return json({ released: true, settled: false, reason: 'others_hold_seats' });
+
+  // Last one out. A lobby arena has nothing to commit and `settle.rs` refuses it, but it
+  // also has no crank and no fight — leaving it warm is correct, and it is the arena the
+  // next player will be handed.
+  if (state.phase === PHASE_LOBBY) {
+    return json({ released: true, settled: false, reason: 'lobby_stays_warm' });
+  }
+  if (state.phase === PHASE_ROLLING) {
+    // A VRF callback may still be in flight; committing now would strand it. `boss_tick`
+    // abandons the roll on its own timeout and the arena becomes settleable.
+    return json({ released: true, settled: false, reason: 'rolling' });
+  }
+
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const ix = settle({ programId: c.programId, payer: c.treasury.address, ...pdas });
+        await confirmSignature(er, await sendInstructions(er, c.treasury, [ix]), {
+          timeoutMs: ER_CONFIRM_MS,
+        });
+        console.log(`matchLeave: settled ${arenaId} after the last player left`);
+      } catch (error) {
+        // Best effort by construction. If this fails the arena is exactly as stranded as
+        // it was before, and `openArena`'s reaper will find it on somebody else's join.
+        console.error(`matchLeave: settle ${arenaId} failed`, error);
+      }
+    })(),
+  );
+
+  return json({ released: true, settled: true });
 }
 
 // ---------------------------------------------------------------------------

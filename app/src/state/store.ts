@@ -132,7 +132,41 @@ export type Store = {
   setWorld(update: WorldUpdate): void;
   setStatus(status: ConnectionStatus, error?: string): void;
   /** Drop the finished match. The next `join` gets a fresh seat in the next arena. */
-  leaveMatch(): void;
+  /**
+   * Release the seat and go back to the character select.
+   *
+   * Async now, and it tells the server. An abandoned raid used to strand its arena
+   * forever: nothing on chain notices a player leaving, so the fight ran its full six
+   * minutes to enrage and then sat in `SETTLING` with nobody left who was allowed to
+   * settle it. Twelve of those made the game unjoinable. Telling the Worker at the moment
+   * of departure is the fix; the request is fire-and-forget because the local state must
+   * clear whether or not the network answers.
+   */
+  leaveMatch(): Promise<void>;
+
+  /**
+   * A Privy token for the closing-tab beacon, or `null` if one cannot be had.
+   *
+   * Separate from the internal `token()` because that one throws — correct everywhere
+   * else, useless in a `pagehide` handler where there is nobody left to show an error to
+   * and the page is already being destroyed. Never clears `authenticated` on failure for
+   * the same reason: a tab being torn down must not decide the player is signed out.
+   */
+  tokenForBeacon(): Promise<string | null>;
+
+  /**
+   * Disconnect the wallet and forget everything derived from it.
+   *
+   * There was no way to do this. `authenticated` had no setter — it was only ever cleared
+   * implicitly when a token refresh failed while holding no seat, which never fires for a
+   * player who simply wants a different wallet, because Privy keeps its own session alive
+   * regardless of what the browser extension is connected to.
+   *
+   * Releases the seat first: a new Privy DID is a new on-chain identity and a new seat, so
+   * switching without leaving would strand the old arena — the exact leak this release is
+   * about, arrived at from a different direction.
+   */
+  signOut(): Promise<void>;
 };
 
 // ---------------------------------------------------------------------------
@@ -351,6 +385,27 @@ export function createStore(): Store {
     return { privyToken: await token(), arenaId: match.arenaId };
   };
 
+  /**
+   * Clear the local match and tell the Worker the seat is free.
+   *
+   * Shared by the Exit button (`leaveMatch`) and by disconnecting a wallet (`signOut`),
+   * because they are the same act from the chain's point of view: this identity is done
+   * with this arena. Local state clears first and unconditionally — the player is watching
+   * a screen change and must never be stuck behind a devnet round trip.
+   */
+  const release = async (): Promise<void> => {
+    settling = false;
+    const held = state.match;
+    set({ match: null, arena: null, boss: null, players: null, status: 'idle', error: null });
+    if (!held) return;
+    try {
+      await postJson('/api/match/leave', { privyToken: await token(), arenaId: held.arenaId });
+    } catch {
+      // Best effort by design. A failed release is the Worker's reaper to catch on the
+      // next join, not an error to put in front of someone who has already left.
+    }
+  };
+
   return {
     getState: () => state,
 
@@ -469,9 +524,19 @@ export function createStore(): Store {
       set({ status, error: error ?? (status === 'error' ? state.error : null) });
     },
 
-    leaveMatch() {
-      settling = false;
-      set({ match: null, arena: null, boss: null, players: null, status: 'idle', error: null });
+    leaveMatch: release,
+
+    async tokenForBeacon() {
+      try {
+        return await authSource();
+      } catch {
+        return null;
+      }
+    },
+
+    async signOut() {
+      await release();
+      set({ authenticated: false, sessionKey: null, skinId: 0, status: 'idle', error: null });
     },
   };
 }

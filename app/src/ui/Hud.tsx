@@ -60,7 +60,7 @@ import { shotAllowed } from '../input/controls';
 import { isMuted, play, setMuted, type SfxName } from '../render/sfx';
 import { SKIN_COLORS } from '../screens/CharacterSelect';
 import { Muster } from '../screens/Gate';
-import { mySeatSlot, useSelect } from '../state/store';
+import { mySeatSlot, useSelect, useStore } from '../state/store';
 
 /**
  * Index-aligned with `Boss.parts`, which is index-aligned with `PART_HITBOXES` — the table
@@ -292,6 +292,7 @@ function PhaseCluster() {
         <span className={`dot dot-${status}`} aria-hidden="true" />
         <span className="fine">{status}</span>
         <MutePill />
+        <ExitPill />
       </div>
       <ol className="hud-seats">
         {Array.from({ length: MAX_SEATS }, (_, i) => {
@@ -332,6 +333,28 @@ function MutePill() {
       }}
     >
       {muted ? 'MUTED' : 'SOUND'}
+    </button>
+  );
+}
+
+/**
+ * The way out — and the reason abandoned arenas no longer strand.
+ *
+ * A player leaving used to be invisible to the chain: the seat kept `ZONE_ARENA`, the raid
+ * ran its full six minutes to enrage, and then sat in `SETTLING` with nobody left who was
+ * permitted to settle it. This button is the departure signal, and `store.leaveMatch`
+ * releases the seat server-side before clearing the local match.
+ *
+ * A real `<button>` inside a `.hud` cluster works despite the layer's `pointer-events:
+ * none` — `MutePill` above is the standing proof.
+ */
+function ExitPill() {
+  const store = useStore();
+  const inMatch = useSelect((s) => s.match !== null);
+  if (!inMatch) return null;
+  return (
+    <button className="pill hud-exit" onClick={() => void store.leaveMatch()}>
+      EXIT
     </button>
   );
 }

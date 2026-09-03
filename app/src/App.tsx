@@ -128,6 +128,52 @@ export default function App() {
   const store = useStore();
 
   /**
+   * Tell the server the seat is free when the tab goes away.
+   *
+   * The Exit button covers a deliberate departure; this covers the other 90 % — closing
+   * the tab, navigating away, backgrounding on mobile. Without it an abandoned raid runs
+   * its full six minutes to enrage and then strands its arena in `SETTLING` forever,
+   * because the only route allowed to settle one requires a live seated player and that
+   * player is the one who just left. Twelve stranded arenas is a game nobody can join.
+   *
+   * `sendBeacon`, not `fetch`: the document is being torn down and a normal request is
+   * cancelled with it. The browser hands the payload to the network stack and lets the
+   * page die, which is exactly the contract needed here.
+   *
+   * `pagehide` rather than `beforeunload` — `beforeunload` is unreliable on mobile and
+   * blocks the bfcache. `visibilitychange` catches the backgrounding case that never
+   * fires `pagehide` at all. Both are idempotent: a second release for a seat already
+   * gone answers `not_live` and does nothing.
+   *
+   * Best effort by construction — a crash or a lost network sends nothing, which is why
+   * the Worker also reaps one stranded arena in the background of somebody else's join.
+   */
+  useEffect(() => {
+    const release = (): void => {
+      const { match } = store.getState();
+      if (!match || typeof navigator.sendBeacon !== 'function') return;
+      void store.tokenForBeacon().then((privyToken) => {
+        if (!privyToken) return;
+        navigator.sendBeacon(
+          '/api/match/leave',
+          new Blob([JSON.stringify({ privyToken, arenaId: match.arenaId })], {
+            type: 'application/json',
+          }),
+        );
+      });
+    };
+    const onHide = (): void => {
+      if (document.visibilityState === 'hidden') release();
+    };
+    window.addEventListener('pagehide', release);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.removeEventListener('pagehide', release);
+      document.removeEventListener('visibilitychange', onHide);
+    };
+  }, [store]);
+
+  /**
    * The one `#stage` node, owned here rather than by the two screens that show it.
    *
    * It used to be declared twice — once in `screens/Lobby.tsx`, once in the arena screen

@@ -14,6 +14,8 @@
  * read at a glance in a crowd of twenty.
  */
 
+import { useLogout } from '@privy-io/react-auth';
+
 import { useSelect, useStore } from '../state/store';
 import { SeatLoader } from './Onboarding';
 
@@ -37,6 +39,7 @@ const SKINS = [
 
 export function CharacterSelect() {
   const store = useStore();
+  const { logout } = useLogout();
   const skinId = useSelect((s) => s.skinId);
   const joining = useSelect((s) => s.status === 'joining');
 
@@ -81,6 +84,20 @@ export function CharacterSelect() {
 
       <button className="btn btn-primary" onClick={() => void store.join()}>
         Take a seat
+      </button>
+
+      {/* The only screen where a wallet can be swapped without abandoning a live seat:
+          `authenticated && !match` holds here and nowhere else. `store.signOut` releases
+          any held seat first, because a different wallet is a different Privy DID, a
+          different on-chain identity and a different seat — switching without releasing
+          would strand the old arena, which is the leak this release exists to close. */}
+      <button
+        className="btn btn-quiet"
+        onClick={() => {
+          void store.signOut().then(logout);
+        }}
+      >
+        Use a different wallet
       </button>
     </section>
   );
