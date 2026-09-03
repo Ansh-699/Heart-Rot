@@ -987,6 +987,12 @@ mod tests {
         let mut slot = shooter(&s);
         // The blocker gone so the ray reaches the core, but the shell is otherwise
         // intact, so the vent stays sealed.
+        //
+        // A FULL RAID, deliberately: the solo threshold is 97 %, so one destroyed part is
+        // already past it and this test would be asserting an open vent while claiming a
+        // sealed one. A sealed vent is a raid-size-dependent state now, and the state this
+        // test is about only exists where the threshold is low.
+        arena.raid_size = MAX_SEATS as u8;
         boss.parts[s.blocker] = 0;
         recompute_vent(&mut boss, arena.raid_size);
         assert_eq!(boss.vent_open, 0);

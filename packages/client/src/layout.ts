@@ -252,10 +252,10 @@ export const CHARGED_SHOT_BIT = 3;
 /**
  * `state::VENT_PCT_SOLO` / `VENT_PCT_FULL`: shell remaining, in percent, below which the
  * vent opens, for a raid of one and for a full raid. Shell HP is flat at every raid size;
- * the *threshold* is the raid-size knob, so solo strips 35 % of the shell before the core
+ * the *threshold* is the raid-size knob, so solo strips 3 % of the shell before the core
  * is reachable and twenty strip 65 %.
  */
-export const VENT_PCT_SOLO = 65;
+export const VENT_PCT_SOLO = 97;
 export const VENT_PCT_FULL = 35;
 
 /**
@@ -961,8 +961,15 @@ export function layoutSelfCheck(): void {
     ok(a.raidSize === 13, 'raidSize reads offset 7');
     ok(a.outcome === OUTCOME_WIPE, 'raidSize did not eat outcome');
     ok(a.arenaId === 0n, 'nor the low byte of arena_id');
-    ok(ventPct(a.raidSize) === 65 - Math.floor((30 * 12) / 19), 'the threshold follows the raid');
-    ok(ventPct(0) === 65 && ventPct(1) === 65, 'an uncounted raid is a solo raid');
+    ok(
+      ventPct(a.raidSize) ===
+        VENT_PCT_SOLO - Math.floor(((VENT_PCT_SOLO - VENT_PCT_FULL) * 12) / (MAX_SEATS - 1)),
+      'the threshold follows the raid',
+    );
+    ok(
+      ventPct(0) === VENT_PCT_SOLO && ventPct(1) === VENT_PCT_SOLO,
+      'an uncounted raid is a solo raid',
+    );
     ok(ventPct(MAX_SEATS) === 35 && ventPct(255) === 35, 'a full raid, and anything past it');
     for (let n = 1; n < MAX_SEATS; n++) {
       ok(ventPct(n) >= ventPct(n + 1) && ventPct(n) - ventPct(n + 1) <= 2, `ventPct is linear at ${n}`);

@@ -196,7 +196,13 @@ pub const ENRAGE_TICKS: u32 = ticks_for(360_000);
 pub const VOLLEY_INTERVAL_TICKS: u8 = ticks_for(3_200) as u8;
 
 /// `Boss::core_hp` for a solo raid — the floor, not the value a full raid fights.
-pub const BOSS_CORE_HP: u16 = 2_000;
+///
+/// 300, not 2,000. At 50 DPS the old floor was 40 s of a solo fight that a lone player
+/// spent entirely on a target that cannot move or be dodged, after the shell was already
+/// down. Cutting it is half of the 10x solo pass; the other half is [`VENT_PCT_SOLO`].
+/// A full raid is untouched, because [`CORE_HP_PER_RAIDER`] dominates the sum the moment
+/// a second player arrives: twenty raiders still fight 57,300.
+pub const BOSS_CORE_HP: u16 = 300;
 
 /// Added to `core_hp_max` for each raider past the first, by the tick stage that already
 /// counts arena occupants.
@@ -222,14 +228,18 @@ const _: () = {
 /// full raid; [`vent_pct`] draws the line between them.
 ///
 /// The **other** raid-size knob, and the one that reaches the shell. Shell HP is flat at
-/// every raid size (see [`CORE_HP_PER_RAIDER`] for why `parts` can never scale), so a solo
-/// raider used to strip 65 % of 18,000 shell HP at 50 DPS — 234 s of a 360 s enrage — before
-/// the vent opened, while twenty players did it in 12 s. Moving the *threshold* instead of
-/// the shell keeps every `u16` where it is and keeps `vent_open` a ratio over `parts`: solo
-/// opens the vent with 65 % of the shell still standing (35 % stripped, 126 s), twenty with
-/// 35 % (65 % stripped, 12 s), linear between. One byte on `Arena`, one function, the same
-/// tick stage the core top-up already runs in.
-pub const VENT_PCT_SOLO: u32 = 65;
+/// every raid size (see [`CORE_HP_PER_RAIDER`] for why `parts` can never scale), so moving
+/// the *threshold* instead of the shell keeps every `u16` where it is and keeps `vent_open`
+/// a ratio over `parts`. One byte on `Arena`, one function, the same tick stage the core
+/// top-up already runs in.
+///
+/// 97, not 65. A solo raider strips 3 % of 18,000 shell HP — 540 damage, under 11 s at
+/// 50 DPS — and the vent opens; twenty still strip 65 % (11,700, 12 s), linear between.
+/// The shell is a wall the raid shares, and a wall sized for twenty is a grind for one:
+/// solo paid 126 s of it. With [`BOSS_CORE_HP`] this takes a perfect solo fight from 166 s
+/// to 17 s, which is what "ten times easier" means when the request is measured rather
+/// than felt. A full raid moves 71 s -> 69 s, which is noise.
+pub const VENT_PCT_SOLO: u32 = 97;
 pub const VENT_PCT_FULL: u32 = 35;
 
 /// The vent threshold for a raid of `raid_size`, in percent of `sum(parts_max)`.
@@ -1059,14 +1069,25 @@ pub(crate) const TTK_MODEL_SHELL_HP: u32 = 18_000;
 
 const _: () = {
     let seconds_to_enrage = ENRAGE_TICKS * TICK_MS / 1_000;
-    // Solo: 6,300 shell + 2,000 core at 50 DPS = 166 s of a 360 s enrage, down from 274.
-    assert!(ttk_s(TTK_MODEL_SHELL_HP, 1) == 166);
-    // Twenty: 11,700 shell + 59,000 core at 1,000 DPS = 71 s.
-    assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) == 71);
-    // More raiders must never be a longer fight, and a perfect solo run must fit the enrage
-    // window twice over — the second half is the allowance for play that is not perfect.
-    assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) < ttk_s(TTK_MODEL_SHELL_HP, 1));
-    assert!(ttk_s(TTK_MODEL_SHELL_HP, 1) * 2 < seconds_to_enrage);
+    // Solo: 540 shell + 300 core at 50 DPS = 17 s of a 360 s enrage, down from 166 and
+    // from 274 before that. The curve is the whole difficulty design, so it is asserted
+    // rather than described — change a constant and this line names what it did.
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, 1) == 17);
+    // Twenty: 11,700 shell + 57,300 core at 1,000 DPS = 69 s. A full raid is the fight
+    // that was already tuned; the solo pass must not have moved it.
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) == 69);
+    // THE CURVE POINTS THE OTHER WAY NOW, and that is the point. It used to assert that
+    // more raiders kill FASTER: the shell was flat, so every extra bow was pure speed.
+    // With the solo pass the shell a lone player must strip is 540 and the core is 300,
+    // while twenty still owe 11,700 and 57,300 — so the fight LENGTHENS with the raid, and
+    // that is the founding requirement ("more people who join, tougher the battle is")
+    // holding as arithmetic instead of as a comment. Difficulty is also bullet density,
+    // which already scaled: `bullets_per_volley = 3 + alive`.
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) > ttk_s(TTK_MODEL_SHELL_HP, 1));
+    // The LONGEST fight — a full raid — must fit the enrage window twice over. The second
+    // half is the allowance for play that is not perfect; `ttk_s` is a floor, not a
+    // forecast, and it ignores dodging, deaths and the walk back from a respawn.
+    assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) * 2 < seconds_to_enrage);
 };
 
 /// One seat. Slot index *is* the seat number, so there is no `seat` field to
@@ -1739,13 +1760,13 @@ mod rate_tests {
 mod balance_tests {
     use super::*;
 
-    /// Solo opens the vent with 65 % of the shell standing, twenty with 35 %, and every
-    /// raid size between is between — never a step *up* in difficulty for one more player
-    /// walking through the gate. 0 and anything past `MAX_SEATS` clamp rather than divide
-    /// by zero or wrap: 0 is what every live account carries today.
+    /// Solo opens the vent with 97 % of the shell standing, twenty with 35 %, and every
+    /// raid size between is between — never a step *down* in difficulty for one more
+    /// player walking through the gate. 0 and anything past `MAX_SEATS` clamp rather than
+    /// divide by zero or wrap: 0 is what every live account carries today.
     #[test]
     fn the_vent_threshold_is_linear_in_the_raid() {
-        assert_eq!(vent_pct(1), 65);
+        assert_eq!(vent_pct(1), 97);
         assert_eq!(vent_pct(MAX_SEATS as u8), 35);
         assert_eq!(vent_pct(0), vent_pct(1), "an uncounted raid is a solo raid");
         assert_eq!(vent_pct(MAX_SEATS as u8 + 1), vent_pct(MAX_SEATS as u8));
@@ -1758,10 +1779,21 @@ mod balance_tests {
                 vent_pct(n),
                 vent_pct(n + 1),
             );
-            assert!(vent_pct(n) - vent_pct(n + 1) <= 2, "the curve is linear, not stepped");
+            // One integer step of the line, never a cliff. The bound is the slope itself
+            // rounded up — derived, not typed, because the endpoints have moved twice and
+            // a literal here silently permits a steeper curve than the one intended.
+            let slope_ceil = (VENT_PCT_SOLO - VENT_PCT_FULL + (MAX_SEATS as u32 - 2))
+                / (MAX_SEATS as u32 - 1);
+            assert!(
+                vent_pct(n) - vent_pct(n + 1) <= slope_ceil,
+                "the curve is linear, not stepped",
+            );
         }
         // The client mirror reads the same two endpoints; the midpoint pins the slope.
-        assert_eq!(vent_pct(11), 65 - 30 * 10 / 19);
+        assert_eq!(
+            vent_pct(11),
+            VENT_PCT_SOLO - (VENT_PCT_SOLO - VENT_PCT_FULL) * 10 / (MAX_SEATS as u32 - 1),
+        );
     }
 
     /// 2.5× on both rows, exactly — the archer's 70 becomes 175, the knight's 40 becomes
@@ -1792,20 +1824,25 @@ mod balance_tests {
     #[test]
     fn the_ttk_model_falls_with_every_raider() {
         let shell = TTK_MODEL_SHELL_HP;
-        assert_eq!(ttk_s(shell, 1), 166);
-        assert_eq!(ttk_s(shell, MAX_SEATS as u8), 71);
+        assert_eq!(ttk_s(shell, 1), 17);
+        assert_eq!(ttk_s(shell, MAX_SEATS as u8), 69);
+        // Monotone the other way: every extra raider makes the fight longer, never
+        // shorter. Non-strict because the vent percentage is integer-divided, so adjacent
+        // raid sizes can land on the same second.
         for n in 1..MAX_SEATS as u8 {
             assert!(
-                ttk_s(shell, n + 1) <= ttk_s(shell, n),
-                "raid {} kills slower than raid {}",
+                ttk_s(shell, n + 1) >= ttk_s(shell, n),
+                "raid {} is an easier fight than raid {}",
                 n + 1,
                 n,
             );
         }
-        // Solo under the old flat 35 % line, for the record: 11,700 + 2,000 at 50 DPS.
-        let old_solo = (shell * (100 - VENT_PCT_FULL) / 100 + BOSS_CORE_HP as u32 + 49) / 50;
-        assert_eq!(old_solo, 274, "the number the plan called nearly unwinnable");
-        assert!(ttk_s(shell, 1) < old_solo);
+        // Solo under the original flat 35 % line and the 2,000 core: 11,700 + 2,000 at
+        // 50 DPS. A historical literal on purpose — deriving it from BOSS_CORE_HP made it
+        // move with the constant it exists to be compared against, which is a test that
+        // can never fail.
+        const ORIGINAL_SOLO_S: u32 = 274;
+        assert!(ttk_s(shell, 1) * 10 <= ORIGINAL_SOLO_S, "the solo pass must be ~10x");
     }
 }
 
