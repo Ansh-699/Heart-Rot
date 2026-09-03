@@ -36,15 +36,16 @@ pub const TILE: i16 = 16;
 ///
 /// Layout, top to bottom. Open floor for the boss's air, with the whole painted dais
 /// laid over its lower rows -- the raid stands on the dais ([`DAIS`]) and the creature
-/// stands on it too, in the middle of the band -- then the stairs, the gate block under
-/// them, then the painted lobby floor. The whole vertical order is the fight: you walk up
-/// the lobby, through the gate, up the stairs onto the dais, and walk the circle around
-/// the creature.
+/// stands on it too, in the middle of the band -- then the three gate blocks in the wall
+/// under it ([`GATES`], one per difficulty tier), then the painted lobby floor. The whole
+/// vertical order is the fight: you walk up the lobby, pick a gate, and the gate puts you
+/// on the dais to walk the circle around the creature.
 ///
 /// Both rooms are open floor with zero interior obstacles. `tools/gen_map.py` holds
 /// them that way: at most one contiguous run of floor per row, so a free-standing
-/// block anywhere splits a row and is refused. Perimeter architecture, banners,
-/// torches, chains and floor markings are paint, never wall tiles.
+/// block anywhere splits a row and is refused -- the gate rows excepted, whose three
+/// runs are the three doorways, each held to a solid rectangle. Perimeter architecture,
+/// banners, torches, chains and floor markings are paint, never wall tiles.
 ///
 /// The rows above the dais's widest row are floor wherever they are not dais, and that
 /// is load-bearing rather than lazy drawing -- see [`DAIS`] and [`PIT_TOP`].
@@ -87,31 +88,31 @@ pub const WALLS: [u64; MAP_TILES] = [
     0xfffe000000007fff, // y=35 ###############PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###############
     0xffffe0000007ffff, // y=36 ###################PPPPPPPPPPPPPPPPPPPPPPPPPP###################
     0xffffff0000ffffff, // y=37 ########################PPPPPPPPPPPPPPPP########################
-    0xfffffff00fffffff, // y=38 ############################GGGGGGGG############################
-    0xfffffff00fffffff, // y=39 ############################GGGGGGGG############################
-    0xfe0000000000007f, // y=40 #######..................................................#######
-    0xfe0000000000007f, // y=41 #######..................................................#######
-    0xfe0000000000007f, // y=42 #######..................................................#######
-    0xfe0000000000007f, // y=43 #######..................................................#######
-    0xfe0000000000007f, // y=44 #######..................................................#######
-    0xfe0000000000007f, // y=45 #######..................................................#######
-    0xfe0000000000007f, // y=46 #######..................................................#######
-    0xfe0000000000007f, // y=47 #######..................................................#######
-    0xfe0000000000007f, // y=48 #######..................................................#######
-    0xfe0000000000007f, // y=49 #######..................................................#######
-    0xfe0000000000007f, // y=50 #######..................................................#######
-    0xfe0000000000007f, // y=51 #######..................................................#######
-    0xfe0000000000007f, // y=52 #######..................................................#######
-    0xfe0000000000007f, // y=53 #######..................................................#######
-    0xfe0000000000007f, // y=54 #######..................................................#######
-    0xfe0000000000007f, // y=55 #######..................................................#######
-    0xfe0000000000007f, // y=56 #######..................................................#######
-    0xfe0000000000007f, // y=57 #######..................................................#######
-    0xfe0000000000007f, // y=58 #######..................................................#######
-    0xfe0000000000007f, // y=59 #######..................................................#######
-    0xfe0000000000007f, // y=60 #######..................................................#######
-    0xfe0000000000007f, // y=61 #######..................................................#######
-    0xfe0000000000007f, // y=62 #######..................................................#######
+    0xfff01ff81ff80fff, // y=38 ############GGGGGGG##########GGGGGG##########GGGGGGG############
+    0xfff01ff81ff80fff, // y=39 ############GGGGGGG##########GGGGGG##########GGGGGGG############
+    0xf80000000000001f, // y=40 #####......................................................#####
+    0xf80000000000001f, // y=41 #####......................................................#####
+    0xf80000000000001f, // y=42 #####......................................................#####
+    0xf80000000000001f, // y=43 #####......................................................#####
+    0xf80000000000001f, // y=44 #####......................................................#####
+    0xf80000000000001f, // y=45 #####......................................................#####
+    0xf80000000000001f, // y=46 #####......................................................#####
+    0xf80000000000001f, // y=47 #####......................................................#####
+    0xfff8000000001fff, // y=48 #############......................................#############
+    0xfff8000000001fff, // y=49 #############......................................#############
+    0xfff8000000001fff, // y=50 #############......................................#############
+    0xfff8000000001fff, // y=51 #############......................................#############
+    0xfff8000000001fff, // y=52 #############......................................#############
+    0xfff8000000001fff, // y=53 #############......................................#############
+    0xfff8000000001fff, // y=54 #############......................................#############
+    0xfff8000000001fff, // y=55 #############......................................#############
+    0xffffffffffffffff, // y=56 ################################################################
+    0xffffffffffffffff, // y=57 ################################################################
+    0xffffffffffffffff, // y=58 ################################################################
+    0xffffffffffffffff, // y=59 ################################################################
+    0xffffffffffffffff, // y=60 ################################################################
+    0xffffffffffffffff, // y=61 ################################################################
+    0xffffffffffffffff, // y=62 ################################################################
     0xffffffffffffffff, // y=63 ################################################################
 ];
 
@@ -200,7 +201,7 @@ pub const DAIS: [u64; MAP_TILES] = [
 ];
 
 /// The four `E` marks on the drawn map, in world units at the tile's top-left corner --
-/// the same convention `handlers::player::LOBBY_ENTRANCE` and `GATE_MIN_X` are written
+/// the same convention `handlers::player::LOBBY_ENTRANCE` and [`GATES`] are written
 /// in, and the one `is_wall` inverts with `pos / TILE`.
 ///
 /// Row-major scan order (top to bottom, then left to right), *not* compass order.
@@ -260,17 +261,59 @@ pub const BOSS_SPAWN: (i16, i16) = (512, 352); // tile (32, 22)
 pub const PIT_TOP: i16 = 192; // tile row 12
 pub const PIT_BOT: i16 = 607; // tile row 37, last unit
 
-/// The gate block `enter_gate` demands the player be standing in, compiled from the `G`
-/// rectangle -- tiles (28, 38)..(35, 39).
+/// One gate block, in world units, both edges inclusive -- the form `handlers::player`
+/// compares a seat's `(x, y)` against.
+#[derive(Clone, Copy)]
+pub struct Gate {
+    pub min_x: i16,
+    pub max_x: i16,
+    pub min_y: i16,
+    pub max_y: i16,
+}
+
+impl Gate {
+    /// Is this world point inside the block? Two range tests, which is why the generator
+    /// holds every drawn block to a solid rectangle.
+    pub const fn contains(&self, x: i16, y: i16) -> bool {
+        x >= self.min_x && x <= self.max_x && y >= self.min_y && y <= self.max_y
+    }
+}
+
+/// The gate blocks `enter_gate` demands the player be standing in, compiled from the
+/// separate `G` blocks on rows 38..39 -- left to right, so the index IS the
+/// difficulty tier (`state::TIER_EASY..=TIER_HARD`) and `state::N_TIERS` is the length.
+///
+/// The gate is a portal, not a corridor: `enter_gate` writes `tick::entrance_for(seat)`,
+/// so a block owes the pit no adjacency and the three can sit anywhere in the lobby's
+/// top wall. What the generator does prove is that each is a solid rectangle of floor
+/// inside the lobby box, reachable from every lobby spawn without leaving it, that the
+/// three do not share a column, and that the heart stands on none of them -- the last
+/// re-proved below on every `cargo check`, against the table that shipped.
 ///
 /// These were four hand literals in `handlers::player` that `gen_map.py` parsed back out
 /// of Rust source to validate against the drawn grid: one fact stored twice, with the
-/// tool agreeing with whichever copy it read. Drawing them is what lets the assertion
-/// below prove `BOSS_SPAWN` is outside the gate on every `cargo check`.
-pub const GATE_MIN_X: i16 = 448;
-pub const GATE_MAX_X: i16 = 575;
-pub const GATE_MIN_Y: i16 = 608;
-pub const GATE_MAX_Y: i16 = 639;
+/// tool agreeing with whichever copy it read.
+pub const GATES: [Gate; 3] = [
+    // tier 0: tiles (12, 38)..(18, 39)
+    Gate { min_x: 192, max_x: 303, min_y: 608, max_y: 639 },
+    // tier 1: tiles (29, 38)..(34, 39)
+    Gate { min_x: 464, max_x: 559, min_y: 608, max_y: 639 },
+    // tier 2: tiles (45, 38)..(51, 39)
+    Gate { min_x: 720, max_x: 831, min_y: 608, max_y: 639 },
+];
+
+/// Which gate this world point stands in, as its tier, or `None` off every gate. The
+/// predicate `enter_gate` runs; `packages/client/src/map.ts` mirrors it as `gateAt`.
+pub const fn gate_at(x: i16, y: i16) -> Option<u8> {
+    let mut tier = 0;
+    while tier < GATES.len() {
+        if GATES[tier].contains(x, y) {
+            return Some(tier as u8);
+        }
+        tier += 1;
+    }
+    None
+}
 
 /// The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
 ///
@@ -281,7 +324,7 @@ pub const LOBBY_SPAWN_MIN_X: i16 = 208;
 pub const LOBBY_SPAWN_MAX_X: i16 = 664;
 pub const LOBBY_SPAWN_Y: i16 = 832;
 
-/// The lobby floor band: the drawn floor rows below the gate (40..62), in world
+/// The lobby floor band: the drawn floor rows below the gate (40..55), in world
 /// units, `LOBBY_BOT` inclusive of the last row's last unit exactly as [`PIT_BOT`] is.
 ///
 /// A *drawing* fact, not a movement rule -- `player::zone_box` holds a `ZONE_LOBBY` seat
@@ -292,7 +335,7 @@ pub const LOBBY_SPAWN_Y: i16 = 832;
 /// on `LOBBY_BOT + 1`. Retyping 640/1008 in the browser beside a map that owns them is the
 /// drift this generator exists to prevent.
 pub const LOBBY_TOP: i16 = 640; // tile row 40
-pub const LOBBY_BOT: i16 = 1007; // tile row 62, last unit
+pub const LOBBY_BOT: i16 = 895; // tile row 55, last unit
 
 /// Every entrance stands on floor in the table above.
 ///
@@ -353,7 +396,6 @@ const _: () = {
 
     // The pit band is non-empty and sits inside the map.
     assert!(PIT_TOP >= 0 && PIT_TOP < PIT_BOT && PIT_BOT < (MAP_TILES as i16) * TILE);
-    assert!(GATE_MIN_X <= GATE_MAX_X && GATE_MIN_Y <= GATE_MAX_Y);
 
     // The boss is reachable by a raider: its anchor is inside the band they are clamped
     // to and on the dais they walk. A boss above `PIT_TOP` would be a target no one can
@@ -368,23 +410,30 @@ const _: () = {
         "map::BOSS_SPAWN is off the dais -- the raid can never walk up to its own boss",
     );
 
-    // And it is not standing on the gate, which would let a player flip zone by walking
-    // into the creature. This is the assertion the four `GATE_*` literals in
-    // `handlers::player` could never carry: it needs both facts to come out of one grid.
-    assert!(
-        !(bx >= GATE_MIN_X && bx <= GATE_MAX_X && by >= GATE_MIN_Y && by <= GATE_MAX_Y),
-        "map::BOSS_SPAWN is inside the gate block",
-    );
+    // The gates: one per tier, each a real block, in tier order left to right, every one
+    // inside the lobby box -- a lobby seat standing on a gate row inside the pit rows
+    // would be outside `PIT_BOT + 1 ..= MAP_MAX_XY` and refused every step -- and above
+    // the painted lobby floor the browser frames on. And the boss stands on none of
+    // them, which would let a player flip zone by walking into the creature: the
+    // assertion the four `GATE_*` literals in `handlers::player` could never carry, since
+    // it needs both facts to come out of one grid.
+    assert!(GATES.len() == crate::state::N_TIERS, "one gate per difficulty tier");
+    let mut tier = 0;
+    while tier < GATES.len() {
+        let gate = GATES[tier];
+        assert!(gate.min_x <= gate.max_x && gate.min_y <= gate.max_y);
+        assert!(
+            gate.min_y > PIT_BOT && gate.max_y < LOBBY_TOP,
+            "a gate is not between the pit and the lobby floor -- re-run tools/gen_map.py",
+        );
+        assert!(tier == 0 || GATES[tier - 1].max_x < gate.min_x, "gates are tiers, left to right");
+        assert!(!gate.contains(bx, by), "map::BOSS_SPAWN is inside a gate block");
+        tier += 1;
+    }
+    assert!(gate_at(bx, by).is_none());
 
-    // The gate is immediately below the pit, so stepping out of it lands in the band.
-    assert!(
-        GATE_MIN_Y == PIT_BOT + 1,
-        "the gate does not adjoin the pit -- a player who flips zone on it would have \
-         no legal destination inside PIT_TOP..=PIT_BOT and would freeze",
-    );
-
-    // The waiting room the browser frames on is the floor immediately under the gate,
-    // and every seat it fans out stands on that floor.
+    // The waiting room the browser frames on is the floor under the gates, and every
+    // seat it fans out stands on that floor.
     //
     // These four constants exist only for the renderer -- `VIEW_LOBBY` is
     // `LOBBY_TOP..=LOBBY_BOT` plus masonry, and `LOBBY_SPAWN_MIN_X..MAX_X` is what has to
@@ -393,10 +442,8 @@ const _: () = {
     // at the top forbids and someone will do anyway, shows up as a knight standing
     // outside its own frame with no error anywhere.
     assert!(
-        LOBBY_TOP == GATE_MAX_Y + 1
-            && LOBBY_TOP < LOBBY_BOT
-            && LOBBY_BOT < (MAP_TILES as i16) * TILE,
-        "the lobby floor band does not start where the gate ends -- re-run tools/gen_map.py",
+        LOBBY_TOP < LOBBY_BOT && LOBBY_BOT < (MAP_TILES as i16) * TILE,
+        "the lobby floor band is empty or off the map -- re-run tools/gen_map.py",
     );
     assert!(
         LOBBY_SPAWN_MIN_X <= LOBBY_SPAWN_MAX_X
@@ -530,22 +577,26 @@ mod tests {
         }
     }
 
-    /// The gate block is walkable end to end, and its columns step straight onto the
-    /// dais. Walling any of it is a lobby nobody can leave; a gate that does not adjoin
-    /// the dais is a player who flips zone and then cannot move.
+    /// Every gate block is walkable end to end, with wall on both sides of it on every one
+    /// of its rows, and `gate_at` answers its own tier on every unit of it and nothing on
+    /// the wall beside it. Walling any of a block is a tier nobody can pick; a block that
+    /// runs into its neighbour is two tiers `gate_at` cannot tell apart.
     #[test]
-    fn the_gate_is_floor_and_walks_onto_the_dais() {
-        for ty in (GATE_MIN_Y / TILE)..=(GATE_MAX_Y / TILE) {
-            for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {
-                assert!(!solid(tx as usize, ty as usize), "gate tile ({tx}, {ty}) is wall");
+    fn every_gate_is_a_walled_block_that_names_its_tier() {
+        for (tier, gate) in GATES.iter().enumerate() {
+            for ty in (gate.min_y / TILE)..=(gate.max_y / TILE) {
+                for tx in (gate.min_x / TILE)..=(gate.max_x / TILE) {
+                    assert!(!solid(tx as usize, ty as usize), "gate {tier} tile ({tx}, {ty}) is wall");
+                    assert_eq!(gate_at(tx * TILE, ty * TILE), Some(tier as u8));
+                    assert_eq!(gate_at(tx * TILE + TILE - 1, ty * TILE + TILE - 1), Some(tier as u8));
+                }
+                assert!(solid((gate.min_x / TILE - 1) as usize, ty as usize), "gate {tier} is open to the west");
+                assert!(solid((gate.max_x / TILE + 1) as usize, ty as usize), "gate {tier} is open to the east");
+                assert_eq!(gate_at(gate.min_x - 1, ty * TILE), None);
+                assert_eq!(gate_at(gate.max_x + 1, ty * TILE), None);
             }
-        }
-        let last_pit_row = (PIT_BOT / TILE) as usize;
-        for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {
-            assert!(
-                dais(tx as usize, last_pit_row),
-                "gate column {tx} does not run onto the dais at the pit's last row",
-            );
+            assert_eq!(gate_at(gate.min_x, gate.min_y - 1), None);
+            assert_eq!(gate_at(gate.min_x, gate.max_y + 1), None);
         }
     }
 

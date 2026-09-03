@@ -218,7 +218,7 @@ const MAX_SIGNER_SEEDS: usize = 3;
 // coordinates above are the history, not the current value; ask `map::BOSS_SPAWN`.
 
 // The core's floor HP is `state::BOSS_CORE_HP`, imported above. It moved out of this file
-// because `tick.rs` now tops `core_hp_max` up by `CORE_HP_PER_RAIDER` per extra raider, so
+// because `tick.rs` now tops `core_hp_max` up by `CORE_HP_PER_RAIDER_BY_TIER` per extra raider, so
 // the two numbers are only meaningful against each other and a copy here would be the
 // balance table stored twice. This file still owns the *shell*; `state.rs` owns the core.
 
@@ -234,7 +234,7 @@ const MAX_SIGNER_SEEDS: usize = 3;
 /// system can catch a permutation of nine `u16`s.
 ///
 /// 18,000 shell HP in total ([`SHELL_HP_BASE`]). The vent opens when `sum(parts) × 100 <
-/// sum(parts_max) × state::vent_pct(raid_size)`: 6,300 damage solo, 11,700 at twenty,
+/// sum(parts_max) × state::vent_pct(raid_size, tier)`: 6,300 damage solo, 11,700 at twenty,
 /// linear between — the raid-size knob is the threshold, never this table.
 ///
 /// ponytail: hardcoded because the frozen 74-byte tag-1 argument block has nowhere to
@@ -260,7 +260,7 @@ const BOSS_PARTS_BASE: [u16; N_PARTS] = [
 const THORN_HP: u16 = 1_000;
 
 // A zero-HP part or core is not a weak boss, it is a broken one: the vent test is
-// `sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size)`, so an all-zero shell never opens, and a zero
+// `sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size, tier)`, so an all-zero shell never opens, and a zero
 // core is a boss that was born dead. Now that these are constants, the check that used to
 // run on every spawn is a compile error instead.
 const _: () = {
@@ -932,7 +932,7 @@ mod tests {
     }
 
     /// The vent is the fight's only path to the core and it opens on a comparison
-    /// (`sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size)`) against numbers this file chooses. A
+    /// (`sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size, tier)`) against numbers this file chooses. A
     /// shell that saturates is a boss whose difficulty silently stops tracking the
     /// incarnation; one that overflows `shoot.rs`'s u32 sum is worse.
     #[test]

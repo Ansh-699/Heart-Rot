@@ -39,8 +39,11 @@ import {
   PIT_BOT,
   PIT_TOP,
   TICK_MS,
+  TIER_EASY,
   ZONE_ARENA,
   ZONE_LOBBY,
+  isFurious,
+  isPhase2,
   isWallTile,
   type ArenaAccount,
   type BossAccount,
@@ -274,6 +277,10 @@ function makeArena(tick: number, bullets: number, phase: number): ArenaAccount {
     phase,
     outcome: 0,
     aliveCount: 20,
+    // The two bytes every balance curve reads (`ventPct`, `fightHp`, `isFurious`,
+    // `isPhase2`). Without them `raidN(undefined)` was NaN and no run was ever furious.
+    raidSize: MAX_SEATS,
+    difficulty: TIER_EASY,
     bulletCursor: tick % MAX_BULLETS,
     arenaId: 1n,
     crankTaskId: 1n,
@@ -291,8 +298,11 @@ function makeArena(tick: number, bullets: number, phase: number): ArenaAccount {
   };
 }
 
-function makeBoss(tick: number): BossAccount {
-  const wear = Math.min(1, tick / 900);
+function makeBoss(tick: number, wearAt: number): BossAccount {
+  // `wearAt` >= 0 pins the shell's state for the whole run: 1 is every part gone, the vent
+  // open, the core inside phase 2 and fury — the second half of a fight, which a 400-frame
+  // run at the crank's real cadence never reaches on its own (tick stays under 20).
+  const wear = wearAt >= 0 ? wearAt : Math.min(1, tick / 900);
   const parts = PARTS_MAX.map((m, i) => {
     const k = Math.max(0, 1 - wear * (1 + (i % 3) * 0.45));
     return Math.round(m * k);
@@ -307,7 +317,9 @@ function makeBoss(tick: number): BossAccount {
     targetSeat: tick % 3 === 0 ? NO_TARGET : (tick >> 2) % MAX_SEATS,
     x: 512,
     y: 400,
-    coreHp: ventOpen ? Math.max(0, 2000 - (tick - 700) * 2) : 2000,
+    // Pinned wear drains the core with it, never to zero: a dead boss draws nothing to
+    // measure, and 300 with the shell gone is 2 % of fight HP — inside fury and phase 2.
+    coreHp: wearAt >= 0 ? Math.round(2000 * (1 - wearAt)) || 300 : ventOpen ? Math.max(0, 2000 - (tick - 700) * 2) : 2000,
     coreHpMax: 2000,
     parts,
     partsMax: PARTS_MAX,
@@ -363,6 +375,12 @@ type Opts = {
   movesPerWrite: number;
   /** Accepted moves per second, paced off the wall clock. 0 = use `movesPerWrite`. */
   movesPerSec: number;
+  /** Boss shell wear 0..1 pinned for the run, or -1 to derive it from the tick as before. */
+  wear: number;
+  /** First tick of the run. `beamAt` is periodic in the tick, so this picks the beam's stage. */
+  tick0: number;
+  /** Count `setAttribute` calls by `tag.name` over the measured window — the commit's writes, named. */
+  countAttrs: boolean;
 };
 
 const DEFAULTS: Opts = {
@@ -387,6 +405,9 @@ const DEFAULTS: Opts = {
   sparseMoves: false,
   movesPerWrite: 1,
   movesPerSec: 0,
+  wear: -1,
+  tick0: 0,
+  countAttrs: false,
 };
 
 // The shipped DOM: header + stage, and World's absolutely-positioned grid box inside it.
@@ -450,7 +471,7 @@ function shape(): Shape {
 
 let cur = {
   a: makeArena(0, 128, PHASE_FIGHTING),
-  b: makeBoss(0),
+  b: makeBoss(0, -1),
   p: makePlayers(0, {
     knights: DEFAULTS.knights,
     archerPct: DEFAULTS.archerPct,
@@ -468,7 +489,7 @@ let cur = {
 function paint(kind?: 'arena' | 'boss' | 'players'): void {
   const phase = opts.room === 'passage' ? PHASE_MUSTERING : PHASE_FIGHTING;
   if (kind === undefined || kind === 'arena') cur = { ...cur, a: makeArena(tick, opts.bullets, phase) };
-  if (kind === undefined || kind === 'boss') cur = { ...cur, b: makeBoss(tick) };
+  if (kind === undefined || kind === 'boss') cur = { ...cur, b: makeBoss(tick, opts.wear) };
   if (kind === undefined || kind === 'players') cur = { ...cur, p: makePlayers(tick, shape()) };
   const { a, b, p } = cur;
 
@@ -477,7 +498,10 @@ function paint(kind?: 'arena' | 'boss' | 'players'): void {
   // and the HUD's clusters off theirs. `App` itself does not re-render (it selects
   // `screenOf`, `phase` and `status` only), so re-rendering the whole root from here would
   // reconcile the HUD twice per payload and price a tree the product never builds.
-  store?.setWorld({ arena: a, boss: b, players: p });
+  // `from` names the arena the update belongs to: `setWorld` drops anything else on the
+  // floor (a feed outliving its match was the seat-bounce bug), silently — 32 nodes and a
+  // 0.0 ms frame is what a harness that forgets it measures.
+  store?.setWorld({ arena: a, boss: b, players: p, from: FAKE_MATCH.arenaPda });
   predictor.reconcile(p.slots[0]!);
 }
 
@@ -584,7 +608,7 @@ window.__run = async (o) => {
   }
   sheet.textContent = opts.css;
   mount();
-  tick = 0;
+  tick = opts.tick0;
   seatSeq.fill(0);
   seatCursor = 0;
   moveDebt = 0;
@@ -597,6 +621,11 @@ window.__run = async (o) => {
   const t0 = performance.now();
   flushSync(() => paint());
   const build = performance.now() - t0;
+  // `wear: 1` is the second half of the fight — fury and phase 2 both on — and this is
+  // the proof: the aura, the wash and the beam were all off in every "fury" number before.
+  if (opts.wear === 1 && !(isFurious(cur.b, cur.a.raidSize, cur.a.difficulty) && isPhase2(cur.b, cur.a.raidSize, cur.a.difficulty))) {
+    throw new Error('fb: wear 1 is not furious');
+  }
 
   const firstPaint = await new Promise<number>((res) => {
     const s = performance.now();
@@ -618,6 +647,31 @@ window.__run = async (o) => {
   });
 
   updates = 0;
+  // Long tasks (>= 50 ms) inside the measured window only: a frame the player felt as a
+  // hitch, counted separately from the p95 that averages it away.
+  let longTasks = 0;
+  let longMs = 0;
+  const lt = new PerformanceObserver((list) => {
+    for (const e of list.getEntries()) {
+      longTasks++;
+      longMs += e.duration;
+    }
+  });
+  lt.observe({ type: 'longtask' });
+  const memAt = (): number =>
+    (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
+  // Which attributes React's commit is actually writing, and how often: `setAttribute`
+  // self time was 5 % of a throttled fight and the profiler cannot say on what.
+  const attrCounts = new Map<string, number>();
+  const realSetAttribute = Element.prototype.setAttribute;
+  if (opts.countAttrs) {
+    Element.prototype.setAttribute = function (this: Element, name: string, value: string) {
+      const k = `${this.tagName.toLowerCase()}.${name}`;
+      attrCounts.set(k, (attrCounts.get(k) ?? 0) + 1);
+      return realSetAttribute.call(this, name, value);
+    };
+  }
+  const heap0 = memAt();
   const wall0 = performance.now();
   const commit: number[] = [];
   const raf: number[] = [];
@@ -639,6 +693,9 @@ window.__run = async (o) => {
   });
   const wallMs = performance.now() - wall0;
   stopFeed();
+  lt.disconnect();
+  Element.prototype.setAttribute = realSetAttribute;
+  const heapGrowMB = +((memAt() - heap0) / 1048576).toFixed(1);
 
   const q = (xs: number[], p: number): number => {
     const s = [...xs].sort((a, b) => a - b);
@@ -669,11 +726,22 @@ window.__run = async (o) => {
     sparseMoves: opts.sparseMoves,
     movesPerWrite: opts.movesPerWrite,
     movesPerSec: opts.movesPerSec,
+    wear: opts.wear,
     seatMoves: seatCursor,
+    updates,
+    longTasks,
+    longMs: +longMs.toFixed(0),
+    setAttributes: opts.countAttrs
+      ? [...attrCounts].sort((a, b) => b[1] - a[1]).slice(0, 16)
+      : null,
+    // Heap growth across the window, before GC reclaims it: allocation pressure, coarsely.
+    heapGrowMB,
     tick,
     // Proof the chrome is actually mounted and seated, not silently absent.
     seat: store?.getState().match?.seat ?? null,
     storeStatus: store?.getState().status ?? null,
+    // And that the wear on screen is the wear the case asked for.
+    fury: document.querySelector('.hr-fury') !== null,
     hudNodes: document.querySelectorAll('.hud, .hud *, .dev-cue, .dev-panel, .dev-panel *').length,
     commitP50: q(commit, 0.5),
     commitP95: q(commit, 0.95),

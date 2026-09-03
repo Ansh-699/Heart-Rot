@@ -11,7 +11,8 @@
  * `Sign in` keeps the Privy path exactly as it was — a Solana wallet proves who you are
  * once, and the DID is the durable identity across browsers and cleared storage. A guest's
  * identity is the key's, so it lasts as long as IndexedDB keeps the key and no longer,
- * which is why the verdict offers a guest one raid and then a sign-in (`ui/Hud.tsx`).
+ * which is why the verdict offers a guest a sign-in in one muted line (`ui/Hud.tsx`) —
+ * an offer, not a gate: the one-raid block was the popup the player asked to lose.
  *
  * **Privy is identity only, and that is a constraint rather than a preference.** It hands
  * back a DID and a JWT; it never signs a transaction. Its headless path runs
@@ -44,12 +45,22 @@ import { useSelect, useStore } from '../state/store';
  * changes the screen and nothing else, and a bordered third button would give three
  * actions equal weight when only one is the offer.
  */
-const LANDING_CSS = `
+
+/**
+ * The text link, for both cards in this file: a button in the accessibility tree and a
+ * link to the eye. Declared once and inlined into each card's block, because only one
+ * of the two is ever mounted and a rule the other card carried would not be there.
+ */
+const LINK_CSS = `
+.card .link { padding: 0; border: 0; background: none; cursor: pointer; font: 10px var(--pixel); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.card .link:hover, .card .link:focus-visible { color: var(--ink); outline: none; }
+`;
+
+const LANDING_CSS = `${LINK_CSS}
 .card.landing { max-width: 720px; }
 .landing video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--line); }
 .landing .row { align-items: center; }
-.landing .link { margin-left: auto; padding: 0; border: 0; background: none; cursor: pointer; font: 10px var(--pixel); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
-.landing .link:hover, .landing .link:focus-visible { color: var(--ink); outline: none; }
+.landing .link { margin-left: auto; }
 `;
 
 export function Onboarding() {
@@ -116,83 +127,79 @@ export function Onboarding() {
         </button>
       </div>
       <p className="fine">
-        Play now takes a seat as a guest, for one raid. Signing in with a Solana wallet keeps
-        your name across raids. Devnet only; nothing to buy and nothing to approve.
+        Play now takes a seat as a guest. Signing in with a Solana wallet keeps your name on
+        the leaderboard. Devnet only; nothing to buy and nothing to approve.
       </p>
     </section>
   );
 }
 
 /**
- * Card 2 — the wait while `POST /api/session/init` runs.
+ * Card 2 — between seats.
  *
- * It lives here because it is the second onboarding card, but it is rendered by
- * `CharacterSelect`: the screen is derived from `authenticated` and `match`, so the moment
- * sign-in succeeds the shell has already moved on, and the seat is not claimed until a
- * colour has been chosen (`skin_id` travels inside `claim_seat` and no route edits it
- * afterwards).
+ * The shell renders it for `'joining'`: a signed-in player with no seat and a marker on
+ * file (`store.ts::screenOf`). That is the first join after the select, every rejoin after
+ * a verdict or Exit, and the wait while the Worker builds the next arena — one card and
+ * nothing under it, because the player asked for the loader and not the select, and a
+ * second "Take a seat" under a "preparing" line is a second retry loop.
  *
- * The steps are named rather than hidden behind a spinner because this is a measured ~2.8 s
- * to the first usable ER write on devnet, and longer when the route has to pay for a fresh
- * arena. An unlabelled spinner that long reads as broken rather than as slow.
+ * The label is the store's own `status`, so the card cannot say one thing while the store
+ * does another. `warming` is `join` retrying `no_open_arena` / `try_again` every 3 s
+ * (`store.ts::WARMING`) while the Worker spends 30–60 s of devnet round trips on the next
+ * arena; a join that landed in that window used to print "The lobby is between arenas …
+ * try again" and hand the player the retry to do by hand. Anything else is the measured
+ * ~2.8 s of `POST /api/session/init`, named because an unlabelled wait that long reads as
+ * broken rather than as slow. The dot is the only motion, and it stops under reduced
+ * motion because the ellipsis already says the same thing.
+ *
+ * `error` is the refusal a retry cannot fix by itself (`arena_full`, a dry treasury, an
+ * expired sign-in); the sentence is in the shell's error bar, so the card carries only the
+ * two ways on — the same seat again, or the select, which is also where a different
+ * wallet is chosen.
  */
-const SEAT_STEPS = [
-  'Checking your sign-in',
-  'Finding the open arena, or paying for a new one',
-  'Delegating it to the rollup and claiming your seat',
-] as const;
-
-export function SeatLoader() {
-  return (
-    <section className="card" aria-busy="true">
-      <p className="eyebrow">Taking a seat</p>
-      <h2>Building your half of the arena.</h2>
-      {/* A plain ordered list: the browser numbers it, and three lines of prose do not
-          justify a class in the stylesheet. */}
-      <ol className="fine">
-        {SEAT_STEPS.map((step) => (
-          <li key={step}>{step}</li>
-        ))}
-      </ol>
-      <p className="fine">
-        Around three seconds, sometimes longer. Devnet is slow; the rollup the raid actually
-        runs on answers in about 200 ms.
-      </p>
-    </section>
-  );
-}
-
-/**
- * Card 3 — the wait while the Worker creates the next arena.
- *
- * `join` was refused with `no_open_arena` or `try_again` and is retrying every 3 s
- * (`store.ts::WARMING`). The Worker is spending 30–60 s of devnet round trips in the
- * background of that refusal, and a join that lands in the window used to print "The lobby
- * is between arenas … try again" and hand the player the retry to do by hand. Two lines
- * and one blinking dot: the dot is the only motion, and it stops under reduced motion
- * because the ellipsis already says the same thing.
- *
- * `App.tsx` shows this in place of the character select, not beside it: the seat has
- * already been asked for, and a second "Take a seat" under a "preparing" line is a second
- * retry loop.
- */
-const WARMING_CSS = `
+const WARMING_CSS = `${LINK_CSS}
 .warming { min-width: 300px; gap: 8px; }
 .warming .label { margin: 0; font: 10px var(--pixel); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 .warming .dot { display: inline-block; width: 6px; height: 6px; margin-left: 8px; vertical-align: 1px; background: var(--torch); animation: warming-blink 1.2s steps(1) infinite; }
+.warming .row { align-items: center; margin-top: 4px; }
 @keyframes warming-blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .warming .dot { animation: none; } }
 `;
 
-export function ArenaWarming() {
+export function SeatLoader() {
+  const store = useStore();
+  const status = useSelect((s) => s.status);
+
+  if (status === 'error') {
+    return (
+      <section className="card warming" role="status">
+        <style>{WARMING_CSS}</style>
+        <p className="label">No seat yet</p>
+        <div className="row">
+          <button className="btn btn-primary" onClick={() => void store.join()}>
+            Try again
+          </button>
+          <button className="link" onClick={() => void store.changeMarker()}>
+            Change marker
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  const warming = status === 'warming';
   return (
     <section className="card warming" role="status" aria-live="polite" aria-busy="true">
       <style>{WARMING_CSS}</style>
       <p className="label">
-        Arena warming…
+        {warming ? 'Arena warming…' : 'Taking a seat…'}
         <span className="dot" aria-hidden="true" />
       </p>
-      <p className="fine">Preparing your arena…</p>
+      <p className="fine">
+        {warming
+          ? 'Preparing your arena…'
+          : 'Finding the open arena and claiming your seat. Around three seconds.'}
+      </p>
     </section>
   );
 }

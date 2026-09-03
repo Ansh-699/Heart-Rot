@@ -235,9 +235,23 @@ Args, **1 byte exactly**: `seat` u8 at `[0]`.
 
 | # | Account | Flags | |
 |---|---|---|---|
-| 0 | arena | `w` | `alive_count` |
+| 0 | arena | `w` | `alive_count`; `difficulty` (byte 38) for the raid's first raider |
 | 1 | players | `w` | |
 | 2 | session key | `s` | must equal `slots[seat].session_pubkey` |
+
+The seat must stand in one of the three `G` blocks (`map::GATES`, left to right = tier
+0 EASY, 1 MEDIUM, 2 HARD; `map::gate_at` answers which). **Which block is the raid's
+difficulty.** While `arena.raid_size == 0 && arena.alive_count == 0` — nobody has walked a
+gate this incarnation — the block's tier is written to `Arena.difficulty` and the seat is
+through. From then on a seat on any *other* block is refused **`HeartrotError::WrongGate`
+(`Custom(21)`)**, and unlike `NotOnGate` (15) standing still never heals it: the client
+must not retry it, and `App.tsx`'s poll does not send it at all (it reads `lockedTier` off
+the arena first and posts a notice instead). `begin_next_incarnation` is the only thing
+that clears the byte. Every balance table on the chain — the vent line, the core, incoming
+damage, the fury bullet — is `[_; N_TIERS]` indexed by it (`10-boss.md` §1.7).
+
+Off every block is `NotOnGate` (15), retried by the poll; already through is `WrongZone`
+(9). The zone check runs before the position and tier checks.
 
 ---
 
@@ -456,6 +470,9 @@ responsibility and none may be skipped:
   skew and must be loud. It is a request, not a grant: whether the shot is charged or a
   super is decided from `last_move_tick` and the ER slot, so setting the byte buys an
   attacker nothing a player standing still for the hold does not already have.
+- **`Arena.difficulty`** is never an argument. Tag 5 derives it from the seat's `(x, y)`
+  against the drawn gate blocks, so a caller cannot name a tier its seat is not standing
+  in, and only the raid's first raider writes it at all.
 - **Nothing here rate-limits.** ER fees are zero and the ER runs no fee-payer validation,
   so the per-seat tick counters written by the handlers (`last_move_tick`,
   `last_shot_tick`) are the only rate limit that exists anywhere.

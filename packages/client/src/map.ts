@@ -67,31 +67,31 @@ export const MAP_GRID: readonly string[] = [
   '###############PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP###############',
   '###################PPPPPPPPPPPPPPPPPPPPPPPPPP###################',
   '########################PPPPPPPPPPPPPPPP########################',
-  '############################GGGGGGGG############################',
-  '############################GGGGGGGG############################',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
-  '#######..................................................#######',
+  '############GGGGGGG##########GGGGGG##########GGGGGGG############',
+  '############GGGGGGG##########GGGGGG##########GGGGGGG############',
+  '#####......................................................#####',
+  '#####......................................................#####',
+  '#####......................................................#####',
+  '#####......................................................#####',
+  '#####......................................................#####',
+  '#####......................................................#####',
+  '#####......................................................#####',
+  '#####......................................................#####',
+  '#############......................................#############',
+  '#############......................................#############',
+  '#############......................................#############',
+  '#############......................................#############',
+  '#############......................................#############',
+  '#############......................................#############',
+  '#############......................................#############',
+  '#############......................................#############',
+  '################################################################',
+  '################################################################',
+  '################################################################',
+  '################################################################',
+  '################################################################',
+  '################################################################',
+  '################################################################',
   '################################################################',
 ];
 
@@ -133,19 +133,33 @@ export const BOSS_SPAWN: readonly [number, number] = [512, 352]; // tile (32, 22
 export const PIT_TOP = 192;
 export const PIT_BOT = 607;
 
+/** One gate block in arena-space units, both edges inclusive -- `map::Gate`. */
+export interface Gate {
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
+}
+
 /**
- * The gate block `enter_gate` demands the player be standing in -- the drawn `G`
- * rectangle, tiles (28, 38)..(35, 39), in arena-space units.
+ * The gate blocks `enter_gate` demands the player be standing in -- the separate drawn `G`
+ * blocks on rows 38..39, left to right, so the index IS the difficulty tier
+ * (`TIER_EASY..=TIER_HARD` in layout.ts) and the length is `N_TIERS`. The exact numbers
+ * `map::GATES` holds on the chain, out of the same grid; `rooms.gen.ts`'s `LOBBY_GATES`
+ * are the same blocks as the painting measured them, cross-checked by `gen_map.py`.
  *
- * The lobby's gate glow keys off the *predicted* local position against this box, so it
- * lights the instant you step on rather than a round trip later; the `enter_gate`
- * transaction still goes through the authoritative poll. Same four numbers as
- * `map::GATE_MIN_X`..`GATE_MAX_Y`, out of the same grid.
+ * The lobby's gate glow keys off the *predicted* local position against these blocks, so
+ * it lights the instant you step on rather than a round trip later; the `enter_gate`
+ * transaction still goes through the authoritative poll.
  */
-export const GATE_MIN_X = 448;
-export const GATE_MAX_X = 575;
-export const GATE_MIN_Y = 608;
-export const GATE_MAX_Y = 639;
+export const GATES: readonly Gate[] = [
+  // tier 0: tiles (12, 38)..(18, 39)
+  { minX: 192, maxX: 303, minY: 608, maxY: 639 },
+  // tier 1: tiles (29, 38)..(34, 39)
+  { minX: 464, maxX: 559, minY: 608, maxY: 639 },
+  // tier 2: tiles (45, 38)..(51, 39)
+  { minX: 720, maxX: 831, minY: 608, maxY: 639 },
+];
 
 /**
  * The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
@@ -159,7 +173,7 @@ export const LOBBY_SPAWN_MAX_X = 664;
 export const LOBBY_SPAWN_Y = 832;
 
 /**
- * The lobby floor band: the drawn floor rows below the gate (tile rows 40..62), in
+ * The lobby floor band: the drawn floor rows below the gate (tile rows 40..55), in
  * arena-space units, `LOBBY_BOT` inclusive of the last row's last unit exactly as
  * {@link PIT_BOT} is.
  *
@@ -170,11 +184,23 @@ export const LOBBY_SPAWN_Y = 832;
  * instead of drifting off a hardcoded 640/1008.
  */
 export const LOBBY_TOP = 640;
-export const LOBBY_BOT = 1007;
+export const LOBBY_BOT = 895;
 
-/** Is this arena-space point inside the gate block? `handlers::player::on_gate`. */
+/**
+ * Which gate this arena-space point stands in, as its tier, or `null` off every gate --
+ * `map::gate_at`, the predicate `enter_gate` runs, byte for byte.
+ */
+export function gateAt(x: number, y: number): number | null {
+  for (let tier = 0; tier < GATES.length; tier++) {
+    const g = GATES[tier]!;
+    if (x >= g.minX && x <= g.maxX && y >= g.minY && y <= g.maxY) return tier;
+  }
+  return null;
+}
+
+/** Is this arena-space point inside any gate block? {@link gateAt} for callers that light a floor. */
 export function onGate(x: number, y: number): boolean {
-  return x >= GATE_MIN_X && x <= GATE_MAX_X && y >= GATE_MIN_Y && y <= GATE_MAX_Y;
+  return gateAt(x, y) !== null;
 }
 
 /** Is this tile solid? Off-map is solid, so a caller that skips the clamp fails closed. */

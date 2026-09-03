@@ -51,8 +51,11 @@ import {
   PHASE_SETTLING,
   SHELL_PCT_PER_INCARNATION,
   TICK_MS,
-  VENT_PCT_FULL,
-  VENT_PCT_SOLO,
+  TIER_COLORS,
+  TIER_EASY,
+  TIER_NAMES,
+  VENT_PCT_FULL_BY_TIER,
+  VENT_PCT_SOLO_BY_TIER,
   ZONE_ARENA,
   fightHp,
   isFurious,
@@ -103,8 +106,9 @@ const FIRST_THORN = 0;
 const LAST_THORN = 3;
 
 /*
- * `Boss.vent_open` flips when `sum(parts) * 100 < sum(parts_max) * vent_pct(raid_size)` —
- * `VENT_PCT_SOLO` solo, `VENT_PCT_FULL` at a full raid, linear between. The percentage is
+ * `Boss.vent_open` flips when `sum(parts) * 100 < sum(parts_max) * vent_pct(raid_size, tier)`
+ * — `VENT_PCT_SOLO_BY_TIER[difficulty]` solo, `VENT_PCT_FULL_BY_TIER[difficulty]` at a full
+ * raid, linear between. The percentage is
  * `layout.ts`'s `ventPct`, the same mirror `shoot.rs` recomputes against; this file used
  * to hold a literal 35 and would have taught a solo player a threshold sixty points below
  * the real one. The self-check names the constants for the same reason: it held a literal
@@ -332,8 +336,14 @@ const HUD_CSS = `
 .verdict { gap: 10px; padding: 14px 16px; }
 .verdict-line { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
 .verdict-next { font: 11px var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
-/* The one thing in the box that takes a click; the box itself stays click-through. */
+/* The button and the text links are what take a click; the box itself stays click-through.
+   The links are inline text — the marker line and the guest's sign-in line read as
+   sentences under the button, not as a second row of controls. */
 .verdict .btn { pointer-events: auto; margin-top: 4px; }
+.verdict .link { pointer-events: auto; padding: 0; border: 0; background: none; cursor: pointer; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.verdict .link:hover, .verdict .link:focus-visible { color: var(--olive); outline: none; }
+/* Until SETTLED lands (see Verdict): plain text, the underline is what says "link". */
+.verdict .link:disabled { color: var(--muted); text-decoration: none; cursor: default; }
 `;
 
 /** Quiet seconds before the layer fades. Long enough that it never fades mid-dodge. */
@@ -481,13 +491,14 @@ function Card() {
   const enrageAt = useSelect((s) => s.arena?.enrageAtTick ?? 0);
   const tickMs = useSelect((s) => s.match?.tickMs ?? TICK_MS);
   const raidSize = useSelect((s) => s.arena?.raidSize ?? 0);
+  const tier = useSelect((s) => s.arena?.difficulty ?? TIER_EASY);
   const boss = useSelect((s) => s.boss);
   const status = useSelect((s) => s.status);
   const players = useSelect((s) => s.players);
   const seat = useSelect((s) => s.match?.seat ?? -1);
   if (!slot) return null;
 
-  const furious = phase === PHASE_FIGHTING && boss !== null && isFurious(boss, raidSize);
+  const furious = phase === PHASE_FIGHTING && boss !== null && isFurious(boss, raidSize, tier);
   const mustering = phase === PHASE_MUSTERING;
   const left = enrageAt - tick;
   const timer = mustering ? clock(fightAt - tick, tickMs) : phase === PHASE_FIGHTING && enrageAt !== 0 ? clock(left, tickMs) : null;
@@ -548,21 +559,28 @@ function Top() {
   const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
   const phase = useSelect((s) => s.arena?.phase ?? PHASE_LOBBY);
   const raidSize = useSelect((s) => s.arena?.raidSize ?? 0);
+  const tier = useSelect((s) => s.arena?.difficulty ?? TIER_EASY);
   const boss = useSelect((s) => s.boss);
   if (!inPit || boss === null || phase === PHASE_LOBBY) return null;
 
   // Fight HP, not shell: shell above the vent line never has to come off, so a solo bar
   // read 97 % three hits from a win. `fightHp` is the chain's own `Boss::fight_hp`, and
   // the floor keeps 20 % and ENRAGED landing on the same tick.
-  const hp = fightHp(boss, raidSize);
+  const hp = fightHp(boss, raidSize, tier);
   if (hp.max <= 0) return null;
-  const furious = phase === PHASE_FIGHTING && isFurious(boss, raidSize);
+  const fighting = phase === PHASE_FIGHTING;
+  const furious = fighting && isFurious(boss, raidSize, tier);
   const pct = floorPercent(hp.left, hp.max);
+  // The tag names the tier while fighting, in the doorway's own light — the one place the
+  // raid's difficulty is written on screen — and ENRAGED overrides it: fury is the fact
+  // that changes what you do next. Through the muster it is still just the boss.
+  const tag = furious ? 'ENRAGED' : fighting ? TIER_NAMES[tier] : 'BOSS';
+  const tagStyle = furious || !fighting ? undefined : { color: TIER_COLORS[tier] };
 
   return (
     <div className={`hud-top${furious ? ' hud-enraged' : ''}`}>
       <div className="hud-boss">
-        <span className="hud-tag">{furious ? 'ENRAGED' : 'BOSS'}</span>
+        <span className="hud-tag" style={tagStyle}>{tag}</span>
         <div className="hud-boss-bar" role="meter" aria-label="boss health" aria-valuenow={pct} aria-valuemax={100}>
           <div className="hud-boss-fill" style={{ transform: `scaleX(${pct / 100})` }} />
           <div className="hud-boss-mark" style={{ left: `${FURY_PCT}%` }} aria-hidden="true" />
@@ -620,9 +638,20 @@ function ordinal(n: number): string {
   return `${n}${teen ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th')}`;
 }
 
+/** Seconds the results panel stays up before the next seat is taken by itself. */
+const REJOIN_SECONDS = 10;
+
 function Verdict() {
   const store = useStore();
   const outcome = useSelect((s) => s.arena?.outcome ?? OUTCOME_UNDECIDED);
+  // The chain's word, delivered by the feed: `settle` (tag 9) writes SETTLED on the ER
+  // before it commits. Not `outcome`, which lands at SETTLING while the Worker's settle is
+  // still in flight. Nothing here leaves before it: `leave_seat` is refused outside
+  // LOBBY/MUSTERING/FIGHTING (`assert_playable`), so a leave sent from SETTLING is a
+  // refused instruction the Worker answers `release_failed`, followed by a join that has
+  // to scan past the arena this seat is still sitting in. The countdown, the button and
+  // both links wait on the same byte.
+  const settled = useSelect((s) => s.arena?.phase === PHASE_SETTLED);
   const incarnation = useSelect((s) => s.arena?.incarnation ?? 0);
   const players = useSelect((s) => s.players);
   const seat = useSelect((s) => s.match?.seat ?? -1);
@@ -631,6 +660,22 @@ function Verdict() {
   // The verdict is the HUD's own event — the byte lands here and nowhere else draws it.
   usePlayOnRise(outcome === OUTCOME_WIN, 'win');
   usePlayOnRise(outcome === OUTCOME_WIPE || outcome === OUTCOME_ENRAGE, 'lose');
+
+  // The countdown. "When a boss is destroyed or lost or exit automatically take a seat
+  // with our loader": ten seconds to read the panel, then `leaveMatch` — which releases
+  // and rejoins by itself — and the button runs the same thing early. Nothing here
+  // cancels it: `leaveMatch` drops the match synchronously, the shell unmounts the HUD
+  // on the same render, and the interval goes with it.
+  const [left, setLeft] = useState(REJOIN_SECONDS);
+  useEffect(() => {
+    if (!settled) return;
+    const timer = window.setInterval(() => setLeft((n) => n - 1), 1_000);
+    return () => window.clearInterval(timer);
+  }, [settled]);
+  useEffect(() => {
+    if (settled && left <= 0) void store.leaveMatch();
+  }, [settled, left, store]);
+
   if (!row) return null;
   const won = outcome === OUTCOME_WIN;
   // Only a WIN rolls a next incarnation (`OUTCOME_WIN`'s own doc), so only a WIN names one.
@@ -656,18 +701,25 @@ function Verdict() {
           </span>
         </>
       )}
-      <button
-        className="btn btn-primary"
-        onClick={() => {
-          // Release, then join — and wait for the release: `leaveMatch` posts the seat
-          // back, and a `join` fired alongside it would race the Worker for a seat under
-          // the same identity in the arena it is still leaving. A guest gets one raid;
-          // the next one starts at sign-in, which `signOut` returns them to.
-          void (guest ? store.signOut() : store.leaveMatch().then(() => store.join()));
-        }}
-      >
-        {guest ? 'Sign in to raid again' : 'Raid again'}
+      <button className="btn btn-primary" disabled={!settled} onClick={() => void store.leaveMatch()}>
+        Raid again{settled && ` · ${Math.max(0, left)}`}
       </button>
+      {/* Secondary, in the box's smallest type: the select is not a step any more, so
+          the way back to it is a link, and the guest's sign-in is an offer under the same
+          button everyone else gets — a name on the leaderboard, not a gate on the raid. */}
+      <span className="fine">
+        <button className="link" disabled={!settled} onClick={() => void store.changeMarker()}>
+          Change marker
+        </button>
+      </span>
+      {guest && (
+        <span className="fine">
+          <button className="link" disabled={!settled} onClick={() => void store.signOut()}>
+            Sign in
+          </button>{' '}
+          to keep your name on the leaderboard.
+        </span>
+      )}
     </div>
   );
 }
@@ -682,14 +734,14 @@ function Verdict() {
 // ---------------------------------------------------------------------------
 
 if (import.meta.env.DEV) {
-  // The threshold the table below is written against: a full raid's 35 %. The solo end
-  // and monotonicity are asserted too, because the bar prints `ventPct` for every size.
-  const VENT_PERCENT = ventPct(MAX_SEATS);
-  if (ventPct(1) !== VENT_PCT_SOLO || VENT_PERCENT !== VENT_PCT_FULL) {
-    throw new Error(`Hud self-check: ventPct reads ${ventPct(1)} solo, ${VENT_PERCENT} full`);
+  // The threshold the table below is written against: a full EASY raid's 35 %. The solo
+  // end and monotonicity are asserted too, because the bar prints `ventPct` for every size.
+  const VENT_PERCENT = ventPct(MAX_SEATS, TIER_EASY);
+  if (ventPct(1, TIER_EASY) !== VENT_PCT_SOLO_BY_TIER[TIER_EASY] || VENT_PERCENT !== VENT_PCT_FULL_BY_TIER[TIER_EASY]) {
+    throw new Error(`Hud self-check: ventPct reads ${ventPct(1, TIER_EASY)} solo, ${VENT_PERCENT} full`);
   }
   for (let raid = 2; raid <= MAX_SEATS; raid += 1) {
-    if (ventPct(raid) > ventPct(raid - 1)) {
+    if (ventPct(raid, TIER_EASY) > ventPct(raid - 1, TIER_EASY)) {
       throw new Error(`Hud self-check: ventPct rises from ${raid - 1} to ${raid} raiders`);
     }
   }
@@ -727,11 +779,15 @@ if (import.meta.env.DEV) {
   // vent or core retune moves the rows with it; the core ceiling is well above any
   // `left` a 20 % line can produce, so the rows stay representable through a retune.
   const solo = { partsMax: [1_000], coreHpMax: 1_000, parts: [1_000], coreHp: 1_000 };
-  const { max: fightMax } = fightHp(solo, 1);
+  const { max: fightMax } = fightHp(solo, 1, TIER_EASY);
   const line = Math.floor((fightMax * FURY_PCT) / 100);
-  const at = (left: number) => ({ ...solo, parts: [Math.floor((1_000 * ventPct(1)) / 100)], coreHp: left });
-  if (isFurious(solo, 1) || !isFurious(at(line), 1) || isFurious(at(line + 1), 1)) {
+  const at = (left: number) => ({ ...solo, parts: [Math.floor((1_000 * ventPct(1, TIER_EASY)) / 100)], coreHp: left });
+  if (isFurious(solo, 1, TIER_EASY) || !isFurious(at(line), 1, TIER_EASY) || isFurious(at(line + 1), 1, TIER_EASY)) {
     throw new Error(`Hud self-check: fury does not flip at exactly ${FURY_PCT}% of ${fightMax}`);
+  }
+  // One name and one colour per tier, so the tag can never print `undefined` over the bar.
+  if (TIER_NAMES.some((n) => n.length === 0) || TIER_COLORS.some((c) => !/^#[0-9a-f]{6}$/i.test(c))) {
+    throw new Error('Hud self-check: a tier has no name or no colour');
   }
   if (floorPercent(line, fightMax) > FURY_PCT || floorPercent(fightMax, fightMax) !== 100) {
     throw new Error(`Hud self-check: boss % reads ${floorPercent(line, fightMax)}% beside ENRAGED`);

@@ -59,7 +59,7 @@ function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, i
  * `beam`: the same open shell with the core at 1,000 — under half of 2,090 and over a
  * fifth, so `isPhase2` reads true and `isFurious` false: the beam without the fury wash.
  */
-function bossBytes(hurt: boolean, vent = false, fury = false, beam = false) {
+function bossBytes(hurt: boolean, vent = false, fury = false, beam = false, dead: number[] = []) {
   const { d, v } = blank(BOSS.size, DISC_BOSS);
   const o = BOSS.offsets;
   v.setInt16(o.x, BOSS_SPAWN[0], true);
@@ -67,7 +67,10 @@ function bossBytes(hurt: boolean, vent = false, fury = false, beam = false) {
   const open = vent || fury || beam;
   for (let i = 0; i < N_PARTS; i++) {
     v.setUint16(o.parts_max + i * 2, 500, true);
-    const hp = (hurt && i === 7) || (fury && (i === 7 || i === 8 || i === 3)) ? 0 : open && i === 0 ? 400 : 500;
+    // `dead` names the destroyed parts outright (the heads, for the torn-off shot); the
+    // fury default strips the mace, the claws and a thorn.
+    const gone = dead.length ? dead.includes(i) : (hurt && i === 7) || (fury && (i === 7 || i === 8 || i === 3));
+    const hp = gone ? 0 : open && i === 0 ? 400 : 500;
     v.setUint16(o.parts + i * 2, hp, true);
   }
   v.setUint8(o.vent_open, open ? 1 : 0);
@@ -143,6 +146,8 @@ interface SceneOpts {
   beam?: 'warn' | 'sweep';
   /** An explicit tick, over the defaults below — e.g. one tick on from `beam: 'sweep'`. */
   tick?: number;
+  /** Which `Boss.parts` slots are destroyed, over the fury default (4 crown, 5 wolf, 6 beast). */
+  dead?: number[];
 }
 
 /**
@@ -167,7 +172,7 @@ function Bridge() {
         from: '11111111111111111111111111111111',
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,
           arena ? (opts.bullets ?? 10) : 0, opts.outcome ?? 0, opts.incarnation ?? 0),
-        boss: bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, !!opts.beam),
+        boss: bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, !!opts.beam, opts.dead),
         players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, opts.at, opts.damage),
       });
     };

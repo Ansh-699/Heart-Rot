@@ -244,11 +244,12 @@ fn encode_aim(dx: i8, dy: i8) -> u8 {
 const VENT_OPEN: u8 = 1;
 
 /// The percentage the vent threshold is expressed in: the comparison is
-/// `sum(parts) × PERCENT < sum(parts_max) × vent_pct(raid_size)`, so no percentage is
+/// `sum(parts) × PERCENT < sum(parts_max) × vent_pct(raid_size, tier)`, so no percentage is
 /// ever a float.
 const PERCENT: u32 = 100;
 
-/// Recompute `Boss.vent_open` from the parts and the raid, and answer whether it is open.
+/// Recompute `Boss.vent_open` from the parts, the raid and its tier, and answer whether
+/// it is open.
 ///
 /// The vent is **derived state**, cached on the account for the client — never set
 /// independently, or it drifts out of agreement with the numbers it summarises. This is
@@ -258,15 +259,18 @@ const PERCENT: u32 = 100;
 /// with `Arena.raid_size`, which only the tick can raise.
 ///
 /// `raid_size` is `Arena.raid_size`, the high-water mark of raiders this incarnation, and
-/// `state::vent_pct` turns it into the threshold: 65 % of the shell standing for a raid of
-/// one, 35 % for twenty. Passed in rather than read off an `Arena` so the function stays
-/// callable on a bare `Boss` — which is how every vent test in this file drives it.
+/// `tier` is `Arena.difficulty`, the gate the raid was opened through; `state::vent_pct`
+/// turns the pair into the threshold: 98 % of the shell standing for one EASY raider,
+/// 35 % for twenty, less on the harder rows. Passed in rather than read off an `Arena` so
+/// the function stays callable on a bare `Boss` — which is how every vent test in this
+/// file drives it.
 ///
 /// The sums cannot overflow `u32` (9 × 65,535 × 100 ≈ 59 M) but are saturating anyway.
-pub(crate) fn recompute_vent(boss: &mut Boss, raid_size: u8) -> bool {
+pub(crate) fn recompute_vent(boss: &mut Boss, raid_size: u8, tier: u8) -> bool {
     let shell: u32 = boss.parts.iter().map(|&hp| hp as u32).sum();
     let shell_max: u32 = boss.parts_max.iter().map(|&hp| hp as u32).sum();
-    let open = shell.saturating_mul(PERCENT) < shell_max.saturating_mul(vent_pct(raid_size));
+    let open =
+        shell.saturating_mul(PERCENT) < shell_max.saturating_mul(vent_pct(raid_size, tier));
     boss.vent_open = u8::from(open);
     open
 }
@@ -655,7 +659,7 @@ fn fire(
     // On the same line that changed a part, and *before* the core is judged: a super that
     // strips the last of the shell has opened the vent for its own core hit.
     if beam.parts != 0 {
-        recompute_vent(boss, arena.raid_size);
+        recompute_vent(boss, arena.raid_size, arena.difficulty);
     }
 
     // The shell absorbs anything aimed at a sealed vent. The shot is spent, the cooldown
@@ -832,7 +836,7 @@ mod tests {
     use crate::map::BOSS_SPAWN;
     use crate::state::{
         Bullet, BULLET_ACTIVE, CLASS_MASK, MAX_BULLETS, MAX_SEATS, N_PARTS, OUTCOME_UNDECIDED,
-        PHASE_SETTLING,
+        PHASE_SETTLING, TIER_EASY, TIER_HARD,
     };
     use bytemuck::Zeroable;
 
@@ -1056,7 +1060,7 @@ mod tests {
     fn shell_then_vent_then_core_is_a_recorded_win() {
         let s = survey();
         let mut arena = arena_fighting();
-        // A full raid: the threshold is `VENT_PCT_FULL`, 35 %, which the shell numbers below
+        // A full raid: the threshold is EASY's `VENT_PCT_FULL_BY_TIER` row, 35 %, which the shell numbers below
         // are cut to. The raid-size curve itself is `the_vent_opens_earlier_for_a_smaller_raid`.
         arena.raid_size = MAX_SEATS as u8;
         let mut boss = standing_boss();
@@ -1069,7 +1073,7 @@ mod tests {
                 cleared += 1;
             }
         }
-        recompute_vent(&mut boss, arena.raid_size);
+        recompute_vent(&mut boss, arena.raid_size, arena.difficulty);
         assert_eq!(boss.vent_open, 0, "400 of 900 is above the threshold");
 
         // Two shots into the blocker: the shell drops to 320/900 (35.5 %), still sealed.
@@ -1125,7 +1129,7 @@ mod tests {
         // test is about only exists where the threshold is low.
         arena.raid_size = MAX_SEATS as u8;
         boss.parts[s.blocker] = 0;
-        recompute_vent(&mut boss, arena.raid_size);
+        recompute_vent(&mut boss, arena.raid_size, arena.difficulty);
         assert_eq!(boss.vent_open, 0);
         assert_eq!(
             raycast(slot.x, slot.y, s.aim.0, s.aim.1, &boss),
@@ -1614,9 +1618,13 @@ mod tests {
         let s = survey();
         let mut boss = standing_boss();
         boss.parts = [60; N_PARTS];
-        assert!(recompute_vent(&mut boss, 1), "solo: 60 % standing is under 65 %");
-        assert!(!recompute_vent(&mut boss, MAX_SEATS as u8), "twenty: 60 % is over 35 %");
-        assert!(recompute_vent(&mut boss, 0), "an uncounted raid is a solo raid");
+        assert!(recompute_vent(&mut boss, 1, TIER_EASY), "solo: 60 % standing is under 98 %");
+        assert!(!recompute_vent(&mut boss, MAX_SEATS as u8, TIER_EASY), "twenty: 60 % is over 35 %");
+        assert!(recompute_vent(&mut boss, 0, TIER_EASY), "an uncounted raid is a solo raid");
+        // The tier moves the same line: 60 % standing is under HARD's 88 % solo and over
+        // its 25 % at twenty, from the same parts.
+        assert!(recompute_vent(&mut boss, 1, TIER_HARD), "HARD solo: 60 % is under 88 %");
+        assert!(!recompute_vent(&mut boss, MAX_SEATS as u8, TIER_HARD), "HARD twenty: 60 % is over 25 %");
 
         // The blocker gone, the lane reaches the core (480 of 900 left: 53 %). Whether the
         // core *takes* the hit is the raid's threshold and nothing else.
@@ -1625,7 +1633,7 @@ mod tests {
             let mut arena = arena_fighting();
             arena.raid_size = raid;
             let mut boss = boss;
-            recompute_vent(&mut boss, arena.raid_size);
+            recompute_vent(&mut boss, arena.raid_size, arena.difficulty);
             let mut slot = shooter(&s);
             shoot_lane(&s, &mut arena, &mut boss, &mut slot);
             assert_eq!(boss.core_hp, core_left, "raid of {raid}");
@@ -1768,7 +1776,7 @@ mod tests {
         arena.tick = 100;
         arena.raid_size = 1;
         let mut boss = standing_boss();
-        recompute_vent(&mut boss, arena.raid_size);
+        recompute_vent(&mut boss, arena.raid_size, arena.difficulty);
         assert_eq!(boss.vent_open, 0, "a full shell is sealed at every raid size");
         let mut slot = archer(&s);
         fire(&mut arena, &mut boss, &mut slot, aim.0, aim.1, Tier::Super, SUPER_SLOTS)

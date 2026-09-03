@@ -2,11 +2,13 @@
  * The shell: four screens, one linear flow, no router — plus the two seams that make the
  * rest of `app/` reachable.
  *
- * Landing → character select → lobby → arena, and the only way back is a settled match;
- * the leaderboard is a detour off the landing, a flag in the store rather than a fifth
- * step. A route table would buy history, deep links and code splitting for a flow with
- * no branches, no shareable URLs and one bundle — so the "route" is `screenOf(state)`,
- * which reads the seat's `zone` straight off the chain.
+ * Landing → character select → lobby → arena, and the way back — a settled match, or
+ * Exit — is the loader and the next seat, never the select again: the store remembers
+ * the marker and joins by itself (`screenOf`'s `'joining'`). The leaderboard is a detour
+ * off the landing, a flag in the store rather than a step. A route table would buy
+ * history, deep links and code splitting for a flow with no branches, no shareable URLs
+ * and one bundle — so the "route" is `screenOf(state)`, which reads the seat's `zone`
+ * straight off the chain.
  *
  * This file draws the chrome (the wordmark, the error bar, the void card) and owns two things
  * nothing else can own, because nothing else sees both the store and the match:
@@ -27,10 +29,11 @@
  *
  * The 320 px side panel is gone (`17-fullscreen-spec.md` §9.1) and the scene fills the
  * stage edge to edge, so the chrome is `ui/Hud.tsx`'s fixed clusters, mounted once here
- * for both sides of the gate. `screens/Lobby.tsx` is down to the one line of instruction
- * that is genuinely the waiting room's. The world is drawn by `render/Passage.tsx`, which
- * is `render/Arena.tsx` wrapped in the gate beat. All of it is imported, never
- * re-implemented: a second copy of the part list or the skin table drifts from the chain
+ * for both sides of the gate. The waiting room has no screen of its own: where to walk
+ * is the three gate marks in `render/WaitingRoom.tsx`. The world is drawn by
+ * `render/Passage.tsx`, which is `render/Arena.tsx` wrapped in the gate beat. All of it is
+ * imported, never re-implemented: a second copy of the part list or the skin table drifts
+ * from the chain
  * layout the moment either is touched.
  */
 
@@ -41,6 +44,7 @@ import {
   PHASE_LOBBY,
   PHASE_SETTLED,
   PHASE_SETTLING,
+  TIER_NAMES,
   ZONE_ARENA,
   ZONE_LOBBY,
   autoAim,
@@ -49,8 +53,9 @@ import {
   connectMatch,
   createSessionSigner,
   enterGate,
+  gateAt,
+  lockedTier,
   movePlayer,
-  onGate,
   refusalOf,
   sendInstructions,
   shoot,
@@ -71,8 +76,7 @@ import { beamDowngraded, fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
 import { gateOpen } from './screens/Gate';
 import { Leaderboard } from './screens/Leaderboard';
-import { Lobby } from './screens/Lobby';
-import { ArenaWarming, Onboarding } from './screens/Onboarding';
+import { Onboarding, SeatLoader } from './screens/Onboarding';
 import { mySeatSlot, screenOf, useSelect, useStore } from './state/store';
 import { Hud } from './ui/Hud';
 
@@ -244,12 +248,12 @@ export default function App() {
         {/* The landing's one detour: a flag in the store, not a step, so `Back` returns to
             whatever screen the seat and the sign-in already say. */}
         {screen === 'leaderboard' && <Leaderboard />}
-        {/* Warming replaces the select rather than sitting beside it: the seat was already
-            asked for, and a second "Take a seat" under a "preparing" line is a second
-            retry loop. The guest path lands here too — `playAsGuest` joins from the
-            landing and `authenticated` already reads `'select'`. */}
-        {screen === 'select' && (status === 'warming' ? <ArenaWarming /> : <CharacterSelect />)}
-        {screen === 'lobby' && <Lobby />}
+        {screen === 'select' && <CharacterSelect />}
+        {/* Between seats — the first join, every rejoin after a verdict or Exit, the wait
+            while the Worker warms the next arena: one card and nothing under it. The
+            select is not shown again; the marker is on file (`screenOf`), and the card
+            reads its own copy off `status`. */}
+        {screen === 'joining' && <SeatLoader />}
       </main>
       <World host={hasStage ? stage : null} link={link} feedEpoch={feedEpoch} />
       {/* One HUD, both sides of the gate. Its clusters are `position: fixed`, so they are
@@ -403,9 +407,9 @@ function WorldPending() {
             {/* Otherwise this is a second dead end: `useMatchLink` treats a failed
                 `connectMatch` as fatal for the match on purpose, and without a way out the
                 player sits on this card for the life of the tab. `leaveMatch` drops the
-                seat and the next join takes a fresh one — the verdict's own exit. */}
-            <button className="btn btn-primary" onClick={() => store.leaveMatch()}>
-              Back to the lobby
+                seat and takes a fresh one through the loader — the verdict's own exit. */}
+            <button className="btn btn-primary" onClick={() => void store.leaveMatch()}>
+              Take a new seat
             </button>
           </>
         ) : (
@@ -707,14 +711,25 @@ function useGateEntry(link: Link): void {
       // act on. Without this a stranded seat pushes two doomed transactions a second into
       // the ER for as long as the tab is open.
       //
-      // `gateOpen`, not the same three phases spelled out here: `screens/Gate.tsx` renders
-      // "The gate is shut." off that predicate, and if this loop's copy drifts from it the
-      // prompt claims a send that is not happening — which is precisely the invisible case
-      // the confirm below exists to end.
+      // `gateOpen` is `assert_playable` mirrored, not the three phases spelled out again
+      // here: a phase missing from it stops sends the chain would take, a phase wrongly in
+      // it sends into `WrongPhase`, and `Gate.tsx`'s dev self-check pins the mirror.
       if (!gateOpen(state.arena?.phase ?? PHASE_LOBBY)) return;
       const slot = mySeatSlot(state);
       if (!slot || slot.zone !== ZONE_LOBBY) return;
-      if (!onGate(slot.x, slot.y)) return;
+      // Any of the three gates; `gateAt` is the predicate `enter_gate` runs.
+      const here = gateAt(slot.x, slot.y);
+      if (here === null) return;
+      // The raid fights ONE boss, tuned by the gate its first raider chose. The chain
+      // refuses every other doorway with `WrongGate` (21), and unlike `NotOnGate` no
+      // amount of standing still heals it — so this loop does not send it. The notice is
+      // the whole answer, re-posted each period the player stands there and gone
+      // `NOTICE_MS` after they walk off; `lockedTier` is `player::locked_tier`, mirrored.
+      const locked = state.arena === null ? null : lockedTier(state.arena);
+      if (locked !== null && here !== locked) {
+        notice(`This raid is ${TIER_NAMES[locked]}. Walk to the ${TIER_NAMES[locked]} gate.`);
+        return;
+      }
       inFlight = true;
       void sendInstructions(er, signer, [
         enterGate({
@@ -917,7 +932,7 @@ function useMatchLink(onFeedDrop: () => void): Link {
   return link;
 }
 
-// The gate self-check that used to live here is gone with the copy it guarded: `onGate`
-// and the four `GATE_*` bounds are now emitted into `packages/client/src/map.ts` by
-// `tools/gen_map.py`, out of the same `G` marks in `assets/map/arena.json` that produce
-// `map::GATE_MIN_X`..`GATE_MAX_Y` on the chain. One fact, one place, nothing to diff.
+// The gate self-check that used to live here is gone with the copy it guarded: `gateAt`
+// and the three `GATES` blocks are emitted into `packages/client/src/map.ts` by
+// `tools/gen_map.py`, out of the same `G` blocks in `assets/map/arena.json` that produce
+// `map::GATES` on the chain. One fact, one place, nothing to diff.

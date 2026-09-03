@@ -38,6 +38,11 @@ MAP_JSON = ROOT / "assets" / "map" / "arena.json"
 PLAYER_RS = ROOT / "programs" / "heartrot" / "src" / "handlers" / "player.rs"
 TICK_RS = ROOT / "programs" / "heartrot" / "src" / "handlers" / "tick.rs"
 STATE_RS = ROOT / "programs" / "heartrot" / "src" / "state.rs"
+# The browser's copy of the gate blocks, written by gen_rooms.py from the same
+# `arena.json`. Cross-checked below, never read as an input: the two generators derive
+# the blocks from the painting and the grid respectively, and the gate mark the lobby
+# draws over a doorway must be the block `enter_gate` admits through it.
+ROOMS_TS = ROOT / "app" / "src" / "render" / "rooms.gen.ts"
 OUT_RS = ROOT / "programs" / "heartrot" / "src" / "map.rs"
 OUT_TS = ROOT / "packages" / "client" / "src" / "map.ts"
 
@@ -73,13 +78,14 @@ def die(msg: str) -> None:
 # `tick::entrance_for` -- a rewrite of either function's shape (not its constants)
 # is the one drift this tool cannot see.
 #
-# The four `GATE_*` corners are NOT read back any more. They used to be hand literals
-# in `player.rs` that this tool parsed out of Rust source and then validated against
-# the drawn grid -- one fact stored twice, with the tool agreeing with whichever copy
-# it happened to read. They are now *drawn*, as the `G` block in `arena.json`, and
-# emitted into `map.rs`/`map.ts` beside `BOSS_SPAWN` and `PIT_TOP`/`PIT_BOT`. That is
-# what lets `map.rs` carry a compile-time assertion that `BOSS_SPAWN` is outside the
-# gate box: both come out of the same grid.
+# The gate corners are NOT read back. They used to be four hand literals in `player.rs`
+# that this tool parsed out of Rust source and then validated against the drawn grid --
+# one fact stored twice, with the tool agreeing with whichever copy it happened to read.
+# They are *drawn*, as the three `G` blocks in `arena.json` (left to right = tier 0..2,
+# the count read back from `state::N_TIERS`), and emitted into `map.rs`/`map.ts` as
+# `GATES` beside `BOSS_SPAWN` and `PIT_TOP`/`PIT_BOT`. That is what lets `map.rs` carry a
+# compile-time assertion that `BOSS_SPAWN` is outside every gate: both come out of the
+# same grid.
 #
 # `TILE`, `MAP_TILES` and `ARENA_SIZE` are deliberately NOT read from the Rust and
 # are not cross-checked against it either: the Rust no longer owns them. This tool
@@ -116,6 +122,9 @@ def read_rust_geometry(tile: int, map_tiles: int) -> dict[str, object]:
         "MAP_TILES": map_tiles,
         "ARENA_SIZE": arena_size,
         "MAX_SEATS": rust_const(STATE_RS, "MAX_SEATS", {}),
+        # One gate per difficulty tier, and the tier tables are `[_; N_TIERS]`: a fourth
+        # `G` block would index past every one of them.
+        "N_TIERS": rust_const(STATE_RS, "N_TIERS", {}),
         "LOBBY_ENTRANCE": rust_const(PLAYER_RS, "LOBBY_ENTRANCE", env),
         "LOBBY_SPACING": rust_const(PLAYER_RS, "LOBBY_SPACING", env),
         "ENTRANCE_SPACING": rust_const(TICK_RS, "ENTRANCE_SPACING", env),
@@ -248,8 +257,8 @@ def entrance_world(grid: list[str], tile: int) -> list[tuple[int, int]]:
     """`entrance_points` in world units: the tile's top-left corner.
 
     That is the convention every position in the program is written in --
-    `player::LOBBY_ENTRANCE` is `(28 * TILE, 52 * TILE)`, `player::GATE_MIN_X` is
-    `30 * TILE`, and `player::is_wall` recovers the tile with `pos / TILE`. Emitting
+    `player::LOBBY_ENTRANCE` is `(28 * TILE, 52 * TILE)`, a gate's `min_x` is its first
+    column `* TILE`, and `player::is_wall` recovers the tile with `pos / TILE`. Emitting
     tile centres instead would be a half-tile drift nothing downstream could see.
     """
     return [(x * tile, y * tile) for x, y in entrance_points(grid)]
@@ -301,33 +310,59 @@ def pit_box(grid: list[str], tile: int) -> dict[str, int]:
             "PIT_ROWS": (rows[0], rows[-1])}
 
 
-def gate_box(grid: list[str], tile: int) -> dict[str, int]:
-    """The four `GATE_*` corners: the block `enter_gate` demands you stand in.
+def gate_boxes(grid: list[str], tile: int, n_tiers: int) -> list[dict[str, object]]:
+    """The gate blocks `enter_gate` demands you stand in, left to right -- one per tier.
 
-    Drawn as the `G` block, which must be a solid rectangle -- `on_gate` is two range
-    tests, so a stepped or hollow gate would claim tiles nobody drew.
+    Drawn as separate `G` blocks: the 4-connected components of the `G` tiles, ordered by
+    their left edge, so the block order IS the tier order (0 EASY, 1 MEDIUM, 2 HARD) and
+    nothing restates it. Each must be a solid rectangle -- `gate_at` is two range tests per
+    block, so a stepped or hollow gate would claim tiles nobody drew -- and the blocks may
+    not share a column, or "left to right" would name no order at all.
 
-    These used to be hand literals in `player.rs` that this tool parsed back out of
-    Rust source. Drawing them instead is what lets `map.rs` prove `BOSS_SPAWN` is not
-    inside the gate at compile time.
+    Exactly `n_tiers` of them, read back from `state::N_TIERS`: every balance table on the
+    chain is `[_; N_TIERS]`, indexed by the block the raid's first raider stood in.
     """
-    pts = marks(grid, GATE)
+    pts = set(marks(grid, GATE))
     if not pts:
         die(f"no `{GATE}` gate tiles drawn -- no player could ever enter_gate")
-    xs = [x for x, _ in pts]
-    ys = [y for _, y in pts]
-    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-    if len(pts) != (x1 - x0 + 1) * (y1 - y0 + 1):
-        die(f"the `{GATE}` block is not a solid rectangle -- its bounding box is "
-            f"tiles ({x0},{y0})..({x1},{y1}) but only {len(pts)} tiles are drawn, and "
-            "`on_gate` is a pair of range tests that would claim the rest")
-    return {"GATE_MIN_X": x0 * tile, "GATE_MAX_X": (x1 + 1) * tile - 1,
-            "GATE_MIN_Y": y0 * tile, "GATE_MAX_Y": (y1 + 1) * tile - 1,
-            "GATE_TILES": (x0, y0, x1, y1)}
+    blocks: list[set[tuple[int, int]]] = []
+    unseen = set(pts)
+    while unseen:
+        start = min(unseen)
+        block = {start}
+        q = deque([start])
+        while q:
+            x, y = q.popleft()
+            for nb in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if nb in unseen and nb not in block:
+                    block.add(nb)
+                    q.append(nb)
+        unseen -= block
+        blocks.append(block)
+    if len(blocks) != n_tiers:
+        die(f"{len(blocks)} separate `{GATE}` blocks drawn, `state::N_TIERS` is {n_tiers} -- "
+            "one gate per difficulty tier, with wall between them")
+
+    out = []
+    for block in sorted(blocks, key=lambda b: min(x for x, _ in b)):
+        xs = [x for x, _ in block]
+        ys = [y for _, y in block]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        if len(block) != (x1 - x0 + 1) * (y1 - y0 + 1):
+            die(f"a `{GATE}` block is not a solid rectangle -- its bounding box is tiles "
+                f"({x0},{y0})..({x1},{y1}) but only {len(block)} tiles are drawn, and "
+                "`gate_at` is a pair of range tests that would claim the rest")
+        if out and x0 <= out[-1]["GATE_TILES"][2]:
+            die(f"`{GATE}` blocks overlap in x at column {x0} -- the tier is the block's "
+                "position left to right, so two blocks sharing a column have no order")
+        out.append({"min_x": x0 * tile, "max_x": (x1 + 1) * tile - 1,
+                    "min_y": y0 * tile, "max_y": (y1 + 1) * tile - 1,
+                    "GATE_TILES": (x0, y0, x1, y1)})
+    return out
 
 
-def lobby_band(grid: list[str], tile: int, gate: dict[str, int]) -> dict[str, int]:
-    """`LOBBY_TOP` / `LOBBY_BOT`: the floor rows below the gate -- the waiting room.
+def lobby_band(grid: list[str], tile: int, gates: list[dict[str, object]]) -> dict[str, int]:
+    """`LOBBY_TOP` / `LOBBY_BOT`: the floor rows below the gates -- the waiting room.
 
     Emitted for the same reason `PIT_TOP`/`PIT_BOT` are: the renderer frames on it.
     `docs/architecture/17-fullscreen-spec.md` 1.1 builds `VIEW_LOBBY` as this band plus
@@ -339,12 +374,37 @@ def lobby_band(grid: list[str], tile: int, gate: dict[str, int]) -> dict[str, in
     (`player::zone_box`) and is wider than this: it includes the gate rows and the
     border ring. This is only where the floor is drawn.
     """
-    rows = [y for y in range(gate["GATE_TILES"][3] + 1, len(grid))
+    last_gate_row = max(g["GATE_TILES"][3] for g in gates)
+    rows = [y for y in range(last_gate_row + 1, len(grid))
             if any(c != WALL for c in grid[y])]
     if not rows:
-        die("no floor row below the gate -- there is no lobby for players to wait in")
+        die("no floor row below the gates -- there is no lobby for players to wait in")
     return {"LOBBY_TOP": rows[0] * tile, "LOBBY_BOT": (rows[-1] + 1) * tile - 1,
             "LOBBY_ROWS": (rows[0], rows[-1])}
+
+
+def gate_rows(gates: list[dict[str, object]]) -> set[int]:
+    """Every tile row a gate block occupies."""
+    return {y for g in gates for y in range(g["GATE_TILES"][1], g["GATE_TILES"][3] + 1)}
+
+
+def rooms_gates(tile: int) -> list[tuple[int, int, int, int]] | None:
+    """`LOBBY_GATES` out of rooms.gen.ts as `(x0, y0, x1, y1)` tiles, by tier; `None` when
+    the file does not exist yet (a fresh clone runs gen_rooms.py first, and gen_rooms.py
+    itself is what writes it)."""
+    if not ROOMS_TS.exists():
+        return None
+    m = re.search(r"export const LOBBY_GATES[^=]*=\s*\[(.*?)\];", ROOMS_TS.read_text(), re.S)
+    if m is None:
+        die(f"{ROOMS_TS.relative_to(ROOT)} no longer exports `LOBBY_GATES` -- re-run "
+            "tools/gen_rooms.py")
+    rows = re.findall(r"\{\s*x:\s*(\d+),\s*y:\s*(\d+),\s*w:\s*(\d+),\s*h:\s*(\d+),\s*tier:\s*(\d+)\s*\}",
+                      m.group(1))
+    out = [(int(x) // tile, int(y) // tile, (int(x) + int(w)) // tile - 1, (int(y) + int(h)) // tile - 1)
+           for x, y, w, h, tier in sorted(rows, key=lambda r: int(r[4]))]
+    if [int(t) for *_, t in sorted(rows, key=lambda r: int(r[4]))] != list(range(len(out))):
+        die(f"{ROOMS_TS.relative_to(ROOT)} `LOBBY_GATES` tiers are not 0..n in order")
+    return out
 
 
 def validate(grid: list[str], g: dict[str, object]) -> None:
@@ -419,16 +479,31 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
         if t not in seen:
             die(f"{label} lands on tile {t}, which cannot reach the heart chamber")
 
-    # The gate block is where `enter_gate` demands the player be standing. Walling
-    # any of it off is a lobby no one can leave.
-    gate = gate_box(grid, tile)
-    gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
-    for ty in range(gy0, gy1 + 1):
-        for tx in range(gx0, gx1 + 1):
-            if solid(tx, ty):
-                die(f"gate tile ({tx}, {ty}) is wall -- no player could ever enter_gate")
-            if (tx, ty) not in seen:
-                die(f"gate tile ({tx}, {ty}) cannot reach the heart chamber {heart}")
+    # The gate blocks are where `enter_gate` demands the player be standing, one per
+    # tier. Walling any of one off is a difficulty no one can pick. The gate is a PORTAL:
+    # `enter_gate` teleports the seat to `tick::entrance_for`, so a block owes the map
+    # nothing about where it sits relative to the pit -- only that it is floor, that the
+    # lobby can walk to it (checked below, inside the lobby box), and that the heart is
+    # not on it.
+    gates = gate_boxes(grid, tile, g["N_TIERS"])
+    for tier, gate in enumerate(gates):
+        gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
+        for ty in range(gy0, gy1 + 1):
+            for tx in range(gx0, gx1 + 1):
+                if solid(tx, ty):
+                    die(f"gate {tier} tile ({tx}, {ty}) is wall -- no player could ever "
+                        "enter_gate through it")
+                if (tx, ty) not in seen:
+                    die(f"gate {tier} tile ({tx}, {ty}) cannot reach the heart chamber {heart}")
+
+    # The browser draws its gate marks and cuts its portcullises from `LOBBY_GATES`, which
+    # gen_rooms.py measured off the painting; the chain admits `GATES`, which this tool
+    # reads off the grid gen_rooms.py wrote. Same source, two derivations: a mark over a
+    # doorway the chain calls another tier sends the raid to the wrong boss.
+    drawn = rooms_gates(tile)
+    if drawn is not None and drawn != [gate["GATE_TILES"] for gate in gates]:
+        die(f"the `{GATE}` blocks {[gate['GATE_TILES'] for gate in gates]} are not "
+            f"{ROOMS_TS.relative_to(ROOT)}'s LOBBY_GATES {drawn} -- re-run tools/gen_rooms.py")
 
     # `PIT_TOP`/`PIT_BOT` is a *second* kind of barrier, alongside the wall bitboard,
     # and the two can disagree without either one erroring: a player clamped into open
@@ -468,25 +543,28 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
                 "raider on its top corner cannot fire upward at all. The boss's air must "
                 "reach down to the row above the dais's widest row (tools/gen_rooms.py)")
 
-    # The gate sits below the pit and its columns walk straight onto the dais. If they
-    # did not, a player who flipped zone on the gate would be outside PIT_TOP..=PIT_BOT
-    # or off the dais, with no legal destination: a hard freeze with nothing logged.
-    if gy0 != pbot + 1:
-        die(f"the gate starts at row {gy0} but the pit ends at row {pbot} -- the gate "
-            "must sit immediately below the pit or stepping through it is a teleport")
-    for tx in range(gx0, gx1 + 1):
-        if grid[pbot][tx] not in DAIS_CHARS:
-            die(f"gate column {tx} does not run onto the dais at the pit's last row {pbot} "
-                "-- a player who enters the gate here can never step into the pit")
+    # There is deliberately no "the gate sits immediately below the pit and its columns
+    # run onto the dais" rule any more. It guarded a freeze that cannot happen: `enter_gate`
+    # does not step a seat through the gate, it writes `tick::entrance_for(seat)` -- a
+    # dais tile inside the arena box, checked below -- so the gate rows can sit anywhere
+    # inside the lobby box (`gy0 > pbot`, the seam test that follows). Three gates cannot
+    # all sit under the one stair anyway.
+    for tier, gate in enumerate(gates):
+        if gate["GATE_TILES"][1] <= pbot:
+            die(f"gate {tier} starts on row {gate['GATE_TILES'][1]}, inside the pit rows "
+                f"{ptop}..{pbot} -- a lobby seat standing on it would be outside the lobby "
+                "box (PIT_BOT + 1 ..= MAP_MAX_XY) and refused every step")
 
     # The boss stands in the pit band (it is the anchor every hitbox is measured from,
-    # and the raid has to be able to reach it) and never on the gate, which would let a
+    # and the raid has to be able to reach it) and never on a gate, which would let a
     # player flip zone by standing inside the creature.
     hx, hy = heart
     if not (ptop <= hy <= pbot):
         die(f"the `{HEART}` heart is on row {hy}, outside the pit rows {ptop}..{pbot}")
-    if gx0 <= hx <= gx1 and gy0 <= hy <= gy1:
-        die(f"the `{HEART}` heart tile {heart} is inside the gate block")
+    for tier, gate in enumerate(gates):
+        gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
+        if gx0 <= hx <= gx1 and gy0 <= hy <= gy1:
+            die(f"the `{HEART}` heart tile {heart} is inside gate block {tier}")
 
     # Every respawn point lands on the dais, because a respawn is a raider and a raider
     # may only stand on the dais. The `E` marks themselves are not the interesting case --
@@ -516,7 +594,14 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
     # perimeter, the chamfer, the divider and the doorway each leave exactly one.
     # Perimeter architecture, banners, torches, chains, medallions and floor
     # markings are paint on tiles this grid already declares -- never a wall tile.
+    #
+    # The gate rows are the one exception, by construction: three doorways in one wall
+    # are three runs with wall between, and `gate_boxes` above already holds each of
+    # them to a solid rectangle -- a stray floor tile on a gate row is a fourth block
+    # there, not a cover tile here.
     for y, row in enumerate(grid):
+        if y in gate_rows(gates):
+            continue
         runs = sum(1 for x, c in enumerate(row)
                    if c != WALL and (x == 0 or row[x - 1] == WALL))
         if runs > 1:
@@ -541,15 +626,18 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
         die(f"the `{HEART}` heart is at world x {hx * tile}, not the centre line "
             f"{n * tile // 2} -- the boss must stand top *centre*")
 
-    # The gate is reachable from every lobby spawn WITHOUT leaving the lobby's zone
-    # box (`player::zone_box`, `PIT_BOT + 1 ..= MAP_MAX_XY`). The whole-map flood
+    # Every gate tile is reachable from every lobby spawn WITHOUT leaving the lobby's
+    # zone box (`player::zone_box`, `PIT_BOT + 1 ..= MAP_MAX_XY`). The whole-map flood
     # fill above cannot answer this: it walks through the pit, which a `ZONE_LOBBY`
-    # seat may not enter. A lobby that cannot reach its own gate is a raid nobody
-    # can ever start.
-    lobby_rows = range(gy0, n)
+    # seat may not enter. A lobby that cannot reach one of its gates is a difficulty
+    # nobody can ever pick. One flood from seat 0's spawn: inside the box the step
+    # relation is symmetric, so "seat 0 reaches every spawn and every gate tile" is
+    # "every spawn reaches every gate tile".
+    lobby_rows = range(pbot + 1, n)
     lobby_open = {(x, y) for y in lobby_rows for x in range(n) if not solid(x, y)}
-    lobby_seen = {(gx0, gy0)}
-    q = deque([(gx0, gy0)])
+    lx0, ly0 = lobby_spawn(0, g)
+    lobby_seen = {(lx0 // tile, ly0 // tile)}
+    q = deque(lobby_seen)
     while q:
         x, y = q.popleft()
         for nb in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
@@ -560,8 +648,15 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
         lx, ly = lobby_spawn(seat, g)
         if (lx // tile, ly // tile) not in lobby_seen:
             die(f"lobby_spawn({seat}) at tile ({lx // tile}, {ly // tile}) cannot walk "
-                "to the gate without leaving the lobby box -- that seat can never "
+                "to the gates without leaving the lobby box -- that seat can never "
                 "enter the raid")
+    for tier, gate in enumerate(gates):
+        gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
+        for ty in range(gy0, gy1 + 1):
+            for tx in range(gx0, gx1 + 1):
+                if (tx, ty) not in lobby_seen:
+                    die(f"gate {tier} tile ({tx}, {ty}) cannot be walked to from the lobby "
+                        "spawns without leaving the lobby box -- that tier can never be picked")
 
     # No position in either zone with zero legal moves. `move_player` refuses a step
     # unless `!is_wall(nx, ny) && may_move_to(zone, y, ny) && may_stand_step(..)`, so the
@@ -630,11 +725,17 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
     (htx, hty) = heart_point(grid)
     (hx, hy) = heart_world(grid, g["TILE"])
     pit = pit_box(grid, g["TILE"])
-    gate = gate_box(grid, g["TILE"])
+    gates = gate_boxes(grid, g["TILE"], g["N_TIERS"])
     spawn = lobby_spawn_extent(g)
-    lobby = lobby_band(grid, g["TILE"], gate)
+    lobby = lobby_band(grid, g["TILE"], gates)
     ptop, pbot = pit["PIT_ROWS"]
-    gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
+    first_gate_row = min(gate_rows(gates))
+    gate_rows_span = f"{first_gate_row}..{max(gate_rows(gates))}"
+    gate_body = "\n".join(
+        f"    // tier {tier}: tiles ({x0}, {y0})..({x1}, {y1})\n"
+        f"    Gate {{ min_x: {gt['min_x']}, max_x: {gt['max_x']}, min_y: {gt['min_y']}, max_y: {gt['max_y']} }},"
+        for tier, gt in enumerate(gates)
+        for (x0, y0, x1, y1) in [gt["GATE_TILES"]])
     dais_body = "\n".join(
         f"    0x{sum(1 << x for x, c in enumerate(row) if c in DAIS_CHARS):016x}, // y={y:<2}"
         for y, row in enumerate(grid))
@@ -644,7 +745,7 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
     # Both emitted rather than written as `1..PIT_TOP` and `1..MAP_TILES - 1`: the first
     # stopped being true when the dais grew past the boss's feet, the second the moment
     # the side perimeter went to two tiles.
-    air_rows = [y for y in range(1, gy0) if FLOOR in grid[y]]
+    air_rows = [y for y in range(1, first_gate_row) if FLOOR in grid[y]]
     if air_rows != list(range(air_rows[0], air_rows[-1] + 1)):
         die(f"the boss's air is not one band of rows: {air_rows}")
     air_y0, air_y1 = air_rows[0], air_rows[-1]
@@ -686,15 +787,16 @@ pub const TILE: i16 = {g["TILE"]};
 ///
 /// Layout, top to bottom. Open floor for the boss's air, with the whole painted dais
 /// laid over its lower rows -- the raid stands on the dais ([`DAIS`]) and the creature
-/// stands on it too, in the middle of the band -- then the stairs, the gate block under
-/// them, then the painted lobby floor. The whole vertical order is the fight: you walk up
-/// the lobby, through the gate, up the stairs onto the dais, and walk the circle around
-/// the creature.
+/// stands on it too, in the middle of the band -- then the three gate blocks in the wall
+/// under it ([`GATES`], one per difficulty tier), then the painted lobby floor. The whole
+/// vertical order is the fight: you walk up the lobby, pick a gate, and the gate puts you
+/// on the dais to walk the circle around the creature.
 ///
 /// Both rooms are open floor with zero interior obstacles. `tools/gen_map.py` holds
 /// them that way: at most one contiguous run of floor per row, so a free-standing
-/// block anywhere splits a row and is refused. Perimeter architecture, banners,
-/// torches, chains and floor markings are paint, never wall tiles.
+/// block anywhere splits a row and is refused -- the gate rows excepted, whose three
+/// runs are the three doorways, each held to a solid rectangle. Perimeter architecture,
+/// banners, torches, chains and floor markings are paint, never wall tiles.
 ///
 /// The rows above the dais's widest row are floor wherever they are not dais, and that
 /// is load-bearing rather than lazy drawing -- see [`DAIS`] and [`PIT_TOP`].
@@ -724,7 +826,7 @@ pub const DAIS: [u64; MAP_TILES] = [
 ];
 
 /// The four `E` marks on the drawn map, in world units at the tile's top-left corner --
-/// the same convention `handlers::player::LOBBY_ENTRANCE` and `GATE_MIN_X` are written
+/// the same convention `handlers::player::LOBBY_ENTRANCE` and [`GATES`] are written
 /// in, and the one `is_wall` inverts with `pos / TILE`.
 ///
 /// Row-major scan order (top to bottom, then left to right), *not* compass order.
@@ -781,17 +883,54 @@ pub const BOSS_SPAWN: (i16, i16) = ({hx}, {hy}); // tile ({htx}, {hty})
 pub const PIT_TOP: i16 = {pit["PIT_TOP"]}; // tile row {ptop}
 pub const PIT_BOT: i16 = {pit["PIT_BOT"]}; // tile row {pbot}, last unit
 
-/// The gate block `enter_gate` demands the player be standing in, compiled from the `G`
-/// rectangle -- tiles ({gx0}, {gy0})..({gx1}, {gy1}).
+/// One gate block, in world units, both edges inclusive -- the form `handlers::player`
+/// compares a seat's `(x, y)` against.
+#[derive(Clone, Copy)]
+pub struct Gate {{
+    pub min_x: i16,
+    pub max_x: i16,
+    pub min_y: i16,
+    pub max_y: i16,
+}}
+
+impl Gate {{
+    /// Is this world point inside the block? Two range tests, which is why the generator
+    /// holds every drawn block to a solid rectangle.
+    pub const fn contains(&self, x: i16, y: i16) -> bool {{
+        x >= self.min_x && x <= self.max_x && y >= self.min_y && y <= self.max_y
+    }}
+}}
+
+/// The gate blocks `enter_gate` demands the player be standing in, compiled from the
+/// separate `G` blocks on rows {gate_rows_span} -- left to right, so the index IS the
+/// difficulty tier (`state::TIER_EASY..=TIER_HARD`) and `state::N_TIERS` is the length.
+///
+/// The gate is a portal, not a corridor: `enter_gate` writes `tick::entrance_for(seat)`,
+/// so a block owes the pit no adjacency and the three can sit anywhere in the lobby's
+/// top wall. What the generator does prove is that each is a solid rectangle of floor
+/// inside the lobby box, reachable from every lobby spawn without leaving it, that the
+/// three do not share a column, and that the heart stands on none of them -- the last
+/// re-proved below on every `cargo check`, against the table that shipped.
 ///
 /// These were four hand literals in `handlers::player` that `gen_map.py` parsed back out
 /// of Rust source to validate against the drawn grid: one fact stored twice, with the
-/// tool agreeing with whichever copy it read. Drawing them is what lets the assertion
-/// below prove `BOSS_SPAWN` is outside the gate on every `cargo check`.
-pub const GATE_MIN_X: i16 = {gate["GATE_MIN_X"]};
-pub const GATE_MAX_X: i16 = {gate["GATE_MAX_X"]};
-pub const GATE_MIN_Y: i16 = {gate["GATE_MIN_Y"]};
-pub const GATE_MAX_Y: i16 = {gate["GATE_MAX_Y"]};
+/// tool agreeing with whichever copy it read.
+pub const GATES: [Gate; {len(gates)}] = [
+{gate_body}
+];
+
+/// Which gate this world point stands in, as its tier, or `None` off every gate. The
+/// predicate `enter_gate` runs; `packages/client/src/map.ts` mirrors it as `gateAt`.
+pub const fn gate_at(x: i16, y: i16) -> Option<u8> {{
+    let mut tier = 0;
+    while tier < GATES.len() {{
+        if GATES[tier].contains(x, y) {{
+            return Some(tier as u8);
+        }}
+        tier += 1;
+    }}
+    None
+}}
 
 /// The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
 ///
@@ -874,7 +1013,6 @@ const _: () = {{
 
     // The pit band is non-empty and sits inside the map.
     assert!(PIT_TOP >= 0 && PIT_TOP < PIT_BOT && PIT_BOT < (MAP_TILES as i16) * TILE);
-    assert!(GATE_MIN_X <= GATE_MAX_X && GATE_MIN_Y <= GATE_MAX_Y);
 
     // The boss is reachable by a raider: its anchor is inside the band they are clamped
     // to and on the dais they walk. A boss above `PIT_TOP` would be a target no one can
@@ -889,23 +1027,30 @@ const _: () = {{
         "map::BOSS_SPAWN is off the dais -- the raid can never walk up to its own boss",
     );
 
-    // And it is not standing on the gate, which would let a player flip zone by walking
-    // into the creature. This is the assertion the four `GATE_*` literals in
-    // `handlers::player` could never carry: it needs both facts to come out of one grid.
-    assert!(
-        !(bx >= GATE_MIN_X && bx <= GATE_MAX_X && by >= GATE_MIN_Y && by <= GATE_MAX_Y),
-        "map::BOSS_SPAWN is inside the gate block",
-    );
+    // The gates: one per tier, each a real block, in tier order left to right, every one
+    // inside the lobby box -- a lobby seat standing on a gate row inside the pit rows
+    // would be outside `PIT_BOT + 1 ..= MAP_MAX_XY` and refused every step -- and above
+    // the painted lobby floor the browser frames on. And the boss stands on none of
+    // them, which would let a player flip zone by walking into the creature: the
+    // assertion the four `GATE_*` literals in `handlers::player` could never carry, since
+    // it needs both facts to come out of one grid.
+    assert!(GATES.len() == crate::state::N_TIERS, "one gate per difficulty tier");
+    let mut tier = 0;
+    while tier < GATES.len() {{
+        let gate = GATES[tier];
+        assert!(gate.min_x <= gate.max_x && gate.min_y <= gate.max_y);
+        assert!(
+            gate.min_y > PIT_BOT && gate.max_y < LOBBY_TOP,
+            "a gate is not between the pit and the lobby floor -- re-run tools/gen_map.py",
+        );
+        assert!(tier == 0 || GATES[tier - 1].max_x < gate.min_x, "gates are tiers, left to right");
+        assert!(!gate.contains(bx, by), "map::BOSS_SPAWN is inside a gate block");
+        tier += 1;
+    }}
+    assert!(gate_at(bx, by).is_none());
 
-    // The gate is immediately below the pit, so stepping out of it lands in the band.
-    assert!(
-        GATE_MIN_Y == PIT_BOT + 1,
-        "the gate does not adjoin the pit -- a player who flips zone on it would have \\
-         no legal destination inside PIT_TOP..=PIT_BOT and would freeze",
-    );
-
-    // The waiting room the browser frames on is the floor immediately under the gate,
-    // and every seat it fans out stands on that floor.
+    // The waiting room the browser frames on is the floor under the gates, and every
+    // seat it fans out stands on that floor.
     //
     // These four constants exist only for the renderer -- `VIEW_LOBBY` is
     // `LOBBY_TOP..=LOBBY_BOT` plus masonry, and `LOBBY_SPAWN_MIN_X..MAX_X` is what has to
@@ -914,10 +1059,8 @@ const _: () = {{
     // at the top forbids and someone will do anyway, shows up as a knight standing
     // outside its own frame with no error anywhere.
     assert!(
-        LOBBY_TOP == GATE_MAX_Y + 1
-            && LOBBY_TOP < LOBBY_BOT
-            && LOBBY_BOT < (MAP_TILES as i16) * TILE,
-        "the lobby floor band does not start where the gate ends -- re-run tools/gen_map.py",
+        LOBBY_TOP < LOBBY_BOT && LOBBY_BOT < (MAP_TILES as i16) * TILE,
+        "the lobby floor band is empty or off the map -- re-run tools/gen_map.py",
     );
     assert!(
         LOBBY_SPAWN_MIN_X <= LOBBY_SPAWN_MAX_X
@@ -1051,22 +1194,26 @@ mod tests {{
         }}
     }}
 
-    /// The gate block is walkable end to end, and its columns step straight onto the
-    /// dais. Walling any of it is a lobby nobody can leave; a gate that does not adjoin
-    /// the dais is a player who flips zone and then cannot move.
+    /// Every gate block is walkable end to end, with wall on both sides of it on every one
+    /// of its rows, and `gate_at` answers its own tier on every unit of it and nothing on
+    /// the wall beside it. Walling any of a block is a tier nobody can pick; a block that
+    /// runs into its neighbour is two tiers `gate_at` cannot tell apart.
     #[test]
-    fn the_gate_is_floor_and_walks_onto_the_dais() {{
-        for ty in (GATE_MIN_Y / TILE)..=(GATE_MAX_Y / TILE) {{
-            for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {{
-                assert!(!solid(tx as usize, ty as usize), "gate tile ({{tx}}, {{ty}}) is wall");
+    fn every_gate_is_a_walled_block_that_names_its_tier() {{
+        for (tier, gate) in GATES.iter().enumerate() {{
+            for ty in (gate.min_y / TILE)..=(gate.max_y / TILE) {{
+                for tx in (gate.min_x / TILE)..=(gate.max_x / TILE) {{
+                    assert!(!solid(tx as usize, ty as usize), "gate {{tier}} tile ({{tx}}, {{ty}}) is wall");
+                    assert_eq!(gate_at(tx * TILE, ty * TILE), Some(tier as u8));
+                    assert_eq!(gate_at(tx * TILE + TILE - 1, ty * TILE + TILE - 1), Some(tier as u8));
+                }}
+                assert!(solid((gate.min_x / TILE - 1) as usize, ty as usize), "gate {{tier}} is open to the west");
+                assert!(solid((gate.max_x / TILE + 1) as usize, ty as usize), "gate {{tier}} is open to the east");
+                assert_eq!(gate_at(gate.min_x - 1, ty * TILE), None);
+                assert_eq!(gate_at(gate.max_x + 1, ty * TILE), None);
             }}
-        }}
-        let last_pit_row = (PIT_BOT / TILE) as usize;
-        for tx in (GATE_MIN_X / TILE)..=(GATE_MAX_X / TILE) {{
-            assert!(
-                dais(tx as usize, last_pit_row),
-                "gate column {{tx}} does not run onto the dais at the pit's last row",
-            );
+            assert_eq!(gate_at(gate.min_x, gate.min_y - 1), None);
+            assert_eq!(gate_at(gate.min_x, gate.max_y + 1), None);
         }}
     }}
 
@@ -1107,11 +1254,16 @@ def emit_ts(grid: list[str], g: dict[str, object]) -> str:
     (htx, hty) = heart_point(grid)
     (hx, hy) = heart_world(grid, g["TILE"])
     pit = pit_box(grid, g["TILE"])
-    gate = gate_box(grid, g["TILE"])
+    gates = gate_boxes(grid, g["TILE"], g["N_TIERS"])
     spawn = lobby_spawn_extent(g)
-    lobby = lobby_band(grid, g["TILE"], gate)
+    lobby = lobby_band(grid, g["TILE"], gates)
     ptop, pbot = pit["PIT_ROWS"]
-    gx0, gy0, gx1, gy1 = gate["GATE_TILES"]
+    gate_rows_span = f"{min(gate_rows(gates))}..{max(gate_rows(gates))}"
+    gate_body = "\n".join(
+        f"  // tier {tier}: tiles ({x0}, {y0})..({x1}, {y1})\n"
+        f"  {{ minX: {gt['min_x']}, maxX: {gt['max_x']}, minY: {gt['min_y']}, maxY: {gt['max_y']} }},"
+        for tier, gt in enumerate(gates)
+        for (x0, y0, x1, y1) in [gt["GATE_TILES"]])
     return f'''/**
  * Arena wall map -- the browser's copy of the table the chain raycasts against.
  *
@@ -1179,19 +1331,28 @@ export const BOSS_SPAWN: readonly [number, number] = [{hx}, {hy}]; // tile ({htx
 export const PIT_TOP = {pit["PIT_TOP"]};
 export const PIT_BOT = {pit["PIT_BOT"]};
 
+/** One gate block in arena-space units, both edges inclusive -- `map::Gate`. */
+export interface Gate {{
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
+}}
+
 /**
- * The gate block `enter_gate` demands the player be standing in -- the drawn `G`
- * rectangle, tiles ({gx0}, {gy0})..({gx1}, {gy1}), in arena-space units.
+ * The gate blocks `enter_gate` demands the player be standing in -- the separate drawn `G`
+ * blocks on rows {gate_rows_span}, left to right, so the index IS the difficulty tier
+ * (`TIER_EASY..=TIER_HARD` in layout.ts) and the length is `N_TIERS`. The exact numbers
+ * `map::GATES` holds on the chain, out of the same grid; `rooms.gen.ts`'s `LOBBY_GATES`
+ * are the same blocks as the painting measured them, cross-checked by `gen_map.py`.
  *
- * The lobby's gate glow keys off the *predicted* local position against this box, so it
- * lights the instant you step on rather than a round trip later; the `enter_gate`
- * transaction still goes through the authoritative poll. Same four numbers as
- * `map::GATE_MIN_X`..`GATE_MAX_Y`, out of the same grid.
+ * The lobby's gate glow keys off the *predicted* local position against these blocks, so
+ * it lights the instant you step on rather than a round trip later; the `enter_gate`
+ * transaction still goes through the authoritative poll.
  */
-export const GATE_MIN_X = {gate["GATE_MIN_X"]};
-export const GATE_MAX_X = {gate["GATE_MAX_X"]};
-export const GATE_MIN_Y = {gate["GATE_MIN_Y"]};
-export const GATE_MAX_Y = {gate["GATE_MAX_Y"]};
+export const GATES: readonly Gate[] = [
+{gate_body}
+];
 
 /**
  * The x span `handlers::player::lobby_spawn` fans the seats across, and their shared row.
@@ -1218,9 +1379,21 @@ export const LOBBY_SPAWN_Y = {spawn["LOBBY_SPAWN_Y"]};
 export const LOBBY_TOP = {lobby["LOBBY_TOP"]};
 export const LOBBY_BOT = {lobby["LOBBY_BOT"]};
 
-/** Is this arena-space point inside the gate block? `handlers::player::on_gate`. */
+/**
+ * Which gate this arena-space point stands in, as its tier, or `null` off every gate --
+ * `map::gate_at`, the predicate `enter_gate` runs, byte for byte.
+ */
+export function gateAt(x: number, y: number): number | null {{
+  for (let tier = 0; tier < GATES.length; tier++) {{
+    const g = GATES[tier]!;
+    if (x >= g.minX && x <= g.maxX && y >= g.minY && y <= g.maxY) return tier;
+  }}
+  return null;
+}}
+
+/** Is this arena-space point inside any gate block? {{@link gateAt}} for callers that light a floor. */
 export function onGate(x: number, y: number): boolean {{
-  return x >= GATE_MIN_X && x <= GATE_MAX_X && y >= GATE_MIN_Y && y <= GATE_MAX_Y;
+  return gateAt(x, y) !== null;
 }}
 
 /** Is this tile solid? Off-map is solid, so a caller that skips the clamp fails closed. */
@@ -1283,8 +1456,11 @@ def self_test(grid: list[str], g: dict[str, object]) -> None:
     # is caught by the spawn sweep rather than by the entrance check above it.
     rx, ry = entrance_for(0, entrance_world(grid, g["TILE"]), g)
     (ex0, ey0) = entrance_points(grid)[0]
-    (gx0, gy0, gx1, gy1) = gate_box(grid, g["TILE"])["GATE_TILES"]
+    gates = gate_boxes(grid, g["TILE"], g["N_TIERS"])
+    (gx0, gy0, gx1, gy1) = gates[0]["GATE_TILES"]
+    (hx0, _, hx1, _) = gates[-1]["GATE_TILES"]
     (ptop, pbot) = pit_box(grid, g["TILE"])["PIT_ROWS"]
+    lobby_last = lobby_band(grid, g["TILE"], gates)["LOBBY_ROWS"][1]
     # The dais's outermost tile on its widest row: the tile above it is air, not dais.
     shoulder = min((x, y) for y, row in enumerate(grid) for x, c in enumerate(row)
                    if c in DAIS_CHARS and grid[y - 1][x] == FLOOR)
@@ -1292,7 +1468,29 @@ def self_test(grid: list[str], g: dict[str, object]) -> None:
         "entrance erased": poke(grid, ex0, ey0, PIT),
         "fifth entrance": poke(grid, ex0, ey0 - 1, ENTRANCE),
         "spawn in a wall": poke(grid, rx // g["TILE"], ry // g["TILE"], WALL),
+        # A `.` on a gate row is refused as a block that is not a rectangle (the `G`s
+        # beside it are still one component), not by the one-run rule that skips the
+        # gate rows -- so this is also the proof that skipping them lost nothing.
         "gate corner erased": poke(grid, gx1, gy1, FLOOR),
+        "gate corner walled": poke(grid, gx0, gy0, WALL),
+        # Two doorways fused into one wide block: the wall between tiers 0 and 1 drawn as
+        # gate. Two blocks where the tables have three rows.
+        "two gates fused": [
+            r if y not in (gy0, gy1) else
+            r[:gx1 + 1] + GATE * (gates[1]["GATE_TILES"][0] - gx1 - 1) + r[gates[1]["GATE_TILES"][0]:]
+            for y, r in enumerate(grid)
+        ],
+        # A fourth doorway, walled off from the others: the tables have no fourth row.
+        "a fourth gate": poke(poke(grid, gx0 - 2, gy0, GATE), gx0 - 2, gy1, GATE),
+        # Still three blocks, but two of them share a column, one above the other (the
+        # HARD doorway walled up, a copy of the EASY one drawn two rows under it on the
+        # lobby floor): no left-to-right order names a tier.
+        "gates stacked": [
+            r if y not in (gy0, gy1, gy1 + 2)
+            else r[:hx0] + WALL * (hx1 - hx0 + 1) + r[hx1 + 1:] if y in (gy0, gy1)
+            else r[:gx0] + GATE * (gx1 - gx0 + 1) + r[gx1 + 1:]
+            for y, r in enumerate(grid)
+        ],
         "doorway sealed": [
             r if y != pbot else WALL * n for y, r in enumerate(grid)
         ],
@@ -1310,8 +1508,10 @@ def self_test(grid: list[str], g: dict[str, object]) -> None:
         # The three below are the open-arena rules. The first is the pillar grid in
         # miniature: one tile of cover, blocking nothing, sealing nothing, moving no
         # constant -- accepted by every check this tool had before it.
+        # On the lobby's last FLOOR row, read off the band: the painting's foot is wall
+        # already, and a cover tile poked onto wall is no cover tile.
         "a cover tile in the open lobby": poke(
-            poke(grid, n // 2, n - 3, WALL), n - 1 - n // 2, n - 3, WALL),
+            poke(grid, n // 2, lobby_last, WALL), n - 1 - n // 2, lobby_last, WALL),
         "a respawn door off the centre line": poke(
             poke(grid, ex0, ey0, PIT), ex0 + 1, ey0, ENTRANCE),
         "the gate cut off from the lobby": [

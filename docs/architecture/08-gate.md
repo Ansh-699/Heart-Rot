@@ -155,7 +155,7 @@ Six beats. Only beats 3, 4 and 5 need anything new on chain.
 |---|---|---|---|
 | 1 | **Arrive** | You spawn among the pillars, other knights already walking | `zone = ZONE_LOBBY`, `phase = LOBBY` |
 | 2 | **Walk** | WASD, one tile per accepted move, prediction-smooth | tag 6 `move`, slot-gated |
-| 3 | **Interact** | The gate lights under your feet; a prompt says to hold | tag 5 `enter_gate`, `zone → ZONE_ARENA` |
+| 3 | **Interact** | One of three gates lights under your feet — EASY, MEDIUM or HARD, each under its painted sign | tag 5 `enter_gate`, `zone → ZONE_ARENA`; the first raider's gate writes `Arena.difficulty` (§3.10) |
 | 4 | **Wait** | You stand in the pit. Knights drop in beside you. A counter falls | `phase = MUSTERING`, `fight_at_tick` set |
 | 5 | **Spawn** | The cavern dims; the thing lowers itself over the rim | still `MUSTERING`; the descent is a function of `fight_at_tick - tick` |
 | 6 | **Fight** | It lands. Weapons free | `phase = FIGHTING`, `enrage_at_tick` stamped |
@@ -440,6 +440,44 @@ it claims does not exist.
 
 ---
 
+### 3.10 Three gates, one tier (added 2026-09-04)
+
+The lobby's top wall carries three doorways, drawn as three separate `G` blocks on the
+gate rows of `assets/map/arena.json` (`tools/gen_rooms.py` measures them off the painting's
+three signs; `tools/gen_map.py` emits them as `map::GATES: [Gate; 3]` and `map.ts`'s
+`GATES`, left to right = tier 0 EASY, 1 MEDIUM, 2 HARD, and refuses any other count — the
+count is read back from `state::N_TIERS`, which sizes every balance table). `map::gate_at(x,
+y) -> Option<u8>` replaces `on_gate`; there are no `GATE_MIN_X`..`GATE_MAX_Y` constants any
+more, on either side.
+
+**The gate is a portal, not a corridor.** `enter_gate` writes `tick::entrance_for(seat)`,
+so a block owes the pit no adjacency. The generator's old "the gate sits immediately below
+the pit and its columns run onto the dais" rule is gone with a comment; what it proves
+instead is that each block is a solid rectangle of floor inside the lobby box, reachable
+from every lobby spawn without leaving it, that the three share no column, that the heart
+stands on none of them, and — cross-checked against `rooms.gen.ts`'s `LOBBY_GATES` — that
+the blocks the browser draws its marks over are the blocks the chain admits through.
+
+**The raid's tier is the first raider's gate.** `Arena.difficulty` (byte 38, claimed out of
+`_pad1`; `04-layout-contract.md`) is written by `enter_gate` from `gate_at` only while
+`raid_size == 0 && alive_count == 0` (`player::locked_tier`) — nobody has walked a gate this
+incarnation — and cleared by `begin_next_incarnation`, the only road back to `LOBBY`.
+Every later raider must take the same gate: another block is refused
+**`WrongGate` (21)**, a code of its own because, unlike `NotOnGate`, no poll heals it.
+The client mirrors the lock as `layout.ts`'s `lockedTier(arena)`: `App.tsx`'s
+`useGateEntry` reads it before sending and, on the wrong block, posts *"This raid is
+MEDIUM. Walk to the MEDIUM gate."* to the error bar instead — nothing is sent, so a player
+standing there does not push a refusal twice a second. Everything the tier tunes is in
+`10-boss.md` §1.7: the vent line, the core floor and top-up, incoming damage ×1/×2/×3 and
+the fury bullets, all indexed by the same byte beside `raid_size`.
+
+On screen: three `.gate-mark[data-tier]` markers in the doorways' own colours
+(`WaitingRoom.tsx`), three under-foot lights and the muster clock over the raid's gate
+(`Arena.tsx`), the passage lifting the portcullis the seat actually walked — read off its
+last lobby position, because the `Players` notification that flips `zone` can land before
+the `Arena` one that carries the tier (`Passage.tsx`) — and the boss bar's tag reading
+the tier name in the tier colour while fighting, ENRAGED still overriding (`Hud.tsx`).
+
 ## 4. What the Worker does
 
 `POST /api/match/start` keeps its path and its shape. Two changes:
@@ -664,26 +702,14 @@ have exactly one line of contact (the `arena_occupants` comment).
 The 33 Immortals composition — boss fixed at top centre, pit below, everyone shooting up —
 is a different slice. This one only asserts what the gate flow needs from it:
 
-1. **The gate block must not contain the boss.** It does today (§1.3). Whatever the new
-   numbers are, add the check to the existing const-assert block in `map.rs` next to the
-   two that already prove `ENTRANCES` and `BOSS_SPAWN` stand on floor:
-
-   ```rust
-   // The gate is where you walk to start a raid; the boss is what you start it against.
-   // One tile cannot be both, and a `B` moved into the gate block would otherwise ship.
-   let (bx, by) = BOSS_SPAWN;
-   assert!(
-       !(bx >= GATE_MIN_X && bx <= GATE_MAX_X && by >= GATE_MIN_Y && by <= GATE_MAX_Y),
-       "map::BOSS_SPAWN stands inside the gate block -- move the `B` in \
-        assets/map/arena.json and re-run tools/gen_map.py",
-   );
-   ```
-
-   Which requires the four `GATE_*` constants to live in `map.rs` (compiled from the drawn
-   map by `tools/gen_map.py`) rather than in `handlers/player.rs`, where they are hand
-   literals today. That is the right home for them anyway: they are a fact about the map,
-   the same argument `map.rs:130` makes for `BOSS_SPAWN`. `app/src/render/sprites.ts:53`
-   then mirrors the generated value instead of restating `30 * MAP_TILE`.
+1. **No gate block may contain the boss.** It did once (§1.3). The check lives in the
+   const-assert block in `map.rs` next to the two that prove `ENTRANCES` and `BOSS_SPAWN`
+   stand on floor — `assert!(gate_at(bx, by).is_none())` over the generated `GATES` — which
+   is only possible because the gate blocks live in `map.rs` (compiled from the drawn map
+   by `tools/gen_map.py`) rather than as hand literals in `handlers/player.rs`. That is the
+   right home for them anyway: they are a fact about the map, the same argument `map.rs`
+   makes for `BOSS_SPAWN`. Nothing in `app/` restates a gate; `GATES` and `gateAt` come out
+   of `map.ts`.
 
 2. **Every `ENTRANCES` mark must land in the pit, below the boss.** `entrance_for(seat)` is
    where `enter_gate` puts you and where every respawn returns you, so the "twenty tiny
@@ -691,10 +717,10 @@ is a different slice. This one only asserts what the gate flow needs from it:
    four `E` marks and the fan direction `fans_along_x` derives from them (`tick.rs:617`).
    No code changes — redraw `assets/map/arena.json` and re-run `tools/gen_map.py`.
 
-3. **The gate must be reachable on foot from all twenty `lobby_spawn(seat)` positions.**
-   `tools/gen_map.py` already proves entrance reachability; extend that check rather than
-   eyeballing it. A lobby spawn walled off from the gate is a seat that can never join a
-   raid, and it would present as one specific player being permanently stuck.
+3. **Every gate must be reachable on foot from all twenty `lobby_spawn(seat)` positions,
+   without leaving the lobby box.** `tools/gen_map.py` proves it, gate tile by gate tile,
+   from one flood over the lobby rows. A lobby spawn walled off from a gate is a tier
+   nobody can pick, and it would present as one specific player being permanently stuck.
 
 ---
 

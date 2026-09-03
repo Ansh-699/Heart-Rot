@@ -1118,7 +1118,10 @@ Card 1   Privy sign-in (email/social, no seed phrase)  OR  "I have a wallet"
 Card 2   Loader — POST /api/session/init
          Worker: verify JWT → allocate seat → claim_seat on the ER
               ↓
-         Character select → lobby
+         Character select (once, the first seat; the marker persists in
+         localStorage `heartrot.skin`) → lobby
+              ↓
+         ...raid ends, or Exit → loader → the next seat, no select
 ```
 
 **Two cards, not three.** Card 2 in the spec was "fund the session wallet"; there is nothing
@@ -1179,7 +1182,7 @@ Cold visitor to leaderboard.
 | 7 | Worker | `claim_seat(seat, session_pubkey, identity, skin_id)` | **ER** | treasury (read-only signer) | nothing — ER fees are 0 |
 | 8 | Worker | Returns seat, all 21 PDAs, `erEndpoint`, `validatorIdentity`, `tickMs` | — | — | — |
 | 9 | Browser | Opens one **router** WebSocket; `accountSubscribe` on all 21 with `encoding:'base64'`; **`getMultipleAccounts` snapshot on `open`** | router | — | — |
-| 10 | Browser | Character select → lobby. Player walks around; `move` transactions go browser → ER directly | ER | session key | nothing |
+| 10 | Browser | Character select, only while no marker is on file (`skinChosen`) — every later seat goes loader → lobby with no select. Player walks around; `move` transactions go browser → ER directly | ER | session key | nothing |
 | 11 | Browser | Enough players stand on the gate. First client to see the threshold calls `POST /api/match/start` | Worker | — | — |
 | 12 | Worker | `init_arena` (1,216 B) | base | treasury | ~0.00935 SOL rent |
 | 13 | Worker | `init_seat × 20`, batched 10/tx | base | treasury | ~0.0323 SOL rent |

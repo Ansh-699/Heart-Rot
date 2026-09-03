@@ -55,10 +55,18 @@
  * animated by this file and by nothing else, and only `opacity` and `transform` — both
  * composited — are ever animated. That is why the design is gradient rects fading rather
  * than the more obvious growing `clip-path`, which measured a 21.5 ms worst frame against
- * a 10.9 ms baseline. `#camera` and `#gate-portcullis` are BORROWED: this file plays one
- * WAAPI one-shot on each and never sets an attribute or an inline style on either. If the
- * waiting room ever gives the portcullis an idle sway of its own, that is §3.1's
- * two-writer failure, and it is silent.
+ * a 10.9 ms baseline. `#camera` and the `.gate-portcullis[data-tier]` walked through are
+ * BORROWED: this file plays one WAAPI one-shot on each and never sets an attribute or an
+ * inline style on either. If the waiting room ever gives a portcullis an idle sway of its
+ * own, that is §3.1's two-writer failure, and it is silent.
+ *
+ * WHICH GATE. There are three, one per difficulty, and the beat lifts the one the seat
+ * walked: the tier is read off the seat's last LOBBY position (`gateAt`), not off
+ * `arena.difficulty`. The two are the same transaction — `enter_gate` writes the tier and
+ * flips the zone in one write — but they are two account notifications, and for the first
+ * raider of a raid the `Players` one can land first, when `difficulty` still reads EASY.
+ * The position is on the gate by the chain's own rule (`enter_gate` refused everything
+ * else), so it is the authoritative answer a payload earlier.
  *
  * ON CHAIN: nothing. 0 CU, 0 bytes, 0 accounts. Every fact the beat reads — `zone`, `x`,
  * `y`, `phase` — is already on the wire, and the payload that flips `zone` is the same
@@ -71,15 +79,15 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   BOSS_SPAWN,
   CORE,
-  GATE_MAX_X,
-  GATE_MAX_Y,
-  GATE_MIN_X,
-  GATE_MIN_Y,
+  GATES,
   MAP_ENTRANCES,
   PHASE_FIGHTING,
   PIT_BOT,
+  TIER_EASY,
   ZONE_ARENA,
   ZONE_LOBBY,
+  gateAt,
+  type Gate,
 } from '@heartrot/client';
 
 import { Arena, CAMERA_EASE, usePrefersReducedMotion, type ArenaProps } from './Arena';
@@ -113,11 +121,13 @@ const MOUTH_OUT = 0.5;
 /** The creature is not seen the instant the room arrives; the light finds it. */
 const BLOOM_DELAY_MS = 100;
 
+/** The gate the beat opens for when nothing says otherwise: the gradients' resting centre. */
+const HOME_GATE: Gate = GATES[TIER_EASY]!;
+/** A gate block's centre — where the dark blooms out of. */
+const gateCx = (g: Gate): number => (g.minX + g.maxX + 1) / 2;
+const gateCy = (g: Gate): number => (g.minY + g.maxY + 1) / 2;
 /** Room A's arch, lifted by exactly its own height. Derived; never a literal. */
-const GATE_LIFT = GATE_MAX_Y - GATE_MIN_Y + 1;
-/** The gate block's centre — where the dark blooms out of. */
-const GATE_CX = (GATE_MIN_X + GATE_MAX_X + 1) / 2;
-const GATE_CY = (GATE_MIN_Y + GATE_MAX_Y + 1) / 2;
+const gateLift = (g: Gate): number => g.maxY - g.minY + 1;
 /** The throat mouth at room B's south edge — where the light opens from. */
 const THROAT_Y = PIT_BOT;
 
@@ -170,9 +180,10 @@ const GLOW = '#8fe9ff';
 
 const FADE_IN: Keyframe[] = [{ opacity: 0 }, { opacity: 1 }];
 const FADE_OUT: Keyframe[] = [{ opacity: 1 }, { opacity: 0 }];
-const LIFT: Keyframe[] = [
+/** The portcullis walked through rises by its own arch's height; a function of the gate. */
+const liftOf = (g: Gate): Keyframe[] => [
   { transform: 'translate(0px, 0px)' },
-  { transform: `translate(0px, ${-GATE_LIFT}px)` },
+  { transform: `translate(0px, ${-gateLift(g)}px)` },
 ];
 const WASH: Keyframe[] = [{ opacity: 0.5 }, { opacity: 0 }];
 const BLOOM: Keyframe[] = [
@@ -184,7 +195,7 @@ const RISE: Keyframe[] = [
   { transform: `translate(0px, ${-CAMERA_LIFT}px)` },
   { transform: 'translate(0px, 0px)' },
 ];
-const ALL_KEYFRAMES = [FADE_IN, FADE_OUT, LIFT, WASH, BLOOM, RISE];
+const ALL_KEYFRAMES = [FADE_IN, FADE_OUT, ...GATES.map(liftOf), WASH, BLOOM, RISE];
 
 // ---------------------------------------------------------------------------
 // The trigger
@@ -277,13 +288,25 @@ interface Beat {
    * Still stored, because it is the only answer the no-veil bail below has.
    */
   to: Room;
+  /** The gate walked through — which portcullis lifts and where the dark blooms from. */
+  gate: Gate;
 }
 
 export function Passage(props: PassageProps) {
   const reduced = usePrefersReducedMotion();
   const { arena, players, localSeat, feedEpoch = 0 } = props;
-  const zone = localSeat === undefined ? undefined : players.slots[localSeat]?.zone;
+  const seat = localSeat === undefined ? undefined : players.slots[localSeat];
+  const zone = seat?.zone;
   const phase = arena.phase;
+
+  // The gate under the seat's last LOBBY position — see WHICH GATE in the header. A ref
+  // and not state: it is read once, at the moment the beat opens, and must not re-render
+  // anything on the way there. Falls back to `arena.difficulty` for a seat that was
+  // never seen in the lobby by this tab (a resync landing on the flip payload).
+  const lastGate = useRef<number | null>(null);
+  useEffect(() => {
+    if (seat !== undefined && seat.zone === ZONE_LOBBY) lastGate.current = gateAt(seat.x, seat.y);
+  }, [seat?.x, seat?.y, seat?.zone]);
 
   // `undefined` until the roster arrives, so `Arena` uses its own §1.7 fallback rather
   // than being told a room by a component that does not know one yet.
@@ -307,6 +330,8 @@ export function Passage(props: PassageProps) {
   const wash = useRef<SVGRectElement | null>(null);
   const bloom = useRef<SVGCircleElement | null>(null);
   const root = useRef<SVGGElement | null>(null);
+  const mouthAGrad = useRef<SVGRadialGradientElement | null>(null);
+  const mouthBGrad = useRef<SVGRadialGradientElement | null>(null);
 
   // Passive is enough, and deliberately so. The commit that carries the flip must already
   // be safe BEFORE this runs — it is, because `room` still names room A on it and
@@ -326,7 +351,8 @@ export function Passage(props: PassageProps) {
     // it, but a phase-only re-run diffs `was === zone` and fires nothing.
     const opens = !resync && passageFires(was, zone);
     if (opens) {
-      setBeat((b) => ({ n: (b?.n ?? 0) + 1, live: phase === PHASE_FIGHTING, to: roomOf(zone) }));
+      const gate = GATES[lastGate.current ?? arena.difficulty] ?? HOME_GATE;
+      setBeat((b) => ({ n: (b?.n ?? 0) + 1, live: phase === PHASE_FIGHTING, to: roomOf(zone), gate }));
       // Latched here rather than only in the beat's own effect, so `covering` is true for
       // every re-run of THIS effect from the moment the beat opens — which is what finding
       // 2's guard below reads. The beat effect sets it again, because `reduced` changing
@@ -336,6 +362,8 @@ export function Passage(props: PassageProps) {
     // The ONLY writer of `room` outside the cut. Finding 2: a phase change or a feed
     // resync inside the cover no longer cuts room B in under a half-transparent veil.
     if (cutsRoom(opens, covering.current)) setRoom(roomOf(zone));
+    // `arena.difficulty` is read as a fallback only, so it is deliberately not a
+    // dependency: an arena notification must not re-run the trigger.
   }, [zone, phase, feedEpoch]);
 
   // Layout, not passive: the veils mount at opacity 0 and must be animating before the
@@ -359,6 +387,13 @@ export function Passage(props: PassageProps) {
     const totalMs = reduced ? REDUCED_MS : beat.live ? PASSAGE_LIVE_MS : PASSAGE_MS;
     const revealMs = totalMs - coverMs;
     const long = !reduced && !beat.live;
+
+    // Both blooms are centred on the gate THIS beat walked, in world units. The gradients
+    // are this file's own nodes (not borrowed), set once per beat before anything paints,
+    // and `userSpaceOnUse` is what lets a centre be a world coordinate at all.
+    mouthAGrad.current?.setAttribute('cx', String(gateCx(beat.gate)));
+    mouthAGrad.current?.setAttribute('cy', String(gateCy(beat.gate)));
+    mouthBGrad.current?.setAttribute('cx', String(gateCx(beat.gate)));
 
     const anims: Animation[] = [];
     const push = (a: Animation | null | undefined): void => {
@@ -385,23 +420,26 @@ export function Passage(props: PassageProps) {
 
     if (long) {
       push(mouthA.current?.animate(FADE_IN, { duration: 230, easing: 'ease-in', fill: 'forwards' }));
-      const portcullis = inRoomA('#gate-portcullis');
+      const tier = GATES.indexOf(beat.gate);
+      const portcullis = inRoomA(`.gate-portcullis[data-tier="${tier}"]`);
       if (import.meta.env.DEV) {
-        // Spec §12.2 check 6, the two-writer check for the one node this file BORROWS.
-        // It cannot run at module load — the node belongs to room A's tree — so it runs
-        // here, on the node already in hand. A second `#gate-portcullis` would take the
-        // LIFT while the drawn one sat still; a CSS animation on it would fight the LIFT
-        // for `transform` and lose or win at random. Both are silent (§3.1).
-        const all = root.current?.ownerSVGElement?.querySelectorAll('#gate-portcullis');
-        ok(all?.length === 1, `exactly one #gate-portcullis in room A (${all?.length ?? 0})`);
+        // Spec §12.2 check 6, the two-writer check for the nodes this file BORROWS. It
+        // cannot run at module load — the nodes belong to room A's tree — so it runs
+        // here, on the node already in hand. A fourth `.gate-portcullis` would mean a
+        // doorway with no tier to lift it by, two on one tier would take the LIFT while
+        // the drawn one sat still, and a CSS animation on one would fight the LIFT for
+        // `transform` and lose or win at random. All silent (§3.1).
+        const all = root.current?.ownerSVGElement?.querySelectorAll('.gate-portcullis');
+        ok(all?.length === GATES.length, `exactly ${GATES.length} .gate-portcullis in room A (${all?.length ?? 0})`);
+        ok(portcullis != null, `a .gate-portcullis carries data-tier ${tier}`);
         ok(getComputedStyle(portcullis as Element).animationName === 'none', 'the portcullis has no CSS animation of its own');
       }
       // The last moment room A is the room.
-      push(portcullis?.animate(LIFT, { duration: 180, easing: 'ease-out', fill: 'forwards' }));
+      push(portcullis?.animate(liftOf(beat.gate), { duration: 180, easing: 'ease-out', fill: 'forwards' }));
       play('gate');
-      // Nothing else in room A moves: the sign, the tower and the braziers are paint in
-      // `LOBBY_IMG`, and the portcullis is the one thing `gen_rooms.py` cuts out of that
-      // painting (`GATE_IMG`) precisely so it can.
+      // Nothing else in room A moves: the signs, the towers and the braziers are paint in
+      // `LOBBY_IMG`, and the portcullises are the one thing `gen_rooms.py` cuts out of that
+      // painting (`GATE_IMGS`) precisely so one of them can.
     }
 
     // Skip. `finish()` jumps to the last keyframe; because the cut hangs off
@@ -494,16 +532,25 @@ export function Passage(props: PassageProps) {
       <g ref={root} pointerEvents="none" aria-hidden="true" shapeRendering="geometricPrecision">
         <defs>
           {/* `userSpaceOnUse`, so both blooms are centred in WORLD units on the arch and on
-              the throat, and do not follow the rect that carries them. */}
-          <radialGradient id="heartrot-passage-mouth-a" gradientUnits="userSpaceOnUse" cx={GATE_CX} cy={GATE_CY} r={900}>
+              the throat, and do not follow the rect that carries them. Mounted on the EASY
+              gate; the beat effect re-centres both on the gate actually walked. */}
+          <radialGradient
+            ref={mouthAGrad}
+            id="heartrot-passage-mouth-a"
+            gradientUnits="userSpaceOnUse"
+            cx={gateCx(HOME_GATE)}
+            cy={gateCy(HOME_GATE)}
+            r={900}
+          >
             <stop offset="0" stopColor={VEIL} stopOpacity={1} />
             <stop offset="0.35" stopColor={VEIL} stopOpacity={0.85} />
             <stop offset="1" stopColor={VEIL} stopOpacity={0} />
           </radialGradient>
           <radialGradient
+            ref={mouthBGrad}
             id="heartrot-passage-mouth-b"
             gradientUnits="userSpaceOnUse"
-            cx={GATE_CX}
+            cx={gateCx(HOME_GATE)}
             cy={THROAT_Y}
             r={900}
           >
@@ -577,12 +624,14 @@ if (import.meta.env.DEV) {
   ok(!passageFires(null, ZONE_ARENA), 'arriving mid-fight does not replay the passage');
   ok(!passageFires(ZONE_ARENA, ZONE_LOBBY), 'the incarnation reset is not a passage');
 
-  // 2. The teleport is still bigger than the snap threshold (15 §11 check 4). If a map
-  //    redraw ever brings an entrance within `SELF_SNAP` of the gate, that seat CHASES
-  //    instead of snapping and the hold freezes a knight mid-walk — a different bug
-  //    wearing this one's clothes.
-  const nearest = Math.min(...MAP_ENTRANCES.map(([x, y]) => Math.hypot(x - GATE_CX, y - GATE_CY)));
-  ok(nearest > SELF_SNAP, `every entrance is farther than SELF_SNAP from the gate (${nearest.toFixed(1)})`);
+  // 2. The teleport is still bigger than the snap threshold (15 §11 check 4), from every
+  //    gate. If a map redraw ever brings an entrance within `SELF_SNAP` of a gate, that
+  //    seat CHASES instead of snapping and the hold freezes a knight mid-walk — a
+  //    different bug wearing this one's clothes.
+  for (const g of GATES) {
+    const nearest = Math.min(...MAP_ENTRANCES.map(([x, y]) => Math.hypot(x - gateCx(g), y - gateCy(g))));
+    ok(nearest > SELF_SNAP, `every entrance is farther than SELF_SNAP from the gate (${nearest.toFixed(1)})`);
+  }
 
   // 3. Only composited properties are animated (15 §11 check 5). This is what stops the
   //    `clip-path` design — worst frame 21.5 ms against a 10.9 ms baseline — coming back.
@@ -594,9 +643,13 @@ if (import.meta.env.DEV) {
     }
   }
 
-  // 4. The geometry is derived, not typed (15 §11 check 7).
-  ok(GATE_LIFT === GATE_MAX_Y - GATE_MIN_Y + 1 && GATE_LIFT > 0, 'the lift is the arch height');
-  ok(GATE_CX === (GATE_MIN_X + GATE_MAX_X + 1) / 2, 'the arch bloom is centred on the arch');
+  // 4. The geometry is derived, not typed (15 §11 check 7), for every gate.
+  for (const g of GATES) {
+    ok(gateLift(g) === g.maxY - g.minY + 1 && gateLift(g) > 0, 'the lift is the arch height');
+    ok(liftOf(g)[1]?.transform === `translate(0px, ${-(g.maxY - g.minY + 1)}px)`, 'the LIFT rises by the arch height');
+    ok(gateCx(g) === (g.minX + g.maxX + 1) / 2, 'the arch bloom is centred on the arch');
+  }
+  ok(GATES.length === 3 && HOME_GATE === GATES[0], 'three gates, and the gradients rest on the first');
   ok(VIEW_LOBBY.h === VIEW_ARENA.h && VIEW_LOBBY.w === VIEW_ARENA.w, 'the rise is a pure translate');
   ok(CAMERA_LIFT > 0, 'the eye rises through the gate, not down through it');
 

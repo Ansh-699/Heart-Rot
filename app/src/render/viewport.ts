@@ -74,21 +74,24 @@ export type Room = 'lobby' | 'arena';
 /**
  * Masonry above the drawn lobby floor and floor below it, in units.
  *
- * The waiting hall is a painting (`assets/rooms/lobby.png`, 1122x785) and
- * `tools/gen_rooms.py` fits it to this room's HEIGHT: 656 / 785 units per px. Its floor
- * sits at px y 248..690 -- 248 px of wall and gate tower above, 95 px of wall below a
- * 442 px band -- which at that fit is 207 units above and 79 below: 13 and 5 tiles. Tile
- * multiples so the painting's own floor edge lands on the map's `LOBBY_TOP` row and the
- * compiled walls on the frame edge instead of half a tile inside it.
+ * The waiting hall is a painting (`assets/rooms/lobby.png`, 1695x1086) and
+ * `tools/gen_rooms.py` fits it to this room's HEIGHT: 656 / 1086 units per px. Its floor
+ * sits at px y 530..955 -- 530 px of void, gate wall and towers above, 131 px of wall
+ * below a 425 px band -- which at that fit is 320 units above and 79 below: 20 and 5
+ * tiles. Tile multiples so the painting's own floor edge lands on the map's `LOBBY_TOP`
+ * row and the compiled walls on the frame edge instead of half a tile inside it. The
+ * painting is 1695 px wide because 1695 x 656 / 1086 is 1024: the frame's width, so no
+ * stage aspect crops a side wall. The 530 px head is mostly void the painter did not
+ * draw: it is what makes the wide mockup's floor a whole number of rows at this height.
  *
  * Both constants are LOAD-BEARING and READ BACK: `gen_rooms.py` parses them out of this
  * file to place `LOBBY_IMG` and to size the room, so this is the one place they are
- * typed. Change 13 and the painted floor no longer lands on the lobby rows -- the
+ * typed. Change 20 and the painted floor no longer lands on the lobby rows -- the
  * generator refuses, and `WaitingRoom.tsx` asserts `LOBBY_IMG.y === VIEW_LOBBY.y` at
- * boot. 13 + the 23-row lobby band + 5 also holds {@link ROOM_H} at 656, which keeps
- * `VIEW_LOBBY` byte-identical to the rect every earlier spec was measured against.
+ * boot. 20 + the 16-row lobby band + 5 also holds {@link ROOM_H} at 656, which keeps
+ * `VIEW_LOBBY` the size of the rect every earlier spec was measured against.
  */
-const LOBBY_HEAD = 13 * MAP_TILE;
+const LOBBY_HEAD = 20 * MAP_TILE;
 const LOBBY_FOOT = 5 * MAP_TILE;
 
 /**
@@ -141,12 +144,11 @@ export const VIEWS: Readonly<Record<Room, ViewRect>> = {
 /**
  * Tower above the floor line the fit must keep, in units.
  *
- * The lobby painting's gate tower is the hero of room A: the ram skull over the BOSS
- * FIGHT sign crests at px y ~60, which at the lobby fit ({@link LOBBY_HEAD}) is 158 units
- * above `LOBBY_TOP` -- 9.9 tiles. 11 tiles keeps it with a course of tower above it, the
- * way the painting shows it, and gives the fit the other 2 tiles of shaft to crop. Not
- * imported from the room, because the room imports {@link VIEW_LOBBY} from here -- a
- * cycle at module load.
+ * The lobby painting's three gate towers are the hero of room A: their crests sit at
+ * px y ~252, which at the lobby fit ({@link LOBBY_HEAD}) is 168 units above `LOBBY_TOP`
+ * -- 10.5 tiles. 11 tiles keeps them with half a tile of dark over them, and gives the
+ * fit the other 9 tiles of void to crop. Not imported from the room, because the room
+ * imports {@link VIEW_LOBBY} from here -- a cycle at module load.
  */
 const LOBBY_HERO = 11 * MAP_TILE;
 
@@ -158,18 +160,19 @@ const LOBBY_SILL = MAP_TILE;
  * inside at every stage aspect. Everything in the room outside it is fiction the fit is
  * free to trade for a bigger picture.
  *
- * Room A keeps its whole width -- the side walls are two tiles and a wall cropped in half
- * reads as a hole -- and, in y, the crest down through one course under the bottom wall:
- * 576 units, so a 16:9 stage is exactly covered with nothing cropped but shaft and void.
- * Room B keeps all of itself: the crown clears its frame by one tile ({@link VIEW_ARENA})
- * and the frame already sits on the rim, so there is no fiction there to give.
+ * Room A keeps its whole width -- the side walls are painted to the frame's edge and a
+ * wall cropped in half reads as a hole -- and, in y, the tower crests down through the
+ * bottom wall's course and one sill under it: 480 units, inside the 576 a 16:9 stage
+ * shows, so at 16:9 nothing is cropped but the void over the towers. Room B keeps all of
+ * itself: the crown clears its frame by one tile ({@link VIEW_ARENA}) and the frame
+ * already sits on the rim, so there is no fiction there to give.
  */
 export const KEEP: Readonly<Record<Room, ViewRect>> = {
   lobby: {
     x: 0,
     y: LOBBY_TOP - LOBBY_HERO,
     w: ARENA_UNITS,
-    h: ARENA_UNITS + LOBBY_SILL - (LOBBY_TOP - LOBBY_HERO),
+    h: LOBBY_BOT + 1 + MAP_TILE + LOBBY_SILL - (LOBBY_TOP - LOBBY_HERO),
   },
   arena: VIEW_ARENA,
 };
@@ -181,10 +184,12 @@ export const KEEP: Readonly<Record<Room, ViewRect>> = {
  * is world space the room does not fill. Narrower than the keep's own aspect the box grows
  * on y, all of it ABOVE the room (the fit is bottom-anchored, so the surplus lands over
  * the tower and the boss's ceiling rather than under the bottom wall): `1024/a - 656`,
- * inside 256 for **aspect >= 1.12**. Wider than 16:9 it grows on x, `(576a - 1024) / 2`
- * per side for room A and `(656a - 1024) / 2` for room B, inside 256 up to **aspect
- * 2.34**. 1024x768 (1.33), 1440x900 (1.60), 1920x1080 (1.78) and 1366x768 (1.78) are all
- * covered, and the three 16:9 and 16:10 shapes show no surplus at all.
+ * inside 256 for **aspect >= 1.12**. Wider than the room it grows on x: `(656a - 1024) / 2`
+ * per side for room B past 16:9, inside 256 up to **aspect 2.34**; room A's keep is only
+ * 480 tall, so its box stays 1024 wide up to aspect 2.13 and its surplus `(480a - 1024) / 2`
+ * is inside 256 up to **aspect 3.2**. 1024x768 (1.33), 1440x900 (1.60), 1920x1080 (1.78)
+ * and 1366x768 (1.78) are all covered, and the three 16:9 and 16:10 shapes show no
+ * surplus at all.
  *
  * Wider than that it does not: a 3440x1392 ultrawide consumes 299 units in x. That is not
  * a hole, because {@link useViewport} sizes every `.vp-void` rect from the LIVE box rather

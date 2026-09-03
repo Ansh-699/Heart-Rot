@@ -24,6 +24,9 @@ id.json
 treasury*.json
 secrets/
 
+# Python
+__pycache__/
+
 # OS / editor
 .DS_Store
 *.swp

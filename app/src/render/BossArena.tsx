@@ -3,19 +3,21 @@
  *
  * ONE module-scope `ReactElement` with no props, mounted as the first child of `#camera`
  * in room A's place whenever the room on screen is the arena, framed on `VIEW_ARENA`.
- * Two nodes: the void and the painting. The pit floor, the dais, the stairs, the braziers,
- * the backdrop and the demon are all in the paint; the only things drawn over it are the
- * boss rig (`Boss.tsx`), the seats, the ordnance and the light beats.
+ * The void, the painting and its light (`RoomLight.tsx`). The pit floor, the dais, the
+ * stairs, the braziers and the backdrop are all in the paint; the demon is NOT — the served
+ * copy has it painted out (`tools/gen_rooms.py`, `bossless`) inside the very silhouette
+ * `gen_boss.py` cut the rig's atlas by. The only things drawn over the room are the boss
+ * rig (`Boss.tsx`), the seats, the ordnance and the light beats.
  *
  * The painting's placement is `ARENA_IMG` in `rooms.gen.ts`: `tools/gen_rooms.py` centres
  * it in x and rests its bottom edge on the pit rim (`PIT_BOT + 1`), at the ONE scale the
  * boss crop and its hitboxes are cut at. That is the invariant this file exists to hold,
  * and the boot check at the bottom is its proof: `Boss.tsx` places the rig's atlas cells at
- * `BOSS_SPAWN + BOSS_ANCHOR`, and `gen_boss.py` cut those cells out of this same painting
- * at `BOSS_CROP` — so on a full shell the rig is pixel-identical to the demon under it and
- * invisible as a rig, which is what lets a limb flinch, break off and char while the room
- * stays a flat image. Both terms of that equation are generated; nothing here restates
- * either.
+ * `BOSS_SPAWN + BOSS_ANCHOR`, and `gen_boss.py` cut those cells out of the source painting
+ * at `BOSS_CROP` — so on a full shell the rig covers the painted-out hole edge to edge, and
+ * a destroyed part is a hole the wall and the dais show through, which is what lets a limb
+ * be torn off and gone while the room stays a flat image. Both terms of that equation are
+ * generated; nothing here restates either.
  *
  * The performance contract `Scene.tsx` earned, unchanged: compared by identity, never
  * diffed again; nothing derived from chain state; `will-change: transform`;
@@ -37,7 +39,8 @@ import {
   isDaisTile,
 } from '@heartrot/client';
 
-import { ARENA_IMG, ARENA_PLATFORM, BOSS_CROP, VOID } from './rooms.gen';
+import { roomGlow, roomMotes } from './RoomLight';
+import { ARENA_IMG, ARENA_LIGHTS, ARENA_PLATFORM, BOSS_CROP, VOID } from './rooms.gen';
 import { ARENA_UNITS } from './sprites';
 import { VIEW_ARENA } from './viewport';
 
@@ -73,10 +76,12 @@ export const BOSS_ARENA: ReactElement = (
       width={ARENA_IMG.w}
       height={ARENA_IMG.h}
       // One unit per px by construction; `none` makes the browser honour the rect to the
-      // unit rather than re-fit inside it, which is what "pixel-exact under the rig" needs.
+      // unit rather than re-fit inside it, which is what "the rig covers its hole" needs.
       preserveAspectRatio="none"
       style={{ imageRendering: 'auto' }}
     />
+    {roomGlow('arena-glow', ARENA_LIGHTS)}
+    {roomMotes(VIEW_ARENA, ARENA_LIGHTS)}
   </g>
 );
 
@@ -85,8 +90,9 @@ export const BOSS_ARENA: ReactElement = (
 //
 // Every failure here is silent and shows as something else: a painting a row off the rim
 // is a raider standing on the void, a pit tile off the dais is permanent lag, and a rig a
-// unit off its own paint is a ghost outline around every limb. Dev-only, run by
-// `scripts/spike/scenemount/devcheck.mjs`; the generators' `--check` guard the other side.
+// unit off its cut is a sliver of painted-out floor showing around every limb. Dev-only,
+// run by `scripts/spike/scenemount/devcheck.mjs`; the generators' `--check` guard the
+// other side.
 // ---------------------------------------------------------------------------
 
 if (import.meta.env.DEV) {
@@ -129,8 +135,9 @@ if (import.meta.env.DEV) {
   }
 
   // THE ONE THAT MATTERS. `Boss.tsx` draws the atlas at `BOSS_SPAWN + BOSS_ANCHOR`;
-  // `gen_boss.py` cut the atlas out of the painting at `BOSS_CROP`. Equal, or the rig sits
-  // beside its own paint and every limb wears a ghost of itself.
+  // `gen_boss.py` cut the atlas out of the painting at `BOSS_CROP`, and `gen_rooms.py`
+  // painted the demon out inside that same cut. Equal, or the rig sits beside its own
+  // hole and every limb wears a rim of cloned floor.
   const rigX = BOSS_SPAWN[0] + BOSS_ANCHOR_X;
   const rigY = BOSS_SPAWN[1] + BOSS_ANCHOR_Y;
   ok(
@@ -144,4 +151,11 @@ if (import.meta.env.DEV) {
     BOSS_CROP.x >= ARENA_IMG.x && BOSS_CROP.x + BOSS_CROP.w <= ARENA_IMG.x + ARENA_IMG.w && BOSS_CROP.y >= ARENA_IMG.y,
     'BOSS_CROP reaches outside the painting it was cut from',
   );
+  // Every light is on the painting: a glow in the void is a brazier nobody drew.
+  for (const l of ARENA_LIGHTS) {
+    ok(
+      l.x >= ARENA_IMG.x && l.x <= ARENA_IMG.x + ARENA_IMG.w && l.y >= ARENA_IMG.y && l.y <= ARENA_IMG.y + ARENA_IMG.h,
+      `light at (${l.x}, ${l.y}) is off the painting`,
+    );
+  }
 }

@@ -5,7 +5,9 @@
  * chain inside `claim_seat`, which the Worker sends from `POST /api/session/init`, and
  * there is no route that edits a seat afterwards — so a select screen that ran after the
  * loader could only ever have sent `skinId: 0`. That is also why this screen owns the
- * `join()` call and renders onboarding's second card while it runs.
+ * `join()` call. The join puts the marker on file (`store.ts::skinChosen`), and from then
+ * on the shell shows the loader in this screen's place: the select is seen once, and
+ * again only through the results panel's `Change marker`.
  *
  * The three archers are the sheet's, left to right, and `skin_id` indexes both this table
  * and the generated `KNIGHT_SKINS` the renderer draws from. `SKIN_COLORS` is separate on
@@ -17,7 +19,6 @@
 import { useLogout } from '@privy-io/react-auth';
 
 import { useSelect, useStore } from '../state/store';
-import { SeatLoader } from './Onboarding';
 
 /**
  * Index **is** `skin_id` — the program stores the number and never range-checks it, so the
@@ -41,10 +42,6 @@ export function CharacterSelect() {
   const store = useStore();
   const { logout } = useLogout();
   const skinId = useSelect((s) => s.skinId);
-  const joining = useSelect((s) => s.status === 'joining');
-
-  // Onboarding card 2. The seat claim is the slow half of onboarding and it starts here.
-  if (joining) return <SeatLoader />;
 
   return (
     <section className="card">
@@ -85,11 +82,13 @@ export function CharacterSelect() {
           `authenticated && !match` holds here and nowhere else. `store.signOut` releases
           any held seat first, because a different wallet is a different Privy DID, a
           different on-chain identity and a different seat — switching without releasing
-          would strand the old arena, which is the leak this release exists to close. */}
+          would strand the old arena, which is the leak this release exists to close.
+          `logout` goes in rather than after: the store runs it before it forgets, or the
+          landing signs the same wallet straight back in (`store.ts::signOut`). */}
       <button
         className="btn btn-quiet"
         onClick={() => {
-          void store.signOut().then(logout);
+          void store.signOut(logout);
         }}
       >
         Use a different wallet

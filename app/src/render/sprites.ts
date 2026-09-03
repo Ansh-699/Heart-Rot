@@ -51,12 +51,12 @@ export const HP_BAR_W = 26;
 // `PART_HITBOXES`.
 //
 // So are `GATE_MIN` / `GATE_MAX`, and they were the dangerous pair. They read
-// `30 * MAP_TILE` .. `34 * MAP_TILE - 1` on BOTH axes — a square block — and the gate is
-// no longer square: x 480..543 by y 608..639. A caller reusing them drew the marker 128
-// units north of the real gate, inside the pit, and "walk to the middle" stranded every
-// player. `GATE_MIN_X` / `GATE_MAX_X` / `GATE_MIN_Y` / `GATE_MAX_Y` come out of
-// `tools/gen_map.py` into `@heartrot/client`, alongside `onGate` itself, which is the
-// same predicate `handlers::player::on_gate` runs. Import those; never restate them.
+// `30 * MAP_TILE` .. `34 * MAP_TILE - 1` on BOTH axes — a square block — and the gate was
+// never square, and is now three blocks: `GATES`, by tier, out of `tools/gen_map.py` into
+// `@heartrot/client`, alongside `gateAt` itself, which is the same predicate
+// `map::gate_at` runs for `enter_gate`. A caller restating a gate drew the marker 128
+// units north of the real one, inside the pit, and "walk to the middle" stranded every
+// player. Import those; never restate them.
 
 /**
  * `PlayerSlot.facing` is eight-way clockwise from north (`FACING_STEP` in `shoot.rs`),

@@ -47,11 +47,16 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * The four screens of one linear flow, plus the leaderboard — a detour off the landing
- * and back, which is why it is a flag (`State.leaderboard`) and not a step. Still a
- * union and not a router.
+ * The screens of one linear flow, plus the leaderboard — a detour off the landing and
+ * back, which is why it is a flag (`State.leaderboard`) and not a step. Still a union and
+ * not a router.
+ *
+ * `joining` is the loader: a signed-in player with no seat and a marker already on file.
+ * It is where every rejoin lives — after a verdict, after Exit, after a lost seat — and
+ * the select is not it. "Nobody wants that annoying popup": the select is seen once, and
+ * again only by asking (`changeMarker`).
  */
-export type Screen = 'onboarding' | 'select' | 'lobby' | 'arena' | 'leaderboard';
+export type Screen = 'onboarding' | 'select' | 'joining' | 'lobby' | 'arena' | 'leaderboard';
 
 /**
  * How much of the world we can currently believe.
@@ -98,9 +103,10 @@ export type State = {
    */
   authenticated: boolean;
   /**
-   * Playing without a wallet. The routes get `guestProof` instead of a Privy token, the
-   * identity is the session key's, and the verdict's button reads "Sign in to raid
-   * again" — one raid, then a name (`ui/Hud.tsx`).
+   * Playing without a wallet. The routes get `guestProof` instead of a Privy token and
+   * the identity is the session key's — as many raids as the key lasts, and the verdict
+   * carries one muted line offering a name on the leaderboard (`ui/Hud.tsx`). The
+   * one-raid block that used to sit here was the popup the player asked to lose.
    */
   guest: boolean;
   /** The leaderboard is open. Set from the landing, cleared by its Back link. */
@@ -108,6 +114,13 @@ export type State = {
   /** The non-extractable WebCrypto keypair. Holds zero SOL, forever. */
   sessionKey: Session | null;
   skinId: number;
+  /**
+   * A seat has been taken with `skinId` — this page load or an earlier one (localStorage
+   * `heartrot.skin`). It is the whole of the difference between `'select'` and
+   * `'joining'` in `screenOf`: a marker on file means the select has nothing left to ask,
+   * so a seatless player gets the loader and the store takes the next seat by itself.
+   */
+  skinChosen: boolean;
   /**
    * Always `CLASS_ARCHER`: the archer is the only class this client sends. Still a field
    * because it travels inside `claim_seat` and `App.tsx` compares it to a returning seat's
@@ -161,8 +174,18 @@ export type Store = {
    * delegates the next arena in the background of the refusal (`routes.ts::prewarmNext`,
    * 30–60 s of devnet round trips), so the honest state is `warming` and the honest
    * action is to ask again. Every 3 s, up to 20 times, then the refusal's own copy.
+   *
+   * Remembers the marker first (`skinChosen`): from this call on, a seatless player is
+   * `'joining'` and never `'select'`. Single-flight — it now has four callers, and two of
+   * them are effects that React runs twice in development.
    */
   join(): Promise<void>;
+  /**
+   * Forget the marker and release any seat: the next screen is the character select.
+   * The only way back to it once a seat has been taken, offered as a small link on the
+   * results panel and on a failed rejoin — never as a step.
+   */
+  changeMarker(): Promise<void>;
   /**
    * `POST /api/match/start` — delegate, arm the crank and open the muster window.
    * 5–15 s of devnet round trips. Fired automatically by the first knight through the
@@ -174,16 +197,21 @@ export type Store = {
   /** Owned by the subscription layer: one call per accepted notification. */
   setWorld(update: WorldUpdate): void;
   setStatus(status: ConnectionStatus, error?: string): void;
-  /** Drop the finished match. The next `join` gets a fresh seat in the next arena. */
   /**
-   * Release the seat and go back to the character select.
+   * Release the seat, then take the next one.
    *
-   * Async now, and it tells the server. An abandoned raid used to strand its arena
-   * forever: nothing on chain notices a player leaving, so the fight ran its full six
-   * minutes to enrage and then sat in `SETTLING` with nobody left who was allowed to
-   * settle it. Twelve of those made the game unjoinable. Telling the Worker at the moment
-   * of departure is the fix; the request is fire-and-forget because the local state must
-   * clear whether or not the network answers.
+   * Async, and it tells the server. An abandoned raid used to strand its arena forever:
+   * nothing on chain notices a player leaving, so the fight ran its full six minutes to
+   * enrage and then sat in `SETTLING` with nobody left who was allowed to settle it.
+   * Twelve of those made the game unjoinable. Telling the Worker at the moment of
+   * departure is the fix; the request is best-effort because the local state must clear
+   * whether or not the network answers.
+   *
+   * The `join` is inside rather than chained by each caller, and it WAITS for the leave:
+   * a join fired alongside it races the Worker for a seat under the same identity in the
+   * arena it is still leaving. Every caller — the verdict's countdown and button, Exit,
+   * the void card's way out — wanted the same sequence, and the one that forgot the
+   * `.then` would have left the player on the loader forever.
    */
   leaveMatch(): Promise<void>;
 
@@ -209,8 +237,13 @@ export type Store = {
    * Releases the seat first: a new Privy DID is a new on-chain identity and a new seat, so
    * switching without leaving would strand the old arena — the exact leak this release is
    * about, arrived at from a different direction.
+   *
+   * `logout` is the provider's own, and it runs BEFORE the store forgets. The landing
+   * signs in whoever the provider still remembers (its returning-tab effect), so a store
+   * that flipped first watched the same wallet sign itself straight back in — and, with a
+   * marker on file, it would now take a seat. A guest has no provider and passes nothing.
    */
-  signOut(): Promise<void>;
+  signOut(logout?: () => Promise<void>): Promise<void>;
 };
 
 // ---------------------------------------------------------------------------
@@ -370,6 +403,39 @@ const BENIGN_START: ReadonlySet<string> = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// The marker on file
+// ---------------------------------------------------------------------------
+
+/**
+ * The `skin_id` the last seat was taken with. Present means the select is done: a
+ * reload, a new wallet, a guest coming back — none of them see it again. Cosmetic, so a
+ * tampered value is the Worker's `skinId out of range` to refuse and the loader's
+ * "Try again" / "Change marker" to recover from; only the shape is checked here.
+ */
+const SKIN_KEY = 'heartrot.skin';
+
+function storedSkin(): number | null {
+  try {
+    const raw = localStorage.getItem(SKIN_KEY);
+    const id = raw === null ? NaN : Number(raw);
+    return Number.isInteger(id) && id >= 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `null` forgets. Storage that refuses (private mode, a blocked origin) is not an error:
+ *  the marker then lasts the tab, which is exactly `skinChosen`. */
+function storeSkin(skinId: number | null): void {
+  try {
+    if (skinId === null) localStorage.removeItem(SKIN_KEY);
+    else localStorage.setItem(SKIN_KEY, String(skinId));
+  } catch {
+    // See above.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The store
 // ---------------------------------------------------------------------------
 
@@ -382,6 +448,7 @@ const INITIAL: State = {
   leaderboard: false,
   sessionKey: null,
   skinId: 0,
+  skinChosen: false,
   classId: CLASS_ARCHER,
   match: null,
   status: 'idle',
@@ -393,7 +460,8 @@ const INITIAL: State = {
 };
 
 export function createStore(): Store {
-  let state = INITIAL;
+  const stored = storedSkin();
+  let state: State = stored === null ? INITIAL : { ...INITIAL, skinId: stored, skinChosen: true };
   const listeners = new Set<() => void>();
 
   // The settle route is deliberately safe to re-enter, but every client in a 20-player
@@ -465,37 +533,68 @@ export function createStore(): Store {
     return { ...(await identity()), arenaId: match.arenaId };
   };
 
-  /**
-   * Clear the local match and tell the Worker the seat is free.
-   *
-   * Shared by the Exit button (`leaveMatch`) and by disconnecting a wallet (`signOut`),
-   * because they are the same act from the chain's point of view: this identity is done
-   * with this arena. Local state clears first and unconditionally — the player is watching
-   * a screen change and must never be stuck behind a devnet round trip.
-   */
   /** Have we ever seen our own seat occupied? See `setWorld` for why this cannot be a
    * one-shot check against the first payload. */
   let seatHeld = false;
   /** When the held seat was first seen empty, or 0 while it is ours. See `setWorld`. */
   let seatMissingSince = 0;
 
-  const release = async (): Promise<void> => {
-    settling = false;
-    seatHeld = false;
-    const held = state.match;
-    set({ match: null, arena: null, boss: null, players: null, status: 'idle', error: null });
-    if (!held) return;
+  /**
+   * The body of `/api/match/leave` for the held seat, or `null` when there is no seat or
+   * no proof can be had. Reads the seat synchronously, so a caller that starts it and
+   * only then clears the match still names the right arena.
+   *
+   * Never throws, and never clears `authenticated` on failure: one caller is a `pagehide`
+   * handler with nobody left to show an error to, and a tab being torn down must not
+   * decide the player is signed out.
+   */
+  const leaveBody = async (): Promise<Record<string, unknown> | null> => {
+    const { match } = state;
+    if (!match) return null;
     try {
-      await postJson('/api/match/leave', { ...(await identity()), arenaId: held.arenaId });
+      // `identity()`, not `authSource()` directly: a guest has no token to fetch, and
+      // `token()` only clears `authenticated` when no seat is held — there is one here.
+      return { ...(await identity()), arenaId: match.arenaId };
     } catch {
-      // Best effort by design. A failed release is the Worker's reaper to catch on the
-      // next join, not an error to put in front of someone who has already left.
+      return null;
     }
   };
 
-  const join = async (): Promise<void> => {
+  /**
+   * Clear the local match and tell the Worker the seat is free.
+   *
+   * Shared by `leaveMatch`, `changeMarker` and `signOut`, because they are the same act
+   * from the chain's point of view: this identity is done with this arena. Local state
+   * clears first and unconditionally — the player is watching a screen change and must
+   * never be stuck behind a devnet round trip. `proof` defaults to one fetched now;
+   * `signOut` hands in one it fetched before the provider forgot it.
+   */
+  const release = async (proof = leaveBody()): Promise<void> => {
+    settling = false;
+    seatHeld = false;
+    set({ match: null, arena: null, boss: null, players: null, status: 'idle', error: null });
+    const body = await proof;
+    if (body === null) return;
+    await postJson('/api/match/leave', body).catch(() => {
+      // Best effort by design. A failed release is the Worker's reaper to catch on the
+      // next join, not an error to put in front of someone who has already left.
+    });
+  };
+
+  // The latch. `signIn` and `playAsGuest` are fired from effects React double-invokes in
+  // development, and the verdict's countdown and its button both want the same seat.
+  let joining: Promise<void> | null = null;
+  const join = (): Promise<void> =>
+    (joining ??= claim().finally(() => {
+      joining = null;
+    }));
+
+  const claim = async (): Promise<void> => {
     const { sessionKey, skinId, classId } = state;
-    set({ status: 'joining', error: null });
+    // On file before the request, not after it: the screen flips to the loader on
+    // `skinChosen`, and the select must be gone the moment the seat is asked for.
+    storeSkin(skinId);
+    set({ status: 'joining', error: null, skinChosen: true });
     try {
       if (!sessionKey) throw new Error('Sign in before taking a seat.');
       for (let attempt = 0; ; attempt++) {
@@ -542,7 +641,11 @@ export function createStore(): Store {
         set({ authenticated: true, guest: false, sessionKey, status: 'idle' });
       } catch (error) {
         fail(error);
+        return;
       }
+      // The select is seen once. A marker on file — this browser has taken a seat before
+      // — makes a signed-in, seatless player `'joining'`, and this is what makes it true.
+      if (state.skinChosen) await join();
     },
 
     async playAsGuest() {
@@ -586,6 +689,7 @@ export function createStore(): Store {
     async settle() {
       if (settling) return;
       settling = true;
+      const held = state.match;
       set({ status: 'settling', error: null });
       try {
         const body = await credentials();
@@ -602,7 +706,11 @@ export function createStore(): Store {
         }
         throw new Error('The raid is taking an unusually long time to settle.');
       } catch (error) {
-        fail(error);
+        // Only for the match still held. The verdict's countdown (or Exit) can release
+        // the seat while this loop is mid-poll, and the route then answers `not_in_match`
+        // for the OLD arena — `fail` would pin `error`, a held status the feed cannot
+        // clear, over the NEW seat's live world.
+        if (state.match === held) fail(error);
       } finally {
         settling = false;
       }
@@ -653,6 +761,11 @@ export function createStore(): Store {
             seatHeld = false;
             seatMissingSince = 0;
             set({ match: null, arena: null, boss: null, players: null, status: 'idle' });
+            // Seatless with a marker on file is `'joining'` (`screenOf`), and the loader
+            // it shows would otherwise wait for a join nobody sends. Reclaiming is the
+            // right answer to a reaped seat, and to another tab's Exit it is what that
+            // tab is doing too.
+            if (state.skinChosen) void join();
             return;
           }
         }
@@ -673,32 +786,34 @@ export function createStore(): Store {
       set({ status, error: error ?? (status === 'error' ? state.error : null) });
     },
 
-    leaveMatch: release,
-
-    async leaveBeaconBody() {
-      const { match } = state;
-      if (!match) return null;
-      try {
-        // `identity()`, not `authSource()` directly: a guest has no token to fetch, and
-        // `token()` only clears `authenticated` when no seat is held — there is one here.
-        return JSON.stringify({ ...(await identity()), arenaId: match.arenaId });
-      } catch {
-        return null;
-      }
+    async leaveMatch() {
+      await release();
+      // `authenticated` is re-read: `token()` clears it when the leave's proof cannot be
+      // had, and the landing — not the loader — is the honest screen for that.
+      if (state.authenticated && state.skinChosen) await join();
     },
 
-    async signOut() {
+    async changeMarker() {
+      storeSkin(null);
+      set({ skinChosen: false });
       await release();
-      // `guest` goes with it: the guest's one raid is over, and the landing's "Play now"
-      // is the same offer again, while "Sign in" makes the next raid a named one.
-      set({
-        authenticated: false,
-        guest: false,
-        sessionKey: null,
-        skinId: 0,
-        status: 'idle',
-        error: null,
-      });
+    },
+
+    async leaveBeaconBody() {
+      const body = await leaveBody();
+      return body === null ? null : JSON.stringify(body);
+    },
+
+    async signOut(logout) {
+      // The proof first, while the provider still answers; then the provider forgets;
+      // then the store. See the `Store` doc for the order.
+      const proof = leaveBody();
+      await logout?.();
+      // `guest` goes with it: the landing's "Play now" is the same offer again, while
+      // "Sign in" makes the next raid a named one. The marker stays — it is the
+      // browser's, and the next identity on it has no more to choose than this one did.
+      set({ authenticated: false, guest: false, sessionKey: null });
+      await release(proof);
     },
   };
 }
@@ -726,11 +841,15 @@ export function mySeatSlot(state: State): PlayerSlot | null {
  *
  * The lobby/arena split is `zone`, which only the chain writes: walking onto the gate tile
  * flips it, and the screen follows on the next notification. Nothing local decides it.
+ *
+ * Seatless splits on the marker: `'select'` only while no seat has ever been taken with
+ * one, `'joining'` — the loader — from then on. The store keeps the second one honest by
+ * joining wherever a seat is lost (`leaveMatch`, `signIn`, `setWorld`).
  */
 export function screenOf(state: State): Screen {
   if (state.leaderboard) return 'leaderboard';
   if (!state.authenticated) return 'onboarding';
-  if (!state.match) return 'select';
+  if (!state.match) return state.skinChosen ? 'joining' : 'select';
   return mySeatSlot(state)?.zone === ZONE_ARENA ? 'arena' : 'lobby';
 }
 
@@ -786,7 +905,9 @@ if (import.meta.env.DEV) {
   const cases: readonly (readonly [string, Partial<State>, Screen])[] = [
     ['signed out', {}, 'onboarding'],
     ['leaderboard from the landing', { leaderboard: true }, 'leaderboard'],
-    ['no seat yet', { authenticated: true }, 'select'],
+    ['no seat, no marker yet', { authenticated: true }, 'select'],
+    // The rejoin: a marker on file makes seatless the loader, never the select again.
+    ['no seat, marker on file', { authenticated: true, skinChosen: true }, 'joining'],
     // A seat with no roster yet is still the lobby, not the arena: `mySeatSlot` is null
     // until the first `Players` notification lands, and guessing "arena" there would drop
     // the player into a stage with nothing on it.

@@ -1,0 +1,245 @@
+[
+ {
+  "name": "base",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1
+  }
+ },
+ {
+  "name": "nohud",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "hud": false
+  }
+ },
+ {
+  "name": "nodev",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "dev": false
+  }
+ },
+ {
+  "name": "nohud-nodev",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "hud": false,
+   "dev": false
+  }
+ },
+ {
+  "name": "wc-off",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "css": "#stage svg *{will-change:auto!important}"
+  }
+ },
+ {
+  "name": "noarrows",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "arrows": false
+  }
+ },
+ {
+  "name": "frozen",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": false,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 0,
+   "movesPerWrite": 1,
+   "frozen": true
+  }
+ },
+ {
+  "name": "feed20",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 20,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 2,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1
+  }
+ },
+ {
+  "name": "bullets0",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 0,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1
+  }
+ },
+ {
+  "name": "fury",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "wear": 1,
+   "tick0": 16
+  }
+ },
+ {
+  "name": "fury-nofilter",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "wear": 1,
+   "tick0": 16,
+   "css": ".hr-fury .hr-boss-shell,.hr-vent-open .hr-boss-vent,.beam-sweep{filter:none!important;animation:none!important}"
+  }
+ },
+ {
+  "name": "fury-nohud",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "wear": 1,
+   "tick0": 16,
+   "hud": false
+  }
+ }
+]

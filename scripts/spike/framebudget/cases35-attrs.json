@@ -1,0 +1,44 @@
+[
+ {
+  "name": "base-attrs",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "countAttrs": true
+  }
+ },
+ {
+  "name": "fury-attrs",
+  "cpu": 6,
+  "viewport": {
+   "width": 1920,
+   "height": 1080
+  },
+  "opts": {
+   "feedHz": 714,
+   "frames": 400,
+   "bullets": 24,
+   "tickEvery": 71,
+   "sparseMoves": true,
+   "room": "arena",
+   "knights": 20,
+   "movesPerSec": 320,
+   "movesPerWrite": 1,
+   "wear": 1,
+   "tick0": 16,
+   "countAttrs": true
+  }
+ }
+]

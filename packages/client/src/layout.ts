@@ -18,7 +18,7 @@
  * `map.ts`, which is generated and imports nothing.
  */
 
-import { GATE_MIN_Y, MAP_MAX_XY, MAP_TILE, MAP_TILES, PIT_BOT, PIT_TOP } from './map';
+import { GATES, MAP_MAX_XY, MAP_TILE, MAP_TILES, PIT_BOT, PIT_TOP } from './map';
 
 // ---------------------------------------------------------------------------
 // Capacities, discriminators, sentinels — mirrors of the Rust constants
@@ -290,17 +290,58 @@ export function superDamage(cls: number): number {
 export const SUPER_SHOT_BIT = 4;
 
 // ---------------------------------------------------------------------------
+// Difficulty tiers — `state.rs`'s tier block, keyed by `Arena.difficulty`
+// ---------------------------------------------------------------------------
+
+/**
+ * `state::N_TIERS`, `TIER_EASY..=TIER_HARD` — the three gates in the lobby's top wall, left
+ * to right, and the index of every table below. `Arena.difficulty` is the gate the raid's
+ * first raider stood in ({@link GATES} has the same order, out of the same grid); every
+ * account that predates the byte reads 0, EASY, the tuning it was already fighting.
+ */
+export const N_TIERS = 3;
+export const TIER_EASY = 0;
+export const TIER_MEDIUM = 1;
+export const TIER_HARD = 2;
+
+/** What the HUD prints for a tier, and the colour it prints it in — the doorway's own light. */
+export const TIER_NAMES: readonly string[] = ['EASY', 'MEDIUM', 'HARD'];
+export const TIER_COLORS: readonly string[] = ['#7ee787', '#ffb648', '#ff5a4a'];
+
+/**
+ * `state::tier_n` — `tier` clamped into a table index. Only `enter_gate` writes the byte,
+ * from a gate index, so this never fires on a live account; it keeps every read below
+ * total, and a byte the chain never writes reads as the hardest row, as it does there.
+ */
+function tierN(tier: number): number {
+  return Math.min(Math.max(tier, 0), N_TIERS - 1);
+}
+
+/**
+ * `handlers::player::locked_tier` — the tier this raid is already committed to, or `null`
+ * while nobody has opened it. Either `raidSize` (the first FIGHTING tick) or `aliveCount`
+ * (the first `enter_gate`) non-zero means a gate has been walked this incarnation, and
+ * `difficulty` is that gate. The chain refuses any other gate with `WrongGate` (21) from
+ * then on, so a client that would send `enter_gate` from another doorway reads this first
+ * and does not — that refusal never heals by standing still.
+ */
+export function lockedTier(arena: Pick<ArenaAccount, 'raidSize' | 'aliveCount' | 'difficulty'>): number | null {
+  return arena.raidSize === 0 && arena.aliveCount === 0 ? null : arena.difficulty;
+}
+
+// ---------------------------------------------------------------------------
 // The vent threshold — `state.rs`'s `vent_pct`
 // ---------------------------------------------------------------------------
 
 /**
- * `state::VENT_PCT_SOLO` / `VENT_PCT_FULL`: shell remaining, in percent, below which the
- * vent opens, for a raid of one and for a full raid. Shell HP is flat at every raid size;
- * the *threshold* is the raid-size knob, so solo strips 2 % of the shell before the core
- * is reachable and twenty strip 65 %.
+ * `state::VENT_PCT_SOLO_BY_TIER` / `VENT_PCT_FULL_BY_TIER`: shell remaining, in percent,
+ * below which the vent opens, for a raid of one and for a full raid, by tier. Shell HP is
+ * flat at every raid size; the *threshold* is the raid-size knob, so an EASY solo strips
+ * 2 % of the shell before the core is reachable and twenty strip 65 %; HARD asks 12 % and
+ * 75 %.
  */
-export const VENT_PCT_SOLO = 98;
-export const VENT_PCT_FULL = 35;
+export const VENT_PCT_SOLO_BY_TIER: readonly number[] = [98, 94, 88];
+export const VENT_PCT_FULL_BY_TIER: readonly number[] = [35, 30, 25];
 
 /**
  * `state::raid_n` — `raidSize` clamped into `1..=MAX_SEATS`, the domain every raid-size
@@ -313,13 +354,30 @@ function raidN(raidSize: number): number {
 }
 
 /**
- * `state::vent_pct(raid_size)` — the threshold for `arena.raidSize`, linear between the two
- * endpoints and clamped by {@link raidN}. The chain's comparison is
- * `sum(parts) * 100 < sum(partsMax) * ventPct(arena.raidSize)`, in integers, so a HUD that
- * draws the line must call this rather than type a 35.
+ * `state::vent_pct(raid_size, tier)` — the threshold for `arena.raidSize` on
+ * `arena.difficulty`, linear between the tier's two endpoints and clamped by {@link raidN}.
+ * The chain's comparison is `sum(parts) * 100 < sum(partsMax) * ventPct(raidSize, tier)`,
+ * in integers, so a HUD that draws the line must call this rather than type a 35.
  */
-export function ventPct(raidSize: number): number {
-  return VENT_PCT_SOLO - Math.floor(((VENT_PCT_SOLO - VENT_PCT_FULL) * (raidN(raidSize) - 1)) / (MAX_SEATS - 1));
+export function ventPct(raidSize: number, tier: number): number {
+  const t = tierN(tier);
+  const solo = VENT_PCT_SOLO_BY_TIER[t]!;
+  return solo - Math.floor(((solo - VENT_PCT_FULL_BY_TIER[t]!) * (raidN(raidSize) - 1)) / (MAX_SEATS - 1));
+}
+
+/**
+ * `state::BOSS_CORE_HP_BY_TIER` / `CORE_HP_PER_RAIDER_BY_TIER` and `core_hp_required` — the
+ * core a raid of `raidSize` on `tier` fights: the tier's floor plus its per-raider top-up.
+ * The tick raises `coreHpMax` to this and never lowers it; a boss is seeded with the EASY
+ * floor in the lobby and grows to its row on the first FIGHTING tick. Per-raider rows are
+ * the largest hundreds whose twenty-raider sum fits the `u16` the chain writes.
+ */
+export const BOSS_CORE_HP_BY_TIER: readonly number[] = [200, 400, 700];
+export const CORE_HP_PER_RAIDER_BY_TIER: readonly number[] = [3_000, 3_200, 3_400];
+
+export function coreHpRequired(raidSize: number, tier: number): number {
+  const t = tierN(tier);
+  return BOSS_CORE_HP_BY_TIER[t]! + CORE_HP_PER_RAIDER_BY_TIER[t]! * (raidN(raidSize) - 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -328,28 +386,33 @@ export function ventPct(raidSize: number): number {
 
 /**
  * `state::BULLET_DAMAGE_SOLO / FULL`, `SLAM_DAMAGE_SOLO / FULL` — what one boss bullet and
- * one hand slam take off a raider, for a raid of one and for a full raid. Twenty take the
- * flat 8 / 45 the crank always dealt; solo takes 2 / 15 against a 150 HP bar, ~40 s
- * standing still for a 12 s kill. The chain deals it; a HUD that predicts a hit reads these.
+ * one hand slam take off a raider, for a raid of one and for a full raid on EASY. Twenty
+ * take the flat 8 / 45 the crank always dealt; solo takes 2 / 15 against a 150 HP bar,
+ * ~40 s standing still for a 12 s kill. The chain deals it; a HUD that predicts a hit reads
+ * these. `INCOMING_MUL_BY_TIER` multiplies the whole curve: MEDIUM doubles it, HARD triples.
  */
 export const BULLET_DAMAGE_SOLO = 2;
 export const BULLET_DAMAGE_FULL = 8;
 export const SLAM_DAMAGE_SOLO = 15;
 export const SLAM_DAMAGE_FULL = 45;
+export const INCOMING_MUL_BY_TIER: readonly number[] = [1, 2, 3];
 
-/** `state::raid_lerp` — linear from `solo` to `full` over `1..=MAX_SEATS`, rounding toward solo. */
-function raidLerp(solo: number, full: number, raidSize: number): number {
-  return solo + Math.floor(((full - solo) * (raidN(raidSize) - 1)) / (MAX_SEATS - 1));
+/** `state::FURY_EXTRA_BULLETS_BY_TIER` — bullets a furious volley adds, by tier. */
+export const FURY_EXTRA_BULLETS_BY_TIER: readonly number[] = [1, 2, 3];
+
+/** `state::raid_lerp` — linear from `solo` to `full` over `1..=MAX_SEATS`, rounding toward solo, times the tier. */
+function raidLerp(solo: number, full: number, raidSize: number, tier: number): number {
+  return (solo + Math.floor(((full - solo) * (raidN(raidSize) - 1)) / (MAX_SEATS - 1))) * INCOMING_MUL_BY_TIER[tierN(tier)]!;
 }
 
-/** `state::bullet_damage(raid_size)`. */
-export function bulletDamage(raidSize: number): number {
-  return raidLerp(BULLET_DAMAGE_SOLO, BULLET_DAMAGE_FULL, raidSize);
+/** `state::bullet_damage(raid_size, tier)`. */
+export function bulletDamage(raidSize: number, tier: number): number {
+  return raidLerp(BULLET_DAMAGE_SOLO, BULLET_DAMAGE_FULL, raidSize, tier);
 }
 
-/** `state::slam_damage(raid_size)`. */
-export function slamDamage(raidSize: number): number {
-  return raidLerp(SLAM_DAMAGE_SOLO, SLAM_DAMAGE_FULL, raidSize);
+/** `state::slam_damage(raid_size, tier)`. The beam deals the same number. */
+export function slamDamage(raidSize: number, tier: number): number {
+  return raidLerp(SLAM_DAMAGE_SOLO, SLAM_DAMAGE_FULL, raidSize, tier);
 }
 
 /**
@@ -361,8 +424,8 @@ export function slamDamage(raidSize: number): number {
 export const FURY_PCT = 20;
 
 /**
- * `Boss::fight_hp(raid_size)` — the fight as one number. Shell above the vent line never has
- * to come off, so it is not fight HP: `threshold = shellMax * ventPct / 100`,
+ * `Boss::fight_hp(raid_size, tier)` — the fight as one number. Shell above the vent line
+ * never has to come off, so it is not fight HP: `threshold = shellMax * ventPct / 100`,
  * `left = max(shell - threshold, 0) + coreHp`, `max = (shellMax - threshold) + coreHpMax`,
  * integers throughout so the HUD's `boss NN%` and the chain's fury edge agree to the point.
  * A solo bar that read `shell 97%` for a fight three hits from won is why this exists.
@@ -370,10 +433,11 @@ export const FURY_PCT = 20;
 export function fightHp(
   boss: Pick<BossAccount, 'parts' | 'partsMax' | 'coreHp' | 'coreHpMax'>,
   raidSize: number,
+  tier: number,
 ): { left: number; max: number } {
   const sum = (xs: readonly number[]): number => xs.reduce((a, b) => a + b, 0);
   const shellMax = sum(boss.partsMax);
-  const threshold = Math.floor((shellMax * ventPct(raidSize)) / 100);
+  const threshold = Math.floor((shellMax * ventPct(raidSize, tier)) / 100);
   return {
     left: Math.max(sum(boss.parts) - threshold, 0) + boss.coreHp,
     max: shellMax - threshold + boss.coreHpMax,
@@ -381,15 +445,16 @@ export function fightHp(
 }
 
 /**
- * `Boss::is_furious(raid_size)` — `max > 0 && left > 0 && left * 100 <= max * FURY_PCT`.
+ * `Boss::is_furious(raid_size, tier)` — `max > 0 && left > 0 && left * 100 <= max * FURY_PCT`.
  * `left > 0` keeps a dead boss out, `max > 0` keeps a zeroed account out, and exactly 20 %
  * is furious.
  */
 export function isFurious(
   boss: Pick<BossAccount, 'parts' | 'partsMax' | 'coreHp' | 'coreHpMax'>,
   raidSize: number,
+  tier: number,
 ): boolean {
-  const { left, max } = fightHp(boss, raidSize);
+  const { left, max } = fightHp(boss, raidSize, tier);
   return max > 0 && left > 0 && left * 100 <= max * FURY_PCT;
 }
 
@@ -409,15 +474,16 @@ export const PHASE2_PCT = 50;
 export const SHELL_PCT_PER_INCARNATION = 15;
 
 /**
- * `Boss::is_phase2(raid_size)` — the same guards and the same cross-multiplied `<=` as
- * {@link isFurious}, so exactly 50 % is phase 2 and a dead or zeroed boss is not. This is
- * the gate a renderer puts on the beam; {@link beamAt} itself never looks at the boss.
+ * `Boss::is_phase2(raid_size, tier)` — the same guards and the same cross-multiplied `<=`
+ * as {@link isFurious}, so exactly 50 % is phase 2 and a dead or zeroed boss is not. This
+ * is the gate a renderer puts on the beam; {@link beamAt} itself never looks at the boss.
  */
 export function isPhase2(
   boss: Pick<BossAccount, 'parts' | 'partsMax' | 'coreHp' | 'coreHpMax'>,
   raidSize: number,
+  tier: number,
 ): boolean {
-  const { left, max } = fightHp(boss, raidSize);
+  const { left, max } = fightHp(boss, raidSize, tier);
   return max > 0 && left > 0 && left * 100 <= max * PHASE2_PCT;
 }
 
@@ -486,6 +552,10 @@ export const ARENA = {
     enrage_at_tick: 28,
     seat_occupied: 32,
     incarnation: 36,
+    // Was the first byte of `_pad1`, the last free byte in the layout: no field moved, the
+    // account did not grow, `LAYOUT_VERSION` stays 1, and every live account reads 0 here —
+    // `TIER_EASY`, the tuning it was already fighting.
+    difficulty: 38,
     crank_authority: 40,
     validator_identity: 72,
     affix_seed: 104,
@@ -607,6 +677,12 @@ export type ArenaAccount = {
    * `boss_tick`, monotone, zeroed with the incarnation.
    */
   raidSize: number;
+  /**
+   * `TIER_EASY..=TIER_HARD` — the gate the raid's first raider stood in, written by
+   * `enter_gate` once per incarnation and read by every balance curve beside `raidSize`.
+   * Zeroed with the incarnation. See {@link lockedTier} for whether it binds yet.
+   */
+  difficulty: number;
   arenaId: bigint;
   crankTaskId: bigint;
   /** The authoritative clock. Also the crank-liveness heartbeat. */
@@ -790,6 +866,7 @@ export function decodeArena(data: Uint8Array): ArenaAccount {
     aliveCount: v.getUint8(o.alive_count),
     bulletCursor: v.getUint8(o.bullet_cursor),
     raidSize: v.getUint8(o.raid_size),
+    difficulty: v.getUint8(o.difficulty),
     arenaId: v.getBigUint64(o.arena_id, true),
     crankTaskId: v.getBigInt64(o.crank_task_id, true),
     tick: v.getUint32(o.tick, true),
@@ -1185,6 +1262,9 @@ export function layoutSelfCheck(): void {
     v.setUint8(o.raid_size, 13);
     v.setUint32(o.tick, 1_234, true);
     v.setUint32(o.enrage_at_tick, 0, true); // zero for the whole muster, by design
+    v.setUint16(o.incarnation, 0x0102, true);
+    v.setUint8(o.difficulty, TIER_HARD);
+    data[o.crank_authority] = 0xcc;
     v.setUint32(o.roll_requested_tick, 111, true);
     v.setUint32(o.fight_at_tick, 1_434, true);
     data[o.next_affix_seed] = 0xab;
@@ -1195,29 +1275,56 @@ export function layoutSelfCheck(): void {
     ok(a.raidSize === 13, 'raidSize reads offset 7');
     ok(a.outcome === OUTCOME_WIPE, 'raidSize did not eat outcome');
     ok(a.arenaId === 0n, 'nor the low byte of arena_id');
-    ok(
-      ventPct(a.raidSize) ===
-        VENT_PCT_SOLO - Math.floor(((VENT_PCT_SOLO - VENT_PCT_FULL) * 12) / (MAX_SEATS - 1)),
-      'the threshold follows the raid',
-    );
-    ok(
-      ventPct(0) === VENT_PCT_SOLO && ventPct(1) === VENT_PCT_SOLO,
-      'an uncounted raid is a solo raid',
-    );
-    ok(ventPct(MAX_SEATS) === 35 && ventPct(255) === 35, 'a full raid, and anything past it');
-    // The bound is the slope rounded up, as the Rust test derives it: the endpoints have
-    // moved three times and the literal `2` this was permitted a 30-point curve, not a 63.
-    const slopeCeil = Math.ceil((VENT_PCT_SOLO - VENT_PCT_FULL) / (MAX_SEATS - 1));
-    for (let n = 1; n < MAX_SEATS; n++) {
-      ok(ventPct(n) >= ventPct(n + 1) && ventPct(n) - ventPct(n + 1) <= slopeCeil, `ventPct is linear at ${n}`);
+    // `difficulty` is the first byte of what was `_pad1` at offset 38, between the high
+    // byte of `incarnation` and the first byte of `crank_authority` — a decoder one byte
+    // off reads 0x01 or 0xcc, both of them plausible tiers to a clamp, so both are pinned.
+    ok(a.difficulty === TIER_HARD, 'difficulty reads offset 38');
+    ok(a.incarnation === 0x0102, 'difficulty did not eat the high byte of incarnation');
+    ok(a.crankAuthority[0] === 0xcc, 'nor the first byte of crank_authority');
+    ok(lockedTier(a) === TIER_HARD, 'a counted raid is locked to its tier');
+    ok(lockedTier({ raidSize: 0, aliveCount: 1, difficulty: TIER_MEDIUM }) === TIER_MEDIUM, 'so is one with a raider through');
+    ok(lockedTier({ raidSize: 0, aliveCount: 0, difficulty: TIER_HARD }) === null, 'an unopened raid is nobody\'s yet');
+    for (let tier = 0; tier < N_TIERS; tier++) {
+      const solo = VENT_PCT_SOLO_BY_TIER[tier]!;
+      const full = VENT_PCT_FULL_BY_TIER[tier]!;
+      ok(
+        ventPct(a.raidSize, tier) === solo - Math.floor(((solo - full) * 12) / (MAX_SEATS - 1)),
+        `tier ${tier}: the threshold follows the raid`,
+      );
+      ok(ventPct(0, tier) === solo && ventPct(1, tier) === solo, `tier ${tier}: an uncounted raid is a solo raid`);
+      ok(ventPct(MAX_SEATS, tier) === full && ventPct(255, tier) === full, `tier ${tier}: a full raid, and anything past it`);
+      // The bound is the slope rounded up, as the Rust test derives it: the endpoints have
+      // moved three times and the literal `2` this was permitted a 30-point curve, not a 63.
+      const slopeCeil = Math.ceil((solo - full) / (MAX_SEATS - 1));
+      for (let n = 1; n < MAX_SEATS; n++) {
+        ok(ventPct(n, tier) >= ventPct(n + 1, tier) && ventPct(n, tier) - ventPct(n + 1, tier) <= slopeCeil, `tier ${tier}: ventPct is linear at ${n}`);
+      }
+      // Incoming damage: the third raid-size knob, the same clamp, monotone between, and
+      // the tier's multiple of EASY at every raid size.
+      const mul = INCOMING_MUL_BY_TIER[tier]!;
+      ok(bulletDamage(0, tier) === 2 * mul && bulletDamage(1, tier) === 2 * mul && slamDamage(0, tier) === 15 * mul, `tier ${tier}: solo takes 2 / 15 times ${mul}`);
+      ok(bulletDamage(MAX_SEATS, tier) === 8 * mul && slamDamage(MAX_SEATS, tier) === 45 * mul, `tier ${tier}: twenty take 8 / 45 times ${mul}`);
+      ok(bulletDamage(255, tier) === 8 * mul && slamDamage(255, tier) === 45 * mul, `tier ${tier}: and anything past twenty`);
+      for (let n = 1; n < MAX_SEATS; n++) {
+        ok(bulletDamage(n, tier) <= bulletDamage(n + 1, tier) && slamDamage(n, tier) <= slamDamage(n + 1, tier), `tier ${tier}: damage rises at ${n}`);
+      }
+      // The core: EASY's 200 + 3,000 per raider is the chain's `core_hp_required`, pinned at
+      // both ends; every row's twenty-raider sum fits the `u16` the tick writes it to.
+      ok(coreHpRequired(MAX_SEATS, tier) <= 0xffff, `tier ${tier}: twenty raiders' core fits a u16`);
+      // Every table is strictly harder than the row below, at every raid size — the whole
+      // reason the gates exist, and a tie is a gate that changes nothing.
+      if (tier > 0) {
+        for (let n = 1; n <= MAX_SEATS; n++) {
+          ok(ventPct(n, tier) < ventPct(n, tier - 1), `tier ${tier} asks more shell than ${tier - 1} at ${n}`);
+          ok(bulletDamage(n, tier) > bulletDamage(n, tier - 1) && slamDamage(n, tier) > slamDamage(n, tier - 1), `tier ${tier} hits harder than ${tier - 1} at ${n}`);
+          ok(coreHpRequired(n, tier) > coreHpRequired(n, tier - 1), `tier ${tier} owes more core than ${tier - 1} at ${n}`);
+        }
+        ok(FURY_EXTRA_BULLETS_BY_TIER[tier]! > FURY_EXTRA_BULLETS_BY_TIER[tier - 1]!, `tier ${tier} adds more fury bullets`);
+      }
     }
-    // Incoming damage: the third raid-size knob, the same clamp, monotone between.
-    ok(bulletDamage(0) === 2 && bulletDamage(1) === 2 && slamDamage(0) === 15, 'solo takes 2 / 15');
-    ok(bulletDamage(MAX_SEATS) === 8 && slamDamage(MAX_SEATS) === 45, 'twenty take the flat 8 / 45');
-    ok(bulletDamage(255) === 8 && slamDamage(255) === 45, 'and anything past twenty');
-    for (let n = 1; n < MAX_SEATS; n++) {
-      ok(bulletDamage(n) <= bulletDamage(n + 1) && slamDamage(n) <= slamDamage(n + 1), `damage rises at ${n}`);
-    }
+    ok(coreHpRequired(0, TIER_EASY) === 200 && coreHpRequired(MAX_SEATS, TIER_EASY) === 57_200, "EASY's core is the chain's 200 + 3,000 per raider");
+    ok(ventPct(1, N_TIERS) === ventPct(1, TIER_HARD) && ventPct(1, 255) === ventPct(1, TIER_HARD), 'a byte the chain never writes reads as HARD');
+    ok(TIER_NAMES.length === N_TIERS && TIER_COLORS.length === N_TIERS && GATES.length === N_TIERS, 'one name, one colour and one gate per tier');
     ok(a.fightAtTick === 1_434, 'fightAtTick reads offset 1164');
     ok(a.rollRequestedTick === 111, 'fightAtTick did not eat rollRequestedTick');
     ok(a.nextAffixSeed[0] === 0xab, 'fightAtTick did not eat the seed');
@@ -1246,25 +1353,29 @@ export function layoutSelfCheck(): void {
     // Fury, on the solo boss the chain's `fury_tests` use: 18,000 shell, 200 core, vent
     // line at 17,640, so fight HP is 560 and the 20 % line is 112.
     const solo = { parts: Array<number>(N_PARTS).fill(2_000), partsMax: Array<number>(N_PARTS).fill(2_000), coreHp: 200, coreHpMax: 200 };
-    const fh = fightHp(solo, 1);
+    const E = TIER_EASY;
+    const fh = fightHp(solo, 1, E);
     ok(fh.left === 560 && fh.max === 560, 'fight HP is the strippable shell plus the core');
-    ok(fightHp(solo, MAX_SEATS).max === 11_900, 'twenty owe 65 % of the shell');
-    ok(fightHp(solo, 0).left === fightHp(solo, 1).left, 'an uncounted raid is a solo raid');
+    ok(fightHp(solo, MAX_SEATS, E).max === 11_900, 'twenty owe 65 % of the shell');
+    ok(fightHp(solo, 0, E).left === fightHp(solo, 1, E).left, 'an uncounted raid is a solo raid');
+    // The tier moves the line under the same parts: HARD solo owes 12 % of the shell, the
+    // chain's `fury_tests` number.
+    ok(fightHp(solo, 1, TIER_HARD).max === 2_360, 'a HARD solo owes 12 % of the shell');
     const stripped = { ...solo, parts: Array<number>(N_PARTS).fill(0) };
-    ok(fightHp(stripped, 1).left === 200, 'below the line only the core is left');
-    ok(!isFurious({ ...stripped, coreHp: 118 }, 1), '21 % is not furious');
-    ok(!isFurious({ ...stripped, coreHp: 113 }, 1), 'one point over the line is not furious');
-    ok(isFurious({ ...stripped, coreHp: 112 }, 1), '20 % is furious');
-    ok(!isFurious({ ...stripped, coreHp: 0 }, 1), 'a dead boss is not furious');
-    ok(!isFurious(solo, 1), 'a full shell is nowhere near');
+    ok(fightHp(stripped, 1, E).left === 200, 'below the line only the core is left');
+    ok(!isFurious({ ...stripped, coreHp: 118 }, 1, E), '21 % is not furious');
+    ok(!isFurious({ ...stripped, coreHp: 113 }, 1, E), 'one point over the line is not furious');
+    ok(isFurious({ ...stripped, coreHp: 112 }, 1, E), '20 % is furious');
+    ok(!isFurious({ ...stripped, coreHp: 0 }, 1, E), 'a dead boss is not furious');
+    ok(!isFurious(solo, 1, E), 'a full shell is nowhere near');
     const empty = { parts: Array<number>(N_PARTS).fill(0), partsMax: Array<number>(N_PARTS).fill(0), coreHp: 0, coreHpMax: 0 };
-    ok(fightHp(empty, 0).max === 0 && !isFurious(empty, 255), 'an empty boss is safe and calm');
+    ok(fightHp(empty, 0, E).max === 0 && !isFurious(empty, 255, E), 'an empty boss is safe and calm');
     ok(FURY_VOLLEY_INTERVAL_TICKS === 16 && FURY_VOLLEY_INTERVAL_TICKS * 2 === VOLLEY_INTERVAL_TICKS, 'fury halves the volley');
     // Phase 2, on the same boss: max 560, so the line is 280.
-    ok(!isPhase2({ ...stripped, coreHp: 281 }, 1), 'one point over half is not phase 2');
-    ok(isPhase2({ ...stripped, coreHp: 280 }, 1), '50 % is phase 2');
-    ok(isPhase2({ ...stripped, coreHp: 112 }, 1), 'fury is inside phase 2, not instead of it');
-    ok(!isPhase2({ ...stripped, coreHp: 0 }, 1) && !isPhase2(solo, 1) && !isPhase2(empty, 255), 'dead, full and empty bosses are calm');
+    ok(!isPhase2({ ...stripped, coreHp: 281 }, 1, E), 'one point over half is not phase 2');
+    ok(isPhase2({ ...stripped, coreHp: 280 }, 1, E), '50 % is phase 2');
+    ok(isPhase2({ ...stripped, coreHp: 112 }, 1, E), 'fury is inside phase 2, not instead of it');
+    ok(!isPhase2({ ...stripped, coreHp: 0 }, 1, E) && !isPhase2(solo, 1, E) && !isPhase2(empty, 255, E), 'dead, full and empty bosses are calm');
     ok(PHASE2_PCT > FURY_PCT, 'the beam comes before fury');
 
     // The slam, against the chain's algorithm. `mix64` is SplitMix64 and its output for
@@ -1445,7 +1556,9 @@ export function layoutSelfCheck(): void {
     // The seam tiles: the two boxes touch and neither leaves a gap to be stranded in.
     ok(mayMoveTo(ARENA_, PIT_BOT, PIT_BOT), 'PIT_BOT is inside the raider box');
     ok(mayMoveTo(LOBBY_, PIT_BOT + 1, PIT_BOT + 1), 'PIT_BOT + 1 is inside the lobby box');
-    ok(GATE_MIN_Y === PIT_BOT + 1, 'the gate sits on the seam, so the flip strands nobody');
+    // Every gate is inside the lobby box, so a seat standing on one to be flipped is a
+    // seat the box lets move; the flip itself lands at an entrance inside the pit's.
+    ok(GATES.every((g) => g.minY > PIT_BOT && mayMoveTo(LOBBY_, g.minY, g.maxY)), 'every gate is inside the lobby box, so the flip strands nobody');
     // The un-stranding clause: a seat written outside its box by an older program walks
     // home rather than freezing, and cannot ride the escape the other way.
     ok(mayMoveTo(LOBBY_, 16, 32), 'an out-of-box seat may step back toward its box');

@@ -1,0 +1,216 @@
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":true,"dev":true,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":-1,"seatMoves":3021,"updates":470,"longTasks":0,"longMs":0,"heapGrowMB":1.3,"tick":8,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":17.1,"commitP95":30.4,"commitP99":47.4,"commitMax":66.2,"rafP50":16.7,"rafP95":34.7,"overCount":216,"overPct":54,"frames":400,"wallMs":8428,"busyPct":88.7,"fps":47.5,"feedActualHz":56,"passages":0,"buildMs":15.1,"firstPaintMs":24.6,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":858,"svgNodes":785,"jsHeapMB":8.7,"name":"cand:base","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":514,"layout":515,"styleMs":0.46,"layoutMs":0.34,"scriptMs":4.45,"taskMs":9.41,"recalcPerFrame":1.17,"layoutPerFrame":1.17,"heapDeltaMB":4.2}
+  trace: 521 layouts; UpdateLayoutTree 467.5ms, Layout 317.7ms, PrePaint 352.8ms, Paint 1277.9ms, RasterTask 100.8ms, Commit 468.2ms, Layerize 1520.7ms, HitTest 52.7ms, FunctionCall 4564.3ms, RunTask 12089ms, TimerFire 9.4ms, EventDispatch 18.4ms, MinorGC 36.8ms, MajorGC 39.3ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 9727.8 ms sampled; inclusive: (program) 5756.3ms/59.2%, performWorkOnRoot 3350.9ms/34.4%, commitRoot 2538.1ms/26.1%, renderRootSync 801.3ms/8.2%, frame 220.8ms/2.3%, Arena 119ms/1.2%, KnightBody 116.3ms/1.2%, (garbage collector) 93.9ms/1%, paint 66.6ms/0.7%, Shot 49ms/0.5%, Card 24ms/0.2%, setWorld 15.9ms/0.2%, (idle) 11.8ms/0.1%, roomSeats 9.9ms/0.1%, sameSeat 5.3ms/0.1%, knightDrawOrder 5.1ms/0.1%, advance 3.5ms/0%, useSeatInterpolation 3.2ms/0%, step 2.5ms/0%, foldTracks 2.5ms/0%, visibleBullets 1.2ms/0%, Hud 0.9ms/0%, Top 0.7ms/0%
+    5756.3 ms  59.2 %  (program)
+     762.2 ms   7.8 %  clearTimeout
+     741.2 ms   7.6 %  setTimeout
+     506.4 ms   5.2 %  setAttribute
+     230.7 ms   2.4 %  requestAnimationFrame
+      93.9 ms     1 %  (garbage collector)
+      78.1 ms   0.8 %  updateProperties index3-4ZzWScdG.js:8149
+      63.7 ms   0.7 %  renderWithHooks index3-4ZzWScdG.js:3060
+      60.6 ms   0.6 %  animate
+      54.2 ms   0.6 %  KnightBody index3-4ZzWScdG.js:14530
+      46.7 ms   0.5 %  placeSeat index3-4ZzWScdG.js:10772
+      45.5 ms   0.5 %  Arena index3-4ZzWScdG.js:16284
+      43.1 ms   0.4 %  Shot index3-4ZzWScdG.js:15099
+      42.2 ms   0.4 %  jsxProd jsx-runtime-BtsEcTrj.js:396
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":false,"dev":true,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":-1,"seatMoves":2618,"updates":401,"longTasks":0,"longMs":0,"heapGrowMB":1.7,"tick":7,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":14.1,"commitP95":23.9,"commitP99":27.6,"commitMax":32.1,"rafP50":20.8,"rafP95":27.8,"overCount":119,"overPct":29.8,"frames":400,"wallMs":7441,"busyPct":82.6,"fps":53.8,"feedActualHz":54,"passages":0,"buildMs":14.9,"firstPaintMs":20.8,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":805,"svgNodes":781,"jsHeapMB":8.5,"name":"cand:nohud","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":837,"layout":875,"styleMs":0.49,"layoutMs":0.33,"scriptMs":3.54,"taskMs":8.19,"recalcPerFrame":1.9,"layoutPerFrame":1.99,"heapDeltaMB":4}
+  trace: 882 layouts; UpdateLayoutTree 487.4ms, Layout 297.4ms, PrePaint 398.2ms, Paint 1055.5ms, RasterTask 72.4ms, Commit 408.9ms, Layerize 1315.6ms, HitTest 163.6ms, FunctionCall 3629.2ms, RunTask 10350.5ms, TimerFire 6.8ms, EventDispatch 5.6ms, MinorGC 24.9ms, MajorGC 43.5ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 8439.4 ms sampled; inclusive: (program) 5245.3ms/62.2%, performWorkOnRoot 2677.3ms/31.7%, commitRoot 2041.7ms/24.2%, renderRootSync 628.2ms/7.4%, frame 218.7ms/2.6%, Arena 131.6ms/1.6%, KnightBody 85.9ms/1%, (garbage collector) 82.5ms/1%, Shot 50.4ms/0.6%, paint 45.3ms/0.5%, setWorld 16.8ms/0.2%, useSeatInterpolation 15.9ms/0.2%, foldTracks 5.7ms/0.1%, roomSeats 5.3ms/0.1%, knightDrawOrder 3.6ms/0%, sameSeat 3.4ms/0%, advance 2.8ms/0%, (idle) 2.6ms/0%, step 2.1ms/0%, visibleBullets 0.6ms/0%
+    5245.3 ms  62.2 %  (program)
+     581.7 ms   6.9 %  clearTimeout
+       568 ms   6.7 %  setTimeout
+     511.7 ms   6.1 %  setAttribute
+       239 ms   2.8 %  requestAnimationFrame
+      82.5 ms     1 %  (garbage collector)
+        61 ms   0.7 %  renderWithHooks index3-4ZzWScdG.js:3060
+      47.1 ms   0.6 %  Shot index3-4ZzWScdG.js:15099
+      46.9 ms   0.6 %  animate
+      46.7 ms   0.6 %  updateProperties index3-4ZzWScdG.js:8149
+      42.2 ms   0.5 %  KnightBody index3-4ZzWScdG.js:14530
+      38.4 ms   0.5 %  commitHostUpdate index3-4ZzWScdG.js:5413
+      38.4 ms   0.5 %  Arena index3-4ZzWScdG.js:16284
+        26 ms   0.3 %  jsxProd jsx-runtime-BtsEcTrj.js:396
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":true,"dev":false,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":-1,"seatMoves":2789,"updates":401,"longTasks":0,"longMs":0,"heapGrowMB":0.3,"tick":7,"seat":0,"storeStatus":"live","hudNodes":0,"commitP50":15.2,"commitP95":24.1,"commitP99":29.4,"commitMax":39.9,"rafP50":20.8,"rafP95":27.8,"overCount":151,"overPct":37.8,"frames":400,"wallMs":7820,"busyPct":82.2,"fps":51.1,"feedActualHz":51,"passages":0,"buildMs":18.1,"firstPaintMs":20.5,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":856,"svgNodes":785,"jsHeapMB":6,"name":"cand:nodev","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":833,"layout":871,"styleMs":0.47,"layoutMs":0.42,"scriptMs":3.77,"taskMs":8.72,"recalcPerFrame":1.89,"layoutPerFrame":1.98,"heapDeltaMB":1.4}
+  trace: 874 layouts; UpdateLayoutTree 467.9ms, Layout 380.2ms, PrePaint 387.5ms, Paint 1091.9ms, RasterTask 87.7ms, Commit 383.3ms, Layerize 1455.2ms, HitTest 186.6ms, FunctionCall 3849.6ms, RunTask 11232.7ms, TimerFire 3.7ms, EventDispatch 9.5ms, MinorGC 22.8ms, MajorGC 56.2ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 9006.1 ms sampled; inclusive: (program) 5596.4ms/62.1%, performWorkOnRoot 2847.7ms/31.6%, commitRoot 2156.9ms/23.9%, renderRootSync 683.9ms/7.6%, frame 236.8ms/2.6%, Arena 130.1ms/1.4%, KnightBody 106.8ms/1.2%, (garbage collector) 80.5ms/0.9%, paint 42.6ms/0.5%, Shot 38.9ms/0.4%, Card 22.2ms/0.2%, setWorld 19.4ms/0.2%, (idle) 12.6ms/0.1%, useSeatInterpolation 8.4ms/0.1%, sameSeat 6.7ms/0.1%, roomSeats 6.6ms/0.1%, knightDrawOrder 4.7ms/0.1%, step 4.4ms/0%, foldTracks 2.6ms/0%, advance 1.4ms/0%, visibleBullets 0.3ms/0%
+    5596.4 ms  62.1 %  (program)
+     638.8 ms   7.1 %  clearTimeout
+     596.9 ms   6.6 %  setTimeout
+     482.9 ms   5.4 %  setAttribute
+     231.1 ms   2.6 %  requestAnimationFrame
+      80.5 ms   0.9 %  (garbage collector)
+      71.1 ms   0.8 %  updateProperties index3-4ZzWScdG.js:8149
+        62 ms   0.7 %  KnightBody index3-4ZzWScdG.js:14530
+      59.5 ms   0.7 %  animate
+      57.8 ms   0.6 %  renderWithHooks index3-4ZzWScdG.js:3060
+      41.8 ms   0.5 %  Arena index3-4ZzWScdG.js:16284
+        32 ms   0.4 %  setValueForAttribute index3-4ZzWScdG.js:964
+      31.8 ms   0.4 %  Shot index3-4ZzWScdG.js:15099
+      31.8 ms   0.4 %  setValueForStyles index3-4ZzWScdG.js:1181
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":false,"dev":false,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":-1,"seatMoves":2339,"updates":401,"longTasks":0,"longMs":0,"heapGrowMB":2.1,"tick":7,"seat":0,"storeStatus":"live","hudNodes":0,"commitP50":14.8,"commitP95":23.1,"commitP99":29.7,"commitMax":40.1,"rafP50":13.9,"rafP95":27.8,"overCount":125,"overPct":31.3,"frames":400,"wallMs":6598,"busyPct":93.7,"fps":60.6,"feedActualHz":61,"passages":0,"buildMs":19.1,"firstPaintMs":18.5,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":803,"svgNodes":781,"jsHeapMB":8.8,"name":"cand:nohud-nodev","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":445,"layout":445,"styleMs":0.38,"layoutMs":0.23,"scriptMs":3.34,"taskMs":7.32,"recalcPerFrame":1.01,"layoutPerFrame":1.01,"heapDeltaMB":4.2}
+  trace: 450 layouts; UpdateLayoutTree 384ms, Layout 216.6ms, PrePaint 263.7ms, Paint 1119.1ms, RasterTask 74.6ms, Commit 384.8ms, Layerize 1294.8ms, HitTest 3.5ms, FunctionCall 3431.5ms, RunTask 9459.2ms, TimerFire 3.4ms, EventDispatch 2.1ms, MinorGC 24.6ms, MajorGC 28.8ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 7595.7 ms sampled; inclusive: (program) 4584.6ms/60.4%, performWorkOnRoot 2567.7ms/33.8%, commitRoot 1963.8ms/25.9%, renderRootSync 599.5ms/7.9%, frame 161.6ms/2.1%, Arena 123ms/1.6%, KnightBody 83ms/1.1%, (garbage collector) 70.5ms/0.9%, Shot 43ms/0.6%, paint 39.5ms/0.5%, setWorld 11ms/0.1%, useSeatInterpolation 7.5ms/0.1%, foldTracks 6.3ms/0.1%, step 3.8ms/0%, (idle) 3.7ms/0%, sameSeat 2.1ms/0%, visibleBullets 1.8ms/0%, advance 1.6ms/0%, roomSeats 1ms/0%, knightDrawOrder 0.3ms/0%
+    4584.6 ms  60.4 %  (program)
+     577.4 ms   7.6 %  clearTimeout
+     530.5 ms     7 %  setTimeout
+     518.5 ms   6.8 %  setAttribute
+     183.2 ms   2.4 %  requestAnimationFrame
+      70.5 ms   0.9 %  (garbage collector)
+      48.1 ms   0.6 %  renderWithHooks index3-4ZzWScdG.js:3060
+      45.6 ms   0.6 %  updateProperties index3-4ZzWScdG.js:8149
+      43.4 ms   0.6 %  jsxProd jsx-runtime-BtsEcTrj.js:396
+      42.6 ms   0.6 %  KnightBody index3-4ZzWScdG.js:14530
+      40.1 ms   0.5 %  animate
+      36.3 ms   0.5 %  Shot index3-4ZzWScdG.js:15099
+        33 ms   0.4 %  createWorkInProgress index3-4ZzWScdG.js:1959
+      31.6 ms   0.4 %  Arena index3-4ZzWScdG.js:16284
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"#stage svg *{will-change:auto!important}","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":true,"dev":true,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":-1,"seatMoves":2734,"updates":408,"longTasks":0,"longMs":0,"heapGrowMB":2.3,"tick":7,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":14.9,"commitP95":25,"commitP99":29.2,"commitMax":31.1,"rafP50":20.8,"rafP95":27.9,"overCount":157,"overPct":39.3,"frames":400,"wallMs":7875,"busyPct":81.5,"fps":50.8,"feedActualHz":52,"passages":0,"buildMs":15.5,"firstPaintMs":27.6,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":858,"svgNodes":785,"jsHeapMB":9.5,"name":"cand:wc-off","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":834,"layout":870,"styleMs":0.53,"layoutMs":0.38,"scriptMs":3.77,"taskMs":8.67,"recalcPerFrame":1.9,"layoutPerFrame":1.98,"heapDeltaMB":0.7}
+  trace: 877 layouts; UpdateLayoutTree 536.4ms, Layout 338ms, PrePaint 423ms, Paint 1112.4ms, RasterTask 140.6ms, Commit 298.9ms, Layerize 1435.5ms, HitTest 189.5ms, FunctionCall 3858.8ms, RunTask 11231.1ms, TimerFire 6.3ms, EventDispatch 7.4ms, MinorGC 21.8ms, MajorGC 38.3ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 8933.2 ms sampled; inclusive: (program) 5557.4ms/62.2%, performWorkOnRoot 2839.4ms/31.8%, commitRoot 2179.1ms/24.4%, renderRootSync 658.6ms/7.4%, frame 211.8ms/2.4%, Arena 120.1ms/1.3%, KnightBody 98.4ms/1.1%, (garbage collector) 79.3ms/0.9%, paint 60.2ms/0.7%, Shot 45ms/0.5%, Card 20.4ms/0.2%, setWorld 19.4ms/0.2%, sameSeat 9ms/0.1%, roomSeats 7.5ms/0.1%, foldTracks 7.4ms/0.1%, useSeatInterpolation 5.9ms/0.1%, (idle) 5.1ms/0.1%, step 4.8ms/0.1%, knightDrawOrder 4.3ms/0%, visibleBullets 2.4ms/0%, Top 0.6ms/0%, advance 0.2ms/0%, DevPanel 0.2ms/0%
+    5557.4 ms  62.2 %  (program)
+     655.4 ms   7.3 %  clearTimeout
+     614.1 ms   6.9 %  setTimeout
+     520.4 ms   5.8 %  setAttribute
+     208.3 ms   2.3 %  requestAnimationFrame
+      79.3 ms   0.9 %  (garbage collector)
+        57 ms   0.6 %  updateProperties index3-4ZzWScdG.js:8149
+      52.9 ms   0.6 %  KnightBody index3-4ZzWScdG.js:14530
+      49.1 ms   0.5 %  renderWithHooks index3-4ZzWScdG.js:3060
+      45.9 ms   0.5 %  animate
+      43.1 ms   0.5 %  Arena index3-4ZzWScdG.js:16284
+      38.6 ms   0.4 %  Shot index3-4ZzWScdG.js:15099
+      35.9 ms   0.4 %  createWorkInProgress index3-4ZzWScdG.js:1959
+      34.3 ms   0.4 %  commitHostUpdate index3-4ZzWScdG.js:5413
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":false,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":true,"dev":true,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":-1,"seatMoves":2602,"updates":402,"longTasks":0,"longMs":0,"heapGrowMB":0.2,"tick":7,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":14.5,"commitP95":23.4,"commitP99":29.4,"commitMax":35.4,"rafP50":20.8,"rafP95":27.8,"overCount":113,"overPct":28.3,"frames":400,"wallMs":7377,"busyPct":82.2,"fps":54.2,"feedActualHz":54,"passages":0,"buildMs":19.7,"firstPaintMs":20.4,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":858,"svgNodes":785,"jsHeapMB":7.2,"name":"cand:noarrows","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":827,"layout":865,"styleMs":0.45,"layoutMs":0.34,"scriptMs":3.62,"taskMs":8.14,"recalcPerFrame":1.88,"layoutPerFrame":1.97,"heapDeltaMB":2.6}
+  trace: 872 layouts; UpdateLayoutTree 447.2ms, Layout 305.7ms, PrePaint 375.5ms, Paint 982.7ms, RasterTask 69.6ms, Commit 380.6ms, Layerize 1274.2ms, HitTest 188.9ms, FunctionCall 3731.4ms, RunTask 10359.8ms, TimerFire 1.9ms, EventDispatch 17.2ms, MinorGC 26ms, MajorGC 45.8ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 8477.1 ms sampled; inclusive: (program) 5224.6ms/61.6%, performWorkOnRoot 2713.8ms/32%, commitRoot 2043.9ms/24.1%, renderRootSync 667.1ms/7.9%, frame 208.8ms/2.5%, Arena 111.2ms/1.3%, (garbage collector) 84.4ms/1%, KnightBody 81.5ms/1%, Shot 52.4ms/0.6%, paint 47.6ms/0.6%, setWorld 22.7ms/0.3%, Card 21.3ms/0.3%, useSeatInterpolation 12.1ms/0.1%, (idle) 8.3ms/0.1%, foldTracks 5.2ms/0.1%, roomSeats 3.1ms/0%, sameSeat 2.8ms/0%, knightDrawOrder 2.2ms/0%, Top 1.4ms/0%, DevPanel 1.3ms/0%, Hud 0.8ms/0%, visibleBullets 0.2ms/0%, advance 0.1ms/0%, step 0ms/0%
+    5224.6 ms  61.6 %  (program)
+     588.5 ms   6.9 %  clearTimeout
+     545.1 ms   6.4 %  setTimeout
+     489.7 ms   5.8 %  setAttribute
+     235.3 ms   2.8 %  requestAnimationFrame
+      84.4 ms     1 %  (garbage collector)
+      51.8 ms   0.6 %  updateProperties index3-4ZzWScdG.js:8149
+      48.5 ms   0.6 %  Shot index3-4ZzWScdG.js:15099
+      43.4 ms   0.5 %  renderWithHooks index3-4ZzWScdG.js:3060
+      42.3 ms   0.5 %  KnightBody index3-4ZzWScdG.js:14530
+      40.4 ms   0.5 %  animate
+      36.8 ms   0.4 %  commitHostUpdate index3-4ZzWScdG.js:5413
+      34.6 ms   0.4 %  jsxProd jsx-runtime-BtsEcTrj.js:396
+      33.1 ms   0.4 %  setValueForAttribute index3-4ZzWScdG.js:964
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":true,"fullHp":false,"noVignette":false,"feedHz":714,"hud":true,"dev":true,"tickEvery":71,"sparseMoves":false,"movesPerWrite":1,"movesPerSec":0,"wear":-1,"seatMoves":0,"updates":524,"longTasks":0,"longMs":0,"heapGrowMB":2.7,"tick":9,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":14.3,"commitP95":21.5,"commitP99":25.5,"commitMax":33,"rafP50":16.7,"rafP95":27.8,"overCount":75,"overPct":18.8,"frames":400,"wallMs":7228,"busyPct":82.7,"fps":55.3,"feedActualHz":72,"passages":0,"buildMs":17.5,"firstPaintMs":20.1,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":858,"svgNodes":785,"jsHeapMB":9.3,"name":"cand:frozen","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":587,"layout":591,"styleMs":0.47,"layoutMs":0.33,"scriptMs":3.05,"taskMs":7.85,"recalcPerFrame":1.33,"layoutPerFrame":1.34,"heapDeltaMB":0.9}
+  trace: 595 layouts; UpdateLayoutTree 473.5ms, Layout 303.9ms, PrePaint 310.7ms, Paint 1174.1ms, RasterTask 73.3ms, Commit 494ms, Layerize 1320.7ms, HitTest 115.5ms, FunctionCall 3184.2ms, RunTask 10212.2ms, TimerFire 3.3ms, EventDispatch 15ms, MinorGC 26.4ms, MajorGC 46.2ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 8150.6 ms sampled; inclusive: (program) 5553.7ms/68.1%, performWorkOnRoot 2099.7ms/25.8%, commitRoot 1450.5ms/17.8%, renderRootSync 648ms/8%, frame 210.6ms/2.6%, Arena 146.6ms/1.8%, (garbage collector) 85.5ms/1%, paint 54.7ms/0.7%, KnightBody 41ms/0.5%, Shot 40ms/0.5%, setWorld 30.2ms/0.4%, Card 27.8ms/0.3%, (idle) 8.9ms/0.1%, roomSeats 8.7ms/0.1%, useSeatInterpolation 4.9ms/0.1%, step 4.4ms/0.1%, sameSeat 4.3ms/0.1%, knightDrawOrder 4.2ms/0.1%, foldTracks 4ms/0%, Top 1.5ms/0%, visibleBullets 1.1ms/0%, advance 0.5ms/0%
+    5553.7 ms  68.1 %  (program)
+     490.4 ms     6 %  setAttribute
+     259.7 ms   3.2 %  clearTimeout
+     227.1 ms   2.8 %  setTimeout
+     226.7 ms   2.8 %  requestAnimationFrame
+      85.5 ms     1 %  (garbage collector)
+      62.2 ms   0.8 %  updateProperties index3-4ZzWScdG.js:8149
+      53.6 ms   0.7 %  Arena index3-4ZzWScdG.js:16284
+      46.6 ms   0.6 %  renderWithHooks index3-4ZzWScdG.js:3060
+      37.7 ms   0.5 %  setValueForStyles index3-4ZzWScdG.js:1181
+      37.1 ms   0.5 %  setValueForAttribute index3-4ZzWScdG.js:964
+      36.8 ms   0.5 %  matchMedia
+      34.4 ms   0.4 %  jsxProd jsx-runtime-BtsEcTrj.js:396
+      31.4 ms   0.4 %  createWorkInProgress index3-4ZzWScdG.js:1959
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":20,"hud":true,"dev":true,"tickEvery":2,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":-1,"seatMoves":3692,"updates":212,"longTasks":1,"longMs":96,"heapGrowMB":2.6,"tick":115,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":17.8,"commitP95":39.4,"commitP99":64.9,"commitMax":80.5,"rafP50":20.9,"rafP95":48.7,"overCount":227,"overPct":56.8,"frames":400,"wallMs":10697,"busyPct":80,"fps":37.4,"feedActualHz":20,"passages":0,"buildMs":19.1,"firstPaintMs":23.4,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":861,"svgNodes":788,"jsHeapMB":8.5,"name":"cand:feed20","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":625,"layout":672,"styleMs":0.95,"layoutMs":0.77,"scriptMs":3.91,"taskMs":11.52,"recalcPerFrame":1.42,"layoutPerFrame":1.53,"heapDeltaMB":4}
+  trace: 676 layouts; UpdateLayoutTree 959.3ms, Layout 728ms, PrePaint 658.1ms, Paint 1606.8ms, RasterTask 188.8ms, Commit 667ms, Layerize 1896.7ms, HitTest 224.4ms, FunctionCall 4016ms, RunTask 16778.7ms, TimerFire 57.1ms, EventDispatch 22.7ms, MinorGC 31.4ms, MajorGC 57.5ms
+  forced layouts by caller: none
+  profile 11872.1 ms sampled; inclusive: (program) 8332.1ms/70.2%, performWorkOnRoot 2689.3ms/22.7%, commitRoot 2023ms/17%, renderRootSync 657.8ms/5.5%, frame 370ms/3.1%, KnightBody 114.4ms/1%, (garbage collector) 107.6ms/0.9%, Arena 85.7ms/0.7%, paint 41.8ms/0.4%, Shot 40.3ms/0.3%, Card 27.8ms/0.2%, (idle) 20.5ms/0.2%, step 18.8ms/0.2%, setWorld 17.8ms/0.2%, foldTracks 6.4ms/0.1%, sameSeat 3.7ms/0%, Top 2.4ms/0%, useSeatInterpolation 2.4ms/0%, visibleBullets 1.9ms/0%, advance 1.6ms/0%, DevPanel 0.7ms/0%, roomSeats 0ms/0%
+    8332.1 ms  70.2 %  (program)
+     558.3 ms   4.7 %  setTimeout
+     537.5 ms   4.5 %  clearTimeout
+     370.2 ms   3.1 %  requestAnimationFrame
+     325.6 ms   2.7 %  setAttribute
+     153.7 ms   1.3 %  animate
+     107.6 ms   0.9 %  (garbage collector)
+      75.7 ms   0.6 %  commitMutationEffectsOnFiber index3-4ZzWScdG.js:5832
+      72.6 ms   0.6 %  updateProperties index3-4ZzWScdG.js:8149
+      64.3 ms   0.5 %  KnightBody index3-4ZzWScdG.js:14530
+      58.8 ms   0.5 %  setValueForStyle index3-4ZzWScdG.js:1177
+      46.6 ms   0.4 %  renderWithHooks index3-4ZzWScdG.js:3060
+      38.1 ms   0.3 %  commitHostUpdate index3-4ZzWScdG.js:5413
+      33.4 ms   0.3 %  Shot index3-4ZzWScdG.js:15099
+{"room":"arena","layer":"full","knights":20,"bullets":0,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":true,"dev":true,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":-1,"seatMoves":2654,"updates":401,"longTasks":0,"longMs":0,"heapGrowMB":1.5,"tick":7,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":14.4,"commitP95":24.5,"commitP99":32.9,"commitMax":38.2,"rafP50":20.7,"rafP95":27.9,"overCount":121,"overPct":30.3,"frames":400,"wallMs":7488,"busyPct":81.7,"fps":53.4,"feedActualHz":54,"passages":0,"buildMs":15.7,"firstPaintMs":14.8,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":834,"svgNodes":761,"jsHeapMB":8.3,"name":"cand:bullets0","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":838,"layout":875,"styleMs":0.47,"layoutMs":0.4,"scriptMs":3.71,"taskMs":8.31,"recalcPerFrame":1.9,"layoutPerFrame":1.99,"heapDeltaMB":3.7}
+  trace: 882 layouts; UpdateLayoutTree 469.5ms, Layout 362.6ms, PrePaint 422.9ms, Paint 1043ms, RasterTask 81.9ms, Commit 324.4ms, Layerize 1216.7ms, HitTest 200.8ms, FunctionCall 3792.5ms, RunTask 10787.9ms, TimerFire 2.4ms, EventDispatch 11.6ms, MinorGC 20.9ms, MajorGC 32.9ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 8591.7 ms sampled; inclusive: (program) 5281.6ms/61.5%, performWorkOnRoot 2792.7ms/32.5%, commitRoot 2148.2ms/25%, renderRootSync 635.2ms/7.4%, frame 205.9ms/2.4%, KnightBody 109.3ms/1.3%, Arena 72.7ms/0.8%, (garbage collector) 66.6ms/0.8%, paint 52.4ms/0.6%, Shot 38ms/0.4%, setWorld 25.5ms/0.3%, Card 19.4ms/0.2%, (idle) 11ms/0.1%, useSeatInterpolation 8.8ms/0.1%, step 6ms/0.1%, sameSeat 5.5ms/0.1%, foldTracks 4.1ms/0%, visibleBullets 2.6ms/0%, roomSeats 2.3ms/0%, knightDrawOrder 2.3ms/0%, advance 1.9ms/0%, DevPanel 0.7ms/0%, Top 0.4ms/0%
+    5281.6 ms  61.5 %  (program)
+     624.1 ms   7.3 %  clearTimeout
+     618.1 ms   7.2 %  setTimeout
+     532.8 ms   6.2 %  setAttribute
+     216.4 ms   2.5 %  requestAnimationFrame
+      66.6 ms   0.8 %  (garbage collector)
+      62.3 ms   0.7 %  KnightBody index3-4ZzWScdG.js:14530
+      52.4 ms   0.6 %  renderWithHooks index3-4ZzWScdG.js:3060
+      51.9 ms   0.6 %  animate
+      41.8 ms   0.5 %  placeSeat index3-4ZzWScdG.js:10772
+      40.1 ms   0.5 %  updateProperties index3-4ZzWScdG.js:8149
+      38.4 ms   0.4 %  jsxProd jsx-runtime-BtsEcTrj.js:396
+      33.4 ms   0.4 %  createWorkInProgress index3-4ZzWScdG.js:1959
+      28.7 ms   0.3 %  commitHostUpdate index3-4ZzWScdG.js:5413
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":true,"dev":true,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":1,"seatMoves":3324,"updates":411,"longTasks":0,"longMs":0,"heapGrowMB":0.7,"tick":23,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":17.5,"commitP95":28.4,"commitP99":36.3,"commitMax":42.4,"rafP50":20.9,"rafP95":34.7,"overCount":217,"overPct":54.3,"frames":400,"wallMs":9012,"busyPct":82.5,"fps":44.4,"feedActualHz":46,"passages":0,"buildMs":54.5,"firstPaintMs":59.1,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":858,"svgNodes":785,"jsHeapMB":7.2,"name":"cand:fury","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":843,"layout":879,"styleMs":0.65,"layoutMs":0.46,"scriptMs":4.22,"taskMs":10.34,"recalcPerFrame":1.92,"layoutPerFrame":2,"heapDeltaMB":2.6}
+  trace: 885 layouts; UpdateLayoutTree 653.5ms, Layout 416ms, PrePaint 512.5ms, Paint 1406.6ms, RasterTask 119ms, Commit 468.3ms, Layerize 1741.6ms, HitTest 232.2ms, FunctionCall 4333.8ms, RunTask 14502.9ms, TimerFire 13ms, EventDispatch 10.6ms, MinorGC 26.4ms, MajorGC 55.5ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 10641.1 ms sampled; inclusive: (program) 6810.4ms/64%, performWorkOnRoot 3185.9ms/29.9%, commitRoot 2439ms/22.9%, renderRootSync 740ms/7%, frame 235ms/2.2%, Arena 130ms/1.2%, KnightBody 108.5ms/1%, (garbage collector) 105.3ms/1%, Shot 58.4ms/0.5%, paint 50.5ms/0.5%, Card 19.4ms/0.2%, setWorld 19.1ms/0.2%, (idle) 15.4ms/0.1%, useSeatInterpolation 9ms/0.1%, step 6.5ms/0.1%, foldTracks 5.6ms/0.1%, roomSeats 4.9ms/0%, knightDrawOrder 4.3ms/0%, sameSeat 4.2ms/0%, visibleBullets 3.5ms/0%, advance 2.2ms/0%, Hud 0.9ms/0%
+    6810.4 ms    64 %  (program)
+     703.2 ms   6.6 %  clearTimeout
+     686.4 ms   6.5 %  setTimeout
+     537.5 ms   5.1 %  setAttribute
+       250 ms   2.3 %  requestAnimationFrame
+     105.3 ms     1 %  (garbage collector)
+        73 ms   0.7 %  animate
+      64.5 ms   0.6 %  renderWithHooks index3-4ZzWScdG.js:3060
+      61.9 ms   0.6 %  updateProperties index3-4ZzWScdG.js:8149
+        54 ms   0.5 %  commitHostUpdate index3-4ZzWScdG.js:5413
+      53.6 ms   0.5 %  KnightBody index3-4ZzWScdG.js:14530
+      50.2 ms   0.5 %  Shot index3-4ZzWScdG.js:15099
+      41.6 ms   0.4 %  cancel
+      36.9 ms   0.3 %  jsxProd jsx-runtime-BtsEcTrj.js:396
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":".hr-fury .hr-boss-shell,.hr-vent-open .hr-boss-vent,.beam-sweep{filter:none!important;animation:none!important}","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":true,"dev":true,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":1,"seatMoves":3362,"updates":432,"longTasks":1,"longMs":53,"heapGrowMB":2.4,"tick":24,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":18.6,"commitP95":37.5,"commitP99":62.9,"commitMax":71.1,"rafP50":20.8,"rafP95":41.7,"overCount":245,"overPct":61.3,"frames":400,"wallMs":9472,"busyPct":89.5,"fps":42.2,"feedActualHz":46,"passages":0,"buildMs":51,"firstPaintMs":54.7,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":858,"svgNodes":785,"jsHeapMB":8.1,"name":"cand:fury-nofilter","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":560,"layout":562,"styleMs":0.5,"layoutMs":0.35,"scriptMs":4.68,"taskMs":10.45,"recalcPerFrame":1.27,"layoutPerFrame":1.28,"heapDeltaMB":3.6}
+  trace: 570 layouts; UpdateLayoutTree 501.8ms, Layout 317.2ms, PrePaint 413.3ms, Paint 1554.6ms, RasterTask 125.8ms, Commit 551.9ms, Layerize 1827.1ms, HitTest 92.7ms, FunctionCall 4811.3ms, RunTask 13804.2ms, TimerFire 15.8ms, EventDispatch 20.5ms, MinorGC 32.6ms, MajorGC 36ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 10789.2 ms sampled; inclusive: (program) 6538.8ms/60.6%, performWorkOnRoot 3577.2ms/33.2%, commitRoot 2681.8ms/24.9%, renderRootSync 886.7ms/8.2%, frame 234.9ms/2.2%, Arena 134.4ms/1.2%, KnightBody 129.5ms/1.2%, (garbage collector) 86.6ms/0.8%, Shot 58.3ms/0.5%, paint 55.5ms/0.5%, Card 34.7ms/0.3%, setWorld 26.9ms/0.2%, useSeatInterpolation 11.9ms/0.1%, (idle) 9ms/0.1%, sameSeat 8.4ms/0.1%, step 6.1ms/0.1%, visibleBullets 5ms/0%, advance 3.3ms/0%, Top 2.5ms/0%, roomSeats 2.3ms/0%, foldTracks 1.8ms/0%, Hud 1.2ms/0%, knightDrawOrder 0.1ms/0%
+    6538.8 ms  60.6 %  (program)
+     779.4 ms   7.2 %  clearTimeout
+     735.6 ms   6.8 %  setTimeout
+     574.7 ms   5.3 %  setAttribute
+     257.3 ms   2.4 %  requestAnimationFrame
+      86.6 ms   0.8 %  (garbage collector)
+      81.1 ms   0.8 %  updateProperties index3-4ZzWScdG.js:8149
+      76.7 ms   0.7 %  animate
+      76.1 ms   0.7 %  KnightBody index3-4ZzWScdG.js:14530
+      68.9 ms   0.6 %  renderWithHooks index3-4ZzWScdG.js:3060
+      58.8 ms   0.5 %  jsxProd jsx-runtime-BtsEcTrj.js:396
+      55.9 ms   0.5 %  Shot index3-4ZzWScdG.js:15099
+        53 ms   0.5 %  createWorkInProgress index3-4ZzWScdG.js:1959
+      52.2 ms   0.5 %  commitHostUpdate index3-4ZzWScdG.js:5413
+{"room":"arena","layer":"full","knights":20,"bullets":24,"archerPct":50,"arrows":true,"damage":true,"localArrows":true,"remoteArrows":true,"css":"","frozen":false,"fullHp":false,"noVignette":false,"feedHz":714,"hud":false,"dev":true,"tickEvery":71,"sparseMoves":true,"movesPerWrite":1,"movesPerSec":320,"wear":1,"seatMoves":2935,"updates":408,"longTasks":0,"longMs":0,"heapGrowMB":-1.6,"tick":23,"seat":0,"storeStatus":"live","hudNodes":1,"commitP50":15.7,"commitP95":26.5,"commitP99":33,"commitMax":47.9,"rafP50":20.8,"rafP95":27.9,"overCount":160,"overPct":40,"frames":400,"wallMs":8223,"busyPct":82.9,"fps":48.6,"feedActualHz":50,"passages":0,"buildMs":51.5,"firstPaintMs":59.6,"stageW":1920,"stageH":1080,"stageMpx":2.07,"viewBox":"-70.89185202325518 -48 1165.7837040465104 656","nodes":805,"svgNodes":781,"jsHeapMB":5.8,"name":"cand:fury-nohud","cpu":6,"rep":0,"vpW":1920,"vpH":1080,"reducedMotion":false,"recalcStyle":828,"layout":866,"styleMs":0.61,"layoutMs":0.38,"scriptMs":3.75,"taskMs":9.28,"recalcPerFrame":1.88,"layoutPerFrame":1.97,"heapDeltaMB":1.2}
+  trace: 870 layouts; UpdateLayoutTree 609.8ms, Layout 340.3ms, PrePaint 459.3ms, Paint 1291.9ms, RasterTask 115.4ms, Commit 443.6ms, Layerize 1594ms, HitTest 190.4ms, FunctionCall 3867.3ms, RunTask 12954.1ms, TimerFire 12.4ms, EventDispatch 6.6ms, MinorGC 22.4ms, MajorGC 46.8ms
+  forced layouts by caller: window.__run index3-4ZzWScdG.js:19455 x1
+  profile 9578.1 ms sampled; inclusive: (program) 6152.6ms/64.2%, performWorkOnRoot 2878.2ms/30%, commitRoot 2211.9ms/23.1%, renderRootSync 656.8ms/6.9%, frame 231ms/2.4%, Arena 117ms/1.2%, (garbage collector) 93.1ms/1%, KnightBody 87.7ms/0.9%, Shot 38.4ms/0.4%, paint 35.4ms/0.4%, setWorld 14ms/0.1%, useSeatInterpolation 13.6ms/0.1%, (idle) 9.9ms/0.1%, roomSeats 4.9ms/0.1%, knightDrawOrder 4.7ms/0%, sameSeat 4.4ms/0%, step 3.9ms/0%, visibleBullets 3.5ms/0%, foldTracks 2.5ms/0%, advance 0.4ms/0%
+    6152.6 ms  64.2 %  (program)
+     689.1 ms   7.2 %  clearTimeout
+     626.4 ms   6.5 %  setTimeout
+     491.2 ms   5.1 %  setAttribute
+     250.8 ms   2.6 %  requestAnimationFrame
+      93.1 ms     1 %  (garbage collector)
+      56.4 ms   0.6 %  renderWithHooks index3-4ZzWScdG.js:3060
+      52.3 ms   0.5 %  updateProperties index3-4ZzWScdG.js:8149
+      52.2 ms   0.5 %  KnightBody index3-4ZzWScdG.js:14530
+      47.9 ms   0.5 %  animate
+      36.5 ms   0.4 %  Arena index3-4ZzWScdG.js:16284
+      35.8 ms   0.4 %  setValueForAttribute index3-4ZzWScdG.js:964
+      33.9 ms   0.4 %  Shot index3-4ZzWScdG.js:15099
+      31.1 ms   0.3 %  commitHostUpdate index3-4ZzWScdG.js:5413

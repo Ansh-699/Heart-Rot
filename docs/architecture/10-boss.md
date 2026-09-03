@@ -38,11 +38,11 @@ Read out of `handlers/tick.rs` at commit `ce9b743`, line numbers as they stand.
 | Interval | `VOLLEY_INTERVAL_TICKS = ticks_for(3_200) = 32` (`tick.rs:155`) |
 | **Real period** | **33 ticks = 3.3 s**, not 32 — see §1.5. |
 | Targeting | Nearest live player by squared distance, recomputed every tick (`tick.rs:520–534`). No threat table. `Boss.target_seat` is the cached answer. |
-| Bullet count | `1 + alive_count`, one more while furious (`BASE_VOLLEY_BULLETS = 1`, `FURY_EXTRA_BULLETS = 1`; was `3 + alive_count` until 2026-09-03), so 2 at one player and 21 at twenty. Const-asserted to fit the 128-slot pool at the furious interval, §1.2.1. |
+| Bullet count | `1 + alive_count`, plus the tier's extra while furious (`BASE_VOLLEY_BULLETS = 1`, `FURY_EXTRA_BULLETS_BY_TIER = [1, 2, 3]`; was `3 + alive_count` until 2026-09-03), so 2 at one player and 21 at twenty. Const-asserted to fit the 128-slot pool at the furious interval on HARD, §1.2.1, §1.7. |
 | Emitters | `hitboxes::MUZZLES`, four thorn centres, gated on `boss.parts[m.part] != 0`. Every thorn destroyed ⇒ the boss fires **nothing** (`tick.rs:685–693`). |
 | Spread | Symmetric fan; `k/SPREAD_DEN` with `SPREAD_DEN = 24` is the tangent of the offset; ±1 jitter per bullet from `mix64`. Outermost bullet of a 23-shot volley sits ≈25° off the aim line. |
 | Entropy | `mix64(affix_seed[0..8] ^ mix64(tick))` — one draw per tick, expanded per bullet. Pure function of state the client already holds, which is why the client can draw the volley locally the instant it sees the tick. |
-| Bullet damage | `state::bullet_damage(raid_size)`: 2 solo → 8 at twenty, linear, read off `arena.raid_size` once per tick; the slam is `slam_damage(raid_size)`, 15 → 45. (Was the flat `BULLET_DAMAGE = 8` / `SLAM_DAMAGE = 45` until 2026-09-03 — those are now the full-raid endpoints.) Against `PLAYER_HP_MAX = 150`. |
+| Bullet damage | `state::bullet_damage(raid_size, tier)`: 2 solo → 8 at twenty on EASY, linear, ×2 MEDIUM, ×3 HARD, read off `arena.raid_size` and `arena.difficulty` once per tick; the slam is `slam_damage(raid_size, tier)`, 15 → 45 on EASY. (Was the flat `BULLET_DAMAGE = 8` / `SLAM_DAMAGE = 45` until 2026-09-03 — those are now the EASY full-raid endpoints.) Against `PLAYER_HP_MAX = 150`. §1.7. |
 | Bullet speed | `BULLET_UNITS_PER_SEC = 120` ⇒ `BULLET_SPEED = 12` units/tick at `TICK_MS = 100`. |
 | Collision | Swept segment vs. a 12-unit player radius, `i64` closest-approach, no sqrt, no tunnelling. |
 | Death | 0 HP ⇒ `respawn_at_tick = tick + RESPAWN_TICKS` where `RESPAWN_TICKS = ticks_for(3_200) = 32` ticks. Respawn is at `entrance_for(seat)` — `map::ENTRANCES[seat % 4]`, fanned ±48 units along its wall. Respawns are **unlimited**. |
@@ -65,11 +65,12 @@ would be the HP stored twice.
 
 `tick.rs` stage 7 reads it on the tick `attack_timer` runs out. Furious, the reload is
 `FURY_VOLLEY_INTERVAL_TICKS = VOLLEY_INTERVAL_TICKS / 2` (16 ticks, 1.6 s) and the volley
-carries `FURY_EXTRA_BULLETS = 1` more. It is never clamped into a running countdown — the
-client draws the telegraph off `attack_timer`, and a timer that jumped mid-wind-up would snap
-the drawing — so the first furious reload is the one set by the volley that fires after the
-line is crossed. The bullet-pool const-assert is written against the furious interval: a
-37-tick flight over 16-tick reloads is three volleys of `1 + 20 + 1` = 66 slots of 128.
+carries `FURY_EXTRA_BULLETS_BY_TIER[difficulty]` more — one on EASY, two on MEDIUM, three
+on HARD (§1.7). It is never clamped into a running countdown — the client draws the
+telegraph off `attack_timer`, and a timer that jumped mid-wind-up would snap the drawing —
+so the first furious reload is the one set by the volley that fires after the line is
+crossed. The bullet-pool const-assert is written against the furious interval on HARD: a
+37-tick flight over 16-tick reloads is three volleys of `1 + 20 + 3` = 72 slots of 128.
 
 ### 1.2.2 The 50 % beam (added 2026-09-04)
 
@@ -98,6 +99,45 @@ takes `slam_damage(raid_size)` through the same `strike_lane` the slam uses — 
 step, no vent-lane exemption (a skipped lane would be a safe column inside a wall of fire).
 No field is read or written for any of it. An 80-tick period against the slam's 60, so the
 two beats coincide once every 24 s.
+
+### 1.7 Difficulty tiers (added 2026-09-04)
+
+The lobby has three gates — EASY, MEDIUM, HARD — and the gate the raid's first raider
+walked is `Arena.difficulty` (byte 38; `08-gate.md` §3.10, `05-wire-abi.md` tag 5). Every
+balance curve in `state.rs` is now a table with one row per tier, read beside
+`raid_size` on the same line the crank always read it, and `layout.ts` mirrors every
+table under the same name. EASY is exactly the tuning every account on chain was already
+fighting, which is why a zero byte needs no migration.
+
+| knob | EASY | MEDIUM | HARD | read by |
+|---|---|---|---|---|
+| `VENT_PCT_SOLO_BY_TIER` / `VENT_PCT_FULL_BY_TIER` | 98 / 35 | 94 / 30 | 88 / 25 | `vent_pct(raid_size, tier)`: `recompute_vent`, `Boss::fight_hp` |
+| `BOSS_CORE_HP_BY_TIER` | 200 | 400 | 700 | `core_hp_required(raid_size, tier)`: the tick's top-up |
+| `CORE_HP_PER_RAIDER_BY_TIER` | 3,000 | 3,200 | 3,400 | same |
+| `INCOMING_MUL_BY_TIER` | ×1 | ×2 | ×3 | `bullet_damage`, `slam_damage` (the beam deals the slam's number) |
+| `FURY_EXTRA_BULLETS_BY_TIER` | +1 | +2 | +3 | `tick::volley_size` while furious |
+
+Everything else — the volley base and interval, fury at 20 %, the beam at 50 %, the
+six-minute enrage, the shell — is untouched by the tier.
+
+**The core rows are bounded by the field they are written to.** `Boss.core_hp` is a `u16`
+and `Boss` has no padding to widen it, so twenty HARD raiders may owe at most 65,535. The
+first draft's 3,600 / 4,500 per raider put twenty MEDIUM raiders at 68,800 and twenty HARD
+at 86,200 — a core that saturates the field for every raid past fourteen and stops getting
+harder there. 3,200 / 3,400 are the largest hundreds that fit (61,200 / 65,300 at twenty);
+`state.rs` const-asserts every row against `u16::MAX`.
+
+**Seeding.** A boss is seeded with the EASY floor (`BOSS_CORE_HP`) by `init_arena` and
+`next_incarnation`, both of which run in `LOBBY` where `difficulty` is 0 by construction.
+Stage 1b of the first FIGHTING tick raises `core_hp_max` to `core_hp_required(raid_size,
+difficulty)` by the same monotone top-up that sizes it to a second raider, so a HARD solo
+fights 700 from its first tick.
+
+**Time to kill** (`ttk_s_tier`, the same floor model as `ttk_s`, const-asserted): solo
+12 / 30 / 58 s; twenty 69 / 74 / 79 s. Each tier is strictly longer than the one below at
+every raid size, and HARD's full raid fits the enrage window twice over (158 < 360), the
+same allowance EASY's has. Incoming damage is where the tiers bite hardest: a HARD solo
+bullet is 6 against the 150 HP bar, a twenty-raider HARD slam 135.
 
 ### 1.3 The incarnation system
 
@@ -803,6 +843,6 @@ not.
 | `SANCTUARY_OFFSET_MAX` | 256 u | half the escape budget, so the far edge of a spread raid can just reach it |
 | `RAIN_SHARD_RADIUS` | 32 u (2 tiles) | 53.5 % coverage at 24 shards in a clumped raid |
 | `RAIN_BOX_INFLATE` | 80 u (5 tiles) | the raid's own bounding box, widened |
-| `CORE_HP_PER_RAIDER` | 3,000 | 2,000 + 19×3,000 = 59,000 ≤ `u16::MAX` |
+| `CORE_HP_PER_RAIDER_BY_TIER` | 3,000 / 3,200 / 3,400 | 700 + 19×3,400 = 65,300 ≤ `u16::MAX` on HARD (§1.7) |
 
 Every duration goes through `state::ticks_for()`. No tick count is written as a literal.

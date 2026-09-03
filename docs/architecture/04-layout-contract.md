@@ -120,14 +120,15 @@ whether a task is alive, so a stalled `tick` is the only signal that exists.
 | `alive_count` | u8 | 4 | 1 | players alive in `ZONE_ARENA`; drives `bullets_per_volley = 3 + alive_count` |
 | `bullet_cursor` | u8 | 5 | 1 | next pool slot `boss_tick` probes when claiming a free bullet |
 | `outcome` | u8 | 6 | 1 | how the last fight ended; was `_pad0[0]` |
-| `raid_size` | u8 | 7 | 1 | high-water raiders this incarnation; `vent_pct(raid_size)` is the vent threshold. Was `_pad0[1]`; 0 on every account already on chain reads as solo |
+| `raid_size` | u8 | 7 | 1 | high-water raiders this incarnation; `vent_pct(raid_size, difficulty)` is the vent threshold. Was `_pad0[1]`; 0 on every account already on chain reads as solo |
 | `arena_id` | u64 | 8 | 8 | match identity; also the `Arena` PDA seed |
 | `crank_task_id` | **i64** | 16 | 8 | validator-**global** task id. i64, not u64 — the published docs are wrong |
 | `tick` | u32 | 24 | 4 | authoritative clock, +1 per crank execution |
 | `enrage_at_tick` | u32 | 28 | 4 | 6-minute timeout in ticks (900 at 400 ms) |
 | `seat_occupied` | u32 | 32 | 4 | bitmask, bit *n* = seat *n*, low bit first; high 12 bits always 0 |
 | `incarnation` | u16 | 36 | 2 | boss incarnation; scales `parts_max` |
-| `_pad1` | [u8; 2] | 38 | 2 | align `crank_authority` |
+| `difficulty` | u8 | 38 | 1 | `TIER_EASY..=TIER_HARD` (0..2): the gate the raid's first raider stood in (`map::gate_at`), written only by `enter_gate` while `raid_size == 0 && alive_count == 0`, zeroed by `begin_next_incarnation`; every balance curve reads it beside `raid_size`. Was `_pad1[0]`; 0 on every account already on chain reads as EASY, the tuning it was fighting |
+| `_pad1` | [u8; 1] | 39 | 1 | align `crank_authority` |
 | `crank_authority` | [u8; 32] | 40 | 32 | treasury the crank signer PDA derives from |
 | `validator_identity` | [u8; 32] | 72 | 32 | which ER this match lives on |
 | `affix_seed` | [u8; 32] | 104 | 32 | `hashv([arena_key, incarnation])` in v1; VRF fills it in v1.1 |
@@ -202,9 +203,10 @@ program raycasts against, so the DOM and the chain cannot drift:
 **Invariants**
 
 - `parts[i] ≤ parts_max[i]` for all *i*; `core_hp ≤ core_hp_max`.
-- `vent_open == 1` ⟺ `sum(parts) × 100 < sum(parts_max) × vent_pct(arena.raid_size)`
-  (65 solo → 35 at twenty, linear). Recomputed every tick from the parts; never set
-  independently. (Integer comparison — no percentage float.)
+- `vent_open == 1` ⟺ `sum(parts) × 100 < sum(parts_max) × vent_pct(arena.raid_size, arena.difficulty)`
+  (98 solo → 35 at twenty on EASY, 94 → 30 on MEDIUM, 88 → 25 on HARD, linear). Recomputed
+  every tick from the parts; never set independently. (Integer comparison — no percentage
+  float.)
 - `core_hp` may only decrease while `vent_open == 1`.
 - `target_seat` is `NO_TARGET` (0xFF) or `< 20`. 0xFF is outside the seat range so a
   bounds check catches it rather than silently aiming at seat 0.

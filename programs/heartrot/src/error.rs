@@ -46,6 +46,7 @@
 //! | a VRF callback not signed by the scoped VRF identity | [`HeartrotError::NotVrfIdentity`] | `roll::consume_roll` |
 //! | `begin_muster` with no seat in `ZONE_ARENA` | [`HeartrotError::NoRaiders`] | `guards::assert_any_raider`, from `settle::begin_muster` |
 //! | `shoot` with `charged = 1` (`= 2`) fewer than `state::CHARGE_SLOTS` (`state::SUPER_SLOTS`) ER slots after the seat's last accepted step | [`HeartrotError::NotCharged`] | `shoot::fire` |
+//! | `enter_gate` from a gate whose tier is not the one the raid was opened through | [`HeartrotError::WrongGate`] | `player::enter_gate` |
 //!
 //! ## Why the game loop added only two codes
 //!
@@ -289,6 +290,15 @@ heartrot_errors! {
     /// expects to see in normal play — a step that landed on chain after the browser
     /// decided the hold was complete is a race, not a bug.
     NotCharged = 20,
+
+    /// `enter_gate` from a gate of another tier than the one this raid was opened through.
+    /// The lobby has three gates — EASY, MEDIUM, HARD — and the raid's tier is the gate its
+    /// FIRST raider stood in (`Arena.difficulty`); everyone after them fights that boss, so
+    /// they must walk the same gate. Distinct from [`Self::NotOnGate`], which is "not on
+    /// any gate yet" and heals itself on the next poll: this one never heals by standing
+    /// still, and a client that retried it would push a refusal twice a second for as
+    /// long as the player stood there. The remedy is a walk to the gate the arena names.
+    WrongGate = 21,
 }
 
 /// Highest code ever issued, live or **retired**. Every variant is numbered at or below
@@ -296,7 +306,7 @@ heartrot_errors! {
 /// (16) being handed to a new rule, since the discriminants are wire ABI and a client in a
 /// browser tab cannot be asked to forget one.
 #[cfg(test)]
-const HIGHEST_ISSUED: u32 = 20;
+const HIGHEST_ISSUED: u32 = 21;
 
 impl From<HeartrotError> for ProgramError {
     #[inline(always)]

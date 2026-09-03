@@ -225,21 +225,56 @@ const _: () = {
     assert!(FURY_VOLLEY_INTERVAL_TICKS > 0 && FURY_VOLLEY_INTERVAL_TICKS < VOLLEY_INTERVAL_TICKS);
 };
 
-/// `Boss::core_hp` for a solo raid — the floor, not the value a full raid fights.
-///
-/// 200, down from 300 and from 2,000 before that. At 50 DPS the 2,000 floor was 40 s of a
-/// solo fight spent entirely on a target that cannot move or be dodged, after the shell was
-/// already down. 300 was measured, not felt: a perfect solo kill was 17 s, and a standing
-/// solo player under the flat 8-per-bullet volley and 45-per-slam was dead in 5.7 s — the
-/// fight was lost three times over before the vent opened. Cutting the core is one third
-/// of the solo pass; [`VENT_PCT_SOLO`] and the incoming side ([`bullet_damage`],
-/// [`slam_damage`], `player::PLAYER_HP_MAX`) are the rest. A full raid is untouched,
-/// because [`CORE_HP_PER_RAIDER`] dominates the sum the moment a second player arrives:
-/// twenty raiders still fight 57,200.
-pub const BOSS_CORE_HP: u16 = 200;
+// ---------------------------------------------------------------------------
+// Difficulty tiers — `Arena.difficulty`, one row per gate
+// ---------------------------------------------------------------------------
 
-/// Added to `core_hp_max` for each raider past the first, by the tick stage that already
-/// counts arena occupants.
+/// The three gates in the lobby's top wall, left to right: EASY, MEDIUM, HARD. The tier is
+/// the index of the `G` block the raid's first raider stood in (`map::gate_at`), written to
+/// [`Arena::difficulty`] by `enter_gate` and read by every balance curve below.
+///
+/// Three, not a `u8` range: each curve is a table with one row per tier, const-asserted in
+/// order, and a fourth gate is a fourth row in every table plus a fourth `G` block in the
+/// drawn map — `tools/gen_map.py` refuses any other count.
+pub const N_TIERS: usize = 3;
+pub const TIER_EASY: u8 = 0;
+pub const TIER_MEDIUM: u8 = 1;
+pub const TIER_HARD: u8 = 2;
+
+/// `tier` clamped into `0..N_TIERS` as a table index. Only `enter_gate` writes the byte,
+/// from a gate index, so an out-of-range value cannot be produced by this program; the
+/// clamp is what makes every table read below total, with no panic path in the BPF. A byte
+/// this program never writes reads as the hardest row, not the easiest.
+const fn tier_n(tier: u8) -> usize {
+    if tier as usize >= N_TIERS {
+        N_TIERS - 1
+    } else {
+        tier as usize
+    }
+}
+
+/// `Boss::core_hp` for a solo raid, by tier — the floor, not the value a full raid fights.
+///
+/// EASY is 200, down from 300 and from 2,000 before that. At 50 DPS the 2,000 floor was
+/// 40 s of a solo fight spent entirely on a target that cannot move or be dodged, after
+/// the shell was already down. 300 was measured, not felt: a perfect solo kill was 17 s,
+/// and a standing solo player under the flat 8-per-bullet volley and 45-per-slam was dead
+/// in 5.7 s — the fight was lost three times over before the vent opened. Cutting the core
+/// is one third of the solo pass; [`VENT_PCT_SOLO_BY_TIER`] and the incoming side
+/// ([`bullet_damage`], [`slam_damage`], `player::PLAYER_HP_MAX`) are the rest. A full raid
+/// is untouched, because [`CORE_HP_PER_RAIDER_BY_TIER`] dominates the sum the moment a
+/// second player arrives: twenty EASY raiders still fight 57,200.
+pub const BOSS_CORE_HP_BY_TIER: [u16; N_TIERS] = [200, 400, 700];
+
+/// The core a boss is *seeded* with — `init_arena` and `next_incarnation` both write it
+/// through `Boss::reset_for_incarnation`. It is the EASY row because both run in
+/// `PHASE_LOBBY`, where `Arena.difficulty` is 0 by construction; the tick's top-up
+/// ([`core_hp_required`]) raises the core to the raid's own row on the first FIGHTING tick,
+/// the same way it raises it for a second raider.
+pub const BOSS_CORE_HP: u16 = BOSS_CORE_HP_BY_TIER[TIER_EASY as usize];
+
+/// Added to `core_hp_max` for each raider past the first, by tier, by the tick stage that
+/// already counts arena occupants.
 ///
 /// The raid-size knob is the core and never `parts`: `parts` carries the incarnation
 /// scaling and already saturates `u16` around incarnation 41, and `vent_open` is a ratio
@@ -247,35 +282,15 @@ pub const BOSS_CORE_HP: u16 = 200;
 /// collapse the progression curve at the same time. `core_hp_max` is monotone and *is* its
 /// own high-water record, so the top-up needs no snapshot field, cannot be gamed by dying
 /// or leaving, and tolerates a player arriving late.
-pub const CORE_HP_PER_RAIDER: u16 = 3_000;
-
-const _: () = {
-    // The top-up runs to `MAX_SEATS` raiders and must not wrap a `u16`.
-    assert!(
-        BOSS_CORE_HP as u32 + CORE_HP_PER_RAIDER as u32 * (MAX_SEATS as u32 - 1) <= u16::MAX as u32
-    );
-    // A muster that outlives the fight it precedes is a scheduling bug, not a balance one.
-    assert!(MUSTER_TICKS < ENRAGE_TICKS);
-};
-
-/// Shell remaining, in percent, below which the vent opens — for a raid of one and for a
-/// full raid; [`vent_pct`] draws the line between them.
 ///
-/// The **other** raid-size knob, and the one that reaches the shell. Shell HP is flat at
-/// every raid size (see [`CORE_HP_PER_RAIDER`] for why `parts` can never scale), so moving
-/// the *threshold* instead of the shell keeps every `u16` where it is and keeps `vent_open`
-/// a ratio over `parts`. One byte on `Arena`, one function, the same tick stage the core
-/// top-up already runs in.
-///
-/// 98, up from 97 and from 65 before that. A solo raider strips 2 % of 18,000 shell HP —
-/// 360 damage, 7.2 s at 50 DPS — and the vent opens; twenty still strip 65 % (11,700,
-/// 12 s), linear between. The shell is a wall the raid shares, and a wall sized for twenty
-/// is a grind for one: solo paid 126 s of it at 65. With [`BOSS_CORE_HP`] a perfect solo
-/// fight is now 12 s — eight archer hits — where it was 17, and 166 before the first pass;
-/// that is what "ten times easier" means when the request is measured rather than felt. A
-/// full raid stays at 69 s.
-pub const VENT_PCT_SOLO: u32 = 98;
-pub const VENT_PCT_FULL: u32 = 35;
+/// The rows are bounded by the field they are written to: `core_hp` is a `u16` and `Boss`
+/// has no padding to widen it, so twenty HARD raiders may owe at most 65,535. 3,600 and
+/// 4,500 — the first draft — put twenty MEDIUM raiders at 68,800 and twenty HARD at 86,200,
+/// which is a core that saturates the field for every raid past fourteen and stops
+/// getting harder there. 3,200 / 3,400 are the largest hundreds that fit; the const block
+/// below is what says so. The tiers still lengthen the fight at every raid size — the
+/// vent tables and the incoming multipliers carry the rest of it.
+pub const CORE_HP_PER_RAIDER_BY_TIER: [u16; N_TIERS] = [3_000, 3_200, 3_400];
 
 /// `raid_size` clamped into `1..=MAX_SEATS`, the domain every raid-size curve in this file
 /// is drawn over. 0 is what every account already on chain carries in `raid_size` and what
@@ -293,35 +308,112 @@ const fn raid_n(raid_size: u8) -> u32 {
     }
 }
 
-/// The vent threshold for a raid of `raid_size`, in percent of `sum(parts_max)`.
-///
-/// The comparison at both call sites is `sum(parts) × 100 < sum(parts_max) × vent_pct`, so
-/// no percentage is ever a float. Linear in the raid size from [`VENT_PCT_SOLO`] at one
-/// raider to [`VENT_PCT_FULL`] at [`MAX_SEATS`], clamped by [`raid_n`]. `const`, so the
-/// TTK model below is checked on every `cargo check`.
-pub const fn vent_pct(raid_size: u8) -> u32 {
-    VENT_PCT_SOLO
-        - (VENT_PCT_SOLO - VENT_PCT_FULL) * (raid_n(raid_size) - 1) / (MAX_SEATS as u32 - 1)
+/// The core a raid of `raid_size` on `tier` fights: the tier's floor plus its per-raider
+/// top-up for every raider past the first. The tick raises `core_hp_max` to this on every
+/// tick and never lowers it; [`ttk_s_tier`] reads the same function, so the balance model
+/// and the crank cannot disagree about what a raid owes. Cannot wrap: the block below
+/// proves the twenty-raider value of every row fits the `u16` it is written to.
+pub const fn core_hp_required(raid_size: u8, tier: u8) -> u16 {
+    let t = tier_n(tier);
+    BOSS_CORE_HP_BY_TIER[t] + CORE_HP_PER_RAIDER_BY_TIER[t] * (raid_n(raid_size) as u16 - 1)
 }
 
 const _: () = {
-    // A threshold at or above 100 opens the vent on a full shell; one at 0 never opens it.
-    assert!(VENT_PCT_SOLO < 100 && VENT_PCT_FULL > 0);
-    // Solo is the *easier* threshold — more shell may stand. Inverting these two makes the
-    // integer subtraction in `vent_pct` wrap, which `const` turns into a compile error.
-    assert!(VENT_PCT_SOLO >= VENT_PCT_FULL);
-    assert!(vent_pct(0) == VENT_PCT_SOLO && vent_pct(1) == VENT_PCT_SOLO);
-    assert!(vent_pct(MAX_SEATS as u8) == VENT_PCT_FULL && vent_pct(u8::MAX) == VENT_PCT_FULL);
+    // The top-up runs to `MAX_SEATS` raiders and must not wrap a `u16`, on any row.
+    let mut t = 0;
+    while t < N_TIERS {
+        assert!(
+            BOSS_CORE_HP_BY_TIER[t] as u32
+                + CORE_HP_PER_RAIDER_BY_TIER[t] as u32 * (MAX_SEATS as u32 - 1)
+                <= u16::MAX as u32
+        );
+        // Each tier owes more core than the one below it, at one raider and at twenty.
+        if t > 0 {
+            assert!(BOSS_CORE_HP_BY_TIER[t] > BOSS_CORE_HP_BY_TIER[t - 1]);
+            assert!(CORE_HP_PER_RAIDER_BY_TIER[t] > CORE_HP_PER_RAIDER_BY_TIER[t - 1]);
+        }
+        t += 1;
+    }
+    assert!(BOSS_CORE_HP != 0);
+    assert!(core_hp_required(0, TIER_EASY) == BOSS_CORE_HP);
+    assert!(core_hp_required(MAX_SEATS as u8, TIER_EASY) == 57_200);
+    // A muster that outlives the fight it precedes is a scheduling bug, not a balance one.
+    assert!(MUSTER_TICKS < ENRAGE_TICKS);
+};
+
+/// Shell remaining, in percent, below which the vent opens — for a raid of one and for a
+/// full raid, by tier; [`vent_pct`] draws the line between them.
+///
+/// The **other** raid-size knob, and the one that reaches the shell. Shell HP is flat at
+/// every raid size (see [`CORE_HP_PER_RAIDER_BY_TIER`] for why `parts` can never scale),
+/// so moving the *threshold* instead of the shell keeps every `u16` where it is and keeps
+/// `vent_open` a ratio over `parts`. One byte on `Arena`, one function, the same tick
+/// stage the core top-up already runs in.
+///
+/// EASY is 98, up from 97 and from 65 before that. A solo raider strips 2 % of 18,000
+/// shell HP — 360 damage, 7.2 s at 50 DPS — and the vent opens; twenty still strip 65 %
+/// (11,700, 12 s), linear between. The shell is a wall the raid shares, and a wall sized
+/// for twenty is a grind for one: solo paid 126 s of it at 65. With [`BOSS_CORE_HP`] a
+/// perfect solo EASY fight is 12 s — eight archer hits — where it was 17, and 166 before
+/// the first pass; that is what "ten times easier" means when the request is measured
+/// rather than felt. A full EASY raid stays at 69 s. MEDIUM and HARD ask for more of the
+/// shell at every raid size: 6 % and 12 % solo, 70 % and 75 % at twenty.
+pub const VENT_PCT_SOLO_BY_TIER: [u32; N_TIERS] = [98, 94, 88];
+pub const VENT_PCT_FULL_BY_TIER: [u32; N_TIERS] = [35, 30, 25];
+
+/// The vent threshold for a raid of `raid_size` on `tier`, in percent of `sum(parts_max)`.
+///
+/// The comparison at both call sites is `sum(parts) × 100 < sum(parts_max) × vent_pct`, so
+/// no percentage is ever a float. Linear in the raid size from the tier's solo row at one
+/// raider to its full row at [`MAX_SEATS`], clamped by [`raid_n`]. `const`, so the TTK
+/// model below is checked on every `cargo check`.
+pub const fn vent_pct(raid_size: u8, tier: u8) -> u32 {
+    let t = tier_n(tier);
+    VENT_PCT_SOLO_BY_TIER[t]
+        - (VENT_PCT_SOLO_BY_TIER[t] - VENT_PCT_FULL_BY_TIER[t]) * (raid_n(raid_size) - 1)
+            / (MAX_SEATS as u32 - 1)
+}
+
+const _: () = {
+    let mut t = 0;
+    while t < N_TIERS {
+        // A threshold at or above 100 opens the vent on a full shell; one at 0 never opens it.
+        assert!(VENT_PCT_SOLO_BY_TIER[t] < 100 && VENT_PCT_FULL_BY_TIER[t] > 0);
+        // Solo is the *easier* threshold — more shell may stand. Inverting these makes the
+        // integer subtraction in `vent_pct` wrap, which `const` turns into a compile error.
+        assert!(VENT_PCT_SOLO_BY_TIER[t] >= VENT_PCT_FULL_BY_TIER[t]);
+        let tier = t as u8;
+        assert!(vent_pct(0, tier) == VENT_PCT_SOLO_BY_TIER[t] && vent_pct(1, tier) == VENT_PCT_SOLO_BY_TIER[t]);
+        assert!(
+            vent_pct(MAX_SEATS as u8, tier) == VENT_PCT_FULL_BY_TIER[t]
+                && vent_pct(u8::MAX, tier) == VENT_PCT_FULL_BY_TIER[t]
+        );
+        // A harder tier asks for strictly more of the shell at EVERY raid size, not only at
+        // the two endpoints — the rows are close enough that integer rounding could tie
+        // them mid-curve, and a tie is a gate that changes nothing for that raid.
+        if t > 0 {
+            let mut n = 1;
+            while n <= MAX_SEATS as u8 {
+                assert!(vent_pct(n, tier) < vent_pct(n, tier - 1));
+                n += 1;
+            }
+        }
+        t += 1;
+    }
+    // Every row is defended by the same rule and the index is clamped, so a byte this
+    // program never writes reads as HARD rather than as a table miss.
+    assert!(vent_pct(1, u8::MAX) == VENT_PCT_SOLO_BY_TIER[N_TIERS - 1]);
 };
 
 /// Damage per boss bullet and per hand slam, for a raid of one and for a full raid;
-/// [`bullet_damage`] and [`slam_damage`] draw the line between them as [`vent_pct`] does.
+/// [`bullet_damage`] and [`slam_damage`] draw the line between them as [`vent_pct`] does,
+/// then scale it by the tier ([`INCOMING_MUL_BY_TIER`]).
 ///
 /// The third raid-size knob, and the one that reaches the PLAYER. The outgoing knobs alone
 /// did not make solo playable: with the vent at 97 and the core at 300 a perfect solo kill
 /// was 17 s, while a standing solo player took `3 + 1` bullets × 8 every 3.2 s plus 45
 /// every 6 s — 17.5 DPS against 100 HP, dead in 5.7 s. The full-raid endpoints are the
-/// flat `BULLET_DAMAGE` / `SLAM_DAMAGE` the crank always dealt, so twenty raiders take
+/// flat `BULLET_DAMAGE` / `SLAM_DAMAGE` the crank always dealt, so twenty EASY raiders take
 /// exactly the hits they took; solo takes a quarter of a bullet and a third of a slam.
 /// Against `player::PLAYER_HP_MAX` (150) that is ~40 s standing still, for a 12 s kill.
 pub const BULLET_DAMAGE_SOLO: u16 = 2;
@@ -329,30 +421,54 @@ pub const BULLET_DAMAGE_FULL: u16 = 8;
 pub const SLAM_DAMAGE_SOLO: u16 = 15;
 pub const SLAM_DAMAGE_FULL: u16 = 45;
 
+/// What a tier multiplies the raid-size damage curve by: MEDIUM doubles every hit, HARD
+/// triples it. A multiplier rather than a second pair of endpoints per row, so the shape of
+/// the curve — and the solo-playability argument above — is one curve on every tier.
+pub const INCOMING_MUL_BY_TIER: [u16; N_TIERS] = [1, 2, 3];
+
 /// Linear from `solo` at one raider to `full` at [`MAX_SEATS`], in integers, rounding
-/// toward solo — the same shape and the same clamp as [`vent_pct`], written once.
-const fn raid_lerp(solo: u16, full: u16, raid_size: u8) -> u16 {
+/// toward solo — the same shape and the same clamp as [`vent_pct`], written once — then
+/// scaled by the tier.
+const fn raid_lerp(solo: u16, full: u16, raid_size: u8, tier: u8) -> u16 {
     (solo as u32 + (full - solo) as u32 * (raid_n(raid_size) - 1) / (MAX_SEATS as u32 - 1)) as u16
+        * INCOMING_MUL_BY_TIER[tier_n(tier)]
 }
 
-/// What one boss bullet takes off a raider, for a raid of `raid_size`.
-pub const fn bullet_damage(raid_size: u8) -> u16 {
-    raid_lerp(BULLET_DAMAGE_SOLO, BULLET_DAMAGE_FULL, raid_size)
+/// What one boss bullet takes off a raider, for a raid of `raid_size` on `tier`.
+pub const fn bullet_damage(raid_size: u8, tier: u8) -> u16 {
+    raid_lerp(BULLET_DAMAGE_SOLO, BULLET_DAMAGE_FULL, raid_size, tier)
 }
 
-/// What one hand slam takes off a raider caught in its lane, for a raid of `raid_size`.
-pub const fn slam_damage(raid_size: u8) -> u16 {
-    raid_lerp(SLAM_DAMAGE_SOLO, SLAM_DAMAGE_FULL, raid_size)
+/// What one hand slam takes off a raider caught in its lane, for a raid of `raid_size` on
+/// `tier`. The beam deals the same number.
+pub const fn slam_damage(raid_size: u8, tier: u8) -> u16 {
+    raid_lerp(SLAM_DAMAGE_SOLO, SLAM_DAMAGE_FULL, raid_size, tier)
 }
+
+/// One more bullet per volley while `Boss::is_furious`, by tier. `tick.rs` counts it into
+/// `volley_size` and its bullet-pool assert names the HARD row, the biggest volley the
+/// pool must hold.
+pub const FURY_EXTRA_BULLETS_BY_TIER: [usize; N_TIERS] = [1, 2, 3];
 
 const _: () = {
     // Solo is the *gentler* endpoint; inverting either pair wraps `raid_lerp`'s subtraction.
     assert!(BULLET_DAMAGE_SOLO <= BULLET_DAMAGE_FULL && SLAM_DAMAGE_SOLO <= SLAM_DAMAGE_FULL);
     // The endpoints, and the clamp: 0 is solo, past `MAX_SEATS` is a full raid.
-    assert!(bullet_damage(0) == 2 && bullet_damage(1) == 2);
-    assert!(bullet_damage(MAX_SEATS as u8) == 8 && bullet_damage(u8::MAX) == 8);
-    assert!(slam_damage(0) == 15 && slam_damage(1) == 15);
-    assert!(slam_damage(MAX_SEATS as u8) == 45 && slam_damage(u8::MAX) == 45);
+    assert!(bullet_damage(0, TIER_EASY) == 2 && bullet_damage(1, TIER_EASY) == 2);
+    assert!(bullet_damage(MAX_SEATS as u8, TIER_EASY) == 8 && bullet_damage(u8::MAX, TIER_EASY) == 8);
+    assert!(slam_damage(0, TIER_EASY) == 15 && slam_damage(1, TIER_EASY) == 15);
+    assert!(slam_damage(MAX_SEATS as u8, TIER_EASY) == 45 && slam_damage(u8::MAX, TIER_EASY) == 45);
+    // Each tier hits strictly harder than the one below and fires one more furious bullet;
+    // EASY is the curve every account on chain already fights (multiplier 1, one bullet).
+    assert!(INCOMING_MUL_BY_TIER[TIER_EASY as usize] == 1 && FURY_EXTRA_BULLETS_BY_TIER[TIER_EASY as usize] == 1);
+    let mut t = 1;
+    while t < N_TIERS {
+        assert!(INCOMING_MUL_BY_TIER[t] > INCOMING_MUL_BY_TIER[t - 1]);
+        assert!(FURY_EXTRA_BULLETS_BY_TIER[t] > FURY_EXTRA_BULLETS_BY_TIER[t - 1]);
+        t += 1;
+    }
+    // The hardest hit fits the `u16` it lands in with the player's whole bar to spare.
+    assert!(slam_damage(MAX_SEATS as u8, TIER_HARD) == 135 && bullet_damage(MAX_SEATS as u8, TIER_HARD) == 24);
 };
 
 /// `PlayerSlot.zone`.
@@ -537,7 +653,20 @@ pub struct Arena {
     /// single u32 without decoding the 1,924-byte `Players` account.
     pub seat_occupied: u32,
     pub incarnation: u16,
-    pub _pad1: [u8; 2],
+    /// `TIER_EASY..=TIER_HARD` — which of the three gates this raid was opened through.
+    ///
+    /// Written by `enter_gate` and by nothing else, from the `G` block the seat stands in
+    /// (`map::gate_at`), and only for the raid's FIRST raider (`raid_size == 0 &&
+    /// alive_count == 0`); every later raider must enter through the same tier or is
+    /// refused `WrongGate`. Read by every balance curve — `vent_pct`, `core_hp_required`,
+    /// `bullet_damage`, `slam_damage`, the fury bullet — beside `raid_size`, and zeroed
+    /// with it by [`Arena::begin_next_incarnation`], the only way back to `PHASE_LOBBY`.
+    ///
+    /// Claimed out of `_pad1`, the last free byte in the layout: no field moved, the
+    /// account did not grow, `LAYOUT_VERSION` stays 1, and every account already on chain
+    /// carries 0 here — EASY, which is exactly the tuning it was fighting.
+    pub difficulty: u8,
+    pub _pad1: [u8; 1],
     /// Treasury address the crank signer PDA derives from:
     /// `find_program_address([b"crank-executor", crank_authority], CRANK_PROGRAM_ID)`.
     /// `boss_tick` authorizes against that PDA and never against a player key.
@@ -618,6 +747,7 @@ const _: () = {
     assert!(offset_of!(Arena, enrage_at_tick) == 28);
     assert!(offset_of!(Arena, seat_occupied) == 32);
     assert!(offset_of!(Arena, incarnation) == 36);
+    assert!(offset_of!(Arena, difficulty) == 38);
     assert!(offset_of!(Arena, crank_authority) == 40);
     assert!(offset_of!(Arena, validator_identity) == 72);
     assert!(offset_of!(Arena, affix_seed) == 104);
@@ -864,7 +994,8 @@ impl Arena {
     /// What carries over: `arena_id`, `bump`, `crank_authority`, `validator_identity`, and
     /// — because it is a different account entirely — the whole `Leaderboard` ring. What
     /// resets: the clock, the phase, the outcome, the bullet pool, the seat bitmask, the
-    /// raid-size high-water (a new raid is sized from its own first tick), both deadlines
+    /// raid-size high-water (a new raid is sized from its own first tick) and the tier
+    /// beside it (the next raid picks its own gate), both deadlines
     /// (`enrage_at_tick` and `fight_at_tick` are match state, and a deadline measured
     /// against a clock that has just been zeroed is already in the past), and (through
     /// [`Players::reset_for_incarnation`] and [`Boss::reset_for_incarnation`]) every seat
@@ -897,6 +1028,7 @@ impl Arena {
         self.fight_at_tick = 0;
         self.alive_count = 0;
         self.raid_size = 0;
+        self.difficulty = TIER_EASY;
         self.bullet_cursor = 0;
         self.seat_occupied = 0;
         self.bullets = [Bullet::zeroed(); MAX_BULLETS];
@@ -921,8 +1053,8 @@ pub struct Boss {
     pub version: u8,
     pub bump: u8,
     /// 0 sealed, 1 open. Recomputed every tick and on every landed shot from
-    /// `sum(parts) × 100 < sum(parts_max) × vent_pct(arena.raid_size)`, so it is derived
-    /// state cached for the client, never an independent flag.
+    /// `sum(parts) × 100 < sum(parts_max) × vent_pct(arena.raid_size, arena.difficulty)`,
+    /// so it is derived state cached for the client, never an independent flag.
     pub vent_open: u8,
     /// Ticks until the next melee/volley beat.
     pub attack_timer: u8,
@@ -956,7 +1088,7 @@ impl Boss {
     /// one owns *what the numbers are*.
     ///
     /// `parts_max` is set from the same array as `parts`, which is what keeps the vent
-    /// threshold (`sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size)`) meaningful: a
+    /// threshold (`sum(parts) × 100 < sum(parts_max) × vent_pct(raid_size, tier)`) meaningful: a
     /// full shell is exactly 100 % by construction, on every incarnation.
     pub fn reset_for_incarnation(&mut self, parts: [u16; N_PARTS], core_hp: u16, x: i16, y: i16) {
         self.x = x;
@@ -979,8 +1111,8 @@ impl Boss {
         self.target_seat = NO_TARGET;
     }
 
-    /// The fight as ONE number: `(left, max)` — the shell a raid of `raid_size` still has
-    /// to strip to open the vent, plus the core.
+    /// The fight as ONE number: `(left, max)` — the shell a raid of `raid_size` on `tier`
+    /// still has to strip to open the vent, plus the core.
     ///
     /// Shell above the vent threshold never has to come off, so it is not fight HP:
     /// `threshold = shell_max × vent_pct / 100`, `left = max(shell − threshold, 0) +
@@ -991,10 +1123,10 @@ impl Boss {
     ///
     /// Integers throughout. `u32`: nine `u16` parts sum to at most 589,815, and the widest
     /// product here is that × 100.
-    pub fn fight_hp(&self, raid_size: u8) -> (u32, u32) {
+    pub fn fight_hp(&self, raid_size: u8, tier: u8) -> (u32, u32) {
         let shell: u32 = self.parts.iter().map(|&p| p as u32).sum();
         let shell_max: u32 = self.parts_max.iter().map(|&p| p as u32).sum();
-        let threshold = shell_max * vent_pct(raid_size) / 100;
+        let threshold = shell_max * vent_pct(raid_size, tier) / 100;
         let left = shell.saturating_sub(threshold) + self.core_hp as u32;
         // `vent_pct < 100` is const-asserted, so `threshold <= shell_max` and this cannot
         // wrap; a zeroed account is `(0, 0)`, not a panic.
@@ -1005,8 +1137,8 @@ impl Boss {
     /// Is the boss in the last [`FURY_PCT`] percent of [`Self::fight_hp`]? `left > 0` keeps
     /// a dead boss out, `max > 0` keeps a zeroed account out, and `≤` on the cross-multiplied
     /// integers is the comparison the client mirror makes — exactly 20 % is furious.
-    pub fn is_furious(&self, raid_size: u8) -> bool {
-        let (left, max) = self.fight_hp(raid_size);
+    pub fn is_furious(&self, raid_size: u8, tier: u8) -> bool {
+        let (left, max) = self.fight_hp(raid_size, tier);
         max > 0 && left > 0 && left * 100 <= max * FURY_PCT
     }
 
@@ -1015,8 +1147,8 @@ impl Boss {
     /// [`Self::is_furious`], mirrored as `isPhase2` in `layout.ts`: exactly 50 % is phase 2,
     /// a dead boss is not, and a zeroed account is not. Fury is *inside* phase 2, not
     /// instead of it — the beam keeps sweeping through the last fifth.
-    pub fn is_phase2(&self, raid_size: u8) -> bool {
-        let (left, max) = self.fight_hp(raid_size);
+    pub fn is_phase2(&self, raid_size: u8, tier: u8) -> bool {
+        let (left, max) = self.fight_hp(raid_size, tier);
         max > 0 && left > 0 && left * 100 <= max * PHASE2_PCT
     }
 }
@@ -1221,18 +1353,29 @@ const _: () = {
 /// It ignores geometry (the limb in the lane is not always the one you want stripped) and
 /// charging (2.5× damage while rooted), so it is a floor, not a forecast: the time a
 /// perfect solo player cannot beat.
+///
+/// The EASY row of [`ttk_s_tier`], kept under its own name because it is the curve every
+/// account on chain already fights and the one every number in this file's history was
+/// measured against.
 pub const fn ttk_s(shell_hp: u32, raid_size: u8) -> u32 {
+    ttk_s_tier(shell_hp, raid_size, TIER_EASY)
+}
+
+/// [`ttk_s`] on `tier`: the same DPS, the tier's own vent line and the tier's own core —
+/// [`vent_pct`] and [`core_hp_required`], the two functions the tick reads, so the model
+/// is the crank's arithmetic and not a restatement of it.
+pub const fn ttk_s_tier(shell_hp: u32, raid_size: u8, tier: u8) -> u32 {
     let n = raid_n(raid_size);
     let dps = n * (CLASS_DAMAGE[CLASS_KNIGHT as usize] as u32 * 1_000
         / CLASS_PERIOD_MS[CLASS_KNIGHT as usize]);
-    let shell = shell_hp * (100 - vent_pct(raid_size)) / 100;
-    let core = BOSS_CORE_HP as u32 + CORE_HP_PER_RAIDER as u32 * (n - 1);
+    let shell = shell_hp * (100 - vent_pct(raid_size, tier)) / 100;
+    let core = core_hp_required(raid_size, tier) as u32;
     (shell + core + dps - 1) / dps
 }
 
 /// The shell the vent curve was tuned against: `init::BOSS_PARTS_BASE` summed — four thorns
-/// at 1,000, the crown at 4,000, four limbs at 2,500 — on the day [`VENT_PCT_SOLO`] and
-/// [`VENT_PCT_FULL`] were chosen. A modelling input, not a second definition of the shell:
+/// at 1,000, the crown at 4,000, four limbs at 2,500 — on the day [`VENT_PCT_SOLO_BY_TIER`] and
+/// [`VENT_PCT_FULL_BY_TIER`] were chosen. A modelling input, not a second definition of the shell:
 /// that table is private to `init.rs`, which pins this literal to its sum with a const
 /// assert (`init::SHELL_HP_BASE`). Retune the shell and this is the number to move; the
 /// block below then says whether the curve still lands where the design promised.
@@ -1261,6 +1404,29 @@ const _: () = {
     // half is the allowance for play that is not perfect; `ttk_s` is a floor, not a
     // forecast, and it ignores dodging, deaths and the walk back from a respawn.
     assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) * 2 < seconds_to_enrage);
+
+    // THE TIERS. MEDIUM: 1,080 shell + 400 core solo = 30 s; 12,600 + 61,200 at twenty =
+    // 74 s. HARD: 2,160 + 700 solo = 58 s; 13,500 + 65,300 at twenty = 79 s. Pinned like
+    // EASY's two, for the same reason; the pair of loops under them is the design — each
+    // gate is a strictly longer fight than the one to its left, alone and at twenty —
+    // and the last line is HARD's full raid fitting the enrage window twice over, which
+    // is the same allowance EASY's full raid gets.
+    assert!(ttk_s_tier(TTK_MODEL_SHELL_HP, 1, TIER_MEDIUM) == 30);
+    assert!(ttk_s_tier(TTK_MODEL_SHELL_HP, MAX_SEATS as u8, TIER_MEDIUM) == 74);
+    assert!(ttk_s_tier(TTK_MODEL_SHELL_HP, 1, TIER_HARD) == 58);
+    assert!(ttk_s_tier(TTK_MODEL_SHELL_HP, MAX_SEATS as u8, TIER_HARD) == 79);
+    assert!(ttk_s_tier(TTK_MODEL_SHELL_HP, 1, TIER_EASY) == ttk_s(TTK_MODEL_SHELL_HP, 1));
+    let mut t = 1;
+    while t < N_TIERS {
+        let (below, tier) = (t as u8 - 1, t as u8);
+        assert!(ttk_s_tier(TTK_MODEL_SHELL_HP, 1, tier) > ttk_s_tier(TTK_MODEL_SHELL_HP, 1, below));
+        assert!(
+            ttk_s_tier(TTK_MODEL_SHELL_HP, MAX_SEATS as u8, tier)
+                > ttk_s_tier(TTK_MODEL_SHELL_HP, MAX_SEATS as u8, below)
+        );
+        t += 1;
+    }
+    assert!(ttk_s_tier(TTK_MODEL_SHELL_HP, MAX_SEATS as u8, TIER_HARD) * 2 < seconds_to_enrage);
 };
 
 /// One seat. Slot index *is* the seat number, so there is no `seat` field to
@@ -1944,40 +2110,44 @@ mod rate_tests {
 mod balance_tests {
     use super::*;
 
-    /// Solo opens the vent with 98 % of the shell standing, twenty with 35 %, and every
-    /// raid size between is between — never a step *down* in difficulty for one more
-    /// player walking through the gate. 0 and anything past `MAX_SEATS` clamp rather than
-    /// divide by zero or wrap: 0 is what every live account carries today.
+    /// Solo opens the vent with 98 % of the shell standing on EASY, twenty with 35 %, and
+    /// every raid size between is between — never a step *down* in difficulty for one
+    /// more player walking through the gate. The same shape on every tier, from that
+    /// tier's own two endpoints. 0 and anything past `MAX_SEATS` clamp rather than divide
+    /// by zero or wrap: 0 is what every live account carries today.
     #[test]
     fn the_vent_threshold_is_linear_in_the_raid() {
-        assert_eq!(vent_pct(1), 98);
-        assert_eq!(vent_pct(MAX_SEATS as u8), 35);
-        assert_eq!(vent_pct(0), vent_pct(1), "an uncounted raid is a solo raid");
-        assert_eq!(vent_pct(MAX_SEATS as u8 + 1), vent_pct(MAX_SEATS as u8));
-        assert_eq!(vent_pct(u8::MAX), 35);
-        for n in 1..MAX_SEATS as u8 {
-            assert!(
-                vent_pct(n) >= vent_pct(n + 1),
-                "a {}th raider made the vent harder to open ({} -> {})",
-                n + 1,
-                vent_pct(n),
-                vent_pct(n + 1),
-            );
-            // One integer step of the line, never a cliff. The bound is the slope itself
-            // rounded up — derived, not typed, because the endpoints have moved twice and
-            // a literal here silently permits a steeper curve than the one intended.
-            let slope_ceil = (VENT_PCT_SOLO - VENT_PCT_FULL + (MAX_SEATS as u32 - 2))
-                / (MAX_SEATS as u32 - 1);
-            assert!(
-                vent_pct(n) - vent_pct(n + 1) <= slope_ceil,
-                "the curve is linear, not stepped",
-            );
+        assert_eq!(vent_pct(1, TIER_EASY), 98);
+        assert_eq!(vent_pct(MAX_SEATS as u8, TIER_EASY), 35);
+        assert_eq!(vent_pct(u8::MAX, TIER_EASY), 35);
+        for tier in 0..N_TIERS as u8 {
+            let (solo, full) = (VENT_PCT_SOLO_BY_TIER[tier as usize], VENT_PCT_FULL_BY_TIER[tier as usize]);
+            assert_eq!(vent_pct(0, tier), vent_pct(1, tier), "an uncounted raid is a solo raid");
+            assert_eq!(vent_pct(MAX_SEATS as u8 + 1, tier), vent_pct(MAX_SEATS as u8, tier));
+            for n in 1..MAX_SEATS as u8 {
+                assert!(
+                    vent_pct(n, tier) >= vent_pct(n + 1, tier),
+                    "tier {tier}: a {}th raider made the vent harder to open ({} -> {})",
+                    n + 1,
+                    vent_pct(n, tier),
+                    vent_pct(n + 1, tier),
+                );
+                // One integer step of the line, never a cliff. The bound is the slope
+                // itself rounded up — derived, not typed, because the endpoints have moved
+                // twice and a literal here silently permits a steeper curve than the one
+                // intended.
+                let slope_ceil = (solo - full + (MAX_SEATS as u32 - 2)) / (MAX_SEATS as u32 - 1);
+                assert!(
+                    vent_pct(n, tier) - vent_pct(n + 1, tier) <= slope_ceil,
+                    "tier {tier}: the curve is linear, not stepped",
+                );
+            }
+            // The client mirror reads the same two endpoints; the midpoint pins the slope.
+            assert_eq!(vent_pct(11, tier), solo - (solo - full) * 10 / (MAX_SEATS as u32 - 1));
         }
-        // The client mirror reads the same two endpoints; the midpoint pins the slope.
-        assert_eq!(
-            vent_pct(11),
-            VENT_PCT_SOLO - (VENT_PCT_SOLO - VENT_PCT_FULL) * 10 / (MAX_SEATS as u32 - 1),
-        );
+        // The table index is clamped, so a byte this program never writes reads as HARD.
+        assert_eq!(vent_pct(1, N_TIERS as u8), vent_pct(1, TIER_HARD));
+        assert_eq!(vent_pct(1, u8::MAX), vent_pct(1, TIER_HARD));
     }
 
     /// 2.5× on both rows, exactly — the archer's 70 becomes 175, the knight's 40 becomes
@@ -2003,7 +2173,8 @@ mod balance_tests {
     /// The model behind the two vent numbers, over every raid size and not just the two
     /// endpoints the compile-time block pins: time-to-kill RISES with the raid, from 12 s
     /// solo to 69 s at twenty, and a 20-seat raid at the old flat 35 % threshold was the
-    /// same 69 s — every pass changed the solo fight, never the full one.
+    /// same 69 s — every pass changed the solo fight, never the full one. And it rises
+    /// with the tier at every raid size, which is what the three gates are for.
     #[test]
     fn the_ttk_model_falls_with_every_raider() {
         let shell = TTK_MODEL_SHELL_HP;
@@ -2020,6 +2191,19 @@ mod balance_tests {
                 n,
             );
         }
+        // Every tier is a strictly longer fight than the one below it, for EVERY raid
+        // size — the compile-time block pins solo and twenty; this is the rest of the
+        // curve. Strict: the tier tables are far enough apart that integer rounding cannot
+        // tie two tiers on one second anywhere.
+        for n in 1..=MAX_SEATS as u8 {
+            for tier in 1..N_TIERS as u8 {
+                assert!(
+                    ttk_s_tier(shell, n, tier) > ttk_s_tier(shell, n, tier - 1),
+                    "raid {n}: tier {tier} is not a longer fight than tier {}",
+                    tier - 1,
+                );
+            }
+        }
         // Solo under the original flat 35 % line and the 2,000 core: 11,700 + 2,000 at
         // 50 DPS. A historical literal on purpose — deriving it from BOSS_CORE_HP made it
         // move with the constant it exists to be compared against, which is a test that
@@ -2030,24 +2214,33 @@ mod balance_tests {
 
     /// Incoming damage is the third raid-size knob. Solo takes a quarter-bullet and a
     /// third-slam; twenty take exactly the flat 8 and 45 `tick.rs` dealt before the knob
-    /// existed. Monotone between, and the clamp is `vent_pct`'s.
+    /// existed. Monotone between, and the clamp is `vent_pct`'s. The tier multiplies the
+    /// whole curve — MEDIUM doubles it, HARD triples it — so its shape is one shape.
     #[test]
     fn incoming_damage_scales_with_the_raid() {
-        assert_eq!((bullet_damage(1), slam_damage(1)), (2, 15));
+        assert_eq!((bullet_damage(1, TIER_EASY), slam_damage(1, TIER_EASY)), (2, 15));
         assert_eq!(
-            (bullet_damage(MAX_SEATS as u8), slam_damage(MAX_SEATS as u8)),
+            (bullet_damage(MAX_SEATS as u8, TIER_EASY), slam_damage(MAX_SEATS as u8, TIER_EASY)),
             (8, 45)
         );
         assert_eq!(
-            (bullet_damage(0), slam_damage(0)),
-            (bullet_damage(1), slam_damage(1)),
+            (bullet_damage(0, TIER_EASY), slam_damage(0, TIER_EASY)),
+            (bullet_damage(1, TIER_EASY), slam_damage(1, TIER_EASY)),
             "an uncounted raid is a solo raid"
         );
-        assert_eq!((bullet_damage(u8::MAX), slam_damage(u8::MAX)), (8, 45));
-        for n in 1..MAX_SEATS as u8 {
-            assert!(bullet_damage(n) <= bullet_damage(n + 1), "bullet at {n}");
-            assert!(slam_damage(n) <= slam_damage(n + 1), "slam at {n}");
+        assert_eq!((bullet_damage(u8::MAX, TIER_EASY), slam_damage(u8::MAX, TIER_EASY)), (8, 45));
+        for tier in 0..N_TIERS as u8 {
+            let mul = INCOMING_MUL_BY_TIER[tier as usize];
+            for n in 1..=MAX_SEATS as u8 {
+                assert_eq!(bullet_damage(n, tier), bullet_damage(n, TIER_EASY) * mul, "bullet at {n} on {tier}");
+                assert_eq!(slam_damage(n, tier), slam_damage(n, TIER_EASY) * mul, "slam at {n} on {tier}");
+                if n < MAX_SEATS as u8 {
+                    assert!(bullet_damage(n, tier) <= bullet_damage(n + 1, tier), "bullet at {n}");
+                    assert!(slam_damage(n, tier) <= slam_damage(n + 1, tier), "slam at {n}");
+                }
+            }
         }
+        assert_eq!((bullet_damage(1, TIER_HARD), slam_damage(1, TIER_HARD)), (6, 45));
     }
 
     /// 5× on both rows, exactly, and strictly more than the charged shot on both — the
@@ -2081,23 +2274,27 @@ mod fury_tests {
     fn fight_hp_is_the_strippable_shell_plus_the_core() {
         let mut boss = solo_boss();
         assert_eq!(
-            boss.fight_hp(1),
+            boss.fight_hp(1, TIER_EASY),
             (560, 560),
             "360 shell above the line + 200 core"
         );
         // Shell above the line is fight HP: 100 off the crown is 100 off `left`.
         boss.parts[0] -= 100;
-        assert_eq!(boss.fight_hp(1), (460, 560));
+        assert_eq!(boss.fight_hp(1, TIER_EASY), (460, 560));
         // Shell below the line is not: strip everything and only the core is left, which is
         // exactly how the vent rule reads it.
         boss.parts = [0; N_PARTS];
-        assert_eq!(boss.fight_hp(1), (200, 560));
+        assert_eq!(boss.fight_hp(1, TIER_EASY), (200, 560));
         // The same shell is a different fight for twenty: 65 % of it must come off.
         let full = solo_boss();
-        assert_eq!(full.fight_hp(MAX_SEATS as u8), (11_900, 11_900));
+        assert_eq!(full.fight_hp(MAX_SEATS as u8, TIER_EASY), (11_900, 11_900));
+        // And for a HARD raider: 12 % of it, six times EASY's 2 %, before the core the
+        // tick will have raised (this fixture seeds the lobby's 200; `core_hp_required`
+        // is the tick's, and stage 1b tops it up on the first FIGHTING tick).
+        assert_eq!(full.fight_hp(1, TIER_HARD), (2_360, 2_360));
         assert_eq!(
-            full.fight_hp(0),
-            full.fight_hp(1),
+            full.fight_hp(0, TIER_EASY),
+            full.fight_hp(1, TIER_EASY),
             "an uncounted raid is a solo raid"
         );
     }
@@ -2108,19 +2305,19 @@ mod fury_tests {
         boss.parts = [0; N_PARTS];
         // max = 560, so the line is 112.
         boss.core_hp = 118;
-        assert!(!boss.is_furious(1), "21 % is not furious");
+        assert!(!boss.is_furious(1, TIER_EASY), "21 % is not furious");
         boss.core_hp = 113;
         assert!(
-            !boss.is_furious(1),
+            !boss.is_furious(1, TIER_EASY),
             "one point over the line is not furious"
         );
         boss.core_hp = 112;
-        assert!(boss.is_furious(1), "20 % is furious");
+        assert!(boss.is_furious(1, TIER_EASY), "20 % is furious");
         boss.core_hp = 1;
-        assert!(boss.is_furious(1));
+        assert!(boss.is_furious(1, TIER_EASY));
         boss.core_hp = 0;
-        assert!(!boss.is_furious(1), "a dead boss is not furious");
-        assert!(!solo_boss().is_furious(1), "a full shell is nowhere near");
+        assert!(!boss.is_furious(1, TIER_EASY), "a dead boss is not furious");
+        assert!(!solo_boss().is_furious(1, TIER_EASY), "a full shell is nowhere near");
     }
 
     #[test]
@@ -2129,26 +2326,26 @@ mod fury_tests {
         boss.parts = [0; N_PARTS];
         // max = 560, so the line is 280.
         boss.core_hp = 281;
-        assert!(!boss.is_phase2(1), "one point over the line is not phase 2");
+        assert!(!boss.is_phase2(1, TIER_EASY), "one point over the line is not phase 2");
         boss.core_hp = 280;
-        assert!(boss.is_phase2(1), "50 % is phase 2");
+        assert!(boss.is_phase2(1, TIER_EASY), "50 % is phase 2");
         boss.core_hp = 112;
         assert!(
-            boss.is_phase2(1) && boss.is_furious(1),
+            boss.is_phase2(1, TIER_EASY) && boss.is_furious(1, TIER_EASY),
             "fury is inside phase 2, not instead of it"
         );
         boss.core_hp = 0;
-        assert!(!boss.is_phase2(1), "a dead boss sweeps nothing");
-        assert!(!solo_boss().is_phase2(1), "a full shell is nowhere near");
+        assert!(!boss.is_phase2(1, TIER_EASY), "a dead boss sweeps nothing");
+        assert!(!solo_boss().is_phase2(1, TIER_EASY), "a full shell is nowhere near");
     }
 
     #[test]
     fn an_empty_boss_is_safe_and_calm() {
         let boss = Boss::zeroed();
-        assert_eq!(boss.fight_hp(0), (0, 0));
-        assert_eq!(boss.fight_hp(MAX_SEATS as u8), (0, 0));
-        assert!(!boss.is_furious(0) && !boss.is_furious(u8::MAX));
-        assert!(!boss.is_phase2(0) && !boss.is_phase2(u8::MAX));
+        assert_eq!(boss.fight_hp(0, TIER_EASY), (0, 0));
+        assert_eq!(boss.fight_hp(MAX_SEATS as u8, TIER_EASY), (0, 0));
+        assert!(!boss.is_furious(0, TIER_EASY) && !boss.is_furious(u8::MAX, TIER_EASY));
+        assert!(!boss.is_phase2(0, TIER_EASY) && !boss.is_phase2(u8::MAX, TIER_EASY));
     }
 }
 

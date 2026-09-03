@@ -30,6 +30,14 @@ is unchanged on disk, no product code is modified, no deploy was run, no git com
 > proof in place of `privyToken` since the same pass (`routes.ts::resolveIdentity`); the scan is
 > identity-agnostic and nothing here changes for it.
 
+> **Amended 2026-09-04, three gates.** The one `G` block and its four corners
+> (`GATE_MIN_X…GATE_MAX_Y` in §3 and §5.3, `CX` = 512) are gone from both generated files.
+> The lobby has three doorways, one per tier, and `tools/gen_map.py` emits them as
+> `map::GATES: [Gate; 3]` / `map.ts`'s `GATES` — x 192..303, 464..559, 720..831 on rows
+> 38..39 (y 608..639), left to right = EASY, MEDIUM, HARD — cross-checked to the tile against
+> `rooms.gen.ts`'s `LOBBY_GATES`. `Arena.difficulty` is the first raider's gate. See
+> 08-gate.md §3.10.
+
 This document collapses four independent design passes — the grid pass, `docs/art/hall.md`,
 `docs/art/arena.md`, and the reach-and-fit pass — into one buildable thing. They disagreed on
 the pit depth, the gate width, the ray-reach limit and the layer order. §10 records every

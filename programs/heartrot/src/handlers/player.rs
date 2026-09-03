@@ -54,9 +54,7 @@ use crate::error::HeartrotError;
 use crate::guards::{
     assert_owned_by, assert_pda, assert_session_authority, assert_signer, assert_writable,
 };
-use crate::map::{
-    DAIS, GATE_MAX_X, GATE_MAX_Y, GATE_MIN_X, GATE_MIN_Y, PIT_BOT, PIT_TOP, WALLS,
-};
+use crate::map::{gate_at, DAIS, PIT_BOT, PIT_TOP, WALLS};
 use crate::state::{
     self, Arena, PlayerSlot, Players, MAX_SEATS, N_CLASSES, PHASE_FIGHTING, PHASE_LOBBY,
     PHASE_MUSTERING, SEED_PLAYERS, ZONE_ARENA, ZONE_LOBBY,
@@ -82,19 +80,20 @@ pub use crate::map::{MAP_TILES, TILE};
 /// `0..=MAP_MAX_XY`, which is also what makes the tile index below in-range.
 pub const MAP_MAX_XY: i16 = (MAP_TILES as i16) * TILE - 1;
 
-// The gate block (`GATE_MIN_X`..=`GATE_MAX_Y`) and the pit box (`PIT_TOP`/`PIT_BOT`) are
-// imported from `crate::map`, not declared here.
+// The gate blocks (`map::GATES`, tested through `map::gate_at`) and the pit box
+// (`PIT_TOP`/`PIT_BOT`) are imported from `crate::map`, not declared here.
 //
 // They used to be six literals in this file, and `tools/gen_map.py` parsed them back out
 // of this source to check the grid it had just emitted — one fact stored twice, in the
 // two places least able to notice they had drifted. They are `G` and `P` marks in
 // `assets/map/arena.json` now, so the tiles `enter_gate` accepts are the tiles the map
 // was compiled from, and `map.rs`'s const-assert block can prove `BOSS_SPAWN` is outside
-// the gate on every `cargo check`.
+// every gate on every `cargo check`.
 //
-// Standing inside the gate block is what `enter_gate` requires — the lobby *is* the
+// Standing inside a gate block is what `enter_gate` requires — the lobby *is* the
 // matchmaker, so the gate has to be a place you walk to and not an API call you make from
-// across the map.
+// across the map. Which block is the difficulty: three doorways, three tiers, and the one
+// the raid's first raider chose is the one everyone after them must take.
 
 /// The lobby entrance and the sideways pitch seats fan out along, so twenty players
 /// never stack on one pixel and the client can render a join without waiting for the
@@ -232,10 +231,6 @@ fn is_wall(x: i16, y: i16) -> bool {
     }
 }
 
-fn on_gate(x: i16, y: i16) -> bool {
-    (GATE_MIN_X..=GATE_MAX_X).contains(&x) && (GATE_MIN_Y..=GATE_MAX_Y).contains(&y)
-}
-
 /// The y range a seat in `zone` may stand in. The *second* kind of barrier in this
 /// program, and the one that is not made of tiles.
 ///
@@ -262,13 +257,13 @@ fn on_gate(x: i16, y: i16) -> bool {
 /// standing in the creature. The lobby box is therefore `PIT_BOT + 1 ..= MAP_MAX_XY`:
 /// everything below the rim, which is the whole lobby half and the gate.
 ///
-/// The seam is exactly one unit wide and `map.rs` const-asserts it (`GATE_MIN_Y ==
-/// PIT_BOT + 1`), which is what makes the flip safe in both directions: the doorway rows
-/// are inside the *lobby* box, the entrance rows are inside the *arena* box, and
-/// `enter_gate` teleports across the seam rather than stepping over it. If the two boxes
-/// left a gap, a player who flipped zone standing on the gate tiles would be outside the
-/// only legal y range with no legal move in any direction — a hard freeze with no error
-/// anywhere.
+/// The seam is exactly one unit wide and every gate block sits below it (`map.rs`
+/// const-asserts `min_y > PIT_BOT`), which is what makes the flip safe in both directions:
+/// the doorway rows are inside the *lobby* box, the entrance rows are inside the *arena*
+/// box, and `enter_gate` teleports across the seam rather than stepping over it. If the
+/// two boxes left a gap, a player who flipped zone standing on the gate tiles would be
+/// outside the only legal y range with no legal move in any direction — a hard freeze
+/// with no error anywhere.
 fn zone_box(zone: u8) -> (i16, i16) {
     if zone == ZONE_ARENA {
         (PIT_TOP, PIT_BOT)
@@ -361,12 +356,29 @@ fn may_stand_step(zone: u8, (x, y): (i16, i16), (nx, ny): (i16, i16)) -> bool {
     !standable(zone, x, y) || standable(zone, nx, ny)
 }
 
-/// The three refusals `enter_gate` owes a caller, as a pure function of the seat.
+/// The tier this raid is already committed to, or `None` while nobody has opened it.
+///
+/// A raid is opened by its first raider: `raid_size` is 0 until the first FIGHTING tick
+/// counts the pit and `alive_count` is 0 until the first `enter_gate` — both zeroed by
+/// `Arena::begin_next_incarnation`, the only road back to `PHASE_LOBBY`. Either non-zero
+/// means someone has walked a gate this incarnation, and `difficulty` is the gate they
+/// walked. Read here and written in [`enter_gate`] off this one predicate, so "first
+/// raider" cannot mean one thing to the refusal and another to the write.
+fn locked_tier(arena: &Arena) -> Option<u8> {
+    if arena.raid_size == 0 && arena.alive_count == 0 {
+        None
+    } else {
+        Some(arena.difficulty)
+    }
+}
+
+/// The four refusals `enter_gate` owes a caller, as a pure function of the seat and the
+/// raid's tier, answering the tier of the gate the seat stands in.
 ///
 /// Split out of the handler so the gate's rules are testable without an `AccountView`:
-/// this *is* the "one-way, on the tiles, and only a real seat" contract, and every one of
-/// the three is load-bearing (see [`enter_gate`]).
-fn gate_refusal(slot: &PlayerSlot) -> Result<(), ProgramError> {
+/// this *is* the "one-way, on a gate, the raid's gate, and only a real seat" contract,
+/// and every one of the four is load-bearing (see [`enter_gate`]).
+fn gate_refusal(slot: &PlayerSlot, locked: Option<u8>) -> Result<u8, ProgramError> {
     // One direction only. Coming back out is `phase == Settled`, not an instruction —
     // and rejecting the repeat is what keeps `alive_count` from being incremented
     // twice by one player, which would inflate `bullets_per_volley` for everyone. It is
@@ -377,8 +389,16 @@ fn gate_refusal(slot: &PlayerSlot) -> Result<(), ProgramError> {
     }
     // The client retries this instruction while the player walks onto the tile, so
     // "not there yet" must be tellable apart from every other gate failure.
-    if !on_gate(slot.x, slot.y) {
+    let Some(tier) = gate_at(slot.x, slot.y) else {
         return Err(HeartrotError::NotOnGate.into());
+    };
+    // The raid fights ONE boss, tuned by the gate its first raider chose. A later raider on
+    // another doorway is refused with a code the client does not retry on: standing still
+    // never heals this one, walking to the named gate does.
+    if let Some(locked) = locked {
+        if tier != locked {
+            return Err(HeartrotError::WrongGate.into());
+        }
     }
     // Aliveness is derived as `hp != 0 && zone == ZONE_ARENA`, so a seat with a zero
     // `hp_max` would count toward `alive_count` while never being alive. `join`
@@ -386,7 +406,7 @@ fn gate_refusal(slot: &PlayerSlot) -> Result<(), ProgramError> {
     if slot.hp_max == 0 {
         return Err(ProgramError::InvalidAccountData);
     }
-    Ok(())
+    Ok(tier)
 }
 
 // ---------------------------------------------------------------------------
@@ -831,15 +851,6 @@ pub fn move_player(
 // enter_gate
 // ---------------------------------------------------------------------------
 
-/// `enter_gate(seat)` — accounts `[arena (w), players (w), session key (signer)]`.
-///
-/// Flips the seat from lobby to arena and teleports it to the arena entrance.
-///
-/// The only player-callable handler here with no tick counter, and it does not need one:
-/// the `zone != ZONE_LOBBY` refusal below makes it one-shot per seat per incarnation, so a
-/// flood of repeats is a flood of rejections that write nothing — where `move` and `shoot`
-/// would each succeed, every time, at zero fee. That refusal is therefore load-bearing
-/// twice over: it is the rate limit *and* the `alive_count` bound.
 /// Tag 16 — release a seat. The other half of `join`, and the reason a player who leaves
 /// stops existing for everyone else.
 ///
@@ -900,15 +911,45 @@ pub fn leave_seat(program_id: &Address, accounts: &mut [AccountView], data: &[u8
         return Ok(());
     }
 
-    // The whole slot, not just the key. A half-cleared seat is the defect this file has
-    // paid for twice: `seat_occupied` is a cache of `session_pubkey != 0`, and position,
-    // HP, class and damage all have to go with it or the next player to take this seat
-    // inherits a stranger's corpse.
-    *slot = PlayerSlot::zeroed();
-    arena.seat_occupied &= !(1u32 << seat);
+    release_seat(arena, slot, seat);
     Ok(())
 }
 
+/// The release itself, once the seat is proven the caller's: the whole slot, and both
+/// arena counts a seat is part of.
+///
+/// The whole slot, not just the key. A half-cleared seat is the defect this file has
+/// paid for twice: `seat_occupied` is a cache of `session_pubkey != 0`, and position,
+/// HP, class and damage all have to go with it or the next player to take this seat
+/// inherits a stranger's corpse.
+///
+/// And `alive_count`, which `enter_gate` added this seat to and which nothing but the
+/// FIGHTING tick's recount (`tick.rs`, step 5) ever takes a seat out of. LOBBY and
+/// MUSTERING have no recount, so a raider who walked HARD and pressed Exit before the
+/// crank woke left the count at 1 over an empty pit, and [`locked_tier`] read that as a
+/// raid on HARD: every next raider refused `WrongGate` on the other two gates, and
+/// `begin_muster` refused `NoRaiders` on the one they were allowed. A seat the tick has
+/// already dropped (`hp == 0`, waiting to respawn) is not subtracted twice; mid-fight the
+/// recount lands within one tick either way, so this only has to agree with it.
+fn release_seat(arena: &mut Arena, slot: &mut PlayerSlot, seat: u8) {
+    if slot.zone == ZONE_ARENA && slot.hp != 0 {
+        arena.alive_count = arena.alive_count.saturating_sub(1);
+    }
+    *slot = PlayerSlot::zeroed();
+    arena.seat_occupied &= !(1u32 << seat);
+}
+
+/// `enter_gate(seat)` — accounts `[arena (w), players (w), session key (signer)]`.
+///
+/// Flips the seat from lobby to arena and teleports it to the arena entrance. The gate it
+/// stood in is the raid's difficulty: the first raider through writes `arena.difficulty`
+/// from it, and everyone after them must walk the same one ([`gate_refusal`]).
+///
+/// The only player-callable handler here with no tick counter, and it does not need one:
+/// the `zone != ZONE_LOBBY` refusal below makes it one-shot per seat per incarnation, so a
+/// flood of repeats is a flood of rejections that write nothing — where `move` and `shoot`
+/// would each succeed, every time, at zero fee. That refusal is therefore load-bearing
+/// twice over: it is the rate limit *and* the `alive_count` bound.
 pub fn enter_gate(
     program_id: &Address,
     accounts: &mut [AccountView],
@@ -941,7 +982,16 @@ pub fn enter_gate(
         .ok_or(HeartrotError::SeatOutOfRange)?;
     assert_session_authority(slot, authority_ai)?;
 
-    gate_refusal(slot)?;
+    let locked = locked_tier(arena);
+    let tier = gate_refusal(slot, locked)?;
+    // The first raider through picks the boss for everyone: `difficulty` is written here
+    // and nowhere else, once per incarnation, and `begin_next_incarnation` clears it. It
+    // is written before the seat flips so the two facts land in one transaction — a seat
+    // in `ZONE_ARENA` under an arena still reading EASY would be the raid tuned wrong for
+    // exactly the tick the crank sizes the core in.
+    if locked.is_none() {
+        arena.difficulty = tier;
+    }
 
     // `boss_tick` owns the arena entrance; a second definition here would read as a
     // teleport bug the first time anyone died. It is also inside the arena box by
@@ -970,8 +1020,10 @@ pub fn enter_gate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map::GATES;
     use crate::state::{
-        CHARGED_SHOT_BIT, CLASS_MASK, PHASE_ROLLED, PHASE_ROLLING, PHASE_SETTLED, PHASE_SETTLING,
+        CHARGED_SHOT_BIT, CLASS_MASK, N_TIERS, PHASE_ROLLED, PHASE_ROLLING, PHASE_SETTLED,
+        PHASE_SETTLING, TIER_EASY, TIER_HARD, TIER_MEDIUM,
     };
 
     /// A step overwrites `facing` whole, so the charged-shot flag `shoot::fire` parks in
@@ -1299,32 +1351,39 @@ mod tests {
         // Standing still is not a direction.
         assert!(octant(0, 0).is_err());
 
-        // The gate is reachable: every unit of it is inside the map and on floor, and the
-        // block is closed on all four sides. One walled tile inside the block is a gate a
-        // player can stand next to and never on, which is a raid that cannot be started
-        // and which nothing at runtime reports.
-        assert!(on_gate(GATE_MIN_X, GATE_MIN_Y) && on_gate(GATE_MAX_X, GATE_MAX_Y));
-        assert!(!on_gate(GATE_MIN_X - 1, GATE_MIN_Y) && !on_gate(GATE_MAX_X + 1, GATE_MAX_Y));
-        assert!(!on_gate(GATE_MIN_X, GATE_MIN_Y - 1) && !on_gate(GATE_MAX_X, GATE_MAX_Y + 1));
-        let mut gx = GATE_MIN_X;
-        while gx <= GATE_MAX_X {
-            let mut gy = GATE_MIN_Y;
-            while gy <= GATE_MAX_Y {
-                assert!(
-                    on_gate(gx, gy) && !is_wall(gx, gy),
-                    "gate unit ({gx}, {gy}) is wall"
-                );
-                gy += TILE;
+        // Every gate is reachable: every unit of it is inside the map and on floor, the
+        // block is closed on all four sides, and it names its own tier. One walled tile
+        // inside a block is a gate a player can stand next to and never on, which is a
+        // tier that cannot be picked and which nothing at runtime reports.
+        assert_eq!(GATES.len(), N_TIERS);
+        for (tier, gate) in GATES.iter().enumerate() {
+            let tier = tier as u8;
+            assert_eq!(gate_at(gate.min_x, gate.min_y), Some(tier));
+            assert_eq!(gate_at(gate.max_x, gate.max_y), Some(tier));
+            assert_eq!(gate_at(gate.min_x - 1, gate.min_y), None);
+            assert_eq!(gate_at(gate.max_x + 1, gate.max_y), None);
+            assert_eq!(gate_at(gate.min_x, gate.min_y - 1), None);
+            assert_eq!(gate_at(gate.min_x, gate.max_y + 1), None);
+            let mut gx = gate.min_x;
+            while gx <= gate.max_x {
+                let mut gy = gate.min_y;
+                while gy <= gate.max_y {
+                    assert!(
+                        gate_at(gx, gy) == Some(tier) && !is_wall(gx, gy),
+                        "gate {tier} unit ({gx}, {gy}) is wall"
+                    );
+                    gy += TILE;
+                }
+                gx += TILE;
             }
-            gx += TILE;
         }
 
-        // The gate is not the boss. `map.rs` const-asserts this too; it is repeated here
+        // No gate is the boss. `map.rs` const-asserts this too; it is repeated here
         // because the failure is silent and total — a gate block overlapping `BOSS_SPAWN`
         // would flip a player into the arena standing inside the shell.
         assert!(
-            !on_gate(crate::map::BOSS_SPAWN.0, crate::map::BOSS_SPAWN.1),
-            "the gate block contains BOSS_SPAWN",
+            gate_at(crate::map::BOSS_SPAWN.0, crate::map::BOSS_SPAWN.1).is_none(),
+            "a gate block contains BOSS_SPAWN",
         );
     }
 
@@ -1385,12 +1444,14 @@ mod tests {
             zone_box(ZONE_LOBBY).0,
             "the boxes do not tile"
         );
-        // ...and the gate the flip is triggered from is inside the lobby box, all of it.
-        assert!(
-            may_move_to(ZONE_LOBBY, GATE_MIN_Y, GATE_MIN_Y)
-                && may_move_to(ZONE_LOBBY, GATE_MAX_Y, GATE_MAX_Y),
-            "the gate rows are outside the lobby box — standing on the gate is a freeze",
-        );
+        // ...and every gate the flip is triggered from is inside the lobby box, all of it.
+        for gate in GATES {
+            assert!(
+                may_move_to(ZONE_LOBBY, gate.min_y, gate.min_y)
+                    && may_move_to(ZONE_LOBBY, gate.max_y, gate.max_y),
+                "the gate rows are outside the lobby box — standing on the gate is a freeze",
+            );
+        }
         for seat in 0..MAX_SEATS {
             let (_, y) = crate::handlers::tick::entrance_for(seat);
             assert!(
@@ -1432,12 +1493,14 @@ mod tests {
         let start = lobby_spawn(0);
         seen[idx(start.0, start.1)] = true;
         let mut queue = std::collections::VecDeque::from([start]);
-        let (mut count, mut min_y, mut gate_units) = (0usize, MAP_MAX_XY, 0usize);
+        let (mut count, mut min_y, mut gate_units) = (0usize, MAP_MAX_XY, [0usize; N_TIERS]);
 
         while let Some((x, y)) = queue.pop_front() {
             count += 1;
             min_y = min_y.min(y);
-            gate_units += usize::from(on_gate(x, y));
+            if let Some(tier) = gate_at(x, y) {
+                gate_units[tier as usize] += 1;
+            }
             for (dx, dy) in MOVE_STEP {
                 let nx = x.saturating_add(dx).clamp(0, MAP_MAX_XY);
                 let ny = y.saturating_add(dy).clamp(0, MAP_MAX_XY);
@@ -1476,12 +1539,15 @@ mod tests {
             "only {count} positions reachable — the lobby is a closet"
         );
 
-        // The other half of the property, and the one a too-tight box breaks: the gate is
-        // still there to be walked onto, from every seat's spawn.
-        assert!(
-            gate_units > 0,
-            "no unit of the gate block is reachable from a lobby spawn"
-        );
+        // The other half of the property, and the one a too-tight box breaks: every gate
+        // is still there to be walked onto, from every seat's spawn — a tier no spawn can
+        // reach is a difficulty nobody can pick.
+        for (tier, units) in gate_units.iter().enumerate() {
+            assert!(
+                *units > 0,
+                "no unit of gate {tier} is reachable from a lobby spawn"
+            );
+        }
         for seat in 0..MAX_SEATS as u8 {
             let (x, y) = lobby_spawn(seat);
             assert!(
@@ -1525,20 +1591,23 @@ mod tests {
                 );
             }
 
-            // Standing on the gate and not yet through it: still `ZONE_LOBBY`, on rows the
+            // Standing on a gate and not yet through it: still `ZONE_LOBBY`, on rows the
             // *arena* box excludes. The client retries `enter_gate` from here, so a seat
-            // can sit on these tiles for many slots.
-            let mut gx = GATE_MIN_X;
-            while gx <= GATE_MAX_X {
-                let mut gy = GATE_MIN_Y;
-                while gy <= GATE_MAX_Y {
-                    assert!(
-                        step_exists(ZONE_LOBBY, gx, gy),
-                        "a lobby seat on gate unit ({gx}, {gy}) is frozen in phase {phase}",
-                    );
-                    gy += TILE;
+            // can sit on these tiles for many slots — or, refused `WrongGate`, for as long
+            // as it likes.
+            for gate in GATES {
+                let mut gx = gate.min_x;
+                while gx <= gate.max_x {
+                    let mut gy = gate.min_y;
+                    while gy <= gate.max_y {
+                        assert!(
+                            step_exists(ZONE_LOBBY, gx, gy),
+                            "a lobby seat on gate unit ({gx}, {gy}) is frozen in phase {phase}",
+                        );
+                        gy += TILE;
+                    }
+                    gx += TILE;
                 }
-                gx += TILE;
             }
         }
     }
@@ -1728,7 +1797,8 @@ mod tests {
         assert!(air > 0, "no dais tile has air beside it: the dais table is the wall table");
 
         // The lobby ignores the dais entirely. A lobby seat's rule is walls and the band.
-        assert!(may_stand_step(ZONE_LOBBY, (GATE_MIN_X, GATE_MIN_Y), (GATE_MIN_X, GATE_MIN_Y - STEP)));
+        let gate = GATES[0];
+        assert!(may_stand_step(ZONE_LOBBY, (gate.min_x, gate.min_y), (gate.min_x, gate.min_y - STEP)));
         assert!(may_stand_step(ZONE_LOBBY, (TILE, TILE), (2 * TILE, TILE)));
         // Off-map is not dais, in the same fail-closed direction as `is_wall`.
         assert!(!on_dais(-1, PIT_TOP) && !on_dais(0, -1) && !on_dais(MAP_MAX_XY + 1, PIT_TOP));
@@ -1765,9 +1835,9 @@ mod tests {
         assert_eq!(other.identity, identity, "the fixture still holds the owner");
     }
 
-    /// The gate's three refusals, which are the whole of the waiting-room contract that
-    /// lives on this side: you must be standing on it, you may pass once, and an unclaimed
-    /// seat may not pass at all.
+    /// The gate's four refusals, which are the whole of the waiting-room contract that
+    /// lives on this side: you must be standing on one, you may pass once, it must be the
+    /// raid's gate, and an unclaimed seat may not pass at all.
     ///
     /// `enter_gate` itself needs three `AccountView`s the host cannot build, so the rules
     /// are asserted through [`gate_refusal`], which is the same code path the handler runs.
@@ -1780,56 +1850,135 @@ mod tests {
         // whole way in, so the refusal has to be its own code or "not there yet" is
         // indistinguishable from "already through".
         assert_eq!(
-            gate_refusal(&slot).unwrap_err(),
+            gate_refusal(&slot, None).unwrap_err(),
             HeartrotError::NotOnGate.into()
         );
-        slot.x = GATE_MIN_X;
-        slot.y = GATE_MAX_Y;
-        assert!(
-            gate_refusal(&slot).is_ok(),
-            "a lobby seat on the gate may pass"
-        );
 
-        // Every unit just outside the block is refused, on all four sides.
-        for (x, y) in [
-            (GATE_MIN_X - 1, GATE_MIN_Y),
-            (GATE_MAX_X + 1, GATE_MIN_Y),
-            (GATE_MIN_X, GATE_MIN_Y - 1),
-            (GATE_MIN_X, GATE_MAX_Y + 1),
-        ] {
-            let mut off = slot;
-            off.x = x;
-            off.y = y;
+        // Each gate admits, and answers its own tier; every unit just outside a block is
+        // refused, on all four sides — including the wall between two doorways, which is
+        // what keeps "which gate" a fact rather than a guess.
+        for (tier, gate) in GATES.iter().enumerate() {
+            let mut on = slot;
+            on.x = gate.min_x;
+            on.y = gate.max_y;
+            assert_eq!(gate_refusal(&on, None), Ok(tier as u8), "gate {tier} admits");
+            for (x, y) in [
+                (gate.min_x - 1, gate.min_y),
+                (gate.max_x + 1, gate.min_y),
+                (gate.min_x, gate.min_y - 1),
+                (gate.min_x, gate.max_y + 1),
+            ] {
+                let mut off = slot;
+                off.x = x;
+                off.y = y;
+                assert_eq!(
+                    gate_refusal(&off, None).unwrap_err(),
+                    HeartrotError::NotOnGate.into()
+                );
+            }
+        }
+
+        // The tier rule. Nobody has opened the raid: any gate, and the answer is the gate.
+        // Somebody has: the same gate passes, any other is `WrongGate` — a code with its
+        // own number because, unlike `NotOnGate`, the next poll cannot heal it.
+        let on_medium = {
+            let mut s = slot;
+            s.x = GATES[TIER_MEDIUM as usize].min_x;
+            s.y = GATES[TIER_MEDIUM as usize].min_y;
+            s
+        };
+        assert_eq!(gate_refusal(&on_medium, None), Ok(TIER_MEDIUM));
+        assert_eq!(gate_refusal(&on_medium, Some(TIER_MEDIUM)), Ok(TIER_MEDIUM));
+        for other in [TIER_EASY, TIER_HARD] {
             assert_eq!(
-                gate_refusal(&off).unwrap_err(),
-                HeartrotError::NotOnGate.into()
+                gate_refusal(&on_medium, Some(other)).unwrap_err(),
+                HeartrotError::WrongGate.into(),
+                "a raid on tier {other} admits nobody through MEDIUM",
             );
         }
 
         // One way. This refusal is simultaneously the `alive_count` bound and the whole
         // rate limit on a handler that has no tick counter, so a second entry has to fail
-        // even standing on the tile it succeeded from.
-        let mut through = slot;
+        // even standing on the tile it succeeded from — and before the tier is judged.
+        let mut through = on_medium;
         through.zone = ZONE_ARENA;
         assert_eq!(
-            gate_refusal(&through).unwrap_err(),
-            HeartrotError::WrongZone.into()
-        );
-        through.x = GATE_MIN_X;
-        through.y = GATE_MIN_Y;
-        assert_eq!(
-            gate_refusal(&through).unwrap_err(),
+            gate_refusal(&through, Some(TIER_HARD)).unwrap_err(),
             HeartrotError::WrongZone.into(),
-            "the zone check must be read before the position check",
+            "the zone check must be read before the position and tier checks",
         );
 
         // A seat that `join` never wrote cannot be walked through: `hp_max == 0` would
         // count toward `alive_count` while never being alive.
-        let mut unclaimed = slot;
+        let mut unclaimed = on_medium;
         unclaimed.hp_max = 0;
         assert_eq!(
-            gate_refusal(&unclaimed).unwrap_err(),
+            gate_refusal(&unclaimed, None).unwrap_err(),
             ProgramError::InvalidAccountData,
         );
+    }
+
+    /// The raid's tier is the first raider's gate and nobody else's: the lock opens on an
+    /// arena nobody has entered, closes on the first `enter_gate` (`alive_count`) or the
+    /// first counted tick (`raid_size`), whichever the reader sees first, and reopens only
+    /// with the incarnation — every account on chain reads EASY until then.
+    #[test]
+    fn the_first_raider_picks_the_tier_and_the_incarnation_clears_it() {
+        let mut arena = Arena::zeroed();
+        assert_eq!(locked_tier(&arena), None, "a fresh arena is anybody's");
+
+        // What `enter_gate` writes for the first raider, and what it reads for the next.
+        arena.difficulty = TIER_HARD;
+        arena.alive_count = 1;
+        assert_eq!(locked_tier(&arena), Some(TIER_HARD));
+        // The first tick counts the raid; a raid whose every raider has since died is
+        // still that raid.
+        arena.alive_count = 0;
+        arena.raid_size = 1;
+        assert_eq!(locked_tier(&arena), Some(TIER_HARD), "raid_size locks it too");
+
+        // Back to the lobby is the only unlock, and it lands on EASY — the tuning every
+        // account already on devnet carries in this byte.
+        arena.phase = PHASE_SETTLED;
+        arena.next_affix_seed = [9u8; 32];
+        arena.begin_next_incarnation().expect("a settled, rolled arena reincarnates");
+        assert_eq!(arena.difficulty, TIER_EASY);
+        assert_eq!(locked_tier(&arena), None, "the next raid picks its own gate");
+    }
+
+    /// Exit before the crank wakes is the one road out of `ZONE_ARENA` no tick recounts
+    /// behind, so the release hands the count back itself -- or the gate a raider walked
+    /// and abandoned stays the raid's tier over an empty pit.
+    #[test]
+    fn leaving_before_the_fight_gives_the_tier_back() {
+        let mut arena = Arena::zeroed();
+        // What `enter_gate` left: the seat in the pit at full HP, the count at one, the
+        // gate it stood in as the raid's tier.
+        let mut walked = PlayerSlot::zeroed();
+        walked.zone = ZONE_ARENA;
+        walked.hp = PLAYER_HP_MAX;
+        walked.hp_max = PLAYER_HP_MAX;
+        arena.seat_occupied = 1 << 3;
+        arena.alive_count = 1;
+        arena.difficulty = TIER_HARD;
+        assert_eq!(locked_tier(&arena), Some(TIER_HARD));
+
+        release_seat(&mut arena, &mut walked, 3);
+        assert_eq!(bytemuck::bytes_of(&walked), bytemuck::bytes_of(&PlayerSlot::zeroed()));
+        assert_eq!((arena.seat_occupied, arena.alive_count), (0, 0));
+        assert_eq!(locked_tier(&arena), None, "the next raider's gate is the raid's");
+
+        // A seat still in the lobby never counted, and a dead raider mid-fight was already
+        // dropped by the tick's recount: neither release moves the count.
+        arena.alive_count = 2;
+        let mut waiting = PlayerSlot::zeroed();
+        waiting.zone = ZONE_LOBBY;
+        waiting.hp = PLAYER_HP_MAX;
+        release_seat(&mut arena, &mut waiting, 4);
+        let mut dead = PlayerSlot::zeroed();
+        dead.zone = ZONE_ARENA;
+        dead.hp = 0;
+        release_seat(&mut arena, &mut dead, 5);
+        assert_eq!(arena.alive_count, 2);
     }
 }

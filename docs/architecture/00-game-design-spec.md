@@ -228,7 +228,8 @@ Card 2   Fund the session wallet  (see §8)
 Card 3   Loader — backend creates the player Entity, initializes
          components, delegates them to the ER, pays all rent
               ↓
-         Character select → lobby
+         Character select → lobby   (the select is seen once — the first
+         seat; after a raid ends or Exit the loop is loader → seat)
 ```
 
 The session wallet is a `Keypair` generated in the browser, secret held in

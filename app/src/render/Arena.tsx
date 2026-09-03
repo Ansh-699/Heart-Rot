@@ -85,10 +85,7 @@ import {
   BEAM_WARN_TICKS,
   BOSS_SPAWN,
   CORE,
-  GATE_MAX_X,
-  GATE_MAX_Y,
-  GATE_MIN_X,
-  GATE_MIN_Y,
+  GATES,
   MAP_ENTRANCES,
   MAP_TILE,
   MAX_BULLETS,
@@ -106,9 +103,9 @@ import {
   ZONE_ARENA,
   ZONE_LOBBY,
   beamAt,
+  gateAt,
   isFurious,
   isPhase2,
-  onGate,
   slamTelegraph,
   type ArenaAccount,
   type BeamState,
@@ -211,6 +208,16 @@ function bulletRisk(b: Bullet, slots: readonly PlayerSlot[]): number {
  */
 /** Room A's bullet list. A module constant, so it is not a fresh array every render. */
 const NO_BULLETS: readonly number[] = [];
+
+/**
+ * The ordnance atlas as React wants it, built ONCE. React 19 does not compare `__html`:
+ * `setProp` assigns `innerHTML` whenever the prop OBJECT is a new one, so an inline
+ * `{ __html: ORDNANCE_DEFS }` re-parsed the eighteen symbols and rebuilt every `<use>`
+ * shadow tree in the scene on every one of the ~380 renders a second this file makes in a
+ * fight. Measured (`scripts/spike/framebudget/run-ab35-defs.log`, 20 seats, 24 bullets,
+ * 1920x1080, 6x throttle): that one object was 9.8 % of all sampled time in `setProp`.
+ */
+const ORDNANCE_HTML = { __html: ORDNANCE_DEFS } as const;
 
 function visibleBullets(bullets: readonly Bullet[], slots: readonly PlayerSlot[]): number[] {
   const live: number[] = [];
@@ -468,7 +475,7 @@ function volleyTelegraph(
  * sweep it announces share a period index, so the tick rendered is the tick asked about.
  */
 function beamTelegraph(arena: ArenaAccount, boss: BossAccount): BeamState | null {
-  if (arena.phase !== PHASE_FIGHTING || !isPhase2(boss, arena.raidSize)) return null;
+  if (arena.phase !== PHASE_FIGHTING || !isPhase2(boss, arena.raidSize, arena.difficulty)) return null;
   return beamAt(arena.affixSeed, arena.tick);
 }
 
@@ -611,6 +618,10 @@ export function Arena({
   const boxRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const reduced = usePrefersReducedMotion();
+  // The gate this raid went through, for the muster clock. `difficulty` is a clamped
+  // chain byte and `GATES` has one entry per tier, so the lookup only misses on a table
+  // the generator refused to write; the clock then draws nowhere rather than throwing.
+  const raidGate = GATES[arena.difficulty];
 
   const localSlot = localSeat === undefined ? undefined : players.slots[localSeat];
   // §1.7's ONE rule, and the shipped `wide = phase === LOBBY || MUSTERING` is deleted with
@@ -704,10 +715,11 @@ export function Arena({
   const shotFrame = useRef<((now: number) => void) | null>(null);
   // The local seat's `<g>`, owned by the frame loop the way `nodes` owns the bullets.
   const selfNode = useRef<SVGGElement | null>(null);
-  // The gate's under-foot light. Same ownership rule: the frame loop writes its opacity and
-  // React never does, so standing on the tile lights it at input rate rather than 127 ms
-  // later (`docs/review/render.md` finding 4). It hints; `useGateEntry` still sends.
-  const gateNode = useRef<SVGRectElement | null>(null);
+  // The gates' under-foot lights, one per tier. Same ownership rule: the frame loop writes
+  // their opacity and React never does, so standing on a tile lights it at input rate
+  // rather than 127 ms later (`docs/review/render.md` finding 4). They hint;
+  // `useGateEntry` still sends.
+  const gateNodes = useRef<(SVGRectElement | null)[]>([]);
   const drawn = useRef<{ x: number; y: number } | null>(null);
   const frameAt = useRef(0);
   // The hold, read by the frame loop rather than closed over: the loop must not be torn
@@ -776,12 +788,14 @@ export function Arena({
         el.style.transform = `translate(${at.x}px, ${at.y}px)`;
 
         // Off the DRAWN position, not the authoritative one: the light has to appear under
-        // the foot the player can see, and `onGate` is the same predicate `enter_gate`
+        // the foot the player can see, and `gateAt` is the same predicate `enter_gate`
         // checks. Written only on a change — this runs every frame and the value flips
-        // twice per visit.
-        const gate = gateNode.current;
-        if (gate !== null) {
-          const lit = onGate(at.x, at.y) ? '1' : '0';
+        // twice per visit; three compares a frame, no allocation.
+        const here = gateAt(at.x, at.y);
+        for (let tier = 0; tier < gateNodes.current.length; tier++) {
+          const gate = gateNodes.current[tier];
+          if (gate == null) continue;
+          const lit = here === tier ? '1' : '0';
           if (gate.style.opacity !== lit) gate.style.opacity = lit;
         }
       }
@@ -970,7 +984,7 @@ export function Arena({
               Generated markup, so `dangerouslySetInnerHTML` is the only way to put it
               inside an SVG parent; it is a build artefact of `tools/gen_ordnance.py`, not
               anything a user can reach. */}
-          <g dangerouslySetInnerHTML={{ __html: ORDNANCE_DEFS }} />
+          <g dangerouslySetInnerHTML={ORDNANCE_HTML} />
         </defs>
 
         {/* `#camera` rests at IDENTITY. It carries no transform from this file, ever — it
@@ -982,17 +996,18 @@ export function Arena({
               and so does the frame budget: two rooms is two full scene rasters. */}
           {shown === 'lobby' ? WAITING : BOSS_ARENA}
 
-          {/* The muster, on the gate itself, for whoever is still in the lobby: the raider
-              who walked through started a twenty-second clock the arena account carries,
-              and the one still here needs to see it where the decision is made — over the
-              gate, in digits, not in a corner. The static room's exclamation mark stands
-              down while this stands (`.is-mustering .gate-mark`). One `<text>` per tick,
-              ten times a second, on a node the static layer does not own. */}
-          {shown === 'lobby' && arena.phase === PHASE_MUSTERING && (
+          {/* The muster, on the raid's gate itself, for whoever is still in the lobby: the
+              raider who walked through started a twenty-second clock the arena account
+              carries, and the one still here needs to see it where the decision is made —
+              over the gate that raid went through (`arena.difficulty`, locked by then), in
+              digits, not in a corner. The static room's exclamation marks stand down while
+              this stands (`.is-mustering .gate-mark`). One `<text>` per tick, ten times a
+              second, on a node the static layer does not own. */}
+          {shown === 'lobby' && arena.phase === PHASE_MUSTERING && raidGate !== undefined && (
             <g
               className="gate-clock"
               aria-hidden="true"
-              transform={`translate(${(GATE_MIN_X + GATE_MAX_X + 1) / 2} ${GATE_MIN_Y - 30})`}
+              transform={`translate(${(raidGate.minX + raidGate.maxX + 1) / 2} ${raidGate.minY - 30})`}
             >
               <text className="gate-clock-label" y={-24} textAnchor="middle">
                 BOSS WAKES IN
@@ -1003,29 +1018,33 @@ export function Arena({
             </g>
           )}
 
-          {/* The gate lighting up under your feet, room A only. Not part of the room
-              element because it is the one part of that layer that is not static — the
-              frame loop owns its opacity and nothing else may set it, which is why React
-              gives it none. It is feedback, never a send: `enter_gate` stays on
+          {/* The gates lighting up under your feet, room A only, one per tier. Not part of
+              the room element because they are the one part of that layer that is not
+              static — the frame loop owns their opacity and nothing else may set it, which
+              is why React gives them none. Feedback, never a send: `enter_gate` stays on
               `useGateEntry`'s authoritative poll, and the version that fired from the input
               path stranded players. */}
-          {shown === 'lobby' && (
-            <rect
-              ref={gateNode}
-              aria-hidden="true"
-              x={GATE_MIN_X}
-              y={GATE_MIN_Y}
-              width={GATE_MAX_X - GATE_MIN_X + 1}
-              height={GATE_MAX_Y - GATE_MIN_Y + 1}
-              fill={PAL.ventOpen}
-              fillOpacity={0.3}
-              stroke={PAL.ventOpen}
-              strokeWidth={3}
-              // Snaps rather than fades: the whole point is that it answers the keypress,
-              // and a 90 ms cross-fade is 90 ms of the lag this exists to remove.
-              style={{ opacity: 0, pointerEvents: 'none' }}
-            />
-          )}
+          {shown === 'lobby' &&
+            GATES.map((g, tier) => (
+              <rect
+                key={tier}
+                ref={(el) => {
+                  gateNodes.current[tier] = el;
+                }}
+                aria-hidden="true"
+                x={g.minX}
+                y={g.minY}
+                width={g.maxX - g.minX + 1}
+                height={g.maxY - g.minY + 1}
+                fill={PAL.ventOpen}
+                fillOpacity={0.3}
+                stroke={PAL.ventOpen}
+                strokeWidth={3}
+                // Snaps rather than fades: the whole point is that it answers the keypress,
+                // and a 90 ms cross-fade is 90 ms of the lag this exists to remove.
+                style={{ opacity: 0, pointerEvents: 'none' }}
+              />
+            ))}
 
           {/* Rows 7-11, room B only. The boss, its telegraphs and its ordnance have no
               business in a room the pit is not in: `VIEW_LOBBY` overlaps the creature's
@@ -1272,7 +1291,7 @@ export function Arena({
           creature, and a red screen with nothing red on it reads as a fault. Pointer-
           transparent so aiming reaches the stage under it. */}
       <div
-        className={`fury-wash${shown === 'arena' && arena.phase === PHASE_FIGHTING && isFurious(boss, arena.raidSize) ? ' is-on' : ''}`}
+        className={`fury-wash${shown === 'arena' && arena.phase === PHASE_FIGHTING && isFurious(boss, arena.raidSize, arena.difficulty) ? ' is-on' : ''}`}
         aria-hidden="true"
       />
     </div>
@@ -1435,17 +1454,19 @@ if (import.meta.env.DEV) {
 
   // The passage hold PLACES the local seat at its entrance rather than chasing it there,
   // and `chase` decides which by comparing the gap against `SELF_SNAP`. `enter_gate` calls
-  // `entrance_for(seat)`, so every entrance has to be a teleport-sized distance from the
-  // gate the player left — the shortest today is 171.0 units against a 64-unit snap. A map
-  // redraw that brings one inside the snap would freeze that seat mid-walk under an opaque
-  // veil, which is the worst-looking failure this file has.
-  const gateCx = (GATE_MIN_X + GATE_MAX_X + 1) / 2;
-  const gateCy = (GATE_MIN_Y + GATE_MAX_Y + 1) / 2;
-  for (const [ex, ey] of MAP_ENTRANCES) {
-    ok(
-      Math.hypot(ex - gateCx, ey - gateCy) > SELF_SNAP,
-      `entrance (${ex}, ${ey}) is a snap away from the gate, not a walk`,
-    );
+  // `entrance_for(seat)`, so every entrance has to be a teleport-sized distance from every
+  // gate a player can leave through — the shortest today is 171.0 units against a 64-unit
+  // snap. A map redraw that brings one inside the snap would freeze that seat mid-walk
+  // under an opaque veil, which is the worst-looking failure this file has.
+  for (const g of GATES) {
+    const gateCx = (g.minX + g.maxX + 1) / 2;
+    const gateCy = (g.minY + g.maxY + 1) / 2;
+    for (const [ex, ey] of MAP_ENTRANCES) {
+      ok(
+        Math.hypot(ex - gateCx, ey - gateCy) > SELF_SNAP,
+        `entrance (${ex}, ${ey}) is a snap away from a gate, not a walk`,
+      );
+    }
   }
 
   // R3, the room contract. Both directions fail silently and both are ugly: a lobby seat
@@ -1594,7 +1615,7 @@ if (import.meta.env.DEV) {
     partsMax: [1000, 1000, 1000, 1000, 4000, 2500, 2500, 2500, 2500],
   };
   const fakeArena = (tick: number): ArenaAccount =>
-    ({ phase: PHASE_FIGHTING, tick, affixSeed: seed, raidSize: 1 }) as unknown as ArenaAccount;
+    ({ phase: PHASE_FIGHTING, tick, affixSeed: seed, raidSize: 1, difficulty: 0 }) as unknown as ArenaAccount;
   const landing = slamTelegraph(fakeArena(59), shell);
   if (landing === null) throw new Error('Arena self-check: a slam is telegraphed on the tick before it lands');
   for (let t = 60 - SLAM_TELEGRAPH_TICKS; t < 60; t++) {

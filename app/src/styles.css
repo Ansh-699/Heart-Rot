@@ -897,7 +897,10 @@ h3 {
   .hr-boss-breathe,
   .hr-boss-eye,
   .hr-vent-open .hr-boss-vent,
-  .hr-fury .hr-boss-shell,
+  .hr-fury .hr-boss-aura,
+  .hr-smoke-wisp,
+  .room-light circle,
+  .room-motes,
   .fury-wash.is-on {
     animation-name: none;
   }
@@ -1224,12 +1227,14 @@ h3 {
   color: var(--ink);
 }
 
-/* The gate marker — the one piece of instruction left, and it lives in the world.
-   Amber against the cavern's cold blue so it reads as an objective rather than scenery,
-   and animated in CSS because the scene layer mounts once and React never walks it again. */
+/* The gate markers — the one piece of instruction left, and it lives in the world.
+   One per gate, its halo in that doorway's own light (`--tier`, read off the painting by
+   gen_rooms.py and published by WaitingRoom.tsx; the torch amber is only the fallback), so
+   it reads as an objective rather than scenery and says which tier without a word.
+   Animated in CSS because the scene layer mounts once and React never walks it again. */
 .gate-mark-halo {
-  fill: color-mix(in srgb, var(--torch) 26%, transparent);
-  stroke: color-mix(in srgb, var(--torch) 55%, transparent);
+  fill: color-mix(in srgb, var(--tier, var(--torch)) 26%, transparent);
+  stroke: color-mix(in srgb, var(--tier, var(--torch)) 55%, transparent);
   stroke-width: 1.5;
 }
 .gate-mark-ink {
@@ -1371,4 +1376,66 @@ h3 {
   fill: var(--ember);
   fill-opacity: 0.85;
   filter: drop-shadow(0 0 6px var(--ember));
+}
+
+/* --------------------------------------------------------------------------
+   rooms: light — the glow under every painted torch and the motes (RoomLight.tsx)
+
+   Both rooms mount these from their generated light tables; the only thing this file
+   adds is motion, and only the kind that composites: opacity on each glow, one keyframe,
+   ±15 % over four seconds, each circle phase-offset by its index through `--i` so eleven
+   flames never breathe in step; and one translate loop on the mote group, closed, so it
+   never jumps. No filter, no blend mode, nothing per frame in JS. Both are cancelled in
+   the reduced-motion block above, where the rooms stay lit at rest.
+   -------------------------------------------------------------------------- */
+
+.room-light circle {
+  animation: room-flicker 4s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * -0.53s);
+}
+@keyframes room-flicker {
+  0%, 100% { opacity: 1; }
+  30% { opacity: 0.87; }
+  55% { opacity: 0.96; }
+  75% { opacity: 0.85; }
+}
+.room-motes {
+  will-change: transform;
+  animation: room-drift 32s ease-in-out infinite;
+}
+@keyframes room-drift {
+  0%, 100% { translate: 0 0; }
+  33% { translate: 9px -14px; }
+  66% { translate: -7px -22px; }
+}
+
+/* --------------------------------------------------------------------------
+   smoke — where a destroyed boss part stood (Boss.tsx)
+
+   The reference: the part is GONE, the room shows through, and a dark purple cloud hangs
+   there. Two parts to it. The burst is twelve gradient-edged chunks Boss.tsx throws with
+   WAAPI on the kill, so nothing here. The wisps are three gradient-edged ellipses that
+   stay while the part is dead, drifting on one keyframe: translate and opacity only. No
+   `filter: blur` — a blurred wisp was re-rastered on every frame of its drift, `will-change`
+   or not (0.9 ms/frame at 1080p with nine parts dead, measured; Boss.tsx has the numbers).
+   Hidden until the part dies (`.is-on`), shown at rest under reduced motion.
+   -------------------------------------------------------------------------- */
+
+.hr-smoke { visibility: hidden; }
+.hr-smoke.is-on { visibility: visible; }
+/* fill-box and centre, or the burst's `scale(2)` resolves against the smoke layer's origin
+   and each chunk leaps by its own atlas offset toward the bottom right instead of doubling
+   where it lies — the trap Boss.tsx guards its part groups against inline. */
+.hr-smoke-chunk { opacity: 0; transform-box: fill-box; transform-origin: center; }
+.hr-smoke-wisp {
+  opacity: 0.55;
+  animation: hr-wisp 3.6s ease-in-out infinite alternate;
+}
+.hr-smoke-wisp:nth-of-type(2) { animation-delay: -1.2s; animation-duration: 3.2s; }
+.hr-smoke-wisp:nth-of-type(3) { animation-delay: -2.4s; animation-duration: 4s; }
+/* A gradient ellipse is already half air, so it rides 0.45-0.65 where a blurred solid
+   would have sat at 0.35-0.5: the cloud reads, the wall still shows through it. */
+@keyframes hr-wisp {
+  from { translate: 0 0; opacity: 0.45; }
+  to { translate: 4px -10px; opacity: 0.65; }
 }

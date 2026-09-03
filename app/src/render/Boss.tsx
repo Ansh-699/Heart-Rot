@@ -3,10 +3,12 @@
  *
  * The creature is cut out of the arena painting by `tools/gen_boss.py` into one RGBA
  * atlas (`assets/sprites/boss_parts.png`), one tight cell per part, and placed back at
- * exactly the crop it came from: `BOSS_SPAWN + BOSS_ANCHOR` is the crop's top-left, so on
- * a full shell the rig is pixel-identical to the room beneath it and invisible as a rig.
- * That is the whole reason it exists — a limb can flinch, break off and char while the
- * room stays a flat image.
+ * exactly the crop it came from: `BOSS_SPAWN + BOSS_ANCHOR` is the crop's top-left. The
+ * room under it (`BossArena.tsx`) is the SAME painting with the demon painted out inside
+ * that same silhouette (`gen_rooms.py`), so on a full shell the rig covers its own hole
+ * edge to edge and reads as the painting — and a destroyed part is simply gone: the wall
+ * and the dais show through where it stood, and a burst of dark smoke marks the wound.
+ * That is the whole reason the rig exists.
  *
  * Every cell is drawn through a nested `<svg viewBox={atlas cell}>` sized to the part's
  * world box: a crop without a `clipPath`, eleven `<image>`s of one URL, one decoded bitmap.
@@ -16,12 +18,12 @@
  *
  * THE TWO SYSTEMS, deliberately separate:
  *
- *   cosmetic   breathing, eye glow, the open vent's breathe, the fury glow. Pure CSS
- *              keyframes on nodes React does not write. They run composited at 60 fps and
- *              NEVER stall waiting for a notification — the boss keeps breathing through a
- *              dead socket.
+ *   cosmetic   breathing, eye glow, the open vent's breathe, the fury aura, the lingering
+ *              smoke. Pure CSS keyframes on nodes React does not write. They run composited
+ *              at 60 fps and NEVER stall waiting for a notification — the boss keeps
+ *              breathing through a dead socket.
  *   derived    dead parts, vent state, fury, enrage, death. Read from the snapshot. The
- *              resting appearance is an attribute (so a reload with no animation is still
+ *              resting appearance is a class (so a reload with no animation is still
  *              correct) and the one-shots are `Element.animate()` calls fired on a VALUE
  *              DIFF against the previous snapshot.
  *
@@ -30,24 +32,34 @@
  * nothing, so nothing fires — idempotence by construction, with no latch registry, no
  * debounce timer and nothing counting notifications.
  *
- * THE PAINT NEVER PEEKS. The room under the rig carries the same demon, so anything that
- * exposes it reads as a ghost: a dead part is OPAQUE and charred, never faded; the breathe
- * scales from 1 upward and never below it; death chars the whole creature in place rather
- * than fading or scattering it. The flinch and the break-off do move a limb for a few
- * hundred ms, and that transient sliver of paint is accepted.
+ * NOTHING GLOWS THROUGH A FILTER. Fury used to be a `drop-shadow` on the whole shell,
+ * re-rasterising the rig every frame of its pulse — and once a part could be a HOLE, the
+ * shadow of the living parts bled a red rim into every hole. It is an ember aura UNDER the
+ * creature now: one gradient ellipse pulsing in opacity, composited, no filter anywhere on
+ * the rig while it fights. The smoke is soft by GRADIENT, not by `filter: blur`: a blurred
+ * SVG child is re-rastered on every frame of its drift, `will-change` or not (measured on
+ * the framebudget harness, 20 seats, nine parts dead — 27 blurred wisps cost 0.9 ms/frame
+ * at 1080p, 3.2 ms at a 4x CPU throttle, and a static blur was still 0.4 ms because the
+ * eye and vent keyframes re-raster the breathe layer every frame anyway). So the smoke
+ * sits in its own group BESIDE the breathe group — outside the shell's death filter — and
+ * carries the `will-change` the seats and the rooms carry: a no-op on a real GPU, 36–85x
+ * on software raster (`Arena.tsx`, `SEAT_STYLE`).
  *
  * NODE STACK, one writer each (two writers on one transform means one of them is silently
  * discarded — measured):
  *
  *     <g .hr-boss>          translate(boss.x, boss.y), `--shell`, state classes  <- React
+ *       <defs>              the aura and smoke gradients
  *       <g .hr-boss-breathe>                                        <- CSS keyframes only
- *         <g .hr-boss-shell>    <- WAAPI `filter` for the death sequence; CSS `filter`
- *                                  keyframes for the fury glow. Never both: fury is a
- *                                  FIGHTING-only class and death starts on SETTLING.
+ *         <g .hr-boss-shell>    <- WAAPI `filter` for the death sequence, and nothing else
+ *           .hr-boss-aura       the fury light, under the creature. CSS opacity only
  *           <g> translate(anchor) scale(BOSS_SCALE)   <- static, memoised, built once
  *             11 part groups                          <- WAAPI one-shots + .hr-dead
- *           .hr-boss-vent            the open vent's ring, over the painted orb. CSS only
+ *           .hr-boss-vent            the open vent's ring, over the core cell. CSS only
  *           .hr-boss-eye x2                                          <- CSS keyframes only
+ *       <g .hr-smoke-layer> translate(anchor) scale(BOSS_SCALE), will-change  <- static
+ *         one .hr-smoke per part: .hr-smoke-chunk x12  WAAPI burst on the kill;
+ *                                 .hr-smoke-wisp x3    CSS drift while dead
  */
 import { useEffect, useMemo, useRef } from 'react';
 
@@ -102,8 +114,21 @@ const EYES: readonly (readonly [number, number])[] = EYES_PX.map(([sx, sy]): rea
 ]);
 
 /**
- * Cosmetic durations, in ms. The first two match no game duration — there is no chain beat
- * for a flinch — so they are typed, and neither may ever reach the chain.
+ * The fury aura's seat: the torso cell, the one part that is never destroyed, so the
+ * light always has a body over it. Read off the generated rig, never typed.
+ */
+const TORSO = BOSS_PARTS.find((p) => p.name === 'torso');
+if (TORSO === undefined) throw new Error('Boss: boss.gen.ts rigs no torso to seat the fury aura on');
+const AURA = {
+  cx: (TORSO.cx + TORSO.w / 2) * BOSS_SCALE + BOSS_ANCHOR_X,
+  cy: (TORSO.cy + TORSO.h / 2) * BOSS_SCALE + BOSS_ANCHOR_Y,
+  rx: TORSO.w * 0.75 * BOSS_SCALE,
+  ry: TORSO.h * 0.6 * BOSS_SCALE,
+};
+
+/**
+ * Cosmetic durations, in ms. The first three match no game duration — there is no chain
+ * beat for a flinch — so they are typed, and none may ever reach the chain.
  *
  * The death sequence is the exception and is now derived: `PHASE_SETTLING` has no bounded
  * on-chain length (it ends when `settle` is called, not on a timer), so the honest bound
@@ -113,6 +138,7 @@ const EYES: readonly (readonly [number, number])[] = EYES_PX.map(([sx, sy]): rea
  */
 const FLINCH_MS = 180;
 const BREAK_MS = 520;
+const BURST_MS = 900;
 const DEATH_MS = VOLLEY_INTERVAL_MS;
 
 /** Sprite pixels a limb moves. One is `BOSS_SCALE` arena units inside the scaled group. */
@@ -120,18 +146,24 @@ const FLINCH_PX = 2;
 const BREAK_PX = 7;
 
 /**
- * A destroyed limb: opaque, drained and dark. Opaque is the load-bearing word — at any
- * opacity under 1 the room's own painted limb shows through the kill. One string, used by
- * the resting class, the break-off's end frame and the death sequence, so the three
- * cannot disagree about what dead looks like.
+ * The smoke, in sprite pixels: the reference's flying chunks scatter 20–60 out from the
+ * wound with a little lift, doubling in size as they thin out; three wisps stay behind.
+ * Two purples, the reference's — the dark of the cloud and the lit edge of it — each a
+ * radial gradient (`hr-smoke-0/1`), which is what makes every chunk and wisp soft-edged
+ * with no filter in the tree.
  */
+const CHUNKS = 12;
+const CHUNK_R = [6, 16] as const;
+const CHUNK_THROW = [20, 60] as const;
+const CHUNK_LIFT = 18;
+const WISPS = 3;
+const SMOKE_INK = ['#2a1230', '#4a1f52'] as const;
+
 /**
- * ASH, not char. This was `grayscale(1) brightness(0.25)`, and on this art it was a hole:
- * the limbs average 40 of 255 (measured over the atlas — mace 39, claws 42, crown 44), so
- * a quarter of that is black, and once the fury glow outlined the creature every dead
- * limb read as a missing piece of it ("fix missing pixel"). Dead is now petrified: drained
- * of colour, LIFTED rather than darkened so the texture survives, a little sepia so it is
- * bone rather than steel. Still opaque, for the reason the class rule gives.
+ * The corpse: opaque, drained and dark. One string, used by the death sequence's end
+ * frame, so the creature burns out in place rather than fading — a corpse that stays is
+ * the read that the raid won. Petrified, not black: the limbs average 40 of 255 (measured
+ * over the atlas — mace 39, claws 42, crown 44), so `brightness(0.25)` was a hole.
  */
 const CHARRED = 'grayscale(1) brightness(1.15) contrast(0.85) sepia(0.35)';
 
@@ -159,7 +191,8 @@ function reduced(): boolean {
 // Every rule here is compositor work on a node React does not touch. `--shell` is the
 // shell fraction, published by the one React-written node and inherited downward, so the
 // breathing quickens and the eyes redden as the creature is stripped — at no extra cost
-// and with no JS in the loop.
+// and with no JS in the loop. The smoke's rules live in styles.css ("smoke"), beside the
+// rooms' light, because they are the same vocabulary.
 // ---------------------------------------------------------------------------
 
 const CSS = `
@@ -174,8 +207,8 @@ const CSS = `
 .hr-enraged .hr-boss-breathe, .hr-fury .hr-boss-breathe {
   animation-duration: calc(1.7s * (0.5 + var(--shell, 1) * 0.5));
 }
-/* Never below 1: the rig grows over the painted demon and shrinks back onto it, so the
-   paint underneath never peeks out around a breath. */
+/* Never below 1: the rig grows over its own painted-out hole and shrinks back onto it;
+   under 1 the two-pixel ring of cloned floor around the cut would show. */
 @keyframes hr-boss-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.014); } }
 
 .hr-boss-eye {
@@ -191,26 +224,18 @@ const CSS = `
   50%      { opacity: 1;    transform: scale(1.25); }
 }
 
-/* Fury: a red glow on the whole creature's silhouette, pulsing at the furious volley's
-   own beat (1.6 s). On .hr-boss-shell, not .hr-boss, so it sits UNDER the breathe scale
-   and inside the arena clip like the rest of the rig. A drop-shadow on the full rig
-   re-rasterises every frame — the vent's old 26 px glow paid the same cost and this one
-   replaces it rather than adding to it. The resting rule is what reduced motion keeps. */
-.hr-fury .hr-boss-shell {
-  filter: drop-shadow(0 0 14px var(--ember, #ff5a4a));
-  animation: hr-fury-glow 1.6s ease-in-out infinite;
-}
-@keyframes hr-fury-glow {
-  0%, 100% { filter: drop-shadow(0 0 10px var(--ember, #ff5a4a)); }
-  50%      { filter: drop-shadow(0 0 22px var(--ember, #ff5a4a)); }
-}
+/* Fury: an ember light under the creature, pulsing at the furious volley's own beat
+   (1.6 s). Opacity on one gradient ellipse, so it composites; no filter on the rig. The
+   resting rule is what reduced motion keeps. */
+.hr-boss-aura { opacity: 0; }
+.hr-fury .hr-boss-aura { animation: hr-fury-aura 1.6s ease-in-out infinite; }
+@keyframes hr-fury-aura { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.85; } }
 
-/* A destroyed limb stays on the creature, ashen and drained — and OPAQUE, because the room
-   under it still carries the living limb. Removing it outright, or fading it, loses the
-   read the whole rig is for: which gun you killed. */
-.hr-boss-part.hr-dead { opacity: 1; filter: ${CHARRED}; }
+/* A destroyed limb is GONE: the room's own wall and dais show through the hole, and its
+   smoke (styles.css) says which gun you killed. The break-off ends here, so there is no pop. */
+.hr-boss-part.hr-dead { opacity: 0; }
 
-/* The vent. Sealed, it draws NOTHING: the painting's own orb is the sealed look, and any
+/* The vent. Sealed, it draws NOTHING: the core cell's own orb is the sealed look, and any
    ring here would sit on it a shade off. Open, a thin half-opacity ring on the exact
    circle the chain raycasts, with a small glow that reads as the orb lighting from
    inside, breathing in opacity and never in size. It used to be a white-hot ring under a
@@ -237,7 +262,8 @@ const CSS = `
 @keyframes hr-boss-vent { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .hr-boss-breathe, .hr-boss-eye, .hr-vent-open .hr-boss-vent, .hr-fury .hr-boss-shell { animation: none; }
+  .hr-boss-breathe, .hr-boss-eye, .hr-vent-open .hr-boss-vent, .hr-fury .hr-boss-aura { animation: none; }
+  .hr-fury .hr-boss-aura { opacity: 0.6; }
 }
 `;
 
@@ -283,20 +309,32 @@ function nextTaunt(last: VoiceName | null): VoiceName {
   return pool[Math.floor(Math.random() * pool.length)] ?? VOICE_NAMES[0]!;
 }
 
+/**
+ * The burst's chunks, per part: a fixed scatter, so the same kill always looks the same
+ * and nothing is drawn at random per frame. Golden-angle headings, so twelve never clump.
+ */
+function chunkFlight(i: number): { dx: number; dy: number; r: number } {
+  const a = i * 2.399963;
+  const d = CHUNK_THROW[0] + ((i * 17) % (CHUNK_THROW[1] - CHUNK_THROW[0]));
+  return { dx: Math.cos(a) * d, dy: Math.sin(a) * d - CHUNK_LIFT, r: CHUNK_R[0] + ((i * 5) % (CHUNK_R[1] - CHUNK_R[0])) };
+}
+
 export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
   const shellRef = useRef<SVGGElement | null>(null);
   const partRefs = useRef<(SVGGElement | null)[]>([]);
+  const smokeRefs = useRef<(SVGGElement | null)[]>([]);
   /** The last snapshot actually consumed. Every one-shot below is a diff against it. */
   const prev = useRef<{ parts: number[]; phase: number; vent: number; fury: boolean } | null>(null);
 
   // A chain fact, derived and never stored: `Boss::is_furious` on the same integers the
   // crank halves the volley on. FIGHTING-gated so a settling corpse at 0 % fight HP and a
   // mustering boss are never furious, whatever the shell reads.
-  const furious = arena.phase === PHASE_FIGHTING && isFurious(boss, arena.raidSize);
+  const furious = arena.phase === PHASE_FIGHTING && isFurious(boss, arena.raidSize, arena.difficulty);
 
-  // Eleven static cells. Built once, never re-rendered: the dead state, the flinches and
-  // the death sequence are all applied imperatively to these nodes, so a 10 Hz account
-  // stream never walks this subtree.
+  // Eleven static cells, and the smoke for the nine the chain can destroy. Built once,
+  // never re-rendered: the dead state, the flinches, the bursts and the death sequence
+  // are all applied imperatively to these nodes, so a 10 Hz account stream never walks
+  // this subtree.
   const art = useMemo(
     () => (
       <g transform={`translate(${BOSS_ANCHOR_X} ${BOSS_ANCHOR_Y}) scale(${BOSS_SCALE})`}>
@@ -335,6 +373,54 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     ),
     [],
   );
+  const smoke = useMemo(
+    () => (
+      <g
+        className="hr-smoke-layer"
+        transform={`translate(${BOSS_ANCHOR_X} ${BOSS_ANCHOR_Y}) scale(${BOSS_SCALE})`}
+        style={{ willChange: 'transform' }}
+      >
+        {BOSS_PARTS.map((p) => {
+          const i = p.index;
+          if (i === null) return null;
+          const cx = p.cx + p.w / 2;
+          const cy = p.cy + p.h / 2;
+          return (
+            <g
+              key={p.name}
+              className="hr-smoke"
+              ref={(el) => {
+                smokeRefs.current[i] = el;
+              }}
+            >
+              {Array.from({ length: CHUNKS }, (_, k) => (
+                <circle
+                  key={k}
+                  className="hr-smoke-chunk"
+                  cx={cx}
+                  cy={cy}
+                  r={chunkFlight(k).r}
+                  fill={`url(#hr-smoke-${k % 2})`}
+                />
+              ))}
+              {Array.from({ length: WISPS }, (_, k) => (
+                <ellipse
+                  key={k}
+                  className="hr-smoke-wisp"
+                  cx={cx + (k - 1) * p.w * 0.18}
+                  cy={cy + (k % 2 ? -1 : 1) * p.h * 0.1}
+                  rx={Math.max(10, p.w * 0.3)}
+                  ry={Math.max(7, p.h * 0.22)}
+                  fill={`url(#hr-smoke-${k % 2})`}
+                />
+              ))}
+            </g>
+          );
+        })}
+      </g>
+    ),
+    [],
+  );
 
   // The taunt clock runs only while the fight does. Keyed on the phase alone so a
   // notification that changes nothing else never re-arms it, and cleared on the way out so
@@ -362,11 +448,16 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
 
     const soft = reduced();
     const at = (i: number): SVGGElement | null => partRefs.current[i] ?? null;
+    /** The resting state of one part: the cell shown or gone, its smoke off or lingering. */
+    const rest = (i: number, dead: boolean): void => {
+      at(i)?.classList.toggle('hr-dead', dead);
+      smokeRefs.current[i]?.classList.toggle('is-on', dead);
+    };
 
     // First snapshot: adopt the resting appearance, play nothing. A page loaded onto a
-    // half-stripped boss must show a half-stripped boss, not nine break-off animations.
+    // half-stripped boss must show a half-stripped boss, not nine bursts of smoke.
     if (was === null) {
-      for (let i = 0; i < N_PARTS; i++) at(i)?.classList.toggle('hr-dead', now.parts[i] === 0);
+      for (let i = 0; i < N_PARTS; i++) rest(i, now.parts[i] === 0);
       return;
     }
 
@@ -381,29 +472,48 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
       const [ox, oy] = OUTWARD[i] ?? [0, -1];
 
       if (after > before) {
-        // A new incarnation refilled the shell. Drop the death sequence's held state.
-        el.classList.remove('hr-dead');
+        // A new incarnation refilled the shell. The cell comes back, the smoke clears.
+        rest(i, false);
         for (const a of el.getAnimations()) a.cancel();
         continue;
       }
 
       if (after === 0) {
         play('partBreak');
-        el.classList.add('hr-dead');
-        // Ends where `.hr-dead` rests, so the limb lands charred with no pop.
+        rest(i, true);
+        // Torn off: a flash, a lurch outward, and gone. Ends where `.hr-dead` rests, so
+        // the limb vanishes with no pop, and the room is already there behind it.
         el.animate(
           [
             { transform: 'none', opacity: 1, filter: 'brightness(3)' },
             soft
-              ? { transform: 'none', opacity: 1, filter: CHARRED }
+              ? { transform: 'none', opacity: 0, filter: 'brightness(3)' }
               : {
                   transform: `translate(${ox * BREAK_PX}px, ${oy * BREAK_PX}px) rotate(${ox * 9}deg)`,
-                  opacity: 1,
-                  filter: CHARRED,
+                  opacity: 0,
+                  filter: 'brightness(1)',
                 },
           ],
           { duration: BREAK_MS, easing: 'ease-in' },
         );
+        // The burst: the reference's flying chunks, scattering out of the wound, doubling
+        // and fading. No `fill: 'forwards'`: it ends where the chunk's own rule rests
+        // (`opacity: 0`, styles.css), and a held fill is twelve Animation objects a kill,
+        // kept for the life of the tab because nothing here ever cancels a chunk. Under
+        // reduced motion the wisps alone say it, at rest.
+        if (!soft) {
+          const chunks = smokeRefs.current[i]?.querySelectorAll<SVGCircleElement>('.hr-smoke-chunk') ?? [];
+          chunks.forEach((c, k) => {
+            const { dx, dy } = chunkFlight(k);
+            c.animate(
+              [
+                { transform: 'translate(0px, 0px) scale(1)', opacity: 0.95 },
+                { transform: `translate(${dx}px, ${dy}px) scale(2)`, opacity: 0 },
+              ],
+              { duration: BURST_MS, easing: 'cubic-bezier(0.1, 0.8, 0.3, 1)' },
+            );
+          });
+        }
         continue;
       }
 
@@ -431,7 +541,7 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     }
     // Fury is the same shape: one edge of one derived bit, the class is the visual and
     // the roar is the one-shot. A reload onto a furious boss lands on the first-snapshot
-    // return above and shows the glow without the roar.
+    // return above and shows the aura without the roar.
     if (!was.fury && now.fury) {
       play('fury');
       speak(VOICE.fury, true);
@@ -450,8 +560,8 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
 
     // Death. One edge, one call. `SETTLING` is reached from `FIGHTING` and from nowhere
     // else, so the phase pair is the whole guard — a duplicate carries the same pair and
-    // fires nothing. The creature burns out IN PLACE: it never fades and never scatters,
-    // because either would expose the living demon painted under it.
+    // fires nothing. The creature burns out IN PLACE: a corpse that stays is the read
+    // that the raid won, and the dead parts' smoke keeps drifting over it.
     if (was.phase === PHASE_FIGHTING && now.phase === PHASE_SETTLING) {
       shell.animate([{ filter: 'brightness(3)' }, { filter: CHARRED }], {
         duration: deathMs,
@@ -461,13 +571,13 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     }
 
     // Back to the lobby: the next incarnation reforms. Release everything the death
-    // sequence is holding, on both the shell and the limbs.
+    // sequence is holding, on the shell, the limbs and their smoke.
     if (was.phase !== PHASE_LOBBY && now.phase === PHASE_LOBBY) {
       for (const a of shell.getAnimations()) a.cancel();
       for (let i = 0; i < N_PARTS; i++) {
         const el = at(i);
         if (el === null) continue;
-        el.classList.remove('hr-dead');
+        rest(i, false);
         for (const a of el.getAnimations()) a.cancel();
       }
     }
@@ -493,8 +603,25 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
       transform={`translate(${boss.x} ${boss.y})`}
     >
       <style>{CSS}</style>
+      <defs>
+        {/* The aura: ember at the core, gone by the edge. The smoke: two purples, soft-edged
+            by the gradient itself so no chunk or wisp ever needs a blur filter. */}
+        <radialGradient id="hr-aura-grad">
+          <stop offset="0" stopColor="var(--ember, #ff5a4a)" stopOpacity={0.55} />
+          <stop offset="0.6" stopColor="var(--ember, #ff5a4a)" stopOpacity={0.18} />
+          <stop offset="1" stopColor="var(--ember, #ff5a4a)" stopOpacity={0} />
+        </radialGradient>
+        {SMOKE_INK.map((ink, k) => (
+          <radialGradient key={ink} id={`hr-smoke-${k}`}>
+            <stop offset="0" stopColor={ink} stopOpacity={0.95} />
+            <stop offset="0.6" stopColor={ink} stopOpacity={0.75} />
+            <stop offset="1" stopColor={ink} stopOpacity={0} />
+          </radialGradient>
+        ))}
+      </defs>
       <g className="hr-boss-breathe">
         <g ref={shellRef} className="hr-boss-shell">
+          <ellipse className="hr-boss-aura" cx={AURA.cx} cy={AURA.cy} rx={AURA.rx} ry={AURA.ry} fill="url(#hr-aura-grad)" />
           {art}
           {/* The vent ring, at exactly the circle the chain raycasts. A literal here would
               make the drawn vent and the hit vent two different circles. Its two states
@@ -513,6 +640,9 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
           ))}
         </g>
       </g>
+      {/* Beside the breathe group, not inside it: the corpse's charring filter never
+          touches it, and it does not breathe with the body it left. */}
+      {smoke}
     </g>
   );
 }
