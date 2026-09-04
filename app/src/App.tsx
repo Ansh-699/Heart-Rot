@@ -826,6 +826,10 @@ type Link = {
  * lobby↔arena transition must not tear it down, because the measured reconnect outage is
  * ~1.7 s and in a bullet-hell fight that is a death and a visible teleport.
  */
+/** How long the roster may fail to show our own seat before the feed is retaken, and how many times. */
+const SEAT_SEEN_MS = 3_000;
+const SEAT_SEEN_TRIES = 5;
+
 function useMatchLink(onFeedDrop: () => void): Link {
   const store = useStore();
   const match = useSelect((s) => s.match);
@@ -840,6 +844,9 @@ function useMatchLink(onFeedDrop: () => void): Link {
 
     let cancelled = false;
     let subscription: MatchSubscription | null = null;
+    let seatCheck = 0;
+    let seatSeen = false;
+    let seatRetry = 0;
     const predictor = createPredictor();
     const accounts = {
       arena: addr(match.arenaPda),
@@ -862,6 +869,28 @@ function useMatchLink(onFeedDrop: () => void): Link {
         });
         if (cancelled) return;
 
+        // THE SEAT MUST APPEAR. The Worker confirmed the claim before it answered, but
+        // the ER offers no read-your-writes across connections: a snapshot from a node
+        // that has not seen the claim shows our seat empty, and in a LOBBY nothing writes
+        // `Players` again until we do — so the archer, the card and everything keyed on
+        // `mySeatSlot` stay absent while the player stands still. Seen live after a
+        // rejoin: a room with no raider and no card while the chain held the seat. If
+        // the roster has not shown our seat within `SEAT_SEEN_MS` of subscribing, drop
+        // the feed and take it again (new socket, new snapshot), a few times, with a log
+        // line each time so it is attributable.
+        seatCheck = window.setInterval(() => {
+          if (cancelled || seatSeen) {
+            window.clearInterval(seatCheck);
+            return;
+          }
+          seatRetry += 1;
+          console.warn(`feed: seat ${match.seat} not on the roster after ${seatRetry * SEAT_SEEN_MS} ms; retaking the feed`);
+          if (seatRetry >= SEAT_SEEN_TRIES) {
+            window.clearInterval(seatCheck);
+            return;
+          }
+          onFeedDrop();
+        }, SEAT_SEEN_MS);
         subscription = subscribeMatch({
           rpc: er,
           ...accounts,
@@ -883,6 +912,7 @@ function useMatchLink(onFeedDrop: () => void): Link {
             // it would buy nothing and would drop the TTL sweep that retires a silently
             // refused move, which is a real desync.
             if (slot !== undefined) predictor.reconcile(slot);
+            if (slot?.occupied) seatSeen = true;
           },
           onHealth: (health) => {
             // The resync gate. `subscribeMatch` only calls this on a *change*, so this
@@ -920,6 +950,7 @@ function useMatchLink(onFeedDrop: () => void): Link {
 
     return () => {
       cancelled = true;
+      window.clearInterval(seatCheck);
       subscription?.close();
       setLink(null);
     };
