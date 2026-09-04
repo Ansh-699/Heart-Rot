@@ -750,11 +750,11 @@ export function createStore(): Store {
       // And it is judged over time, not on one payload: the seat must be missing for
       // `SEAT_LOSS_MS` of continuous updates, after the feed is live, before the match is
       // dropped. One stale roster is not a release; a second of them is.
-      if (update.players && state.status !== 'connecting' && state.status !== 'joining') {
+      if (update.players) {
         if (slot?.occupied) {
           seatHeld = true;
           seatMissingSince = 0;
-        } else if (seatHeld) {
+        } else if (seatHeld && state.status !== 'connecting' && state.status !== 'joining') {
           const now = performance.now();
           if (seatMissingSince === 0) seatMissingSince = now;
           else if (now - seatMissingSince >= SEAT_LOSS_MS) {

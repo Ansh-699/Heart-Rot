@@ -82,6 +82,10 @@ CROP_CENTRE = (561, 356)
 PART_INDEX = ["thorn0", "thorn1", "thorn2", "thorn3", "crown", "wolf_l", "beast_r", "mace", "claws"]
 
 # The silhouette, clockwise from the top of the ram skull, in 1122-wide source pixels.
+# Generous beats tight: `gen_rooms.py` paints the demon out of the served room inside
+# this polygon AND every warm pixel in its convex hull, so a demon pixel this polygon
+# misses is in neither the rig nor the room -- a hole, lit red by the fury aura. The ram's
+# left shoulder and the wolf's brow were such a notch ("boss pixel missing ... shoulder").
 BODY = [
     (548, 66), (562, 58), (582, 55), (602, 56), (618, 62), (630, 76), (636, 96), (632, 118),
     (622, 130), (608, 136),                                    # outer horn, down to its tip
@@ -98,10 +102,12 @@ BODY = [
     (428, 300), (403, 299), (403, 291), (424, 286), (442, 283),  # the bone spike
     (448, 282), (452, 270), (452, 250), (452, 242),            # up the left arm
     (438, 242), (424, 238), (414, 226), (415, 208), (426, 198), (440, 190), (446, 176),  # wolf snout and cheek
-    (440, 160), (442, 140), (452, 138), (466, 164), (478, 170),  # left ear
+    (440, 160), (442, 140), (452, 138), (457, 143), (468, 149), (471, 154),  # left ear, down its inner edge
+    (476, 153), (490, 153),                                    # the brow between the ears
     (492, 158), (482, 106), (487, 102), (504, 148),            # thorn0, the spear
-    (503, 132), (508, 140), (512, 158), (516, 168),            # right ear
-    (526, 172), (540, 176), (560, 174), (556, 166), (550, 154), (544, 142), (532, 132), (518, 126),  # the ram's jaw
+    (503, 132), (508, 140), (511, 150),                        # right ear
+    (524, 151), (530, 154), (531, 148), (531, 143), (535, 139), (537, 136),  # the shoulder tentacle under the jaw
+    (532, 132), (524, 132), (513, 131), (514, 124),            # the ram's jaw, out to the snout's tip
     (512, 118), (520, 108), (534, 96),                         # ram snout, up to the dome
 ]
 
@@ -114,7 +120,7 @@ PARTS = [
     ("crown", [(508, 118), (530, 94), (548, 62), (580, 54), (604, 54), (622, 62), (636, 80),
                (638, 112), (630, 132), (608, 140), (596, 132), (592, 152), (568, 172), (540, 170),
                (524, 152), (510, 134)]),
-    ("wolf_l", [(438, 136), (454, 136), (472, 166), (488, 160), (506, 128), (512, 164), (513, 178),
+    ("wolf_l", [(438, 136), (454, 136), (458, 142), (470, 149), (472, 155), (478, 153), (494, 153), (506, 128), (512, 164), (513, 178),
                 (506, 198), (494, 216), (478, 242), (452, 248), (430, 246), (412, 228), (412, 206),
                 (430, 192), (444, 172)]),
     ("beast_r", [(596, 150), (606, 130), (618, 146), (630, 124), (642, 144), (654, 132), (668, 150),

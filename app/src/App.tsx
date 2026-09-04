@@ -377,7 +377,12 @@ function WorldPending() {
   // so on the failure branch the card has to carry the reason itself or it is not readable
   // anywhere.
   const error = useSelect((s) => s.error);
-  const arrived = useSelect((s) => (s.arena ? 1 : 0) | (s.boss ? 2 : 0) | (s.players ? 4 : 0));
+  // The roster is "here" only with our seat on it: a room drawn around a roster that
+  // lacks the player is the bare room the Sep 4 2026 bug showed, with no card, no
+  // archer and nothing to say why. Under this card the seat guard is re-reading.
+  const arrived = useSelect(
+    (s) => (s.arena ? 1 : 0) | (s.boss ? 2 : 0) | (s.players && mySeatSlot(s) ? 4 : 0),
+  );
 
   if (arrived === 7) return null;
 
@@ -826,9 +831,9 @@ type Link = {
  * lobby↔arena transition must not tear it down, because the measured reconnect outage is
  * ~1.7 s and in a bullet-hell fight that is a death and a visible teleport.
  */
-/** How long the roster may fail to show our own seat before the feed is retaken, and how many times. */
+/** How long the roster may lack our own seat before the accounts are re-read, and after how many re-reads the seat is re-claimed instead. */
 const SEAT_SEEN_MS = 3_000;
-const SEAT_SEEN_TRIES = 5;
+const SEAT_SEEN_TRIES = 4;
 
 function useMatchLink(onFeedDrop: () => void): Link {
   const store = useStore();
@@ -869,36 +874,53 @@ function useMatchLink(onFeedDrop: () => void): Link {
         });
         if (cancelled) return;
 
-        // THE SEAT MUST APPEAR. The Worker confirmed the claim before it answered, but
-        // the ER offers no read-your-writes across connections: a snapshot from a node
-        // that has not seen the claim shows our seat empty, and in a LOBBY nothing writes
-        // `Players` again until we do — so the archer, the card and everything keyed on
-        // `mySeatSlot` stay absent while the player stands still. Seen live after a
-        // rejoin: a room with no raider and no card while the chain held the seat. If
-        // the roster has not shown our seat within `SEAT_SEEN_MS` of subscribing, drop
-        // the feed and take it again (new socket, new snapshot), a few times, with a log
-        // line each time so it is attributable.
+        // THE SEAT MUST APPEAR, AND STAY. The Worker confirmed the claim before it
+        // answered, but the roster the feed shows can still lack our seat: a snapshot
+        // from a node that has not seen the claim, or a frame the feed should not have
+        // applied. In a LOBBY nothing rewrites `Players` until someone moves, and with
+        // the seat missing the predictor refuses to move — so the room stays bare for
+        // good. Every `SEAT_SEEN_MS` the latest roster lacks our seat, read the accounts
+        // again; on the last try re-claim through the Worker, which for a returning
+        // identity re-lands the same seat in place — a `Players` write, the one thing a
+        // lobby roster otherwise never gets. Each try logs, so it is attributable.
         seatCheck = window.setInterval(() => {
-          if (cancelled || seatSeen) {
+          if (cancelled) {
             window.clearInterval(seatCheck);
+            return;
+          }
+          if (seatSeen) {
+            seatRetry = 0;
             return;
           }
           seatRetry += 1;
-          console.warn(`feed: seat ${match.seat} not on the roster after ${seatRetry * SEAT_SEEN_MS} ms; retaking the feed`);
-          if (seatRetry >= SEAT_SEEN_TRIES) {
+          const last = seatRetry >= SEAT_SEEN_TRIES;
+          console.warn(
+            `feed: seat ${match.seat} not on the roster after ${seatRetry * SEAT_SEEN_MS} ms; ${last ? 're-claiming' : 're-reading'}`,
+          );
+          if (last) {
             window.clearInterval(seatCheck);
+            void store.join();
             return;
           }
-          onFeedDrop();
+          subscription?.resnapshot();
         }, SEAT_SEEN_MS);
         subscription = subscribeMatch({
           rpc: er,
           ...accounts,
-          onArena: (arena) => store.setWorld({ arena, from: match.arenaPda }),
-          onBoss: (boss) => store.setWorld({ boss, from: match.arenaPda }),
+          owner: addr(match.programId),
+          onArena: (arena) => {
+            if (cancelled) return;
+            store.setWorld({ arena, from: match.arenaPda });
+          },
+          onBoss: (boss) => {
+            if (cancelled) return;
+            store.setWorld({ boss, from: match.arenaPda });
+          },
           onPlayers: (players) => {
+            if (cancelled) return;
             store.setWorld({ players, from: match.arenaPda });
             const slot = players.slots[match.seat];
+            seatSeen = slot?.occupied === true;
             // The reconcile is what drains the prediction buffer. Without it every input
             // replays forever and the local knight walks away from the server's copy.
             //
@@ -911,8 +933,11 @@ function useMatchLink(onFeedDrop: () => void): Link {
             // is 643 ns on a saturated 32-deep buffer, ~6 µs per wall-clock second. Gating
             // it would buy nothing and would drop the TTL sweep that retires a silently
             // refused move, which is a real desync.
-            if (slot !== undefined) predictor.reconcile(slot);
-            if (slot?.occupied) seatSeen = true;
+            //
+            // Only from a seat that is ours, though: an empty slot is hp 0, and a
+            // predictor fed hp 0 refuses every input, which is how a bare room became a
+            // room the player could not even walk in.
+            if (slot?.occupied) predictor.reconcile(slot);
           },
           onHealth: (health) => {
             // The resync gate. `subscribeMatch` only calls this on a *change*, so this

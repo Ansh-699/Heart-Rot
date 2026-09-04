@@ -77,6 +77,9 @@ import {
 type AccountAddress = Parameters<HeartrotRpc['getAccountInfo']>[0];
 
 /** The Magic Router's WebSocket. Same host as `ROUTER_ENDPOINT`, `wss` scheme. */
+/** Frames further than this from the snapshot's slot are another chain's: ~5.8 days of rollup slots. */
+const SLOT_DOMAIN = 10_000_000;
+
 export const ROUTER_WS_ENDPOINT = 'wss://devnet-router.magicblock.app/';
 
 /**
@@ -116,6 +119,8 @@ export interface MatchSubscriptionConfig {
   readonly boss: AccountAddress;
   readonly players: AccountAddress;
   readonly wsUrl?: string;
+  /** The game program. A frame whose account is owned by anything else is not the rollup's. */
+  readonly owner: AccountAddress;
   /** `tickAt` is when `Arena.tick` last *changed* — feed it to `tickAlpha`. */
   onArena(arena: ArenaAccount, tickAt: number): void;
   onBoss(boss: BossAccount): void;
@@ -126,6 +131,8 @@ export interface MatchSubscriptionConfig {
 
 export interface MatchSubscription {
   close(): void;
+  /** Read all three accounts again and deliver them, whatever the socket has shown since. */
+  resnapshot(): void;
 }
 
 type AccountKind = 'arena' | 'boss' | 'players';
@@ -137,7 +144,10 @@ interface RpcMessage {
   readonly method?: string;
   readonly params?: {
     readonly subscription?: number;
-    readonly result?: { readonly value?: { readonly data?: readonly string[] } };
+    readonly result?: {
+      readonly context?: { readonly slot?: number };
+      readonly value?: { readonly data?: readonly string[]; readonly owner?: string };
+    };
   };
 }
 
@@ -209,8 +219,28 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
   let nextRequestId = 1;
   const requestKind = new Map<number, AccountKind>();
   const subscriptionKind = new Map<number, AccountKind>();
-  /** Kinds that have received a live notification since this `open`. */
-  let fresh = new Set<AccountKind>();
+  /**
+   * THE ROUTER RELAYS THE BASE LAYER TOO. Seen live, Sep 4 2026: a rejoin into an arena
+   * the Worker had prewarmed seconds earlier took its ER snapshot (roster: our seat), and
+   * a second later the router delivered the arena's base-layer create and delegate states
+   * — an empty roster — as ordinary accountNotifications at base-layer slots. The feed
+   * applied them by subscription id, the seat vanished from the store, the predictor took
+   * the zeroed slot and refused every move, and since nothing in a lobby rewrites Players
+   * until someone moves, the room stayed bare until a reload.
+   *
+   * Two facts tell a base-layer frame from the rollup's: its account is owned by the
+   * delegation program (the delegated copy) or, for the create itself, its slot belongs to
+   * another clock. The rollup's slot counter and devnet's are tens of millions apart and
+   * drift further; a raid spans thousands. So the snapshot's slot anchors the clock and a
+   * frame more than `SLOT_DOMAIN` away is not from it. The anchor never moves, so the
+   * failure mode of a wrong guess is one stale frame, never a frozen feed.
+   *
+   * `lastSlot` is the newest slot applied per kind: a snapshot delivers a kind unless a
+   * frame at or past the snapshot's slot has already been applied for it (the old "fresh"
+   * set, made exact). A frame with no slot counts as heard from, at slot 0.
+   */
+  const lastSlot = new Map<AccountKind, number>();
+  let anchorSlot: number | null = null;
   /**
    * The last base64 payload delivered per kind, and the whole of the dedupe.
    *
@@ -311,16 +341,19 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
 
   async function snapshot(): Promise<void> {
     const kinds: AccountKind[] = ['arena', 'boss', 'players'];
-    const { value } = await cfg.rpc
+    const { context, value } = await cfg.rpc
       .getMultipleAccounts([cfg.arena, cfg.boss, cfg.players], { encoding: 'base64' })
       .send();
+    const slot = Number(context?.slot ?? 0);
+    if (anchorSlot === null && Number.isFinite(slot) && slot > 0) anchorSlot = slot;
     for (let i = 0; i < kinds.length; i++) {
       const kind = kinds[i];
       const account = value[i];
       if (kind === undefined || account == null) continue;
       // A notification that arrived while this request was in flight is newer than the
       // snapshot; letting the snapshot win would rewind the world by one round trip.
-      if (fresh.has(kind)) continue;
+      if ((lastSlot.get(kind) ?? -1) >= slot) continue;
+      lastSlot.set(kind, slot);
       const encoded = encodedData(account);
       if (encoded !== undefined) deliverEncoded(kind, encoded);
     }
@@ -342,12 +375,15 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     const subscription = message.params?.subscription;
     if (subscription === undefined) return;
     const kind = subscriptionKind.get(subscription);
-    const encoded = message.params?.result?.value?.data?.[0];
+    const result = message.params?.result;
+    const encoded = result?.value?.data?.[0];
     if (kind === undefined || encoded === undefined) return;
-    // Liveness first, and before the dedupe returns: a duplicate is still proof the feed
-    // is delivering. Suppressing it here would make `snapshot`'s race guard think this
-    // kind had never been heard from.
-    fresh.add(kind);
+    if (result?.value?.owner !== undefined && result.value.owner !== cfg.owner) return;
+    const slot = Number(result?.context?.slot ?? 0);
+    if (anchorSlot !== null && Number.isFinite(slot) && Math.abs(slot - anchorSlot) > SLOT_DOMAIN) return;
+    // Before the dedupe returns: a duplicate is still proof the feed is delivering, and
+    // `snapshot` must know this kind has been heard from, and at what slot.
+    lastSlot.set(kind, Math.max(slot, lastSlot.get(kind) ?? 0));
     deliverEncoded(kind, encoded);
   }
 
@@ -386,7 +422,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
       attempt = 0;
       requestKind.clear();
       subscriptionKind.clear();
-      fresh = new Set();
+      lastSlot.clear();
       lastPayload = new Map();
       for (const kind of ['arena', 'boss', 'players'] as const) {
         const id = nextRequestId++;
@@ -401,7 +437,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
         );
       }
       // Subscribe first, then snapshot: the reverse order loses every write that lands
-      // between the two, and the `fresh` guard above resolves the race the other way.
+      // between the two, and `lastSlot` resolves the race the other way.
       void snapshot().catch(() => undefined);
       setHealth('live');
     };
@@ -439,7 +475,7 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
       const now = performance.now();
       if (now - lastResnapshotAt >= RESNAPSHOT_MIN_GAP_MS) {
         lastResnapshotAt = now;
-        fresh = new Set();
+        lastSlot.clear();
         void snapshot().catch(() => undefined);
       }
       return;
@@ -451,6 +487,10 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
   void connect();
 
   return {
+    resnapshot() {
+      lastSlot.clear();
+      void snapshot().catch(() => undefined);
+    },
     close() {
       closed = true;
       clearInterval(watchdog);
@@ -572,6 +612,7 @@ if (import.meta.env.DEV) {
     arena: 'arena' as unknown as AccountAddress,
     boss: 'boss' as unknown as AccountAddress,
     players: 'players' as unknown as AccountAddress,
+    owner: 'program' as unknown as AccountAddress,
     onArena: () => {},
     onBoss: () => {},
     onPlayers: () => {},
