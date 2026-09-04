@@ -137,11 +137,20 @@ const SEQ_MASK = 0xffff;
  * forever would leave the prediction permanently ahead of the server — a player who
  * appears to walk through the boss and then teleports back. Expiring at ~5× the measured
  * 196 ms RTT keeps a genuinely in-flight input, drops a dead one.
+ *
+ * 3,000, not 1,000. Measured live on Sep 4 2026 walking a lobby from India against
+ * devnet-as: ack p50 85 ms, p95 668 ms, single spikes to 1,366 ms, thirteen moves in
+ * flight at once, refused 0 %. At a one-second TTL every spike expired live inputs, the
+ * replay dropped them, and the archer snapped back a few steps — the "choppy" the player
+ * reports, which is the network's tail and not a refusal. The TTL has to clear the tail:
+ * three seconds is over twice the worst spike seen, and a genuinely refused move (a lost
+ * slot race) costs one step of lateness at most, three seconds later, on a path the
+ * pacing now makes rare.
  */
-const PENDING_TTL_MS = 1_000;
+const PENDING_TTL_MS = 3_000;
 
 /** Hard cap under the TTL, so a stalled socket cannot grow the buffer without bound. */
-const MAX_PENDING = 32;
+const MAX_PENDING = 64;
 
 export interface PredictedSelf {
   x: number;

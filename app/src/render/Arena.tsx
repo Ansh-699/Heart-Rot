@@ -602,6 +602,9 @@ function clockOf(ticks: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+/** How many ticks a bullet may fly on its own velocity past the last tick the feed delivered. */
+const BULLET_LOOKAHEAD = 6;
+
 export function Arena({
   arena,
   boss,
@@ -758,7 +761,13 @@ export function Arena({
       // A hit stop holds the two writers below for its length; both snap forward after.
       const stopped = now < hitStopUntil;
       if (!reduced && !stopped) {
-        const f = Math.min(1, (now - tickAt.current) / pace.current);
+        // Up to BULLET_LOOKAHEAD ticks past the last one, not one. A bullet's velocity is
+        // fixed for its whole flight, so extrapolating along it through a feed stall is
+        // exact until the next tick lands; clamping at 1 froze every bullet in the air for
+        // the length of the stall and then jumped it. Measured live on Sep 4 2026: feed
+        // stalls of 0.6–1.4 s in a fight. A bullet that hits something during the stall is
+        // freed by the tick that reports it, which is when it disappears — one tick late.
+        const f = Math.min(BULLET_LOOKAHEAD, (now - tickAt.current) / pace.current);
         for (const [slot, el] of nodes.current) {
           const b = bullets.current[slot];
           if (b === undefined) continue;
