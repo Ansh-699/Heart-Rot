@@ -14,6 +14,6 @@ for (let step = 0; step < 50; step++) {
   const rpc = createRpc(st.fqdn);
   const d = await acct(rpc, pdas.arena); const pd = await acct(rpc, pdas.players); if (!d || !pd) { console.log(id.toString(), 'delegated but unreadable'); continue; }
   const a = decodeArena(d); const roster = decodePlayers(pd);
-  const seated = roster.slots.filter((s) => s.occupied).map((s) => `seat${s.seat} zone${s.zone} (${s.x},${s.y}) hp${s.hp}/${s.hpMax} skin${s.skinId} moveSeq${s.lastMoveSeq}`);
+  const seated = roster.slots.filter((s) => s.occupied).map((s) => `seat${s.seat} zone${s.zone} (${s.x},${s.y}) hp${s.hp}/${s.hpMax} skin${s.skinId} class${s.classAim >> 7} moveSeq${s.lastMoveSeq}`);
   console.log(`${id} phase=${a.phase} tick=${a.tick} difficulty=${a.difficulty} inc=${a.incarnation} seatOccupied=0b${a.seatOccupied.toString(2)} seated=[${seated.join(' | ') || '-'}]`);
 }

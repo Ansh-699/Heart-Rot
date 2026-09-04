@@ -76,8 +76,8 @@
  * `skipPreflight` and never confirmed, so `Custom(7)`/`Custom(8)` are not observable on
  * the hot path at all — the transaction returns a signature and quietly does nothing.
  * The authoritative signal is the roster the world feed already delivers (`hp == 0`,
- * cleared by the respawn eight ticks later), which costs no round trip. Without it a
- * corpse holding fire sends one doomed `shoot` every 800 ms for the rest of the match.
+ * final for the raid), which costs no round trip. Without it a corpse holding fire sends
+ * one doomed `shoot` every 800 ms for the rest of the match.
  *
  * Movement is gated on the ER slot in every phase. It used to gate a fight on `arena.tick`
  * instead, and that made the raid feel like wading: one 16-unit tile per 400 ms crank tick
@@ -190,7 +190,7 @@ const MIN_GAP_MS = 45;
  *
  * `shoot.rs` compares `arena.tick > slot.last_shot_tick + CLASS_COOLDOWN_TICKS[class]`, so
  * the next accepted shot is one full class period after the last: 800 ms for a knight,
- * 1400 ms for an archer. Both come from `@heartrot/client`, which derives them from
+ * 400 ms for an archer. Both come from `@heartrot/client`, which derives them from
  * `CLASS_PERIOD_MS` through `ticksFor` exactly as `state.rs` does — no tick count is typed
  * anywhere on either side.
  *
@@ -198,7 +198,7 @@ const MIN_GAP_MS = 45;
  * had gone stale at the 400 ms-era `1`: the pill went green 600 ms early, in a live fight,
  * while this module's own gate refused to send. That is the second half of "the space bar
  * doesn't work". `Hud.tsx` now imports this function, so the pill and the pump cannot
- * disagree again, and the archer's 1400 ms lands in both the day a seat carries one.
+ * disagree again, and the archer's 400 ms lands in both the day a seat carries one.
  *
  * `cls` is `PlayerSlot.class_aim >> 7`, so 0 or 1 — the fallback is totality, not defence,
  * and it resolves to the knight because that is what a zeroed byte decodes to (`classOf`),
@@ -470,12 +470,10 @@ export function attachControls(cfg: ControlsConfig): () => void {
     const { phase, tick, alive, zone, cls, lastShotTick: stamped } = cfg.clock();
     const now = performance.now();
 
-    // Dead. Every move and shot would come back `PlayerDead`, invisibly. Held keys are
-    // deliberately NOT cleared: the respawn eight ticks later resumes whatever the player
-    // is still pressing, and clearing would strand them standing still at the entrance.
-    // The draw, though, comes down — a corpse does not hold a bow — and a queued release
-    // goes with it: a super fired from the entrance eight ticks later is not the shot the
-    // player stood for.
+    // Dead, and a death is final for the raid. Every move and shot would come back
+    // `PlayerDead`, invisibly. Held keys are left alone — the next seat starts from a
+    // fresh attach anyway. The draw comes down — a corpse does not hold a bow — and a
+    // queued release goes with it.
     if (alive === false) {
       setHold(null);
       queued = null;
@@ -687,13 +685,13 @@ if (import.meta.env.DEV) {
     assert(shotAllowed(0, Number.NEGATIVE_INFINITY, cls), 'the first shot of a match must pass');
   }
   assert(periodMsFor(CLASS_KNIGHT) === 800, "the knight's period must stay 800 ms");
-  assert(periodMsFor(CLASS_ARCHER) === 1400, "the archer's period must stay 1400 ms");
-  // Slower and heavier, never faster: the notification budget is the constraint, so a shot
-  // a knight may take at tick t is one an archer may not.
+  assert(periodMsFor(CLASS_ARCHER) === 400, "the archer's period is 400 ms");
+  // Faster and lighter: a shot
+  // an archer may take at tick t is one a knight may not.
   assert(
-    shotAllowed(9 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_KNIGHT) &&
-      !shotAllowed(9 + cooldownTicksFor(CLASS_KNIGHT), 7, CLASS_ARCHER),
-    'the archer must be the slower class',
+    shotAllowed(9 + cooldownTicksFor(CLASS_ARCHER), 7, CLASS_ARCHER) &&
+      !shotAllowed(9 + cooldownTicksFor(CLASS_ARCHER), 7, CLASS_KNIGHT),
+    'the archer is the faster class',
   );
   assert(SHOT_MARGIN_TICKS * TICK_MS * 4 < periodMsFor(CLASS_KNIGHT), 'the slack is slack, not a second cooldown');
   // A zeroed `class_aim` decodes to the knight, so an omitted class and any byte this build

@@ -300,7 +300,7 @@
 //! |---|---|---|---|
 //! | 0 | arena | `w` | clock, bullet pool, phase |
 //! | 1 | boss | `w` | timer, aggro, vent |
-//! | 2 | players | `w` | health, respawns |
+//! | 2 | players | `w` | health, deaths |
 //! | 3 | crank signer | `r s` | **read-only signer**, PDA `["crank-executor", Arena.crank_authority]` under `Crank11111111111111111111111111111111111111` |
 //!
 //! No client ever builds this. `begin_muster` freezes the four metas and the single data

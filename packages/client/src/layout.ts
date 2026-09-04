@@ -176,19 +176,19 @@ export function mayMoveTo(zone: number, y: number, ny: number): boolean {
 export const CLASS_MASK = 0b1000_0000;
 /** Must stay 0 — it is what every live seat's byte already says. */
 export const CLASS_KNIGHT = 0;
-/** Slower and heavier, never faster: shot rate is notification rate. */
+/** Faster and lighter: 400 ms and 20 a hit (was 1,400 ms and 70). The knight is the slow, heavy row. */
 export const CLASS_ARCHER = 1;
 export const N_CLASSES = 2;
 
 /** Milliseconds between accepted shots, per class. Ticks below are derived, never typed. */
-export const CLASS_PERIOD_MS: readonly number[] = [800, 1_400];
+export const CLASS_PERIOD_MS: readonly number[] = [800, 400];
 
 /**
  * Damage per landed shot, per class — DPS-neutral with {@link CLASS_PERIOD_MS} by
- * construction (`40 x 14 == 70 x 8`), so the boss's HP curve does not move with the class
+ * construction (`40 x 4 == 20 x 8`), so the boss's HP curve does not move with the class
  * a raid picks. The equality is asserted in {@link layoutSelfCheck}.
  */
-export const CLASS_DAMAGE: readonly number[] = [40, 70];
+export const CLASS_DAMAGE: readonly number[] = [40, 20];
 
 /**
  * Shot cooldown in ticks, per class. The chain compares
@@ -277,7 +277,7 @@ export const SUPER_SLOTS = SUPER_MS / SLOT_MS;
 export const SUPER_NUM = 5;
 export const SUPER_DEN = 1;
 
-/** `state::super_damage(class)` — 350 archer, 200 knight; the chain const-asserts it divides. */
+/** `state::super_damage(class)` — 100 archer, 200 knight; the chain const-asserts it divides. */
 export function superDamage(cls: number): number {
   return (CLASS_DAMAGE[cls]! * SUPER_NUM) / SUPER_DEN;
 }
@@ -1470,7 +1470,7 @@ export function layoutSelfCheck(): void {
     ok(last.skinId === 2, 'and class_aim did not eat skin_id');
     ok(last.x === 512, 'nor the low byte of x');
     ok(classOf(last) === CLASS_ARCHER, 'bit 7 is the class');
-    ok(shotDamage(last) === 70 && cooldownTicks(last) === ticksFor(1_400) - 1, "the archer's numbers");
+    ok(shotDamage(last) === 20 && cooldownTicks(last) === ticksFor(400) - 1, "the archer's numbers");
     const zeroed = p.slots[0]!;
     ok(zeroed.classAim === 0 && classOf(zeroed) === CLASS_KNIGHT, 'a zeroed seat is the knight');
     ok(shotDamage(zeroed) === 40 && cooldownTicks(zeroed) === ticksFor(800) - 1,
@@ -1520,16 +1520,16 @@ export function layoutSelfCheck(): void {
     }
     ok(CLASS_DAMAGE[0]! * (CLASS_COOLDOWN_TICKS[1]! + 1) === CLASS_DAMAGE[1]! * (CLASS_COOLDOWN_TICKS[0]! + 1),
       'the two classes are DPS-neutral, so the boss needs no rescaling');
-    ok(CLASS_COOLDOWN_TICKS[0] === 7 && CLASS_COOLDOWN_TICKS[1] === 13, 'ticksFor(800) - 1, ticksFor(1400) - 1');
+    ok(CLASS_COOLDOWN_TICKS[0] === 7 && CLASS_COOLDOWN_TICKS[1] === 3, 'ticksFor(800) - 1, ticksFor(400) - 1');
     // The charged multiplier, exact on both rows — the number `showDamage` styles on.
-    ok(chargedDamage(CLASS_ARCHER) === 175 && chargedDamage(CLASS_KNIGHT) === 100, '2.5x, both rows');
+    ok(chargedDamage(CLASS_ARCHER) === 50 && chargedDamage(CLASS_KNIGHT) === 100, '2.5x, both rows');
     for (let c = 0; c < N_CLASSES; c++) {
       ok(Number.isInteger(chargedDamage(c)) && chargedDamage(c) * CHARGED_DEN === CLASS_DAMAGE[c]! * CHARGED_NUM,
         `class ${c}: charged damage divides exactly, as the chain asserts`);
     }
     ok(CHARGE_MS % SLOT_MS === 0 && CHARGE_MS / SLOT_MS === 20, 'the hold is a whole number of ER slots (20)');
     // The super: 5x on both rows, exact, above the charged shot, and a longer hold in slots.
-    ok(superDamage(CLASS_ARCHER) === 350 && superDamage(CLASS_KNIGHT) === 200, '5x, both rows');
+    ok(superDamage(CLASS_ARCHER) === 100 && superDamage(CLASS_KNIGHT) === 200, '5x, both rows');
     for (let c = 0; c < N_CLASSES; c++) {
       ok(superDamage(c) * SUPER_DEN === CLASS_DAMAGE[c]! * SUPER_NUM && superDamage(c) > chargedDamage(c),
         `class ${c}: super damage divides exactly and beats charged`);

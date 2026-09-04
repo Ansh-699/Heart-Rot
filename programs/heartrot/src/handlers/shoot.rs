@@ -53,7 +53,7 @@
 //! byte, 0.2354° worst-case direction error over 200,000 angles.
 //!
 //! **Two classes, one byte, no migration.** The knight (40 damage / 800 ms) and the archer
-//! (70 / 1400 ms) are 50 DPS apiece by construction, so the boss needs no rescale. The
+//! (20 / 400 ms) are 50 DPS apiece by construction, so the boss needs no rescale. The
 //! choice rides bit 7 of `PlayerSlot::class_aim` and the aim it fired along rides bits 6..0
 //! of the same byte; nothing grows, nothing moves, and every seat already on chain reads
 //! class 0 — the knight it already was. **No projectile is allocated for either class.**
@@ -196,11 +196,12 @@ const CLASS_ARCHER: usize = crate::state::CLASS_ARCHER as usize;
 
 // Checks, not a second copy of the table: every name below is `state.rs`'s. `state.rs`
 // asserts DPS neutrality and that class 0 is the knight; these two are the shape of the
-// class that nothing else states — "slower and heavier" — and a balance edit that inverts
-// it is otherwise silent, because the raid just gets longer or shorter and nothing says why.
+// class that nothing else states — the archer is the fast, light row, the knight the slow,
+// heavy one — and a balance edit that inverts it is otherwise silent, because the raid just
+// gets longer or shorter and nothing says why.
 const _: () = {
-    assert!(CLASS_COOLDOWN[CLASS_ARCHER] > CLASS_COOLDOWN[CLASS_KNIGHT]);
-    assert!(CLASS_DAMAGE[CLASS_ARCHER] > CLASS_DAMAGE[CLASS_KNIGHT]);
+    assert!(CLASS_COOLDOWN[CLASS_ARCHER] < CLASS_COOLDOWN[CLASS_KNIGHT]);
+    assert!(CLASS_DAMAGE[CLASS_ARCHER] < CLASS_DAMAGE[CLASS_KNIGHT]);
 };
 
 // There is deliberately **no per-class range**. Measured over 214 pit stands, aimed
@@ -589,8 +590,9 @@ fn fire(
     let facing = octant(dx, dy)?;
 
     // Dead players and lobby players have nothing to shoot with or at. Two separate
-    // rules, so two separate codes: "you are dead, wait for respawn" and "you are still
-    // in the lobby" are opposite instructions to the player holding the fire key.
+    // rules, so two separate codes: "you are dead, this raid is over for you" and "you
+    // are still in the lobby" are opposite instructions to the player holding the fire
+    // key.
     if slot.hp == 0 {
         return Err(HeartrotError::PlayerDead.into());
     }
@@ -958,7 +960,7 @@ mod tests {
 
     /// Advance past *this seat's* cooldown and take one shot along the surveyed lane,
     /// which must be accepted. The wait is read off the class table, never typed, so the
-    /// archer's tests wait 1400 ms and the knight's 800 without a second helper.
+    /// archer's tests wait 400 ms and the knight's 800 without a second helper.
     fn shoot_lane(s: &Survey, arena: &mut Arena, boss: &mut Boss, slot: &mut PlayerSlot) {
         arena.tick += CLASS_COOLDOWN[class_of(slot)] + 1;
         fire(arena, boss, slot, s.aim.0, s.aim.1, Tier::Plain, 0)
@@ -1391,7 +1393,7 @@ mod tests {
     /// needs no rescale. The compile-time block up top asserts the arithmetic; this
     /// asserts the *behaviour*, because a table nothing reads is not a balance change.
     #[test]
-    fn the_archer_is_slower_and_heavier_at_the_same_dps() {
+    fn the_archer_is_faster_and_lighter_at_the_same_dps() {
         let s = survey();
         let mut boss = standing_boss();
         boss.parts = [u16::MAX; N_PARTS];
@@ -1426,10 +1428,10 @@ mod tests {
         }
 
         assert!(
-            ready_at[CLASS_ARCHER] > ready_at[CLASS_KNIGHT],
-            "the archer must be the slower class, not the faster one",
+            ready_at[CLASS_ARCHER] < ready_at[CLASS_KNIGHT],
+            "the archer is the faster class, the knight the slower one",
         );
-        // 40 x 14 == 70 x 8: neither class out-damages the other over the same wall clock.
+        // 40 x 4 == 20 x 8: neither class out-damages the other over the same wall clock.
         assert_eq!(
             CLASS_DAMAGE[CLASS_KNIGHT] as u32 * ready_at[CLASS_ARCHER],
             CLASS_DAMAGE[CLASS_ARCHER] as u32 * ready_at[CLASS_KNIGHT],
@@ -1511,7 +1513,7 @@ mod tests {
         assert!(!phase_takes_fire(PHASE_SETTLING));
     }
 
-    /// The charged shot: 2.5× — 175 for the archer, 100 for the knight — granted only when
+    /// The charged shot: 2.5× — 50 for the archer, 100 for the knight — granted only when
     /// the seat's last step is `CHARGE_SLOTS` ER slots old, slot against slot and never
     /// `arena.tick`, and refused *before* the cooldown is spent so the client's uncharged
     /// resend lands. The refusal must change nothing: not the stamp, not the shell, not the
@@ -1543,10 +1545,10 @@ mod tests {
         // The same shot, same tick, resent uncharged: lands at 70 — the client's recovery.
         fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0)
             .expect("uncharged");
-        assert_eq!(boss.parts[s.blocker], 1_000 - 70);
+        assert_eq!(boss.parts[s.blocker], 1_000 - 20);
         assert_eq!(slot.facing, aim, "an uncharged shot carries no flag");
 
-        // Exactly the hold: 175, and the flag rides `facing` beside the octant.
+        // Exactly the hold: 50, and the flag rides `facing` beside the octant.
         arena.tick += CLASS_COOLDOWN[CLASS_ARCHER] + 1;
         fire(
             &mut arena,
@@ -1558,9 +1560,9 @@ mod tests {
             5_000 + CHARGE_SLOTS,
         )
         .expect("charged");
-        assert_eq!(charged_damage(CLASS_ARCHER as u8), 175);
-        assert_eq!(boss.parts[s.blocker], 1_000 - 70 - 175);
-        assert_eq!(slot.damage_dealt, 70 + 175);
+        assert_eq!(charged_damage(CLASS_ARCHER as u8), 50);
+        assert_eq!(boss.parts[s.blocker], 1_000 - 20 - 50);
+        assert_eq!(slot.damage_dealt, 20 + 50);
         assert_eq!(slot.facing, aim | 1 << CHARGED_SHOT_BIT);
 
         // The next uncharged shot clears it.
@@ -1576,7 +1578,7 @@ mod tests {
             HeartrotError::RateLimited.into(),
         );
 
-        // The knight's row: 100, not 175 — the multiplier is per class. A seat that has
+        // The knight's row: 100, not 50 — the multiplier is per class. A seat that has
         // never stepped reads `last_move_tick == 0` and has been still since it joined.
         let mut knight = shooter(&s);
         let mut arena = arena_fighting();
@@ -1640,7 +1642,7 @@ mod tests {
         }
     }
 
-    /// The super: 5× — 350 for the archer, 200 for the knight — behind a hold of
+    /// The super: 5× — 100 for the archer, 200 for the knight — behind a hold of
     /// `SUPER_SLOTS`, judged on the same slot clock as the charged hold and refused the same
     /// way: `NotCharged`, before the cooldown is spent, with nothing written. A charged-length
     /// hold is *not* enough, which is what makes the client's downgrade ladder a ladder. The
@@ -1674,14 +1676,14 @@ mod tests {
         assert_eq!(slot.facing, 0, "and writes nothing");
         assert_eq!(slot.damage_dealt, 0);
 
-        // Exactly the hold: 350 into every live part on the lane — the survey's blocker
+        // Exactly the hold: 100 into every live part on the lane — the survey's blocker
         // first, and whatever the beam finds behind it, once each — and bit 4 alone.
         let on_line = raycast_beam(slot.x, slot.y, s.aim.0, s.aim.1, &boss).parts.count_ones();
         fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Super, 5_000 + SUPER_SLOTS)
             .expect("super");
-        assert_eq!(super_damage(CLASS_ARCHER as u8), 350);
-        assert_eq!(boss.parts[s.blocker], 1_000 - 350);
-        assert_eq!(slot.damage_dealt, 350 * on_line);
+        assert_eq!(super_damage(CLASS_ARCHER as u8), 100);
+        assert_eq!(boss.parts[s.blocker], 1_000 - 100);
+        assert_eq!(slot.damage_dealt, 100 * on_line);
         assert_eq!(slot.facing, aim | 1 << SUPER_SHOT_BIT);
         assert_eq!(slot.facing & (1 << CHARGED_SHOT_BIT), 0, "a super is not also charged");
         assert_eq!(slot.last_shot_tick, arena.tick, "the attempt spent the cooldown");
@@ -1751,7 +1753,7 @@ mod tests {
             walled_out: 0,
         };
 
-        // Twenty raiders: 35 % threshold. 1,000-HP parts each lose 350, once, the shell
+        // Twenty raiders: 35 % threshold. 1,000-HP parts each lose 100, once, the shell
         // stays far above the line, and the beam's core crossing scores nothing.
         let mut arena = arena_fighting();
         arena.tick = 100;
@@ -1764,11 +1766,11 @@ mod tests {
             .expect("super");
         for index in 0..N_PARTS {
             let on_beam = beam.parts & (1 << index) != 0;
-            assert_eq!(boss.parts[index], if on_beam { 650 } else { 1_000 }, "part {index}");
+            assert_eq!(boss.parts[index], if on_beam { 900 } else { 1_000 }, "part {index}");
         }
         assert_eq!(boss.vent_open, 0, "the shell is 90 % standing");
         assert_eq!(boss.core_hp, 100, "a sealed vent absorbs the beam's core crossing");
-        assert_eq!(slot.damage_dealt, 350 * hits, "each part once, the core not at all");
+        assert_eq!(slot.damage_dealt, 100 * hits, "each part once, the core not at all");
 
         // Solo: 98 % threshold, a full 100-HP shell, sealed. One beam takes every part on
         // the line to 0, which opens the vent, and the same beam's core crossing then lands.
@@ -1789,10 +1791,10 @@ mod tests {
         assert_eq!(boss.core_hp, 0, "and killed through it");
         assert_eq!(arena.outcome, OUTCOME_WIN);
         assert_eq!(arena.phase, PHASE_SETTLING);
-        // Credited what was removed: 100 per part on the line and 100 off the core, not 350s.
+        // Credited what was removed: 100 per part on the line and 100 off the core.
         assert_eq!(slot.damage_dealt, 100 * hits + 100);
 
-        // The same lane, charged: first live part only, 175, and the core untouched.
+        // The same lane, charged: first live part only, 50, and the core untouched.
         let mut arena = arena_fighting();
         arena.tick = 100;
         arena.raid_size = 1;
@@ -1802,7 +1804,7 @@ mod tests {
         let mut slot = archer(&s);
         fire(&mut arena, &mut boss, &mut slot, aim.0, aim.1, Tier::Charged, CHARGE_SLOTS)
             .expect("charged");
-        assert_eq!(slot.damage_dealt, 175, "a charged shot stops at the first part");
+        assert_eq!(slot.damage_dealt, 50, "a charged shot stops at the first part");
         assert_eq!(boss.parts.iter().filter(|&&hp| hp != 1_000).count(), 1);
         assert_eq!(boss.core_hp, 100);
     }

@@ -794,11 +794,12 @@ h3 {
 }
 
 /* --------------------------------------------------------------------------
-   The verdict — WIN / WIPE / ENRAGE
+   The verdict — WIN / WIPE / ENRAGE — and your own fall
 
    Three separate bytes on chain and three separate colours here. A win is olive, a wipe is
    the dead maroon, an enrage is torchlight: you did not get wiped, you ran out of clock,
-   and a raid that cannot tell those apart cannot fix either.
+   and a raid that cannot tell those apart cannot fix either. Ember is the fourth, for the
+   one card that is not a verdict: you are down, the raid is not.
    -------------------------------------------------------------------------- */
 
 .verdict {
@@ -837,6 +838,14 @@ h3 {
 
 .verdict-enrage .verdict-label {
   color: var(--torch);
+}
+
+.verdict-ember {
+  border-color: var(--ember);
+}
+
+.verdict-ember .verdict-label {
+  color: var(--ember);
 }
 
 /* --------------------------------------------------------------------------

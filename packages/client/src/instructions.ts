@@ -466,7 +466,7 @@ export const startMatch = beginMuster;
  *
  * A returning identity keeps the **class** its seat already holds, where `skin_id` is
  * rotated: a skin is a render hint, a class is the damage and cooldown `shoot` reads, and
- * rotating it mid-match would let a player fire the archer's 70 and take the next shot on
+ * rotating it mid-match would let a player fire the archer's 20 and take the next shot on
  * the knight's 800 ms. Render the class off the roster slot, not off what was sent.
  */
 /**

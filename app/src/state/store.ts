@@ -139,6 +139,12 @@ export type State = {
   /** Player-readable. Rendered; never a stack trace, never a token. */
   error: string | null;
   arena: ArenaAccount | null;
+  /**
+   * `performance.now()` when `arena.tick` last changed — the feed's word, carried so the
+   * send pump can extrapolate the chain's tick between notifications instead of pacing
+   * shots against a view that is one or two ticks stale.
+   */
+  tickAt: number;
   boss: BossAccount | null;
   players: PlayersAccount | null;
   /** `Date.now()` of the last accepted account update. The watchdog's input. */
@@ -147,6 +153,8 @@ export type State = {
 
 export type WorldUpdate = {
   arena?: ArenaAccount;
+  /** When `arena.tick` last changed, per the feed. Only meaningful beside `arena`. */
+  tickAt?: number;
   boss?: BossAccount;
   players?: PlayersAccount;
   /**
@@ -462,6 +470,7 @@ const INITIAL: State = {
   status: 'idle',
   error: null,
   arena: null,
+  tickAt: 0,
   boss: null,
   players: null,
   updatedAt: 0,

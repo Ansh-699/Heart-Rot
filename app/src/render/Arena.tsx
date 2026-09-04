@@ -22,7 +22,7 @@
  *                                                     React can walk again.
  *   `./Boss`    `<Boss boss arena />`                 the rig at `BOSS_SPAWN`, top centre,
  *                                                     unmoved by anything in here.
- *   `./Knight`  `<Knight slot tick mine reduced />`   the CHILDREN of one seat `<g>`, never
+ *   `./Knight`  `<Knight slot mine reduced />`        the CHILDREN of one seat `<g>`, never
  *                                                     the `<g>` itself, whose transform the
  *                                                     loops below own.
  *   `./Shot`    `<Shot … />`                          the arrows, ABOVE the knights.
@@ -1245,7 +1245,7 @@ export function Arena({
                 // attribute on it, which is why `Knight` renders the CHILDREN of this node
                 // and never the node. The style is {@link SEAT_STYLE}, shared by all twenty.
                 <g key={slot.seat} ref={predicted ? selfRef : seats.ref(slot.seat)} style={SEAT_STYLE}>
-                  <Knight slot={posed} tick={arena.tick} mine={mine} reduced={reduced} />
+                  <Knight slot={posed} mine={mine} reduced={reduced} />
                 </g>
               );
             })}
@@ -1423,7 +1423,7 @@ export function usePrefersReducedMotion(): boolean {
 //
 // The chase is the whole of the smoothness fix and it fails silently: too small a step
 // floats behind the input, too large a one is the 16-unit teleport it exists to remove,
-// and a missing snap slides a respawning corpse across the dungeon.
+// and a missing snap slides a re-anchored body across the dungeon.
 //
 // The composition's failure modes have the same shape — silent, and wrong in a way that
 // reads as lag or as a bug in the chain: a seat painted into the wrong room, a slam
@@ -1456,10 +1456,10 @@ if (import.meta.env.DEV) {
   chase(at, { x: 300, y: 300 }, Infinity);
   ok(at.x === 300 && at.y === 300, 'an unbounded step snaps');
 
-  // A reconcile onto a respawn is not a walk, and lerping it draws a corpse gliding
+  // A reconcile across a stall is not a walk, and lerping it draws a body gliding
   // through walls for two seconds.
   chase(at, { x: 900, y: 900 }, MAP_TILE);
-  ok(at.x === 900 && at.y === 900, 'a respawn-sized gap snaps instead of chasing');
+  ok(at.x === 900 && at.y === 900, 'a teleport-sized gap snaps instead of chasing');
 
   // The passage hold PLACES the local seat at its entrance rather than chasing it there,
   // and `chase` decides which by comparing the gap against `SELF_SNAP`. `enter_gate` calls

@@ -388,7 +388,7 @@ if (import.meta.env.DEV) {
       for (let tx = 0; tx < MAP_TILES; tx++) {
         if (isWallTile(tx, ty)) continue;
         // Every unit of the tile, not its origin: the chain moves in 16s but clamps and
-        // respawns land anywhere, and a frame edge inside a walkable tile is a knight cut
+        // seats land anywhere, and a frame edge inside a walkable tile is a knight cut
         // in half.
         const y0 = Math.max(ty * MAP_TILE, top);
         const y1 = Math.min(ty * MAP_TILE + MAP_TILE - 1, bot);

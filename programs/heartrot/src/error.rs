@@ -182,7 +182,8 @@ heartrot_errors! {
     /// counter *is* the rate limiter — there is no economic backstop behind it (D16).
     RateLimited = 7,
 
-    /// The seat's `hp` is 0. Dead players wait for `respawn_at_tick`; they do not act.
+    /// The seat's `hp` is 0. Death is final for the raid: a dead seat watches, or
+    /// leaves; it does not act.
     PlayerDead = 8,
 
     /// The seat is in the wrong zone for this instruction — shooting from the lobby, or

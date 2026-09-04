@@ -85,7 +85,7 @@ function bossBytes(hurt: boolean, vent = false, fury = false, beam = false, dead
 
 /** 20 seats spread over the room named by `zone`, mixed skins and classes. `damage` is
  *  per seat, for the results panel's placing; the default is a spread nobody ties on. */
-function playersBytes(zone: number, tick: number, seats: number, at?: number[][], damage?: number[]) {
+function playersBytes(zone: number, tick: number, seats: number, at?: number[][], damage?: number[], localHp?: number) {
   const { d, v } = blank(PLAYERS.size, DISC_PLAYERS);
   if (at) {
     // art-judge: explicit world placements [x, y, skin, isArcher]. Everything else matches
@@ -118,8 +118,11 @@ function playersBytes(zone: number, tick: number, seats: number, at?: number[][]
     const y = zone === ZONE_ARENA ? 430 + row * 44 : 700 + row * 72;
     v.setInt16(s + PLAYER_SLOT.offsets.x, x, true);
     v.setInt16(s + PLAYER_SLOT.offsets.y, y, true);
-    v.setUint16(s + PLAYER_SLOT.offsets.hp, seat === 7 ? 34 : 100, true);
+    // Seat 0 is the local seat (`/api/session/init` below); `localHp` 0 is the fallen card.
+    const hp = seat === 0 && localHp !== undefined ? localHp : seat === 7 ? 34 : 100;
+    v.setUint16(s + PLAYER_SLOT.offsets.hp, hp, true);
     v.setUint16(s + PLAYER_SLOT.offsets.hp_max, 100, true);
+    v.setUint16(s + PLAYER_SLOT.offsets.deaths, hp === 0 ? 1 : 0, true);
     v.setUint32(s + PLAYER_SLOT.offsets.last_shot_tick, tick > 4 ? tick - 1 : 0, true);
     v.setUint32(s + PLAYER_SLOT.offsets.damage_dealt, damage?.[seat] ?? seat * 137, true);
   }
@@ -152,6 +155,8 @@ interface SceneOpts {
   tick?: number;
   /** Which `Boss.parts` slots are destroyed, over the fury default (4 crown, 5 wolf, 6 beast). */
   dead?: number[];
+  /** The local seat's hp; 0 photographs the fallen card over its corpse. */
+  localHp?: number;
 }
 
 /**
@@ -177,7 +182,7 @@ function Bridge() {
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,
           arena ? (opts.bullets ?? 10) : 0, opts.outcome ?? 0, opts.incarnation ?? 0),
         boss: bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, !!opts.beam, opts.dead),
-        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, opts.at, opts.damage),
+        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, opts.at, opts.damage, opts.localHp),
       });
     };
     w.__PHASE = { PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING };

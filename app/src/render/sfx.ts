@@ -38,7 +38,6 @@ export type SfxName =
   | 'beamSweep'
   | 'hurt'
   | 'fall'
-  | 'respawn'
   | 'gate'
   | 'win'
   | 'lose';
@@ -299,10 +298,6 @@ const RECIPES: Readonly<Record<SfxName, Recipe>> = {
     noise(c, o, t, 'bandpass', 1200, 0.06, 0.25);
   },
   fall: (c, o, t) => tone(c, o, t, 'sawtooth', 420, 60, 0.55, 0.3),
-  respawn: (c, o, t) => {
-    tone(c, o, t, 'sine', 260, 1040, 0.4, 0.25);
-    tone(c, o, t + 0.3, 'sine', 1560, 1560, 0.15, 0.2);
-  },
   gate: (c, o, t) => {
     noise(c, o, t, 'lowpass', 350, 0.6, 0.6);
     tone(c, o, t, 'sine', 90, 45, 0.6, 0.4);

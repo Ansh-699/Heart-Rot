@@ -33,8 +33,8 @@ export const ARENA_UNITS = MAP_TILES * MAP_TILE;
 // ---------------------------------------------------------------------------
 
 /**
- * Past this a position change was a teleport, not a walk — a reconcile onto a respawn at
- * an entrance. Chasing it draws a corpse gliding across the dungeon for two seconds, so
+ * Past this a position change was a teleport, not a walk — a reconcile across a feed
+ * stall. Chasing it draws a body gliding across the dungeon for two seconds, so
  * the render snaps instead, and the gait accumulator resets rather than spinning the legs.
  *
  * Three readers: `Arena.tsx`'s `chase`, `Knight.tsx`'s `advance`, and — restated there,

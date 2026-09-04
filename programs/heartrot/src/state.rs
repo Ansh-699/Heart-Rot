@@ -1188,20 +1188,22 @@ pub const CLASS_MASK: u8 = 0b1000_0000;
 /// today, so 0 is not a choice — it is what the accounts already say, and it is the whole
 /// reason this feature has no migration.
 pub const CLASS_KNIGHT: u8 = 0;
-/// Slower and heavier, never faster: shot rate is notification rate, and the ER budget the
-/// raid's latency depends on is the constraint that picked these numbers.
+/// Faster and lighter: 400 ms between arrows, 20 a hit. It was 1,400 ms and 70 — "slower
+/// and heavier, never faster", the ER budget's pick — until the owner asked for a bow that
+/// answers the hand (Sep 4 2026). Shot rate is notification rate, so twenty archers are
+/// fifty shots a second on the rollup; the knight keeps the slow, heavy row.
 pub const CLASS_ARCHER: u8 = 1;
 pub const N_CLASSES: u8 = 2;
 
 /// Milliseconds between accepted shots, per class. Milliseconds, like every other duration
 /// in this file — the tick counts below are derived, never typed.
-pub const CLASS_PERIOD_MS: [u32; N_CLASSES as usize] = [800, 1_400];
+pub const CLASS_PERIOD_MS: [u32; N_CLASSES as usize] = [800, 400];
 
 /// Damage per landed shot, per class. Paired with [`CLASS_PERIOD_MS`] to be **DPS-neutral**
-/// — `40 × 14 == 70 × 8` — so the boss's HP curve is untouched by the class a raid picks.
+/// — `40 × 4 == 20 × 8` — so the boss's HP curve is untouched by the class a raid picks.
 /// The equality is asserted below, because a balance pass that changes one of the four
 /// numbers and not the others would otherwise rescale every fight silently.
-pub const CLASS_DAMAGE: [u16; N_CLASSES as usize] = [40, 70];
+pub const CLASS_DAMAGE: [u16; N_CLASSES as usize] = [40, 20];
 
 /// Shot cooldown in ticks, per class. The comparison at the call site is
 /// `arena.tick > last_shot_tick + cooldown`, so this is one *less* than the period in
@@ -1298,8 +1300,8 @@ pub const SUPER_MS: u32 = 2_500;
 /// slot exactly as [`CHARGE_SLOTS`] is for tier 1.
 pub const SUPER_SLOTS: u32 = SUPER_MS / SLOT_MS;
 
-/// Super damage is `CLASS_DAMAGE × SUPER_NUM / SUPER_DEN` — 5×: the archer's 70 becomes
-/// 350, the knight's 40 becomes 200. Twice a charged shot for two and a half times the
+/// Super damage is `CLASS_DAMAGE × SUPER_NUM / SUPER_DEN` — 5×: the archer's 20 becomes
+/// 100, the knight's 40 becomes 200. Twice a charged shot for two and a half times the
 /// hold, and it PIERCES (`shoot.rs`): every part on the ray takes it once, and the core
 /// takes it if the vent is open once those parts are gone. That is the whole case for a
 /// 2.5 s stand in a bullet hell.
@@ -1402,7 +1404,7 @@ const _: () = {
     assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) > ttk_s(TTK_MODEL_SHELL_HP, 1));
     // The LONGEST fight — a full raid — must fit the enrage window twice over. The second
     // half is the allowance for play that is not perfect; `ttk_s` is a floor, not a
-    // forecast, and it ignores dodging, deaths and the walk back from a respawn.
+    // forecast, and it ignores dodging and deaths.
     assert!(ttk_s(TTK_MODEL_SHELL_HP, MAX_SEATS as u8) * 2 < seconds_to_enrage);
 
     // THE TIERS. MEDIUM: 1,080 shell + 400 core solo = 30 s; 12,600 + 61,200 at twenty =
@@ -1486,15 +1488,16 @@ pub struct PlayerSlot {
     /// Claimed out of `_pad1`: no field moved, the account did not grow, and every seat
     /// already on chain reads 0, which is true of a match nobody has died in yet.
     ///
-    /// Incremented on exactly the line that stamps `respawn_at_tick`, so there is one
-    /// death event and one place it is counted. Saturating — a seat that somehow died
-    /// 65,535 times stops counting rather than wrapping to zero and reading as flawless.
-    /// It is the only record that a wipe-heavy raid happened: `survived` on the
-    /// leaderboard row is a single bit sampled at settle time, and a player who died
-    /// nineteen times and respawned before the end is indistinguishable from one who
-    /// never took a hit.
+    /// Incremented on exactly the line in `tick::damage_seat` that drops `hp` to 0, so
+    /// there is one death event and one place it is counted. Saturating — a seat that
+    /// somehow died 65,535 times stops counting rather than wrapping to zero and reading
+    /// as flawless. Death is final for the raid, so within one incarnation this is 0 or
+    /// 1 per seat; it stays a counter because `survived` on the leaderboard row is a
+    /// single bit sampled at settle time and this is the field that records the death.
     pub deaths: u16,
-    /// Tick at which `boss_tick` returns this player to the arena entrance.
+    /// Reserved. Always 0. It once held the tick at which `boss_tick` revived this seat;
+    /// death is now final for the raid and nothing schedules a revive. Kept at its
+    /// offset so `PlayerSlot` stays 96 bytes and the client mirror's layout is unchanged.
     pub respawn_at_tick: u32,
     /// Rate limit for `shoot`. ER transaction fees are zero and the ER runs no
     /// fee-payer validation at all, so nothing debits a spammer and the network
@@ -2060,7 +2063,6 @@ mod rate_tests {
     /// and they must not move when `TICK_MS` does.
     #[test]
     fn durations_survive_the_tick_rate() {
-        assert_eq!(ticks_for(3_200) * TICK_MS, 3_200, "respawn stays 3.2 s");
         assert_eq!(
             ticks_for(10_000) * TICK_MS,
             10_000,
@@ -2150,12 +2152,12 @@ mod balance_tests {
         assert_eq!(vent_pct(1, u8::MAX), vent_pct(1, TIER_HARD));
     }
 
-    /// 2.5× on both rows, exactly — the archer's 70 becomes 175, the knight's 40 becomes
+    /// 2.5× on both rows, exactly — the archer's 20 becomes 50, the knight's 40 becomes
     /// 100 — and the multiplier is the same ratio for every class, so the classes stay
     /// DPS-neutral charged as well as uncharged.
     #[test]
     fn a_charged_shot_is_two_and_a_half_times_the_class_damage() {
-        assert_eq!(charged_damage(CLASS_ARCHER), 175);
+        assert_eq!(charged_damage(CLASS_ARCHER), 50);
         assert_eq!(charged_damage(CLASS_KNIGHT), 100);
         for class in [CLASS_KNIGHT, CLASS_ARCHER] {
             assert_eq!(
@@ -2247,7 +2249,7 @@ mod balance_tests {
     /// longer hold must never be the worse deal.
     #[test]
     fn a_super_shot_is_five_times_the_class_damage() {
-        assert_eq!(super_damage(CLASS_ARCHER), 350);
+        assert_eq!(super_damage(CLASS_ARCHER), 100);
         assert_eq!(super_damage(CLASS_KNIGHT), 200);
         for class in [CLASS_KNIGHT, CLASS_ARCHER] {
             assert_eq!(super_damage(class), CLASS_DAMAGE[class as usize] * 5);
@@ -2403,8 +2405,8 @@ mod class_tests {
                 CLASS_KNIGHT,
                 "shot {i} re-classed the knight"
             );
-            assert_eq!(archer.shot_damage(), 70);
-            assert_eq!(archer.cooldown_ticks(), ticks_for(1_400) - 1);
+            assert_eq!(archer.shot_damage(), 20);
+            assert_eq!(archer.cooldown_ticks(), ticks_for(400) - 1);
         }
         // And the class write is the mirror image: it must not disturb the aim.
         let aim = archer.class_aim & !CLASS_MASK;

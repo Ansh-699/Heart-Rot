@@ -365,6 +365,7 @@ export function Hud() {
         <Top />
         <Corner />
       </div>
+      <Fallen />
       <Verdict />
     </>
   );
@@ -523,9 +524,8 @@ function Card() {
         <div className="hud-hp-bar" role="meter" aria-label="your health" aria-valuenow={slot.hp} aria-valuemax={slot.hpMax}>
           <div className={`hud-hp-fill${pct <= 30 ? ' is-low' : ''}`} style={{ transform: `scaleX(${pct / 100})` }} />
         </div>
-        <span className="hud-hp-num">
-          {dead ? clock(Math.max(0, slot.respawnAtTick - tick), tickMs) : `${slot.hp}/${slot.hpMax}`}
-        </span>
+        {/* A death is final for the raid — no respawn, so no countdown. */}
+        <span className="hud-hp-num">{dead ? 'DOWN' : `${slot.hp}/${slot.hpMax}`}</span>
       </div>
       {occupied > 1 && (
         <ol className="hud-seats">
@@ -617,7 +617,7 @@ const VERDICTS: Readonly<
   [OUTCOME_WIPE]: {
     label: 'WIPE',
     tone: 'wipe',
-    line: 'Every raider standing in the arena was down on the same tick.',
+    line: 'Every raider in the arena was down. A death is final, so the raid ended with the last one.',
   },
   [OUTCOME_ENRAGE]: {
     label: 'ENRAGE',
@@ -744,6 +744,47 @@ function Verdict() {
   );
 }
 
+/**
+ * Down, mid-fight. A death is final for the raid — the seat stays on the floor at hp 0,
+ * its damage still counts at the verdict, and there is nothing to wait for — so the card
+ * says so once and offers the two things a corpse can still do: leave, or watch. It yields
+ * to {@link Verdict} the moment the phase leaves FIGHTING; the Verdict is the result.
+ */
+function Fallen() {
+  const store = useStore();
+  const slot = useSelect(mySeatSlot);
+  const fighting = useSelect((s) => s.arena?.phase === PHASE_FIGHTING);
+  const players = useSelect((s) => s.players);
+  const seat = useSelect((s) => s.match?.seat ?? -1);
+  const down = slot !== null && slot.hp === 0 && slot.zone === ZONE_ARENA && fighting;
+  // "Watch the raid" is local and lasts one death: a new seat, or hp back above zero,
+  // starts over.
+  const [watching, setWatching] = useState(false);
+  useEffect(() => setWatching(false), [seat, down]);
+  usePlayOnRise(down, 'lose');
+  if (!down || watching || players === null) return null;
+  const stand = standing(players.slots, seat);
+  return (
+    <div className="hud hud-ml verdict verdict-ember" role="status">
+      <span className="verdict-label">YOU FELL</span>
+      <span className="fine">Heartrot got you. No respawn — what you dealt still counts at the verdict.</span>
+      <span className="verdict-line">
+        {stand.damage.toLocaleString('en-US')} damage · {stand.share}%
+      </span>
+      <span className="verdict-line">
+        {ordinal(stand.rank)} of {stand.of} so far
+      </span>
+      <button className="btn btn-primary" onClick={() => void store.leaveMatch()}>
+        Back to lobby
+      </button>
+      <span className="fine">
+        <button className="link" onClick={() => setWatching(true)}>
+          Watch the raid
+        </button>
+      </span>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Self-check
@@ -865,8 +906,9 @@ if (import.meta.env.DEV) {
   // The archer row of the same table. Without this the class argument could be dropped on
   // the floor here and the pill would go green 600 ms early for an archer exactly the way
   // the hardcoded `1` did for a knight — the same defect, one class over.
-  if (shotAllowed(14, 0, CLASS_ARCHER) || !shotAllowed(15, 0, CLASS_ARCHER)) {
-    throw new Error('Hud self-check: the shot gate is not controls.ts’s 1400 ms archer cooldown');
+  // 400 ms is 4 ticks: cooldown 3, the margin's +1 opens the gate at tick 5.
+  if (shotAllowed(4, 0, CLASS_ARCHER) || !shotAllowed(5, 0, CLASS_ARCHER)) {
+    throw new Error('Hud self-check: the shot gate is not controls.ts’s 400 ms archer cooldown');
   }
   // Not asserted here any more: `classOf` is `layout.ts`'s and is checked where it lives.
   // What this file still owns is the LABEL — a names array shorter than the class table

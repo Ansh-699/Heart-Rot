@@ -11,10 +11,9 @@
  *   seat  <g>                 position          — the existing loops. NOT TOUCHED HERE.
  *     <ellipse shadow>        static            — React
  *     <ellipse ring x2>       static            — React (local seat only)
- *     <circle  respawn arc>   dash offset       — React, once per notification
  *     <circle  charge arc x2> dash offset       — WAAPI, one run each per hold (local seat only)
- *     <g       body>          transform+opacity — WAAPI one-shots (recoil, fall, revive,
- *                                                 idle breathe). Resting values are React
+ *     <g       body>          transform+opacity — WAAPI one-shots (recoil, fall, idle
+ *                                                 breathe). Resting values are React
  *                                                 attributes, so a reload with no
  *                                                 animation running still looks right.
  *       <g     flip>          static per facing — React
@@ -125,7 +124,7 @@ function anchorX(w: number, flip: boolean): number {
   return flip ? -(w - (w >> 1)) : -(w >> 1);
 }
 
-/** Feet-level chrome: the shadow, the local ring, the respawn and charge arcs sit here. */
+/** Feet-level chrome: the shadow, the local ring and the charge arcs sit here. */
 const FEET_Y = 20;
 /** The wide dark tone under every bright line of local-seat chrome. */
 const KEYLINE = '#05060a';
@@ -137,8 +136,8 @@ const SUPER_ARC_R = ARC_R + 3;
 const SUPER_ARC_C = 2 * Math.PI * SUPER_ARC_R;
 
 /**
- * Past this a position change was a teleport, not a walk — a reconcile onto a respawn at
- * an entrance. Accumulating it would spin the legs for a dozen frames.
+ * Past this a position change was a teleport, not a walk — a reconcile across a feed
+ * stall. Accumulating it would spin the legs for a dozen frames.
  *
  * `Arena.tsx`'s, imported rather than restated: it is the same threshold
  * `predict.ts::teleported` applies to remote seats, and the gait must reset on exactly the
@@ -168,16 +167,13 @@ interface Walk {
   hp: number;
   deaths: number;
   lastShotTick: number;
-  /** `arena.tick` when `deaths` last moved, so the respawn arc has a start as well as an end. */
-  deathTick: number;
   /** One-shot counters. Monotonic, so a `useEffect` dep fires exactly once per event. */
   shots: number;
   hurts: number;
   falls: number;
-  revives: number;
 }
 
-function initialWalk(slot: PlayerSlot, tick: number): Walk {
+function initialWalk(slot: PlayerSlot): Walk {
   return {
     x: slot.x,
     y: slot.y,
@@ -187,11 +183,9 @@ function initialWalk(slot: PlayerSlot, tick: number): Walk {
     hp: slot.hp,
     deaths: slot.deaths,
     lastShotTick: slot.lastShotTick,
-    deathTick: tick,
     shots: 0,
     hurts: 0,
     falls: 0,
-    revives: 0,
   };
 }
 
@@ -200,7 +194,7 @@ function initialWalk(slot: PlayerSlot, tick: number): Walk {
  * against the last snapshot consumed**, never a count of notifications — so a byte-
  * identical duplicate advances nothing, with no bookkeeping to get wrong.
  */
-function advance(st: Walk, slot: PlayerSlot, tick: number): void {
+function advance(st: Walk, slot: PlayerSlot): void {
   // Manhattan, not Euclidean: the stride only has to count tiles, and a sqrt per seat per
   // notification buys nothing. The diagonal step is (11,11) — Manhattan 22 against 16 for
   // a cardinal, so a diagonal walker cycles 1.375x fast for 15.6 units of real ground.
@@ -210,8 +204,8 @@ function advance(st: Walk, slot: PlayerSlot, tick: number): void {
   // it is deliberately not applied until someone says it reads wrong.
   const step = Math.abs(slot.x - st.x) + Math.abs(slot.y - st.y);
   st.d = step > SNAP ? 0 : st.d + step;
-  // A teleport is not a stride, so it is not locomotion either: an archer reconciled onto a
-  // respawn point should stand and breathe, not finish a step it never took.
+  // A teleport is not a stride, so it is not locomotion either: an archer reconciled across
+  // a stall should stand and breathe, not finish a step it never took.
   st.stepped = step > 0 && step <= SNAP;
   st.x = slot.x;
   st.y = slot.y;
@@ -220,12 +214,11 @@ function advance(st: Walk, slot: PlayerSlot, tick: number): void {
   if (slot.hp < st.hp) st.hurts++;
   // `deaths` is the *event*; `hp === 0` is the state. A client that missed a snapshot still
   // sees the counter move.
+  // A death is final for the raid: there is no revive edge, hp never leaves zero.
   if (slot.deaths > st.deaths) {
     st.deaths = slot.deaths;
-    st.deathTick = tick;
     st.falls++;
   }
-  if (st.hp === 0 && slot.hp > 0) st.revives++;
   st.hp = slot.hp;
 
   // Works for remote seats, which "I sent a shoot transaction" cannot — and nineteen other
@@ -269,8 +262,6 @@ let chargeSink: ((tier: ShotTier | null) => void) | null = null;
 
 export interface KnightProps {
   slot: PlayerSlot;
-  /** `arena.tick`. Only the respawn countdown reads it, once per notification. */
-  tick: number;
   /** The seat this browser drives. Gets the chevron, the ground ring and the charge. */
   mine?: boolean;
   /** No breathe, no recoil, no glow pulse, no translation — fades survive as opacity only. */
@@ -322,17 +313,17 @@ function Sprite({
   );
 }
 
-function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) {
+function KnightBody({ slot, mine = false, reduced = false }: KnightProps) {
   const state = useRef<Walk | null>(null);
   // Guards the fold against React re-rendering this component with the *same* snapshot —
   // StrictMode's double render, or a parent re-rendering for the bullet feed. The decoder
   // allocates a fresh `PlayerSlot` per notification, so object identity is exactly "is
   // this new state".
   const seen = useRef<PlayerSlot | null>(null);
-  const w = (state.current ??= initialWalk(slot, tick));
+  const w = (state.current ??= initialWalk(slot));
   if (seen.current !== slot) {
     seen.current = slot;
-    advance(w, slot, tick);
+    advance(w, slot);
   }
 
   const dead = slot.hp === 0;
@@ -375,7 +366,7 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
   const looseTimer = useRef(0);
   // What has already been played, so the effect is a no-op on mount and on every
   // re-render that carried no event.
-  const played = useRef({ shots: w.shots, hurts: w.hurts, falls: w.falls, revives: w.revives });
+  const played = useRef({ shots: w.shots, hurts: w.hurts, falls: w.falls });
 
   const facingUnit = FACING_UNIT[slot.facing] ?? FACING_UNIT[0]!;
   // The bits the chain set on THIS loose. A super is bit 4 alone, never also bit 3
@@ -389,8 +380,8 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
 
     if (w.falls !== p.falls) {
       play('fall');
-      // The corpse settles at React's `opacity: 0.55`; `fill: 'none'` (the default) means
-      // the animation hands the property straight back when it ends.
+      // The corpse settles at React's `opacity: 0.55` for the rest of the raid; `fill:
+      // 'none'` (the default) means the animation hands the property straight back.
       body.animate(
         reduced
           ? [{ opacity: 1 }, { opacity: 0.55 }]
@@ -400,9 +391,6 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
             ],
         { duration: reduced ? 150 : 200, easing: 'ease-in' },
       );
-    } else if (w.revives !== p.revives) {
-      play('respawn');
-      body.animate([{ opacity: 0.55 }, { opacity: 1 }], { duration: 250 });
     } else if (w.shots !== p.shots && !dead) {
       // The loose frame, then the arm comes back. The bits on the seat say which tier this
       // loose was — the next move clears them, which is the arrow's lifetime. The local
@@ -432,8 +420,8 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
       hitRef.current?.animate([{ opacity: 1 }, { opacity: 1, offset: 0.5 }, { opacity: 0 }], { duration: 220 });
     }
 
-    played.current = { shots: w.shots, hurts: w.hurts, falls: w.falls, revives: w.revives };
-  }, [w, w.shots, w.hurts, w.falls, w.revives, dead, reduced, facingUnit, tier, mine]);
+    played.current = { shots: w.shots, hurts: w.hurts, falls: w.falls };
+  }, [w, w.shots, w.hurts, w.falls, dead, reduced, facingUnit, tier, mine]);
 
   useEffect(() => () => clearTimeout(looseTimer.current), []);
 
@@ -535,12 +523,6 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
     return () => anim?.cancel();
   }, [pulsing]);
 
-  // Elapsed fraction of this seat's own death-to-respawn window. `RESPAWN_TICKS` is a chain
-  // fact and is deliberately not restated: both ends of the sweep are read off the feed.
-  const span = slot.respawnAtTick - w.deathTick;
-  const waiting = dead && slot.respawnAtTick > tick && span > 0;
-  const progress = waiting ? Math.max(0, Math.min(1, 1 - (slot.respawnAtTick - tick) / span)) : 0;
-
   // Your own bar is always on in the pit ("show our hp when inside boss"): the top-centre
   // bar is where the number lives, but in a fight the eyes are on the archer, and the bar
   // over its head is the one that is read. Every other seat's bar still appears only once
@@ -570,19 +552,6 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
             opacity={0.9}
           />
         </>
-      )}
-
-      {waiting && (
-        <circle
-          cy={FEET_Y}
-          r={ARC_R}
-          fill="none"
-          stroke={PAL.selfRing}
-          strokeWidth={2}
-          strokeDasharray={`${ARC_C * progress} ${ARC_C}`}
-          transform={`rotate(-90 0 ${FEET_Y})`}
-          opacity={0.7}
-        />
       )}
 
       {charging && (
@@ -634,8 +603,8 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
 
       {/* Cue 1 of 3, and the only one that works when you are completely hidden behind another
           archer — so it is never clipped, never faded, and never suppressed while dead: a
-          player watching their own respawn countdown still needs to know which corpse is
-          theirs. The keyline exists because the chevron's one bad background is an ally's
+          player watching the rest of the raid from the floor still needs to know which
+          corpse is theirs. The keyline exists because the chevron's one bad background is an ally's
           lifted rim; `paint-order: stroke` puts it outside the fill so the shape does not
           shrink to pay for it. It cannot be occluded: draw order is ascending `y`, so only an
           ally with a larger `y` paints later, and such an ally's head top sits at worst 29
@@ -677,8 +646,8 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
  * The fields are exactly what this component reads, and it is a closed list on purpose —
  * a field added to the render and forgotten here is a seat that stops updating, which
  * is silent. In render order: position and facing (the walk, via `advance`), `hp`/`hpMax`
- * (the flash, the corpse, the bar), `deaths` and `respawnAtTick` (the fall, the revive,
- * the arc), `lastShotTick`, `chargedShot` and `superShot` (the recoil and the loose),
+ * (the flash, the corpse, the bar), `deaths` (the fall), `lastShotTick`, `chargedShot`
+ * and `superShot` (the recoil and the loose),
  * `skinId` (the sprite and its rim). The aim bits of `classAim` are not read here and change every
  * tick, so they are not compared.
  *
@@ -686,9 +655,8 @@ function KnightBody({ slot, tick, mine = false, reduced = false }: KnightProps) 
  * folded nothing: the fold stays driven by `seen.current !== slot` and stays correct
  * against whichever snapshot was last *rendered*.
  *
- * `tick` is the one prop that is not a seat fact. Only the respawn arc reads it, so it is
- * a difference only while this seat is dead — otherwise every `Arena` write (half the
- * feed) would re-render all twenty seats to redraw nothing.
+ * Nothing here reads `arena.tick` — the respawn arc that did is gone with the respawn —
+ * so an `Arena` write (half the feed) re-renders no seat at all.
  */
 function sameSeat(a: KnightProps, b: KnightProps): boolean {
   const p = a.slot;
@@ -702,12 +670,10 @@ function sameSeat(a: KnightProps, b: KnightProps): boolean {
     p.hp === n.hp &&
     p.hpMax === n.hpMax &&
     p.deaths === n.deaths &&
-    p.respawnAtTick === n.respawnAtTick &&
     p.lastShotTick === n.lastShotTick &&
     p.chargedShot === n.chargedShot &&
     p.superShot === n.superShot &&
-    p.skinId === n.skinId &&
-    (a.tick === b.tick || (p.hp > 0 && n.hp > 0))
+    p.skinId === n.skinId
   );
 }
 
@@ -725,7 +691,7 @@ export const Knight = memo(KnightBody, sameSeat);
 //
 // `advance` is the whole animation contract and every one of its failure modes is silent:
 // a walk driven by anything but displacement moonwalks, a missing snap guard spins the
-// legs across a respawn, a facing table that mirrors the wrong side draws half the raid
+// legs across a teleport, a facing table that mirrors the wrong side draws half the raid
 // aiming away from the boss, and an event that fires on a duplicate notification fires
 // twice a second forever. Dev-only.
 // ---------------------------------------------------------------------------
@@ -760,16 +726,16 @@ if (import.meta.env.DEV) {
       ...o,
     }) as PlayerSlot;
 
-  const st = initialWalk(slot({}), 0);
+  const st = initialWalk(slot({}));
 
   // A duplicate delivery is byte-identical, so it diffs to nothing. This is the whole
   // duplicate-proofing: no counter, no latch, no bookkeeping.
-  advance(st, slot({}), 0);
-  advance(st, slot({}), 0);
+  advance(st, slot({}));
+  advance(st, slot({}));
   ok(st.d === 0 && st.shots === 0 && st.hurts === 0, 'a duplicate snapshot advances nothing');
 
   // One tile stepped is one walk frame, and the cycle is contact / pass / contact / pass.
-  advance(st, slot({ x: 100 + MAP_TILE }), 0);
+  advance(st, slot({ x: 100 + MAP_TILE }));
   ok(st.d === MAP_TILE, 'one accepted move is one tile of stride');
   ok(walkPose(0) === 'walk0' && walkPose(2 * MAP_TILE) === 'walk2', 'the contacts');
   ok(walkPose(MAP_TILE) === 'walk1' && walkPose(3 * MAP_TILE) === 'walk3', 'the passes');
@@ -781,17 +747,18 @@ if (import.meta.env.DEV) {
   // must nevertheless read as standing, or the idle breathe is cancelled for the life of
   // the seat. Getting this wrong the other way — a `stepped` that never becomes true —
   // leaves twenty infinite animations running under the walk, which is worse.
-  advance(st, slot({ x: 100 + MAP_TILE }), 0);
+  advance(st, slot({ x: 100 + MAP_TILE }));
   ok(st.d === MAP_TILE && !st.stepped, 'a fold that moves nothing reads as standing');
 
-  // A respawn is a teleport of hundreds of units. Accumulating it would spin the legs.
-  advance(st, slot({ x: 900, y: 900 }), 0);
+  // A reconcile across a stall is a teleport of hundreds of units. Accumulating it would
+  // spin the legs.
+  advance(st, slot({ x: 900, y: 900 }));
   ok(st.d === 0, 'a teleport resets the stride instead of adding to it');
   ok(!st.stepped, 'a teleport is not locomotion');
 
   // Facing is stored verbatim and every client draws the same seat the same way; the
   // western half of the compass is the eastern half mirrored, and N and S never mirror.
-  advance(st, slot({ x: 900, y: 900, facing: 6 }), 0);
+  advance(st, slot({ x: 900, y: 900, facing: 6 }));
   ok(st.facing === 6, 'facing is the byte');
   ok(dirOf(0).dir === 'n' && !dirOf(0).flip && dirOf(4).dir === 's' && !dirOf(4).flip, 'the poles');
   ok(dirOf(2).dir === 'e' && !dirOf(2).flip && dirOf(6).dir === 'e' && dirOf(6).flip, 'west is east mirrored');
@@ -799,17 +766,16 @@ if (import.meta.env.DEV) {
   ok(dirOf(3).dir === 'se' && dirOf(5).dir === 'se' && dirOf(5).flip, 'south-west is south-east mirrored');
   ok(dirOf(200).dir === 'n', 'a byte the table does not hold degrades to north');
 
-  // hp decreasing is the hit; `deaths` incrementing is the death; hp leaving zero is the
-  // respawn. All three are diffs, none is a flag on chain.
-  advance(st, slot({ x: 900, y: 900, facing: 2, hp: 60 }), 5);
+  // hp decreasing is the hit; `deaths` incrementing is the death. Both are diffs, neither
+  // is a flag on chain, and a byte-identical corpse falls once.
+  advance(st, slot({ x: 900, y: 900, facing: 2, hp: 60 }));
   ok(st.hurts === 1, 'a hp decrease is one flash');
-  advance(st, slot({ x: 900, y: 900, facing: 2, hp: 0, deaths: 1 }), 7);
-  ok(st.falls === 1 && st.deathTick === 7, 'the death event stamps its own tick');
-  advance(st, slot({ x: 900, y: 900, facing: 2, hp: 100, deaths: 1 }), 9);
-  ok(st.revives === 1, 'hp leaving zero is the respawn');
+  advance(st, slot({ x: 900, y: 900, facing: 2, hp: 0, deaths: 1 }));
+  advance(st, slot({ x: 900, y: 900, facing: 2, hp: 0, deaths: 1 }));
+  ok(st.falls === 1, 'the death event is the deaths counter, once');
 
-  advance(st, slot({ x: 900, y: 900, facing: 2, lastShotTick: 12 }), 12);
-  advance(st, slot({ x: 900, y: 900, facing: 2, lastShotTick: 12 }), 12);
+  advance(st, slot({ x: 900, y: 900, facing: 2, lastShotTick: 12 }));
+  advance(st, slot({ x: 900, y: 900, facing: 2, lastShotTick: 12 }));
   ok(st.shots === 1, 'a repeated last_shot_tick recoils once');
 
   // An out-of-range `skin_id` is reachable: the program stores the byte verbatim and only
@@ -840,24 +806,23 @@ if (import.meta.env.DEV) {
   // The memo comparison. Every failure mode here is silent in exactly one of two
   // directions: a field left out is a seat that stops updating, a field wrongly included
   // is the twenty-seat re-render this exists to remove, coming straight back.
-  const props = (o: Partial<PlayerSlot>, tick = 0): KnightProps => ({ slot: slot(o), tick });
+  const props = (o: Partial<PlayerSlot>): KnightProps => ({ slot: slot(o) });
   const base = props({});
   ok(sameSeat(base, props({})), 'a byte-identical seat is skipped');
   ok(!sameSeat(base, props({ x: 100 + MAP_TILE })), 'a step renders');
   ok(!sameSeat(base, props({ facing: 6 })), 'a turn renders');
   ok(!sameSeat(base, props({ hp: 60 })), 'a hit renders');
   ok(!sameSeat(base, props({ hp: 0, deaths: 1 })), 'a death renders');
-  ok(!sameSeat(base, props({ respawnAtTick: 30 })), 'a respawn window renders');
   ok(!sameSeat(base, props({ lastShotTick: 12 })), 'a shot renders');
   ok(!sameSeat(base, props({ chargedShot: true })), 'a charged loose renders');
   ok(!sameSeat(base, props({ superShot: true })), 'a super loose renders');
   ok(!sameSeat(base, props({ skinId: 2 })), 'a re-skin renders');
   ok(!sameSeat(base, { ...base, mine: true }), 'the local cues render');
-  // The two rows the whole fix rests on. An `Arena` write is half the feed and moves
-  // `tick` alone; the aim bits move with every one of them and nothing here draws them.
-  ok(sameSeat(base, props({ classAim: 0x3f }, 9)), 'aim and tick alone are skipped');
+  // The rows the whole fix rests on: the aim bits move with every `Arena` write and
+  // nothing here draws them, and a corpse is a corpse — `respawnAtTick` is unread.
+  ok(sameSeat(base, props({ classAim: 0x3f })), 'aim alone is skipped');
   ok(
-    !sameSeat(props({ hp: 0, deaths: 1, respawnAtTick: 30 }), props({ hp: 0, deaths: 1, respawnAtTick: 30 }, 9)),
-    'a dead seat still follows the tick, or its respawn arc freezes',
+    sameSeat(props({ hp: 0, deaths: 1 }), props({ hp: 0, deaths: 1, respawnAtTick: 30 })),
+    'a dead seat with nothing else changed is skipped',
   );
 }

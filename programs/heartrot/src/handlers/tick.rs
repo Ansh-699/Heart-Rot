@@ -39,8 +39,8 @@
 //!    a clock that only ran while `FIGHTING` would freeze in `PHASE_ROLLING` — the timeout
 //!    would never fire and a VRF outage would wedge the arena there for good.
 //!
-//! Order of operations is the spec's, with one deliberate swap noted at the respawn
-//! pass. Damage *to* the boss is not here — that is `shoot`, a player transaction.
+//! Order of operations is the spec's. Damage *to* the boss is not here — that is
+//! `shoot`, a player transaction.
 //!
 //! Everything is integer. The client re-runs this exact arithmetic locally to render
 //! 10 Hz of chain state as 60 fps of bullet hell, so a single float — or a single
@@ -94,8 +94,8 @@ use crate::state::{
 const TILE: i32 = map::TILE as i32;
 const ARENA_SIZE: i32 = (map::MAP_TILES as i32) * TILE;
 
-/// Seats fan out along the wall their door is set into, so five simultaneous respawns
-/// at one door are five visible knights rather than one. 24 units is 1½ tiles, and the
+/// Seats fan out along the wall their door is set into, so five seats entering through
+/// one door are five visible knights rather than one. 24 units is 1½ tiles, and the
 /// widest rank is ±2 — ±48 units, three tiles either side of the `E`.
 const ENTRANCE_SPACING: i32 = 24;
 
@@ -114,7 +114,7 @@ const ENTRANCE_SPACING: i32 = 24;
 /// `packages/client/src/map.ts`'s `isWall`: negatives are wall *before* the divide, so
 /// truncation direction can never matter.
 ///
-/// `const` because the respawn assertion below runs it at compile time on all twenty
+/// `const` because the entrance assertion below runs it at compile time on all twenty
 /// seats. One function, both uses — a second copy of this test is precisely the kind of
 /// duplicate that drifts.
 #[inline]
@@ -163,11 +163,6 @@ const PLAYER_HIT_RADIUS: i32 = 12;
 // off `arena.raid_size` once per tick beside the vent threshold they were tuned against.
 // The flat 8 / 45 that used to sit here are those curves' full-raid endpoints: twenty
 // raiders take exactly the hits they always took, one takes a quarter and a third.
-
-/// Death lasts 3.2 s — 32 ticks at [`crate::state::TICK_MS`]. Counted in ticks, never
-/// milliseconds: the crank makes no wall-clock promise and a millisecond timer would run
-/// at a different speed on a slower validator.
-const RESPAWN_TICKS: u32 = crate::state::ticks_for(3_200);
 
 /// `bullets_per_volley = 1 + alive_players` (one more while furious, below) — difficulty
 /// as bullet density, so twenty players make a visibly harder fight rather than a boss
@@ -484,7 +479,7 @@ struct Target {
 /// The clock advances first, unconditionally, and that ordering is load-bearing — see
 /// point 4 of the module docs. Saturating, not wrapping: at `u32::MAX` the clock stops and
 /// the client's watchdog settles the match, where wrapping would rewind every rate limiter
-/// and every respawn deadline at once. (A match is ~900 ticks; this is a guard, not a
+/// and the enrage deadline at once. (A match is ~900 ticks; this is a guard, not a
 /// scenario.)
 ///
 /// `abandon_roll` is total and self-gating: it checks the phase and the deadline itself,
@@ -645,16 +640,15 @@ pub(crate) fn beam_at(affix_seed: &[u8; 32], tick: u32) -> Beam {
 /// Land `damage` on the live target at `live[i]`, and do the one and only death
 /// bookkeeping this program has.
 ///
-/// Four things happen to a seat that dies and all four have to happen together:
-/// `respawn_at_tick` is the only death *state* (aliveness is derived from `hp`, so there
-/// is no flag to fall out of sync), `deaths` is the only death *record* and the only
-/// trace a wipe-heavy raid leaves once `survived` has been sampled, `pending_respawns`
-/// is what stops the wipe check reading a scheduled comeback as a corpse, and the
-/// swap-remove is what stops anything else in this tick hitting a body.
+/// Death is final for the raid. Aliveness is derived from `hp`, so there is no flag to
+/// fall out of sync; `deaths` is the only death *record* and the only trace a wipe-heavy
+/// raid leaves once `survived` has been sampled; and the swap-remove is what stops
+/// anything else in this tick hitting a body. `respawn_at_tick` is written to 0 — the
+/// "not scheduled" value — so no reader, on chain or off, sees a comeback stamped.
 ///
-/// It is a function because there are now two damage sources. A slam that stamped three
-/// of the four would be a death the win/wipe check cannot see: the raid keeps
-/// `alive_count` it does not have, or settles as a wipe with a player still coming back.
+/// It is a function because there are two damage sources. A slam that stamped some of
+/// this would be a death the win/wipe check cannot see: the raid keeps `alive_count` it
+/// does not have.
 ///
 /// Returns `true` when the seat died — which is also when `live[i]` now holds a
 /// *different* seat and the caller must not advance `i`.
@@ -663,9 +657,7 @@ fn damage_seat(
     players: &mut Players,
     live: &mut [Target; MAX_SEATS],
     live_n: &mut usize,
-    pending_respawns: &mut u32,
     i: usize,
-    tick: u32,
     damage: u16,
 ) -> bool {
     // `get_mut`, not `[]`, on the one indexed read left in the handler. `live` is filled
@@ -682,12 +674,8 @@ fn damage_seat(
         return false;
     }
     // Saturating: a raid that has died 65,535 times has stopped caring about the count.
-    slot.respawn_at_tick = tick.saturating_add(RESPAWN_TICKS);
+    slot.respawn_at_tick = 0;
     slot.deaths = slot.deaths.saturating_add(1);
-    // `tick >= 1` (heartbeat ran), so the deadline just stamped is non-zero and this seat
-    // is coming back. Counted here as well as in the respawn pass because a seat that
-    // dies *this* tick was alive when that pass ran.
-    *pending_respawns += 1;
     *live_n -= 1;
     live[i] = live[*live_n];
     true
@@ -701,8 +689,6 @@ fn strike_lane(
     players: &mut Players,
     live: &mut [Target; MAX_SEATS],
     live_n: &mut usize,
-    pending_respawns: &mut u32,
-    tick: u32,
     damage: u16,
 ) {
     let lo = lane * SLAM_LANE_W;
@@ -713,7 +699,7 @@ fn strike_lane(
         // otherwise the seat swapped into this slot never gets tested.
         if live[i].x >= lo
             && live[i].x < hi
-            && damage_seat(players, live, live_n, pending_respawns, i, tick, damage)
+            && damage_seat(players, live, live_n, i, damage)
         {
             continue;
         }
@@ -730,13 +716,10 @@ fn strike_lane(
 fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     let tick = arena.tick;
 
-    // ---- 1. respawns, and the live-target list ---------------------------
+    // ---- 1. the live-target list ------------------------------------------
     //
-    // Deliberate deviation from the spec's ordering, which respawns *after* collision:
-    // doing it here means one pass over the 1,924-byte `Players` account instead of
-    // two. The only behavioural difference is that a player who respawns on tick T is
-    // exposed to tick T's bullets — and they respawn at the entrance, roughly half the
-    // arena from the boss, so in practice there are none to be exposed to.
+    // One pass over the 1,924-byte `Players` account: who is in the arena, and who is
+    // still standing. Nothing revives here — death is final for the raid.
     let mut live = [Target {
         seat: 0,
         x: 0,
@@ -747,38 +730,18 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // all-zero, so `zone` alone separates "nobody has entered yet" from "everybody
     // died" without needing to look at `session_pubkey` or the occupancy bitmask.
     let mut arena_occupants = 0u32;
-    // Seats that are down *with a deadline still to come*. The wipe check below is
-    // "everybody is dead and nobody is coming back", not "everybody is dead right now":
-    // a solo raider stamps their own respawn on the tick they die, and counting that as
-    // a wipe made `RESPAWN_TICKS` unreachable below two occupants — one player alone died
-    // once and the match ended. A seat at 0 HP with `respawn_at_tick == 0` is *not*
-    // pending; that is the "not scheduled" value, and it is what still makes a real wipe
-    // fire. Enrage remains the bound on a fight that would otherwise respawn forever.
-    let mut pending_respawns = 0u32;
 
     for seat in 0..MAX_SEATS {
-        let slot = &mut players.slots[seat];
+        let slot = &players.slots[seat];
         if slot.zone != ZONE_ARENA {
             continue;
         }
         arena_occupants += 1;
 
+        // A corpse stays on the floor — it counts as an occupant, so a raid whose every
+        // seat is dead is a wipe and not "nobody here" — but it is never a target.
         if slot.hp == 0 {
-            // `respawn_at_tick == 0` means "not scheduled" — a seat that entered the
-            // arena at 0 HP through some path we did not anticipate stays down rather
-            // than resurrecting on tick 1.
-            if slot.respawn_at_tick != 0 && tick >= slot.respawn_at_tick {
-                slot.hp = slot.hp_max;
-                let (x, y) = entrance_for(seat);
-                slot.x = x;
-                slot.y = y;
-                slot.respawn_at_tick = 0;
-            } else {
-                if slot.respawn_at_tick != 0 {
-                    pending_respawns += 1;
-                }
-                continue;
-            }
+            continue;
         }
 
         live[live_n] = Target {
@@ -914,15 +877,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
             // Damage and, if it kills, the whole death record — stamped in one place so
             // the slam below cannot grow a second, subtly different definition of "died".
             // The swap-remove inside also shortens every remaining bullet's inner loop.
-            damage_seat(
-                players,
-                &mut live,
-                &mut live_n,
-                &mut pending_respawns,
-                i,
-                tick,
-                per_bullet,
-            );
+            damage_seat(players, &mut live, &mut live_n, i, per_bullet);
             // One bullet, one hit — it is spent either way, so stop scanning.
             break;
         }
@@ -962,15 +917,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // this tick is not killed twice, and before the alive count so the wipe check below
     // sees a slam death exactly as it sees a bullet death.
     if let Some(lane) = slam_lane(&arena.affix_seed, tick, boss) {
-        strike_lane(
-            lane,
-            players,
-            &mut live,
-            &mut live_n,
-            &mut pending_respawns,
-            tick,
-            per_slam,
-        );
+        strike_lane(lane, players, &mut live, &mut live_n, per_slam);
     }
 
     // ---- 4b. the beam -----------------------------------------------------
@@ -986,15 +933,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     if boss.is_phase2(arena.raid_size, arena.difficulty) {
         let beam = beam_at(&arena.affix_seed, tick);
         if beam.strikes {
-            strike_lane(
-                beam.lane,
-                players,
-                &mut live,
-                &mut live_n,
-                &mut pending_respawns,
-                tick,
-                per_slam,
-            );
+            strike_lane(beam.lane, players, &mut live, &mut live_n, per_slam);
         }
     }
 
@@ -1063,14 +1002,12 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // where the last point of core HP was removed by a transaction that then failed to
     // land its own write.
     //
-    // Wipe: every player who is *in* the arena is dead **and nobody is coming back**.
-    // `arena_occupants > 0` is what stops a match that has been armed but not yet entered
-    // from settling on tick 1 — there is no grace timer and no extra field, just the
-    // distinction between "nobody here" and "nobody left". `pending_respawns == 0` is the
-    // other half: a seat with a deadline still to come is not a corpse, and reading it as
-    // one is what made a solo raid unplayable — the lone occupant's death and the wipe
-    // landed on the same tick, so the respawn this handler had just stamped was never
-    // reached. Respawns are resolved in stage 1, above, so by here that count is current.
+    // Wipe: every player who is *in* the arena is dead. Death is final, so there is no
+    // "coming back" to wait for: the tick the last live raider falls on is the tick the
+    // raid ends. `arena_occupants > 0` is what stops a match that has been armed but not
+    // yet entered from settling on tick 1 — there is no grace timer and no extra field,
+    // just the distinction between "nobody here" and "nobody left". Corpses count as
+    // occupants, so twenty dead seats are a wipe and an empty arena is not.
     //
     // Enrage: the six-minute timeout, kept distinct from a wipe because "you ran out of
     // time" and "you all died" are different end screens and nothing else on chain
@@ -1085,7 +1022,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // nothing, and the win does not become an enrage one tick later.
     let outcome = if boss.core_hp == 0 {
         OUTCOME_WIN
-    } else if arena_occupants > 0 && live_n == 0 && pending_respawns == 0 {
+    } else if arena_occupants > 0 && live_n == 0 {
         OUTCOME_WIPE
     } else if arena.enrage_at_tick != 0 && tick >= arena.enrage_at_tick {
         OUTCOME_ENRAGE
@@ -1119,19 +1056,20 @@ const fn fans_along_x(ex: i16, ey: i16) -> bool {
     to_y_edge <= to_x_edge
 }
 
-/// Where seat `seat` comes back: at one of the map's drawn doors, fanned out along that
-/// door's wall so simultaneous respawns do not stack into one sprite. Clamped to the
-/// arena because a position outside it would be un-hittable and un-renderable.
+/// Where seat `seat` enters the arena: at one of the map's drawn doors, fanned out along
+/// that door's wall so seats arriving together do not stack into one sprite. Clamped to
+/// the arena because a position outside it would be un-hittable and un-renderable.
 ///
 /// The door is `map::ENTRANCES[seat % 4]` — the four `E` tiles `tools/gen_map.py`
-/// compiles out of the drawn grid — so the respawn point *is* the mark on the map
+/// compiles out of the drawn grid — so the entrance point *is* the mark on the map
 /// rather than a pair of constants that used to sit here describing the arena a second
-/// time. Round-robin, so twenty players come back through all four doors instead of
+/// time. Round-robin, so twenty players enter through all four doors instead of
 /// funnelling into one, and each door carries `20 / 4 = 5` ranks centred on the `E`.
 ///
-/// `pub(crate)` for `enter_gate`, which has to put a player through the gate at the same
-/// place a respawn puts them. Two definitions of "the entrance" is exactly the kind of
-/// duplication that drifts and then reads as a teleport bug.
+/// `pub(crate)` for `enter_gate`, its one caller; it lives here beside the compile-time
+/// wall check rather than in `player.rs` so that check and the map it reads stay in one
+/// file. Two definitions of "the entrance" is exactly the kind of duplication that drifts
+/// and then reads as a teleport bug.
 ///
 /// `const fn` so the assertion below can run it on every seat at compile time.
 pub(crate) const fn entrance_for(seat: usize) -> (i16, i16) {
@@ -1161,13 +1099,13 @@ const fn clamp_arena(v: i32) -> i32 {
     }
 }
 
-/// Every respawn point stands on floor in the generated map.
+/// Every entrance point stands on floor in the generated map.
 ///
 /// The doors themselves are `E` tiles and floor by construction, but the *fan* is not:
 /// a rank three tiles along the wall can still land in a pillar if the map is redrawn
 /// with one there. `tools/gen_map.py` proves the same points plus reachability to the
 /// heart chamber — but only when someone runs the tool. This fires on every
-/// `cargo check`, against the table that actually shipped. A respawn inside a wall is a
+/// `cargo check`, against the table that actually shipped. An entrance inside a wall is a
 /// player who cannot move in any direction for the rest of the match, and there is no
 /// runtime signal for it at all: they simply stop.
 const _: () = {
@@ -1176,7 +1114,7 @@ const _: () = {
         let (x, y) = entrance_for(seat);
         assert!(
             !wall_at(x as i32, y as i32),
-            "a respawn point lands in a wall in map::WALLS -- redraw assets/map/arena.json \
+            "an entrance point lands in a wall in map::WALLS -- redraw assets/map/arena.json \
              (move an `E`, or clear the tiles beside it) and re-run tools/gen_map.py",
         );
         seat += 1;
@@ -1297,7 +1235,7 @@ fn spawn_volley(
 /// |---|---|---|
 /// | 0 | `Arena` | writable — clock, bullet pool, phase |
 /// | 1 | `Boss` | writable — timer, aggro, vent |
-/// | 2 | `Players` | writable — health, respawns |
+/// | 2 | `Players` | writable — health, deaths |
 /// | 3 | `crank_signer` | read-only signer, `[b"crank-executor", crank_authority]` under `Crank111…` |
 ///
 /// Four metas plus two program ids: six keys against the ER's ~38-key ceiling. That
@@ -1658,10 +1596,10 @@ mod tests {
         }
     }
 
-    /// The damage → death → respawn cycle, and the wipe rule that has to distinguish
+    /// Damage → death, death is final, and the wipe rule that has to distinguish
     /// "everybody died" from "nobody has walked through the gate yet".
     #[test]
-    fn damage_kills_respawns_and_wipes() {
+    fn damage_kills_for_good_and_wipes() {
         let (mut arena, mut boss, mut players) = fight();
         // No thorns and no hands: the only bullets in this test are the ones it fires by
         // hand, so nothing the boss does can move the health it is asserting on.
@@ -1697,13 +1635,16 @@ mod tests {
         assert_eq!(arena.alive_count, 2);
 
         // Kill seat 3 outright. One seat down is not a wipe while seat 7 is standing, so
-        // the fight carries on and the death is a respawn deadline rather than an ending.
+        // the fight carries on — with seat 3 on the floor for the rest of it.
         players.slots[3].hp = bullet_damage(arena.raid_size, arena.difficulty);
         arena.bullets[1] = shot;
         let died_on = arena.tick + 1;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(players.slots[3].hp, 0);
-        assert_eq!(players.slots[3].respawn_at_tick, died_on + RESPAWN_TICKS);
+        assert_eq!(
+            players.slots[3].respawn_at_tick, 0,
+            "death schedules nothing"
+        );
         assert_eq!(arena.alive_count, 1);
         assert_eq!(
             players.slots[3].deaths, 1,
@@ -1712,30 +1653,32 @@ mod tests {
         assert_eq!(arena.phase, PHASE_FIGHTING, "one seat down is not a wipe");
         assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
 
-        // Let the respawn deadline pass: the seat comes back at full health, at its door.
-        while arena.tick < died_on + RESPAWN_TICKS {
+        // A hundred ticks later the corpse is still a corpse: same health, same spot,
+        // same death count, and it still stands in the occupant count — the fight is on
+        // because seat 7 is standing, not because seat 3 is coming back.
+        let (cx, cy) = (players.slots[3].x, players.slots[3].y);
+        while arena.tick < died_on + 100 {
             tick_once(&mut arena, &mut boss, &mut players);
+            assert_eq!(players.slots[3].hp, 0, "the dead stay dead");
         }
-        assert_eq!(players.slots[3].hp, 100);
         assert_eq!(players.slots[3].respawn_at_tick, 0);
-        assert_eq!((players.slots[3].x, players.slots[3].y), entrance_for(3));
-        assert_eq!(
-            players.slots[3].deaths, 1,
-            "coming back is not a second death"
-        );
+        assert_eq!((players.slots[3].x, players.slots[3].y), (cx, cy), "a corpse does not move");
+        assert_eq!(players.slots[3].zone, ZONE_ARENA, "a corpse keeps its seat in the arena");
+        assert_eq!(players.slots[3].deaths, 1, "and dies exactly once");
+        assert_eq!(arena.alive_count, 1);
+        assert_eq!(arena.phase, PHASE_FIGHTING);
 
-        // Now everyone in the arena is down with nothing scheduled. That, and only that,
-        // is a wipe — and it is a loss, distinguishable from a win forever after. (Set
-        // directly: the bullet → damage → death path is what the lines above test, and
-        // the wipe rule reads `hp` and `respawn_at_tick`, not how they got there.)
-        players.slots[3].hp = 0;
-        players.slots[3].respawn_at_tick = 0;
-        players.slots[7].hp = 0;
+        // Now the last live raider falls, by the same bullet path. That tick is the wipe
+        // — a loss, distinguishable from a win forever after.
+        seat_in_arena(&mut players, 7, px, py);
+        players.slots[7].hp = bullet_damage(arena.raid_size, arena.difficulty);
+        arena.bullets[2] = shot;
         tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(players.slots[7].hp, 0);
         assert_eq!(arena.alive_count, 0);
         assert_eq!(
             arena.phase, PHASE_SETTLING,
-            "every arena occupant dead is a wipe"
+            "the last live raider dying is the wipe, on that tick"
         );
         assert_eq!(arena.outcome, OUTCOME_WIPE, "and a wipe is not a win");
 
@@ -1746,12 +1689,11 @@ mod tests {
         assert_eq!(arena.outcome, OUTCOME_WIPE, "the outcome is written once");
     }
 
-    /// One player alone must be able to play the game. Their death and the "everybody is
-    /// dead" test land on the same tick, so reading that as a wipe made `RESPAWN_TICKS`
-    /// unreachable below two occupants: a solo raider died once and the match ended, with
-    /// the respawn deadline this handler had just stamped never read by anything.
+    /// A solo raider's death is the raid's death: the wipe lands on the tick they fall,
+    /// with no comeback to wait for. (This used to be the one case with a grace period —
+    /// a scheduled respawn — and that is gone by decision, not by accident.)
     #[test]
-    fn a_solo_raid_respawns_instead_of_wiping() {
+    fn a_solo_death_is_a_wipe_on_that_tick() {
         let (mut arena, mut boss, mut players) = fight();
         // No thorns: the only bullet in this test is the one it fires by hand.
         boss.parts = [0; N_PARTS];
@@ -1759,48 +1701,28 @@ mod tests {
         seat_in_arena(&mut players, 0, px, py);
         players.slots[0].hp = bullet_damage(1, TIER_EASY);
         arena.bullets[0] = shot;
-        let died_on = arena.tick + 1;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(players.slots[0].hp, 0);
-        assert_eq!(players.slots[0].respawn_at_tick, died_on + RESPAWN_TICKS);
+        assert_eq!(players.slots[0].respawn_at_tick, 0, "nothing is scheduled");
+        assert_eq!(players.slots[0].deaths, 1);
         assert_eq!(arena.alive_count, 0);
-        assert_eq!(
-            arena.phase, PHASE_FIGHTING,
-            "a pending respawn is not a wipe"
-        );
-        assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
+        assert_eq!(arena.phase, PHASE_SETTLING, "the lone raider's death is the wipe");
+        assert_eq!(arena.outcome, OUTCOME_WIPE);
 
-        // And the deadline is actually reached, which it never was before.
-        while arena.tick < died_on + RESPAWN_TICKS {
+        // The crank keeps firing after the fight; the corpse is untouched and the
+        // outcome is written once.
+        for _ in 0..10 {
             tick_once(&mut arena, &mut boss, &mut players);
-            assert_eq!(
-                arena.phase, PHASE_FIGHTING,
-                "the lone raider is still coming back"
-            );
         }
-        assert_eq!(
-            players.slots[0].hp, 100,
-            "one player alone respawns like anyone else"
-        );
-        assert_eq!(players.slots[0].respawn_at_tick, 0);
-        assert_eq!((players.slots[0].x, players.slots[0].y), entrance_for(0));
-        assert_eq!(arena.alive_count, 1);
+        assert_eq!(players.slots[0].hp, 0);
+        assert_eq!(players.slots[0].deaths, 1);
+        assert_eq!(arena.outcome, OUTCOME_WIPE);
 
-        // A seat that is down with *nothing* scheduled is still a wipe, solo or not.
-        players.slots[0].hp = 0;
-        tick_once(&mut arena, &mut boss, &mut players);
-        assert_eq!(arena.phase, PHASE_SETTLING);
-        assert_eq!(
-            arena.outcome, OUTCOME_WIPE,
-            "nobody coming back is still a loss"
-        );
-
-        // And enrage still ends a fight that would otherwise respawn forever.
+        // Enrage still ends a fight nobody has finished — and it outranks nothing here:
+        // with a live seat standing at the deadline, the clock is the only thing left.
         let (mut arena, mut boss, mut players) = fight();
         boss.parts = [0; N_PARTS];
         seat_in_arena(&mut players, 0, 400, 512);
-        players.slots[0].hp = 0;
-        players.slots[0].respawn_at_tick = u32::MAX;
         arena.tick = 899;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(
@@ -1876,7 +1798,6 @@ mod tests {
         // Seat 3 dies; aggro falls through to the one still standing rather than sticking
         // to a corpse.
         players.slots[3].hp = 0;
-        players.slots[3].respawn_at_tick = u32::MAX;
         tick_once(&mut arena, &mut boss, &mut players);
         assert_eq!(boss.target_seat, 7);
     }
@@ -2059,12 +1980,12 @@ mod tests {
         );
     }
 
-    /// Respawns are read out of the drawn map, not restated beside it. The compile-time
+    /// Entrances are read out of the drawn map, not restated beside it. The compile-time
     /// assertion already proves every point is floor; this proves it is floor *at a
     /// door* — every seat sits on one of the four `E` marks, all four doors are used,
     /// and the fan runs along the wall the door is set into rather than into it.
     #[test]
-    fn respawns_come_out_of_the_drawn_doors() {
+    fn entrances_come_out_of_the_drawn_doors() {
         const DOORS: usize = map::ENTRANCES.len();
         let mut used = [0usize; DOORS];
         let span = (ENTRANCE_SPACING * (MAX_SEATS / DOORS / 2) as i32) as i16;
@@ -2330,7 +2251,7 @@ mod tests {
 
     /// A slam death has to be indistinguishable from a bullet death to everything
     /// downstream, or the raid keeps an `alive_count` it does not have — or settles as a
-    /// wipe with a player still coming back.
+    /// wipe with a player still standing.
     #[test]
     fn a_slam_death_is_recorded_exactly_like_a_bullet_death() {
         let (mut arena, mut boss, mut players) = hands_only();
@@ -2360,15 +2281,14 @@ mod tests {
         assert_eq!(players.slots[9].hp, 100, "and on no other");
         assert_eq!(players.slots[5].hp, 0);
         assert_eq!(
-            players.slots[5].respawn_at_tick,
-            SLAM_PERIOD_TICKS + RESPAWN_TICKS,
-            "a slam death is a respawn deadline, like any other"
+            players.slots[5].respawn_at_tick, 0,
+            "a slam death schedules nothing, like any other"
         );
         assert_eq!(players.slots[5].deaths, 1, "and it is counted");
         assert_eq!(arena.alive_count, 2, "and the corpse left the live list");
         assert_eq!(
             arena.phase, PHASE_FIGHTING,
-            "a scheduled comeback is not a wipe"
+            "two raiders still standing is not a wipe"
         );
 
         // Two slams do not quite kill a full-health raider; that is the whole point of
@@ -2553,8 +2473,8 @@ mod tests {
 
     /// Twenty seats in one lane at one slam of health each, all dying on the same strike:
     /// the swap-remove loop is the one place a wrong index would panic, and a panic here
-    /// burns a crank strike. Every seat dies once, none twice, and twenty scheduled
-    /// comebacks are not a wipe.
+    /// burns a crank strike. Every seat dies once, none twice, and twenty corpses are a
+    /// wipe on the tick they fall.
     #[test]
     fn a_whole_raid_can_die_to_one_lane_step() {
         let (mut arena, mut boss, mut players) = core_only(MAX_SEATS as u16, true);
@@ -2572,19 +2492,13 @@ mod tests {
         for seat in 0..MAX_SEATS {
             assert_eq!(players.slots[seat].hp, 0, "seat {seat} survived the lane");
             assert_eq!(players.slots[seat].deaths, 1, "seat {seat} died once");
-            assert_eq!(players.slots[seat].respawn_at_tick, strike + RESPAWN_TICKS);
+            assert_eq!(players.slots[seat].respawn_at_tick, 0);
+            assert_eq!(players.slots[seat].zone, ZONE_ARENA, "seat {seat} keeps its seat");
         }
         assert_eq!(arena.alive_count, 0);
-        assert_eq!(
-            arena.phase, PHASE_FIGHTING,
-            "twenty scheduled comebacks are not a wipe"
-        );
-        // The next lane step finds an empty floor and touches nothing.
-        while arena.tick < strike + BEAM_LANE_TICKS {
-            tick_once(&mut arena, &mut boss, &mut players);
-        }
-        assert_eq!(arena.phase, PHASE_FIGHTING);
-        assert!(players.slots.iter().all(|s| s.deaths <= 1), "nobody died twice");
+        assert_eq!(arena.tick, strike, "the wipe lands on the strike's own tick");
+        assert_eq!(arena.phase, PHASE_SETTLING, "twenty corpses are a wipe");
+        assert_eq!(arena.outcome, OUTCOME_WIPE);
     }
 
     /// Incoming damage is the third raid-size knob: one raider takes the solo endpoint

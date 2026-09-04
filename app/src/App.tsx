@@ -470,7 +470,7 @@ function World({
       {/* `predictor` is what lets the renderer draw the local seat from prediction instead
           of from `useSeatInterpolation`. Interpolation lerps between *authoritative*
           snapshots, and once the boss activates `boss_tick` rewrites `Players` every 100 ms
-          for collisions and respawns — most of those carry no position change — so the
+          for collisions — most of those carry no position change — so the
           local seat lerps P→P, holds, then jumps when a real move lands. Prediction is
           driven by input and cannot be re-anchored by a crank write. Remote seats keep
           interpolating; they have no input to predict from.
@@ -590,14 +590,26 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
       surface: host,
       // Read live rather than captured: the gates mirror `arena.tick`, and a stale clock
       // here would rate-limit against a tick that passed seconds ago. `alive` stops a
-      // downed player spending the whole respawn window sending shots the chain answers
-      // with PlayerDead.
+      // downed player spending the rest of the raid sending shots the chain answers
+      // with PlayerDead — a death is final, there is no respawn.
       clock: () => {
-        const { arena } = store.getState();
+        const { arena, tickAt, match } = store.getState();
+        const tickMs = match?.tickMs ?? 100;
         const slot = mySeatSlot(store.getState());
+        // The tick as the chain most likely has it NOW, not as of the last notification:
+        // the crank runs every `tickMs` whether or not the feed has said so, and the
+        // notification that carried this tick took at least one tick to arrive. Pacing a
+        // shot against the stale view spent that lag again on every arrow (measured: 766 ms
+        // between sends against a 400 ms gate). One tick of credit and no more: with
+        // `SHOT_MARGIN_TICKS` the view may run a tick ahead of the chain and a shot still
+        // lands past the cooldown; two ahead and it would not. Capped, so a stalled feed
+        // cannot run the clock ahead by more than a few ticks — a refused shot at worst.
+        const ahead = arena
+          ? Math.min(5, Math.floor((performance.now() - tickAt + NOTIFY_LAG_MS) / tickMs))
+          : 0;
         return {
           phase: arena?.phase ?? PHASE_LOBBY,
-          tick: arena?.tick ?? 0,
+          tick: (arena?.tick ?? 0) + ahead,
           alive: slot === null || slot.hp > 0,
           // `shoot.rs` refuses outside the pit as hard as it refuses outside `FIGHTING`
           // (spec §6.1). Without this a seat that never crossed the gate sends a doomed
@@ -831,6 +843,9 @@ type Link = {
  * lobby↔arena transition must not tear it down, because the measured reconnect outage is
  * ~1.7 s and in a bullet-hell fight that is a death and a visible teleport.
  */
+/** The least a notification takes to come back: one tick, the credit the pump's clock gives itself. */
+const NOTIFY_LAG_MS = 100;
+
 /** How long the roster may lack our own seat before the accounts are re-read, and after how many re-reads the seat is re-claimed instead. */
 const SEAT_SEEN_MS = 3_000;
 const SEAT_SEEN_TRIES = 4;
@@ -908,9 +923,9 @@ function useMatchLink(onFeedDrop: () => void): Link {
           rpc: er,
           ...accounts,
           owner: addr(match.programId),
-          onArena: (arena) => {
+          onArena: (arena, tickAt) => {
             if (cancelled) return;
-            store.setWorld({ arena, from: match.arenaPda });
+            store.setWorld({ arena, tickAt, from: match.arenaPda });
           },
           onBoss: (boss) => {
             if (cancelled) return;

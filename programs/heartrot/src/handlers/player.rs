@@ -25,12 +25,12 @@
 //!    death count.
 //! 2. **Entered** by `enter_gate` (tag 5), once: `ZONE_LOBBY → ZONE_ARENA` is one-way and
 //!    the reverse call is refused, which is what bounds `arena.alive_count`.
-//! 3. **Killed and respawned** by `boss_tick`, which owns `hp`, `deaths` and
-//!    `respawn_at_tick`. A death does **not** release the seat: the design's death is a
-//!    3-second timer, not permadeath (`00-game-design-spec.md` §3), so the session key,
-//!    the identity and the accumulated `damage_dealt` all survive it — and must, or a
-//!    respawning player would lose their leaderboard row mid-fight. Nothing in this file
-//!    frees a seat; there is no unclaim instruction, by design.
+//! 3. **Killed** by `boss_tick`, which owns `hp` and `deaths`. Death is final for the
+//!    raid — there is no revive — but it does **not** release the seat: the corpse stays
+//!    in the arena at 0 HP, so the session key, the identity and the accumulated
+//!    `damage_dealt` all survive it and the player gets the verdict like everyone else.
+//!    A dead player may still `leave_seat`. Nothing else in this file frees a seat;
+//!    there is no unclaim instruction, by design.
 //! 4. **Cleared** by `init::next_incarnation` (tag 15) through
 //!    [`Players::reset_for_incarnation`], which zeroes all twenty slots on the base layer.
 //!    That is the only thing that ever unclaims a seat, and it unclaims all of them at
@@ -99,9 +99,8 @@ pub const MAP_MAX_XY: i16 = (MAP_TILES as i16) * TILE - 1;
 /// never stack on one pixel and the client can render a join without waiting for the
 /// next crank tick to separate them.
 ///
-/// The *arena* entrance is deliberately not here: `tick::entrance_for` owns it, because
-/// that is where `boss_tick` returns a dead player, and walking through the gate has to
-/// land in the same place a respawn does.
+/// The *arena* entrance is deliberately not here: `tick::entrance_for` owns it, beside
+/// the compile-time check that every entrance point is floor in the generated map.
 const LOBBY_ENTRANCE: (i16, i16) = (28 * TILE, 52 * TILE);
 const LOBBY_SPACING: i16 = 24;
 
@@ -179,11 +178,12 @@ pub fn lobby_spawn(seat: u8) -> (i16, i16) {
 /// is zero here until someone deliberately names it.
 ///
 /// It is also exactly what [`Players::reset_for_incarnation`] does to all twenty seats, so a
-/// seat claimed after a respawn and a seat claimed on a fresh arena are the same bytes.
+/// seat claimed after a new incarnation and a seat claimed on a fresh arena are the same
+/// bytes.
 ///
 /// Every field left implicit is correct at zero: `facing` 0 is north, `last_move_seq` 0 is
-/// "no input yet", `respawn_at_tick` 0 is "not scheduled" (the value `tick::step` reads as
-/// unarmed), `damage_dealt` and `deaths` start a leaderboard row at nothing, and both
+/// "no input yet", `respawn_at_tick` is reserved and always 0, `damage_dealt` and
+/// `deaths` start a leaderboard row at nothing, and both
 /// rate-limit stamps start at 0 — legal under the `!=` rule in [`move_clock`], which can
 /// only collide in the one slot/tick where the clock also reads 0.
 fn claim_seat(
@@ -450,7 +450,7 @@ fn move_clock(arena: &Arena) -> Result<u32, ProgramError> {
     // raid itself felt like wading.
     //
     // Raising the crank instead would have worked and cost far more: every tick-denominated
-    // constant in the simulation (bullet velocity, RESPAWN_TICKS, the enrage deadline,
+    // constant in the simulation (bullet velocity, the volley interval, the enrage deadline,
     // the shot cooldown) is expressed in ticks and would have to be rescaled together,
     // and the validator would do 4-8x the work to produce a purely visual result that
     // interpolation already provides. The boss simulation is genuinely happy at 400 ms;
@@ -810,8 +810,8 @@ pub fn move_player(
         .ok_or(HeartrotError::SeatOutOfRange)?;
     assert_session_authority(slot, authority_ai)?;
 
-    // A dead player is `boss_tick`'s to move: it owns `respawn_at_tick` and the
-    // return to the entrance.
+    // Death is final for the raid: a corpse stays where it fell until the raid settles
+    // or the player leaves the seat.
     if slot.hp == 0 {
         return Err(HeartrotError::PlayerDead.into());
     }
@@ -929,7 +929,7 @@ pub fn leave_seat(program_id: &Address, accounts: &mut [AccountView], data: &[u8
 /// crank woke left the count at 1 over an empty pit, and [`locked_tier`] read that as a
 /// raid on HARD: every next raider refused `WrongGate` on the other two gates, and
 /// `begin_muster` refused `NoRaiders` on the one they were allowed. A seat the tick has
-/// already dropped (`hp == 0`, waiting to respawn) is not subtracted twice; mid-fight the
+/// already dropped (`hp == 0`, dead for the raid) is not subtracted twice; mid-fight the
 /// recount lands within one tick either way, so this only has to agree with it.
 fn release_seat(arena: &mut Arena, slot: &mut PlayerSlot, seat: u8) {
     if slot.zone == ZONE_ARENA && slot.hp != 0 {
@@ -1716,7 +1716,7 @@ mod tests {
     /// The boss's body is a barrier and nothing else is: a raider walks up to the feet
     /// line and along it, is refused the step into the creature, and is refused it from
     /// beside the body too. Every place the program puts a raider -- the four doors and all
-    /// twenty respawn ranks -- is outside it, or that seat would be born inside the boss
+    /// twenty entrance ranks -- is outside it, or that seat would be born inside the boss
     /// and governed by walls alone until it walked out.
     ///
     /// The body's extent is the folded hitbox table and the boss stands at `BOSS_SPAWN`,
@@ -1760,7 +1760,7 @@ mod tests {
         }
         for seat in 0..MAX_SEATS {
             let (x, y) = crate::handlers::tick::entrance_for(seat);
-            assert!(standable(ZONE_ARENA, x, y), "seat {seat} respawns at ({x}, {y}), inside the boss or off the dais");
+            assert!(standable(ZONE_ARENA, x, y), "seat {seat} enters at ({x}, {y}), inside the boss or off the dais");
         }
     }
 

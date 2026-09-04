@@ -170,7 +170,7 @@ export interface Predictor {
    *
    * **This is the local seat's render source.** `useSeatInterpolation` is for everybody
    * else: it lerps between *authoritative* snapshots, and once the boss activates
-   * `boss_tick` rewrites `Players` every 100 ms for collisions and respawns — most of
+   * `boss_tick` rewrites `Players` every 100 ms for collisions — most of
    * those carrying no position change — so a seat driven from it holds, holds, holds and
    * jumps. Prediction is driven by input and no chain write can re-anchor it.
    *
@@ -234,8 +234,8 @@ export function createPredictor(): Predictor {
     },
 
     push(dir, now = performance.now()): number | null {
-      // A dead player's position belongs to `boss_tick` — it owns `respawn_at_tick` and
-      // the return to the entrance — and `move_player` rejects them outright.
+      // A dead player stays where it fell for the rest of the raid, and `move_player`
+      // rejects them outright.
       if (authoritative === null || authoritative.hp === 0) return null;
 
       const next = stepFrom(self.x, self.y, dir, authoritative.zone);
@@ -325,7 +325,7 @@ const MIN_SPAN_MS = 16;
  * hold one global `{previous, next, at}` and re-anchor every seat whenever any `Players`
  * write arrived. Two measured consequences, both only in a fight:
  *
- *   - `boss_tick` rewrites `Players` every 100 ms for bullet collisions and respawns and
+ *   - `boss_tick` rewrites `Players` every 100 ms for bullet collisions and
  *     the ER notifies a written account whether or not its bytes changed. Measured on
  *     devnet: 0% of lobby notifications carry no position change, 39.8% of fight ones do
  *     on the ER socket and 68.4% on the router the client actually opens. Each of those
@@ -398,9 +398,9 @@ function retarget(track: SeatTrack, to: PlayerSlot, now: number, ceiling: number
  * Distance past which a position change is a teleport, not a walk.
  *
  * `move_player` advances one `MOVE_STEP` — at most one tile — per accepted input, so any
- * larger jump is `boss_tick` returning a dead player to an entrance. Lerping a respawn
- * draws a corpse sliding diagonally through the dungeon for a full tick; four tiles is
- * comfortably above any real step and far below the shortest respawn.
+ * larger jump is a re-anchor across a feed stall or a room change. Lerping one draws a
+ * body sliding diagonally through the dungeon for a full tick; four tiles is comfortably
+ * above any real step and far below any such jump.
  */
 const SNAP_DISTANCE = 4 * TILE;
 
@@ -759,8 +759,8 @@ if (import.meta.env.DEV) {
   foldTracks(fresh, [slot({ seat: 3, x: 100 + TILE, y: 100, occupied: true, zone: 1 })], 50, TICK_MS);
   ok(fresh.get(3)?.span === 50, 'a second fold retargets the existing track');
 
-  // A respawn crosses the map in one update. Lerping it walks a corpse through walls.
+  // A re-anchor crosses the map in one update. Lerping it walks a body through walls.
   ok(!teleported(here, step), 'one step is a walk');
-  ok(teleported(here, slot({ x: 900, y: 900, occupied: true, zone: 1 })), 'a respawn snaps');
+  ok(teleported(here, slot({ x: 900, y: 900, occupied: true, zone: 1 })), 'a re-anchor snaps');
   ok(teleported(here, slot({ x: 100, y: 100, occupied: true, zone: 0 })), 'a zone change snaps');
 }

@@ -95,6 +95,7 @@ import {
   type PlayerSlot,
   type PlayersAccount,
   type ShotTier,
+  SUPER_MS,
 } from '@heartrot/client';
 
 import { hitStop, shake } from './Arena';
@@ -117,10 +118,14 @@ import type { Room } from './viewport';
  * it — an arrow still in the air when its own damage number appears is the one ordering a
  * player can actually notice.
  */
-const ARROW_UNITS_PER_SEC = 2200;
+const ARROW_UNITS_PER_SEC = 2600;
 
-/** How long the impact spark lives after the arrow arrives. */
-const STICK_FADE_MS = 400;
+/**
+ * How long the impact spark lives after the arrow arrives. 120, not 400: the archer's
+ * period is 400 ms now, and flight plus this must fit inside the SHORTEST period for the
+ * one-node-per-seat pool below to hold.
+ */
+const STICK_FADE_MS = 120;
 
 /**
  * Flight time ceiling, and the reason the pool needs no management.
@@ -133,14 +138,15 @@ const STICK_FADE_MS = 400;
  *
  * It does not bind on a shot that matters: over every pit stand on the painted map (764
  * tiles at a 4-unit pitch, 12,224 stands x 64 angles, full shell at `BOSS_SPAWN`) the
- * longest terminus that STRIKES the creature is 583 units — 265 ms at
- * {@link ARROW_UNITS_PER_SEC}, against the 400 ms below. A miss can fly further (954 units,
+ * longest terminus that STRIKES the creature is 583 units — 224 ms at
+ * {@link ARROW_UNITS_PER_SEC}, against the 280 ms below (the archer's 400 ms period, the
+ * shortest, less the stick). A miss can fly further (954 units,
  * the length of the pit) and is clamped to the ceiling, which is harmless: only a strike
  * has a damage number to arrive before. The dev check confirms the headroom is still there,
  * so a speed change that starts clamping real shots is reported rather than silently making
  * every long shot look slow.
  */
-const ARROW_MAX_MS = CLASS_PERIOD_MS[0]! - STICK_FADE_MS;
+const ARROW_MAX_MS = Math.min(...CLASS_PERIOD_MS) - STICK_FADE_MS;
 
 /** The loose flash at the bow, at the moment of input. */
 const MUZZLE_MS = 110;
@@ -1014,7 +1020,7 @@ if (import.meta.env.DEV) {
     (WORST_RANGE / ARROW_UNITS_PER_SEC) * 1000 < ARROW_MAX_MS,
     'the longest real shot is being clamped — it will look slow, and 2200 u/s is derived',
   );
-  ok(CLASS_PERIOD_MS[0]! <= CLASS_PERIOD_MS[1]!, 'the knight is the shortest cooldown');
+  ok(ARROW_MAX_MS === Math.min(...CLASS_PERIOD_MS) - STICK_FADE_MS, 'the ceiling is the shortest period, whichever class holds it');
   ok(LOB_FRACTION < 0.5, 'a lob past half the range stalls the tangent on a vertical shot');
 
   // The cut under the projectile cap keeps the local seat and drops the OLDEST. A shot the
@@ -1047,5 +1053,7 @@ if (import.meta.env.DEV) {
   ok(on[0] === 4 && on[1] === 0, 'a strike beside the beam is drawn on the beam');
   ok(onBeam(0, 0, 10, 0, -5, 2)[0] === 0 && onBeam(0, 0, 10, 0, 25, 2)[0] === 10, 'a strike clamps to the ends');
   ok(onBeam(3, 3, 3, 3, 9, 9)[0] === 3, 'a zero-length beam strikes at the bow');
-  ok(BEAM_MS < CLASS_PERIOD_MS[0]!, "a beam outlives the cooldown — the seat's two lines cannot be one pair");
+  // Two beams from one seat are a full super hold apart, never a mere cooldown: the hold
+  // is the floor, and the beam must be gone before the next one can be earned.
+  ok(BEAM_MS < SUPER_MS, "a beam outlives the super hold — the seat's two lines cannot be one pair");
 }
