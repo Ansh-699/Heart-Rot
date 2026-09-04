@@ -32,7 +32,7 @@
  * seam — "give me a token" — cannot express.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 
 import { useSelect, useStore } from '../state/store';
@@ -67,6 +67,7 @@ export function Onboarding() {
   const store = useStore();
   const busy = useSelect((s) => s.status === 'joining');
   const { ready, authenticated, login } = usePrivy();
+  const signedIn = useSelect((s) => s.authenticated && !s.guest);
 
   /**
    * Two steps, because the proof and the key have different owners: Privy's modal proves
@@ -76,20 +77,30 @@ export function Onboarding() {
    * the flow forward. It is also what picks up a returning tab, where Privy restores the
    * session and `authenticated` is already true by the time this card first renders.
    *
-   * It cannot loop: `signIn` flips the store's own `authenticated`, which moves `screenOf`
-   * to `'select'` and unmounts this card. On failure the store holds `status: 'error'`
-   * (rendered by the shell's error bar) and the button below re-arms as the retry.
+   * Identity only, on a returning tab: the page opens on this landing, not on the loader
+   * — a seat used to follow the restore by itself, and the player was "building the
+   * arena" before they could read a word. A seat follows a click: Play, or the Sign in
+   * whose wallet popup just finished (`asked`), the one join a login implies.
    */
+  const asked = useRef(false);
   useEffect(() => {
-    if (authenticated) void store.signIn();
+    if (!authenticated) return;
+    void store.signIn().then(() => {
+      if (asked.current) void store.join();
+    });
   }, [authenticated, store]);
 
+  const play = () => {
+    if (authenticated) void store.signIn().then(() => store.join());
+    else void store.playAsGuest();
+  };
   /**
    * Already authenticated means the modal has nothing left to ask — this press is a retry
    * after a failed token fetch or a failed key unwrap — so it goes straight at `signIn`.
    */
   const connect = () => {
-    if (authenticated) void store.signIn();
+    asked.current = true;
+    if (authenticated) void store.signIn().then(() => store.join());
     else login();
   };
 
@@ -116,19 +127,22 @@ export function Onboarding() {
         A co-op boss raid where every move and every arrow is a Solana transaction.
       </p>
       <div className="row">
-        <button className="btn btn-primary" onClick={() => void store.playAsGuest()} disabled={busy}>
-          {busy ? 'Taking a seat…' : 'Play now'}
+        <button className="btn btn-primary" onClick={play} disabled={busy}>
+          {busy ? 'Taking a seat…' : signedIn ? 'Play' : 'Play now'}
         </button>
-        <button className="btn" onClick={connect} disabled={!ready || busy}>
-          Sign in
-        </button>
+        {!signedIn && (
+          <button className="btn" onClick={connect} disabled={!ready || busy}>
+            Sign in
+          </button>
+        )}
         <button className="link" onClick={() => store.showLeaderboard()}>
           Leaderboard
         </button>
       </div>
       <p className="fine">
-        Play now takes a seat as a guest. Signing in with a Solana wallet keeps your name on
-        the leaderboard. Devnet only; nothing to buy and nothing to approve.
+        {signedIn
+          ? 'Signed in. Your name stays on the leaderboard. Devnet only; nothing to buy and nothing to approve.'
+          : 'Play now takes a seat as a guest. Signing in with a Solana wallet keeps your name on the leaderboard. Devnet only; nothing to buy and nothing to approve.'}
       </p>
     </section>
   );

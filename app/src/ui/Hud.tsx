@@ -207,18 +207,27 @@ const HUD_CSS = `
 
 /* Under the wordmark, which owns the top-left row: the first row of the screen reads
    wordmark / boss bar / icons, and the card hangs below it. */
+/* One phase line and one bar. No box: the room is the picture and the card is a caption. */
 .hud-card {
   position: absolute;
   top: 44px;
-  left: 12px;
-  width: 236px;
-  padding: 8px 10px 9px;
+  left: 14px;
+  width: 168px;
   display: grid;
-  gap: 6px;
-  background: color-mix(in srgb, var(--panel) 80%, transparent);
-  border: 1px solid var(--line);
-  border-radius: 3px;
+  gap: 5px;
 }
+.hud-stale { font: 9px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--torch); }
+/* The controls, once, in the corner nobody plays in, gone on the first step. */
+.hud-hint {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  font: 10px var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.8);
+}
+.hud-hint b { font-weight: normal; color: var(--ink); }
 .hud-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .hud-state {
   font: 10px var(--pixel);
@@ -236,21 +245,10 @@ const HUD_CSS = `
   color: var(--ink);
 }
 .hud-urgent .hud-timer { color: var(--ember); }
-.hud-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font: 10px var(--mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-.hud-meta .dot { flex: none; }
-.hud-hp { display: grid; grid-template-columns: 18px 1fr 52px; align-items: center; gap: 8px; }
-.hud-hp-label { font: 9px var(--pixel); letter-spacing: 0.14em; color: var(--muted); }
-.hud-hp-bar { position: relative; height: 4px; background: rgb(0 0 0 / 0.5); overflow: hidden; }
+.hud-hp { display: grid; grid-template-columns: 1fr 52px; align-items: center; gap: 8px; }
+.hud-hp-bar { position: relative; height: 3px; background: rgb(0 0 0 / 0.55); overflow: hidden; }
 .hud-hp-fill { height: 100%; width: 100%; transform-origin: left center; background: var(--ok); transition: transform 0.25s ease-out, background-color 0.3s; }
 .hud-hp-fill.is-low, .is-down .hud-hp-fill { background: var(--ember); }
-.is-down .hud-hp-label { color: var(--ember); }
 .hud-hp-num { font: 11px var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .hud-hp-fill { transition: none; } }
 .hud-icon {
@@ -333,6 +331,8 @@ const HUD_CSS = `
   box-shadow: 0 8px 26px -10px rgb(0 0 0 / 0.75);
 }
 .hud-ml { top: 50%; left: 12px; transform: translateY(-50%); width: min(300px, 30vw); }
+/* The result: centred over the pit floor, under the corpse, where the raid just ended. */
+.hud-ml.verdict { top: 68%; left: 50%; transform: translate(-50%, -50%); width: min(340px, 80vw); text-align: center; align-items: center; }
 .verdict { gap: 10px; padding: 14px 16px; }
 .verdict-line { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
 .verdict-next { font: 11px var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -361,6 +361,7 @@ export function Hud() {
       <style>{HUD_CSS}</style>
       <div className={`hud-layer${calm ? ' is-calm' : ''}${hidden ? ' is-hidden' : ''}`}>
         <Card />
+        <Hint />
         <Top />
         <Corner />
       </div>
@@ -515,14 +516,10 @@ function Card() {
         </span>
         {timer !== null && <span className="hud-timer">{timer}</span>}
       </div>
-      <div className="hud-meta">
-        <span>tick {tick}</span>
-        <span aria-hidden="true">·</span>
-        <span className={`dot dot-${status}`} aria-hidden="true" />
-        <span>{status}</span>
-      </div>
+      {/* The tick and the feed status live in the telemetry panel; here only a feed
+          that is NOT live earns a word, in the phase line, where the eye already is. */}
+      {status === 'stale' && <span className="hud-stale">stale</span>}
       <div className="hud-hp">
-        <span className="hud-hp-label">HP</span>
         <div className="hud-hp-bar" role="meter" aria-label="your health" aria-valuenow={slot.hp} aria-valuemax={slot.hpMax}>
           <div className={`hud-hp-fill${pct <= 30 ? ' is-low' : ''}`} style={{ transform: `scaleX(${pct / 100})` }} />
         </div>
@@ -550,6 +547,22 @@ function Card() {
           })}
         </ol>
       )}
+    </div>
+  );
+}
+
+/**
+ * The controls, said once. It used to be a plate painted in the middle of the lobby floor,
+ * which is where the player walks; now it is one muted line in the corner, and the first
+ * step the chain acknowledges (`lastMoveSeq`) takes it away for the life of the seat.
+ */
+function Hint() {
+  const moved = useSelect((s) => (mySeatSlot(s)?.lastMoveSeq ?? 0) > 0);
+  const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
+  if (moved || inPit) return null;
+  return (
+    <div className="hud-hint" aria-hidden="true">
+      <b>WASD</b> move · <b>SPACE</b> attack · hold to charge
     </div>
   );
 }
@@ -600,7 +613,7 @@ function Top() {
 const VERDICTS: Readonly<
   Record<number, { readonly label: string; readonly tone: string; readonly line: string }>
 > = {
-  [OUTCOME_WIN]: { label: 'VICTORY', tone: 'win', line: 'Heartrot fell' },
+  [OUTCOME_WIN]: { label: 'DESTROYED', tone: 'win', line: 'Heartrot fell' },
   [OUTCOME_WIPE]: {
     label: 'WIPE',
     tone: 'wipe',
@@ -639,7 +652,13 @@ function ordinal(n: number): string {
 }
 
 /** Seconds the results panel stays up before the next seat is taken by itself. */
-const REJOIN_SECONDS = 10;
+/**
+ * How long after the outcome lands the result waits before it draws — the kill plays
+ * first. A WIN chars the boss over `VOLLEY_INTERVAL_MS` (3.2 s) with the limbs tearing
+ * off across it; a loss has nothing to watch and only needs the beat.
+ */
+const REVEAL_WIN_MS = 4_200;
+const REVEAL_LOSS_MS = 1_500;
 
 function Verdict() {
   const store = useStore();
@@ -661,22 +680,23 @@ function Verdict() {
   usePlayOnRise(outcome === OUTCOME_WIN, 'win');
   usePlayOnRise(outcome === OUTCOME_WIPE || outcome === OUTCOME_ENRAGE, 'lose');
 
-  // The countdown. "When a boss is destroyed or lost or exit automatically take a seat
-  // with our loader": ten seconds to read the panel, then `leaveMatch` — which releases
-  // and rejoins by itself — and the button runs the same thing early. Nothing here
-  // cancels it: `leaveMatch` drops the match synchronously, the shell unmounts the HUD
-  // on the same render, and the interval goes with it.
-  const [left, setLeft] = useState(REJOIN_SECONDS);
+  // No countdown and no auto-rejoin: the result stays until the player leaves it. It
+  // draws only after the ending has played — the outcome lands at SETTLING, the same
+  // edge the boss's death starts on, so the timer runs from there.
+  const [shown, setShown] = useState(false);
   useEffect(() => {
-    if (!settled) return;
-    const timer = window.setInterval(() => setLeft((n) => n - 1), 1_000);
-    return () => window.clearInterval(timer);
-  }, [settled]);
-  useEffect(() => {
-    if (settled && left <= 0) void store.leaveMatch();
-  }, [settled, left, store]);
+    if (outcome === OUTCOME_UNDECIDED) {
+      setShown(false);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setShown(true),
+      outcome === OUTCOME_WIN ? REVEAL_WIN_MS : REVEAL_LOSS_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [outcome]);
 
-  if (!row) return null;
+  if (!row || !shown) return null;
   const won = outcome === OUTCOME_WIN;
   // Only a WIN rolls a next incarnation (`OUTCOME_WIN`'s own doc), so only a WIN names one.
   const next = incarnation + 1;
@@ -702,7 +722,7 @@ function Verdict() {
         </>
       )}
       <button className="btn btn-primary" disabled={!settled} onClick={() => void store.leaveMatch()}>
-        Raid again{settled && ` · ${Math.max(0, left)}`}
+        Back to lobby
       </button>
       {/* Secondary, in the box's smallest type: the select is not a step any more, so
           the way back to it is a link, and the guest's sign-in is an offer under the same

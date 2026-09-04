@@ -32,7 +32,7 @@
  */
 import type { CSSProperties, ReactElement } from 'react';
 
-import { LOBBY_SPAWN_Y, LOBBY_TOP, MAP_TILE, MAP_TILES, isWallTile } from '@heartrot/client';
+import { LOBBY_TOP, MAP_TILE, MAP_TILES, isWallTile } from '@heartrot/client';
 
 import { roomGlow, roomMotes } from './RoomLight';
 import {
@@ -103,59 +103,9 @@ export const WAITING: ReactElement = (
     {LOBBY_GATES.map((gate) => (
       <GateMark key={gate.tier} gate={gate} color={LOBBY_GATE_COLORS[gate.tier]} />
     ))}
-    <ControlsSign />
   </g>
 );
 
-/**
- * The controls, on a plaque in the world, where the player is looking when they need them.
- *
- * It is the last of the three paragraphs the gate mark's comment says the lobby stopped
- * printing: the legend came back because a first-time raider stood still in the muster not
- * knowing the bow is `SPACE` held, not tapped. Three lines, a dark plate, nothing that moves.
- *
- * Placed from the map, not typed: centred in the gap between the EASY and MEDIUM gates, so
- * it stands in no gate's aisle, and three tiles above the spawn row `LOBBY_SPAWN_Y`: a
- * knight's canvas is centred on its y and its own "you" marker floats ~37 units above that,
- * so 48 keeps a freshly seated raider clear of the plate. The gate clock (`Arena.tsx`) hangs
- * 30 units above a gate's top edge, 100 units higher, so the two cannot meet.
- *
- * `<text>`, unlike the gate mark's drawn glyph: real words need the font. Silkscreen lands
- * after this layer has mounted once, and that is fine — a webfont swap is the browser's own
- * relayout, not a React render — and the `--pixel` stack falls back to the mono the HUD
- * already reads in.
- */
-const [EASY_GATE, MEDIUM_GATE] = LOBBY_GATES;
-if (EASY_GATE === undefined || MEDIUM_GATE === undefined) {
-  throw new Error('WaitingRoom: rooms.gen.ts names fewer than two gates — re-run tools/gen_rooms.py');
-}
-const SIGN_W = 134;
-const SIGN_H = 52;
-const SIGN_X = (EASY_GATE.x + EASY_GATE.w + MEDIUM_GATE.x - SIGN_W) / 2;
-const SIGN_Y = LOBBY_SPAWN_Y - 3 * MAP_TILE - SIGN_H;
-
-function ControlsSign() {
-  const w = SIGN_W;
-  const h = SIGN_H;
-  const x = SIGN_X;
-  const y = SIGN_Y;
-  const lines: readonly (readonly [string, string])[] = [
-    ['MOVE', 'WASD'],
-    ['ATTACK', 'hold SPACE'],
-    ['CHARGE', 'hold longer'],
-  ];
-  return (
-    <g className="ctl-sign" aria-hidden="true" transform={`translate(${x} ${y})`}>
-      <rect width={w} height={h} rx={2} className="ctl-sign-plate" />
-      {lines.map(([label, key], i) => (
-        <text key={label} x={10} y={17 + i * 13}>
-          {label}
-          <tspan x={58}>{key}</tspan>
-        </text>
-      ))}
-    </g>
-  );
-}
 
 /**
  * The "go here" marker over a gate — one per tier, in that gate's own light.

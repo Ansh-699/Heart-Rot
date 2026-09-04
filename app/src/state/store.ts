@@ -122,6 +122,13 @@ export type State = {
    */
   skinChosen: boolean;
   /**
+   * The player asked for a seat this page load — Play, Sign in, a rejoin, a marker
+   * change. Without it a returning player with a session on file landed on the loader
+   * the moment the page opened, "building the arena" before they could read a word.
+   * The landing is the resting screen; a seat is taken on a click and nowhere else.
+   */
+  seeking: boolean;
+  /**
    * Always `CLASS_ARCHER`: the archer is the only class this client sends. Still a field
    * because it travels inside `claim_seat` and `App.tsx` compares it to a returning seat's
    * class, which the chain keeps (class 0 seats still exist).
@@ -449,6 +456,7 @@ const INITIAL: State = {
   sessionKey: null,
   skinId: 0,
   skinChosen: false,
+  seeking: false,
   classId: CLASS_ARCHER,
   match: null,
   status: 'idle',
@@ -594,7 +602,7 @@ export function createStore(): Store {
     // On file before the request, not after it: the screen flips to the loader on
     // `skinChosen`, and the select must be gone the moment the seat is asked for.
     storeSkin(skinId);
-    set({ status: 'joining', error: null, skinChosen: true });
+    set({ status: 'joining', error: null, skinChosen: true, seeking: true });
     try {
       if (!sessionKey) throw new Error('Sign in before taking a seat.');
       for (let attempt = 0; ; attempt++) {
@@ -643,9 +651,8 @@ export function createStore(): Store {
         fail(error);
         return;
       }
-      // The select is seen once. A marker on file — this browser has taken a seat before
-      // — makes a signed-in, seatless player `'joining'`, and this is what makes it true.
-      if (state.skinChosen) await join();
+      // Identity only. Whether a seat follows is the caller's: the landing's Sign in
+      // joins, the page-load restore of a Privy session does not (`seeking`).
     },
 
     async playAsGuest() {
@@ -795,7 +802,7 @@ export function createStore(): Store {
 
     async changeMarker() {
       storeSkin(null);
-      set({ skinChosen: false });
+      set({ skinChosen: false, seeking: true });
       await release();
     },
 
@@ -812,7 +819,7 @@ export function createStore(): Store {
       // `guest` goes with it: the landing's "Play now" is the same offer again, while
       // "Sign in" makes the next raid a named one. The marker stays — it is the
       // browser's, and the next identity on it has no more to choose than this one did.
-      set({ authenticated: false, guest: false, sessionKey: null });
+      set({ authenticated: false, guest: false, sessionKey: null, seeking: false });
       await release(proof);
     },
   };
@@ -849,7 +856,10 @@ export function mySeatSlot(state: State): PlayerSlot | null {
 export function screenOf(state: State): Screen {
   if (state.leaderboard) return 'leaderboard';
   if (!state.authenticated) return 'onboarding';
-  if (!state.match) return state.skinChosen ? 'joining' : 'select';
+  if (!state.match) {
+    if (!state.seeking) return 'onboarding';
+    return state.skinChosen ? 'joining' : 'select';
+  }
   return mySeatSlot(state)?.zone === ZONE_ARENA ? 'arena' : 'lobby';
 }
 
@@ -905,9 +915,10 @@ if (import.meta.env.DEV) {
   const cases: readonly (readonly [string, Partial<State>, Screen])[] = [
     ['signed out', {}, 'onboarding'],
     ['leaderboard from the landing', { leaderboard: true }, 'leaderboard'],
-    ['no seat, no marker yet', { authenticated: true }, 'select'],
+    ['no seat, no marker yet, asked', { authenticated: true, seeking: true }, 'select'],
     // The rejoin: a marker on file makes seatless the loader, never the select again.
-    ['no seat, marker on file', { authenticated: true, skinChosen: true }, 'joining'],
+    ['no seat, marker on file, not asked', { authenticated: true, skinChosen: true }, 'onboarding'],
+    ['no seat, marker on file, asked', { authenticated: true, skinChosen: true, seeking: true }, 'joining'],
     // A seat with no roster yet is still the lobby, not the arena: `mySeatSlot` is null
     // until the first `Players` notification lands, and guessing "arena" there would drop
     // the player into a stage with nothing on it.

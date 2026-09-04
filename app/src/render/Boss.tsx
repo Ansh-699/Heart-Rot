@@ -81,6 +81,7 @@ import {
   isFurious,
   type ArenaAccount,
   type BossAccount,
+  OUTCOME_WIN,
 } from '@heartrot/client';
 
 import { ATLAS_H, ATLAS_SCALE, ATLAS_W, BOSS_ATLAS, BOSS_PARTS, EYES_PX } from './boss.gen';
@@ -119,6 +120,7 @@ const EYES: readonly (readonly [number, number])[] = EYES_PX.map(([sx, sy]): rea
  */
 const TORSO = BOSS_PARTS.find((p) => p.name === 'torso');
 if (TORSO === undefined) throw new Error('Boss: boss.gen.ts rigs no torso to seat the fury aura on');
+const TORSO_INDEX = BOSS_PARTS.indexOf(TORSO);
 const AURA = {
   cx: (TORSO.cx + TORSO.w / 2) * BOSS_SCALE + BOSS_ANCHOR_X,
   cy: (TORSO.cy + TORSO.h / 2) * BOSS_SCALE + BOSS_ANCHOR_Y,
@@ -138,6 +140,8 @@ const AURA = {
  */
 const FLINCH_MS = 180;
 const BREAK_MS = 520;
+/** Between one limb tearing off and the next, in the death — ten limbs in 1.4 s. */
+const DEATH_STAGGER_MS = 140;
 const BURST_MS = 900;
 const DEATH_MS = VOLLEY_INTERVAL_MS;
 
@@ -323,6 +327,10 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
   const shellRef = useRef<SVGGElement | null>(null);
   const partRefs = useRef<(SVGGElement | null)[]>([]);
   const smokeRefs = useRef<(SVGGElement | null)[]>([]);
+  const deathTimers = useRef<number[]>([]);
+  useEffect(() => () => {
+    for (const t of deathTimers.current) window.clearTimeout(t);
+  }, []);
   /** The last snapshot actually consumed. Every one-shot below is a diff against it. */
   const prev = useRef<{ parts: number[]; phase: number; vent: number; fury: boolean } | null>(null);
 
@@ -453,6 +461,47 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
       at(i)?.classList.toggle('hr-dead', dead);
       smokeRefs.current[i]?.classList.toggle('is-on', dead);
     };
+    /**
+     * Torn off: a flash, a lurch outward, and gone. Ends where `.hr-dead` rests, so the
+     * limb vanishes with no pop, and the room is already there behind it. The burst is
+     * the reference's flying chunks, scattering out of the wound, doubling and fading.
+     * No `fill: 'forwards'` on the chunks: they end where their own rule rests
+     * (`opacity: 0`, styles.css), and a held fill is twelve Animation objects a kill,
+     * kept for the life of the tab because nothing here ever cancels a chunk. Under
+     * reduced motion the wisps alone say it, at rest.
+     */
+    const tear = (i: number): void => {
+      const el = at(i);
+      if (el === null) return;
+      const [ox, oy] = OUTWARD[i] ?? [0, -1];
+      play('partBreak');
+      rest(i, true);
+      el.animate(
+        [
+          { transform: 'none', opacity: 1, filter: 'brightness(3)' },
+          soft
+            ? { transform: 'none', opacity: 0, filter: 'brightness(3)' }
+            : {
+                transform: `translate(${ox * BREAK_PX}px, ${oy * BREAK_PX}px) rotate(${ox * 9}deg)`,
+                opacity: 0,
+                filter: 'brightness(1)',
+              },
+        ],
+        { duration: BREAK_MS, easing: 'ease-in' },
+      );
+      if (soft) return;
+      const chunks = smokeRefs.current[i]?.querySelectorAll<SVGCircleElement>('.hr-smoke-chunk') ?? [];
+      chunks.forEach((c, k) => {
+        const { dx, dy } = chunkFlight(k);
+        c.animate(
+          [
+            { transform: 'translate(0px, 0px) scale(1)', opacity: 0.95 },
+            { transform: `translate(${dx}px, ${dy}px) scale(2)`, opacity: 0 },
+          ],
+          { duration: BURST_MS, easing: 'cubic-bezier(0.1, 0.8, 0.3, 1)' },
+        );
+      });
+    };
 
     // First snapshot: adopt the resting appearance, play nothing. A page loaded onto a
     // half-stripped boss must show a half-stripped boss, not nine bursts of smoke.
@@ -472,48 +521,17 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
       const [ox, oy] = OUTWARD[i] ?? [0, -1];
 
       if (after > before) {
-        // A new incarnation refilled the shell. The cell comes back, the smoke clears.
+        // A new incarnation refilled the shell. The cell comes back, the smoke clears,
+        // and a death still tearing limbs off stops where it is.
+        for (const t of deathTimers.current) window.clearTimeout(t);
+        deathTimers.current = [];
         rest(i, false);
         for (const a of el.getAnimations()) a.cancel();
         continue;
       }
 
       if (after === 0) {
-        play('partBreak');
-        rest(i, true);
-        // Torn off: a flash, a lurch outward, and gone. Ends where `.hr-dead` rests, so
-        // the limb vanishes with no pop, and the room is already there behind it.
-        el.animate(
-          [
-            { transform: 'none', opacity: 1, filter: 'brightness(3)' },
-            soft
-              ? { transform: 'none', opacity: 0, filter: 'brightness(3)' }
-              : {
-                  transform: `translate(${ox * BREAK_PX}px, ${oy * BREAK_PX}px) rotate(${ox * 9}deg)`,
-                  opacity: 0,
-                  filter: 'brightness(1)',
-                },
-          ],
-          { duration: BREAK_MS, easing: 'ease-in' },
-        );
-        // The burst: the reference's flying chunks, scattering out of the wound, doubling
-        // and fading. No `fill: 'forwards'`: it ends where the chunk's own rule rests
-        // (`opacity: 0`, styles.css), and a held fill is twelve Animation objects a kill,
-        // kept for the life of the tab because nothing here ever cancels a chunk. Under
-        // reduced motion the wisps alone say it, at rest.
-        if (!soft) {
-          const chunks = smokeRefs.current[i]?.querySelectorAll<SVGCircleElement>('.hr-smoke-chunk') ?? [];
-          chunks.forEach((c, k) => {
-            const { dx, dy } = chunkFlight(k);
-            c.animate(
-              [
-                { transform: 'translate(0px, 0px) scale(1)', opacity: 0.95 },
-                { transform: `translate(${dx}px, ${dy}px) scale(2)`, opacity: 0 },
-              ],
-              { duration: BURST_MS, easing: 'cubic-bezier(0.1, 0.8, 0.3, 1)' },
-            );
-          });
-        }
+        tear(i);
         continue;
       }
 
@@ -551,7 +569,11 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     // with its core gone. A wipe or an enrage ends the fight through the same phase
     // change; the death line is only for the raid that actually killed it.
     if (was.phase === PHASE_MUSTERING && now.phase === PHASE_FIGHTING) speak(VOICE.wakes, true);
-    if (was.phase === PHASE_FIGHTING && now.phase === PHASE_SETTLING && boss.coreHp === 0) {
+    // `arena.outcome`, not `boss.coreHp`: the kill lands as two notifications, and when
+    // the arena's arrives first the boss in hand still has the core it had a tick ago.
+    // The outcome byte is written with the phase, in the same payload as the edge.
+    const killed = arena.outcome === OUTCOME_WIN;
+    if (was.phase === PHASE_FIGHTING && now.phase === PHASE_SETTLING && killed) {
       speak(VOICE.dies, true);
     }
 
@@ -568,6 +590,17 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
         easing: 'ease-in',
         fill: 'forwards',
       });
+      // A kill, not a wipe or a clock-out (the core is what says so): the limbs still on
+      // the shell tear off one after another while it chars, each with its own burst
+      // and its own smoke, and the torso is what remains — a charred core in a column
+      // of wisps. The result card waits for this (`Hud.tsx`, REVEAL_WIN_MS).
+      if (killed) {
+        let k = 0;
+        for (let i = 0; i < N_PARTS; i++) {
+          if (i === TORSO_INDEX || (now.parts[i] ?? 0) === 0) continue;
+          deathTimers.current.push(window.setTimeout(() => tear(i), DEATH_STAGGER_MS * k++));
+        }
+      }
     }
 
     // Back to the lobby: the next incarnation reforms. Release everything the death
