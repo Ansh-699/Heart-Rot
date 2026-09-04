@@ -84,7 +84,7 @@ import {
   OUTCOME_WIN,
 } from '@heartrot/client';
 
-import { ATLAS_H, ATLAS_SCALE, ATLAS_W, BOSS_ATLAS, BOSS_PARTS, EYES_PX } from './boss.gen';
+import { ASH_DY, ATLAS_H, ATLAS_SCALE, ATLAS_W, BOSS_ATLAS, BOSS_PARTS, EYES_PX, type BossPart } from './boss.gen';
 import { play, speak, VOICE_NAMES, type VoiceName } from './sfx';
 
 /**
@@ -121,6 +121,10 @@ const EYES: readonly (readonly [number, number])[] = EYES_PX.map(([sx, sy]): rea
 const TORSO = BOSS_PARTS.find((p) => p.name === 'torso');
 if (TORSO === undefined) throw new Error('Boss: boss.gen.ts rigs no torso to seat the fury aura on');
 const TORSO_INDEX = BOSS_PARTS.indexOf(TORSO);
+/** The nine destructible parts by their `Boss.parts` slot, for the cell swap on death. */
+const PART_BY_INDEX: readonly (BossPart | undefined)[] = Array.from({ length: 9 }, (_, i) =>
+  BOSS_PARTS.find((p) => p.index === i),
+);
 const AURA = {
   cx: (TORSO.cx + TORSO.w / 2) * BOSS_SCALE + BOSS_ANCHOR_X,
   cy: (TORSO.cy + TORSO.h / 2) * BOSS_SCALE + BOSS_ANCHOR_Y,
@@ -237,7 +241,9 @@ const CSS = `
 
 /* A destroyed limb is GONE: the room's own wall and dais show through the hole, and its
    smoke (styles.css) says which gun you killed. The break-off ends here, so there is no pop. */
-.hr-boss-part.hr-dead { opacity: 0; }
+/* A dead limb is drawn, from the atlas's ash row (ASH_DY): charred, not gone. Drawn
+   from nothing it was a hole in the silhouette, and the fury aura lit the hole red. */
+.hr-boss-part.hr-dead { opacity: 0.96; }
 
 /* The vent. Sealed, it draws NOTHING: the core cell's own orb is the sealed look, and any
    ring here would sit on it a shade off. Open, a thin half-opacity ring on the exact
@@ -458,13 +464,24 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     const at = (i: number): SVGGElement | null => partRefs.current[i] ?? null;
     /** The resting state of one part: the cell shown or gone, its smoke off or lingering. */
     const rest = (i: number, dead: boolean): void => {
-      at(i)?.classList.toggle('hr-dead', dead);
+      const el = at(i);
+      el?.classList.toggle('hr-dead', dead);
       smokeRefs.current[i]?.classList.toggle('is-on', dead);
+      // The cell itself: the live row or the ash row of the same atlas, same box.
+      const p = PART_BY_INDEX[i];
+      const cell = el?.querySelector('svg');
+      if (p !== undefined && cell) {
+        cell.setAttribute(
+          'viewBox',
+          `${p.ax} ${p.ay + (dead ? ASH_DY : 0)} ${p.w * ATLAS_SCALE} ${p.h * ATLAS_SCALE}`,
+        );
+      }
     };
     /**
-     * Torn off: a flash, a lurch outward, and gone. Ends where `.hr-dead` rests, so the
-     * limb vanishes with no pop, and the room is already there behind it. The burst is
-     * the reference's flying chunks, scattering out of the wound, doubling and fading.
+     * Burnt off: a flash, a flinch outward, and the limb settles as ash — `rest` has
+     * already swapped its cell to the ash row under the flash, so what the flash fades
+     * into is the charred limb, in place; the silhouette never opens. The burst is the
+     * reference's flying chunks, scattering out of the wound, doubling and fading.
      * No `fill: 'forwards'` on the chunks: they end where their own rule rests
      * (`opacity: 0`, styles.css), and a held fill is twelve Animation objects a kill,
      * kept for the life of the tab because nothing here ever cancels a chunk. Under
@@ -477,17 +494,18 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
       play('partBreak');
       rest(i, true);
       el.animate(
-        [
-          { transform: 'none', opacity: 1, filter: 'brightness(3)' },
-          soft
-            ? { transform: 'none', opacity: 0, filter: 'brightness(3)' }
-            : {
-                transform: `translate(${ox * BREAK_PX}px, ${oy * BREAK_PX}px) rotate(${ox * 9}deg)`,
-                opacity: 0,
-                filter: 'brightness(1)',
+        soft
+          ? [{ filter: 'brightness(3)' }, { filter: 'none' }]
+          : [
+              { offset: 0, transform: 'none', filter: 'brightness(3)' },
+              {
+                offset: 0.35,
+                transform: `translate(${ox * BREAK_PX}px, ${oy * BREAK_PX}px) rotate(${ox * 4}deg)`,
+                filter: 'brightness(2)',
               },
-        ],
-        { duration: BREAK_MS, easing: 'ease-in' },
+              { offset: 1, transform: 'none', filter: 'none' },
+            ],
+        { duration: BREAK_MS, easing: 'ease-out' },
       );
       if (soft) return;
       const chunks = smokeRefs.current[i]?.querySelectorAll<SVGCircleElement>('.hr-smoke-chunk') ?? [];
@@ -696,7 +714,7 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     if (p.cx < 0 || p.cy < 0 || p.cx + p.w > BOSS_SPRITE_W || p.cy + p.h > BOSS_SPRITE_H) {
       throw new Error(`Boss: "${p.name}" lies outside the ${BOSS_SPRITE_W}x${BOSS_SPRITE_H} sprite canvas`);
     }
-    if (p.ax + p.w * ATLAS_SCALE > ATLAS_W || p.ay + p.h * ATLAS_SCALE > ATLAS_H) {
+    if (p.ax + p.w * ATLAS_SCALE > ATLAS_W || p.ay + ASH_DY + p.h * ATLAS_SCALE > ATLAS_H) {
       throw new Error(`Boss: "${p.name}" reaches outside the ${ATLAS_W}x${ATLAS_H} atlas`);
     }
     if (p.index === null) continue;

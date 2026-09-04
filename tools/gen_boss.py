@@ -265,6 +265,14 @@ def build(src, boss_crop_px):
         got[by:by + ch, bx:bx + cw][on] = cell[on]
     if not np.array_equal(got, want):
         raise SystemExit(f"atlas is lossy: {int((got != want).any(-1).sum())} pixels differ from crop AND body")
+    # THE ASH ROW. Below the live cells, every cell again, charred: a limb the raid tears
+    # off is drawn from here instead of vanishing. Drawn from nothing, a dead limb was a
+    # hole in the silhouette that the fury aura lit red -- "missing a shoulder". Baked,
+    # so the rig carries no filter while it fights; the client reaches it by adding
+    # `ASH_DY` to a cell's `ay`.
+    ash = charred(atlas)
+    atlas = np.concatenate([atlas, ash], axis=0)
+    ash_dy, ah = ah, ah * 2
 
     hit = {}
     for i, (name, mask) in enumerate(parts):
@@ -286,8 +294,20 @@ def build(src, boss_crop_px):
                      w=boxes[name][2], h=boxes[name][3], cx=boxes[name][0], cy=boxes[name][1])
                 for (name, _), (ax, ay) in zip(parts, pos)]
     eyes = [((x * k - x0) // k, (y * k - y0) // k) for x, y in EYES]
-    return dict(atlas=atlas, k=k, aw=aw, ah=ah, crop=crop, hitboxes=hitboxes, parts=ts_parts,
-                eyes=eyes, masks=parts, rgba=rgba, src=src)
+    return dict(atlas=atlas, k=k, aw=aw, ah=ah, ash_dy=ash_dy, crop=crop, hitboxes=hitboxes,
+                parts=ts_parts, eyes=eyes, masks=parts, rgba=rgba, src=src)
+
+
+def charred(cells):
+    """The cells burnt: luminance only, dark, a little warm -- ash on a bone, not a ghost."""
+    out = cells.copy()
+    rgb = cells[..., :3].astype(np.float32)
+    lum = rgb[..., 0] * 0.299 + rgb[..., 1] * 0.587 + rgb[..., 2] * 0.114
+    out[..., 0] = np.clip(lum * 0.50 + 6, 0, 255)
+    out[..., 1] = np.clip(lum * 0.42 + 4, 0, 255)
+    out[..., 2] = np.clip(lum * 0.38 + 4, 0, 255)
+    out[cells[..., 3] == 0] = 0
+    return out
 
 
 def emit_ts(b):
@@ -312,6 +332,8 @@ export const BOSS_ATLAS: string = atlas;
 /** The atlas bitmap, in atlas pixels -- the `<image>`'s own width and height. */
 export const ATLAS_W = {b['aw']};
 export const ATLAS_H = {b['ah']};
+/** The ash row: add to a cell's `ay` for the same cell charred -- what a torn-off limb is drawn from. */
+export const ASH_DY = {b['ash_dy']};
 /** Atlas pixels per crop pixel: the source was {b['k']}x the 1122 px authoring width. */
 export const ATLAS_SCALE = {b['k']};
 

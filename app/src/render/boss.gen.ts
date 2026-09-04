@@ -10,7 +10,9 @@ import atlas from '../../../assets/sprites/boss_parts.png';
 export const BOSS_ATLAS: string = atlas;
 /** The atlas bitmap, in atlas pixels -- the `<image>`'s own width and height. */
 export const ATLAS_W = 488;
-export const ATLAS_H = 395;
+export const ATLAS_H = 790;
+/** The ash row: add to a cell's `ay` for the same cell charred -- what a torn-off limb is drawn from. */
+export const ASH_DY = 395;
 /** Atlas pixels per crop pixel: the source was 1x the 1122 px authoring width. */
 export const ATLAS_SCALE = 1;
 
