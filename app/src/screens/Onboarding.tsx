@@ -36,6 +36,7 @@ import { useEffect, useRef } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 
 import { useSelect, useStore } from '../state/store';
+import { SKIN_COLORS, SKIN_NAMES } from './CharacterSelect';
 
 /**
  * The card is 560 px everywhere else; the clip earns a wider one so that it reads as
@@ -61,6 +62,10 @@ const LANDING_CSS = `${LINK_CSS}
 .landing video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--line); }
 .landing .row { align-items: center; }
 .landing .link { margin-left: auto; }
+.marker-row { gap: 8px; margin: -4px 0 2px; }
+.marker-row .fine { margin: 0 4px 0 0; }
+.marker-chip { width: 22px; height: 22px; border: 2px solid var(--line); cursor: pointer; padding: 0; }
+.marker-chip[aria-checked='true'] { border-color: var(--ink); outline: 2px solid var(--olive); outline-offset: 1px; }
 `;
 
 export function Onboarding() {
@@ -68,6 +73,7 @@ export function Onboarding() {
   const busy = useSelect((s) => s.status === 'joining');
   const { ready, authenticated, login } = usePrivy();
   const signedIn = useSelect((s) => s.authenticated && !s.guest);
+  const skinId = useSelect((s) => s.skinId);
 
   /**
    * Two steps, because the proof and the key have different owners: Privy's modal proves
@@ -126,6 +132,24 @@ export function Onboarding() {
       <p className="lede">
         A co-op boss raid where every move and every arrow is a Solana transaction.
       </p>
+      {/* The marker, picked here: a seat is one click now, so the select screen no
+          longer stands between the landing and the lobby, and the colour had nowhere
+          to be chosen. Three chips, the same three the select still offers. */}
+      <div className="row marker-row" role="radiogroup" aria-label="Your marker colour">
+        <span className="fine">Marker</span>
+        {SKIN_COLORS.map((color, index) => (
+          <button
+            key={color}
+            className="marker-chip"
+            role="radio"
+            aria-checked={index === skinId}
+            aria-label={SKIN_NAMES[index]}
+            title={SKIN_NAMES[index]}
+            style={{ background: color }}
+            onClick={() => store.setSkin(index)}
+          />
+        ))}
+      </div>
       <div className="row">
         <button className="btn btn-primary" onClick={play} disabled={busy}>
           {busy ? 'Taking a seat…' : signedIn ? 'Play' : 'Play now'}

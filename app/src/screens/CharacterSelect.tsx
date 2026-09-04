@@ -31,6 +31,8 @@ import { useSelect, useStore } from '../state/store';
  * consumer ever appears, move the array into `@heartrot/client` next to the map table.
  */
 export const SKIN_COLORS = ['#5aa9e6', '#e6a25a', '#7fd48b'] as const;
+/** The chips' names, for the landing's picker and this screen's cards alike. */
+export const SKIN_NAMES = ['Cobalt', 'Nocturne', 'Argent'] as const;
 
 const SKINS = [
   { name: 'Cobalt', note: 'Blue.' },

@@ -620,7 +620,14 @@ export function Shot({
       flash.style.transform = `translate(${x}px, ${y}px)`;
       flash.animate([{ opacity: 0.95 }, { opacity: 0 }], { duration: MUZZLE_MS });
     }
-    if (seat === localSeat) play(tier === 2 ? 'looseSuper' : tier === 1 ? 'looseCharged' : 'loose');
+    if (seat === localSeat) {
+      play(tier === 2 ? 'looseSuper' : tier === 1 ? 'looseCharged' : 'loose');
+      // A charged loose is FELT at the bow, not only where it lands: the landing kick in
+      // `land` needs a creature to hit, and in the lobby there is none — a practice super
+      // used to fire in silence. The recoil here; the impact, in the pit, adds its own.
+      if (tier === 2) shake(SHAKE_UNITS / 2);
+      else if (tier === 1) shake(SHAKE_UNITS / 3);
+    }
 
     // The charged dress, once per launch and for every tier past a tap: the class colours
     // the shaft and head (`styles.css`) and the trail is shown; the scale rides the

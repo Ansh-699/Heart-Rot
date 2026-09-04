@@ -422,6 +422,7 @@ function useHideKey(): boolean {
 function Corner() {
   return (
     <div className="hud-corner">
+      <MarkerIcon />
       <MuteIcon />
       <ExitIcon />
     </div>
@@ -458,6 +459,27 @@ function MuteIcon() {
   );
 }
 
+/**
+ * The marker colour, from the lobby: `changeMarker` gives the seat back and opens the
+ * select, whose "Take a seat" claims again with the new colour — the colour is written
+ * at the claim and nowhere else, so a change is a re-seat.
+ */
+function MarkerIcon() {
+  const store = useStore();
+  const skinId = useSelect((s) => s.skinId);
+  return (
+    <button
+      className="hud-icon"
+      aria-label="Change marker colour"
+      title="Change marker colour"
+      onClick={() => void store.changeMarker()}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="7" fill={SKIN_COLORS[skinId] ?? 'currentColor'} stroke="currentColor" strokeWidth="2" />
+      </svg>
+    </button>
+  );
+}
 function ExitIcon() {
   const store = useStore();
   const inMatch = useSelect((s) => s.match !== null);
