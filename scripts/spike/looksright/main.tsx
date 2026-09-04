@@ -40,11 +40,15 @@ function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, i
   v.setUint32(o.fight_at_tick, tick + 140, true);
   if (phase === PHASE_FIGHTING) v.setUint32(o.enrage_at_tick, tick + 3480, true);
   v.setBigUint64(o.arena_id, 1n, true);
+  // The ring flies: each bullet sits `tick` steps along its own velocity, wrapping every
+  // twelve, so a scene re-issued at 10 Hz with the tick advancing reads as a live volley.
+  const step = ((tick % 12) + 12) % 12;
   for (let i = 0; i < bullets; i++) {
     const b = o.bullets + i * BULLET.size;
     const a = (i / Math.max(1, bullets)) * Math.PI * 2;
-    v.setInt16(b + BULLET.offsets.x, Math.round(512 + Math.cos(a) * (90 + i * 7)), true);
-    v.setInt16(b + BULLET.offsets.y, Math.round(470 + Math.sin(a) * (40 + i * 3)), true);
+    const fly = ((step + i) % 12) * 42;
+    v.setInt16(b + BULLET.offsets.x, Math.round(512 + Math.cos(a) * (90 + i * 7 + fly)), true);
+    v.setInt16(b + BULLET.offsets.y, Math.round(470 + Math.sin(a) * (40 + i * 3 + fly * 0.45)), true);
     v.setInt8(b + BULLET.offsets.dx, Math.round(Math.cos(a) * 42));
     v.setInt8(b + BULLET.offsets.dy, Math.round(Math.sin(a) * 42));
     v.setUint8(b + BULLET.offsets.active, 1);
