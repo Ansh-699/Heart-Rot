@@ -574,14 +574,31 @@ function Card() {
 }
 
 /**
- * The controls, said once. It used to be a plate painted in the middle of the lobby floor,
- * which is where the player walks; now it is one muted line in the corner, and the first
- * step the chain acknowledges (`lastMoveSeq`) takes it away for the life of the seat.
+ * The controls, said twice, both times in the corner and never in the play area.
+ *
+ * The first is the waiting area's: how to walk, said once, and gone for the life of the
+ * seat on the first step the chain acknowledges (`lastMoveSeq`).
+ *
+ * The second is the muster's, and it is a different lesson. A player who has crossed the
+ * gate has plainly worked out how to walk and how to shoot — but the SUPER is the one
+ * thing in this game nothing teaches, because it is a hold with no button and no cooldown
+ * ring to hint at it, and the muster is the only window where there is nothing else to
+ * read. So the countdown before a boss wakes is exactly when to say it, and it goes when
+ * the fight starts rather than lingering over it.
  */
 function Hint() {
   const moved = useSelect((s) => (mySeatSlot(s)?.lastMoveSeq ?? 0) > 0);
   const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
-  if (moved || inPit) return null;
+  const mustering = useSelect((s) => s.arena?.phase === PHASE_MUSTERING);
+  if (inPit) {
+    if (!mustering) return null;
+    return (
+      <div className="hud-hint" aria-hidden="true">
+        <b>SPACE</b> shoot · <b>HOLD</b> to charge · <b>HOLD LONGER</b> for a super
+      </div>
+    );
+  }
+  if (moved) return null;
   return (
     <div className="hud-hint" aria-hidden="true">
       <b>WASD</b> move · <b>SPACE</b> attack · hold to charge
