@@ -15,11 +15,12 @@ import { StoreProvider, setAuthSource, useStore } from '../../../app/src/state/s
 import { fireLocal } from '../../../app/src/render/Shot';
 import { chargeLocal } from '../../../app/src/render/Knight';
 import {
-  ARENA, BOSS, BOSS_SPAWN, BULLET, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
+  ARENA, BOSS, BOSS_SPAWN, BULLET, MUZZLES, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
   BEAM_LANE_TICKS, BEAM_PERIOD_TICKS, BEAM_WARN_TICKS,
   LAYOUT_VERSION, MAX_SEATS, N_PARTS, CLASS_MASK,
   PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING, ZONE_ARENA, ZONE_LOBBY,
-  decodeArena, decodeBoss, decodePlayers,
+  autoAim, decodeAim, decodeArena, decodeBoss, decodePlayers,
+  type BossAccount,
 } from '@heartrot/client';
 
 const blank = (size: number, disc: number) => {
@@ -28,7 +29,10 @@ const blank = (size: number, disc: number) => {
   return { d, v: new DataView(d.buffer) };
 };
 
-function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, incarnation = 0) {
+/** Byte offset of bullet `i`'s x field. */
+const b0 = (o: typeof ARENA.offsets, i: number): number => o.bullets + i * BULLET.size + BULLET.offsets.x;
+
+function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, incarnation = 0, dead: number[] = []) {
   const { d, v } = blank(ARENA.size, DISC_ARENA);
   const o = ARENA.offsets;
   v.setUint8(o.phase, phase);
@@ -40,18 +44,39 @@ function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, i
   v.setUint32(o.fight_at_tick, tick + 140, true);
   if (phase === PHASE_FIGHTING) v.setUint32(o.enrage_at_tick, tick + 3480, true);
   v.setBigUint64(o.arena_id, 1n, true);
-  // The ring flies: each bullet sits `tick` steps along its own velocity, wrapping every
-  // twelve, so a scene re-issued at 10 Hz with the tick advancing reads as a live volley.
-  const step = ((tick % 12) + 12) % 12;
-  for (let i = 0; i < bullets; i++) {
-    const b = o.bullets + i * BULLET.size;
-    const a = (i / Math.max(1, bullets)) * Math.PI * 2;
-    const fly = ((step + i) % 12) * 42;
-    v.setInt16(b + BULLET.offsets.x, Math.round(512 + Math.cos(a) * (90 + i * 7 + fly)), true);
-    v.setInt16(b + BULLET.offsets.y, Math.round(470 + Math.sin(a) * (40 + i * 3 + fly * 0.45)), true);
-    v.setInt8(b + BULLET.offsets.dx, Math.round(Math.cos(a) * 42));
-    v.setInt8(b + BULLET.offsets.dy, Math.round(Math.sin(a) * 42));
-    v.setUint8(b + BULLET.offsets.active, 1);
+  // VOLLEYS LEAVE THE CREATURE, which is the whole of what a fake volley has to get right.
+  // This used to scatter bullets around a circle centred on the floor, so the footage showed
+  // fireballs streaming out of empty stone with nothing throwing them — the first thing the
+  // owner said about the landing clip. `tick.rs::spawn_volley` is the rule: a bullet leaves
+  // `boss + MUZZLES[i]`, one emitter per thorn, and only while that thorn is alive. Same
+  // muzzle table, same liveness gate, so a torn-off arm stops shooting here exactly as it
+  // does on chain.
+  const live = MUZZLES.filter((m) => !dead.includes(m.part));
+  if (live.length > 0) {
+    const step = ((tick % 14) + 14) % 14;
+    for (let i = 0; i < bullets; i++) {
+      const m = live[i % live.length]!;
+      const mx = BOSS_SPAWN[0] + m.x;
+      const my = BOSS_SPAWN[1] + m.y;
+      // Fanned into the pit rather than radially: the raiders are down there, and a volley
+      // that ignores them reads as decoration. Spread is deterministic per bullet so the
+      // pattern is stable frame to frame and the flight below is a straight line.
+      const spread = ((i * 5) % 9) / 8 - 0.5;
+      const ax = spread * 1.9;
+      const ay = 1;
+      const len = Math.hypot(ax, ay);
+      const ux = ax / len;
+      const uy = ay / len;
+      // Distance travelled since this bullet left the muzzle. Wrapping on a period longer
+      // than the flight keeps a steady stream without every bullet restarting together.
+      const fly = (((step + i * 3) % 14) / 14) * 520;
+      v.setInt16(b0(o, i), Math.round(mx + ux * fly), true);
+      v.setInt16(b0(o, i) + (BULLET.offsets.y - BULLET.offsets.x), Math.round(my + uy * fly), true);
+      const b = o.bullets + i * BULLET.size;
+      v.setInt8(b + BULLET.offsets.dx, Math.round(ux * 42));
+      v.setInt8(b + BULLET.offsets.dy, Math.round(uy * 42));
+      v.setUint8(b + BULLET.offsets.active, 1);
+    }
   }
   return decodeArena(d);
 }
@@ -83,9 +108,66 @@ function bossBytes(hurt: boolean, vent = false, fury = false, beam = false, dead
   return decodeBoss(d);
 }
 
+/**
+ * The aim half of `class_aim`, packed the way `PlayerSlot::set_aim` packs it
+ * (`programs/heartrot/src/state.rs`): bits 6..4 sector `neg_x << 2 | neg_y << 1 | steep`,
+ * bits 3..0 `min/max` scaled 0..15, rounded to nearest the same way. Bit 7 (class) is the
+ * caller's to OR in — the same split the chain keeps.
+ *
+ * `decodeAim` in `packages/client/src/layout.ts` is the inverse and is what `Shot.tsx`
+ * draws along, so the check below round-trips through it rather than restating the maths.
+ */
+function aimByte(dx: number, dy: number): number {
+  const rx = Math.round(dx), ry = Math.round(dy);
+  const ax = Math.abs(rx), ay = Math.abs(ry);
+  const sector = (rx < 0 ? 4 : 0) | (ry < 0 ? 2 : 0) | (ay > ax ? 1 : 0);
+  const min = Math.min(ax, ay), max = Math.max(ax, ay);
+  return (sector << 4) | (max === 0 ? 0 : Math.floor((min * 15 + (max >> 1)) / max));
+}
+
+// The one thing in this file that can be wrong silently: an arrow that flies the wrong way
+// still draws. Round-trip through the shipped decoder at load, so a bad frame is a console
+// error and not a mystery in the footage.
+for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1], [3, -9], [-40, -17], [200, 130], [-7, 7]]) {
+  const [ax, ay] = decodeAim(aimByte(dx, dy));
+  const err = Math.abs(Math.atan2(dy, dx) - Math.atan2(ay, ax)) * 180 / Math.PI;
+  if (!(err < 1.92)) console.error('aimByte round-trip', dx, dy, '->', ax, ay, err.toFixed(2), 'deg');
+}
+
+/**
+ * A firing line rather than a parade: two interleaved ranks on an arc under the boss,
+ * wider than it is deep because the pit is (the `P` block in `map.ts`). Rank 1 sits far
+ * enough back that its arrows fly ~180 ms instead of ~90, so three ticks of volleys are in
+ * the air at once instead of one.
+ */
+function ringSeat(seat: number, seats: number): [number, number] {
+  const rank = seat % 2;
+  const n = Math.max(1, Math.ceil(seats / 2));
+  const i = (seat - rank) / 2;
+  // A deterministic nudge off the lattice — an evenly-stepped arc photographs as a chorus
+  // line. Seeded on the seat, so a scene re-issued at 10 Hz does not shimmer.
+  const j = (k: number) => ((Math.sin(seat * 127.1 + k) * 43758.5453) % 1 + 1) % 1 - 0.5;
+  const a = Math.PI * (0.06 + 0.88 * (n === 1 ? 0.5 : i / (n - 1)) + 0.03 * j(0));
+  const rx = (rank ? 440 : 300) + 46 * j(7), ry = (rank ? 205 : 128) + 22 * j(3);
+  return [Math.round(BOSS_SPAWN[0] - Math.cos(a) * rx), Math.round(BOSS_SPAWN[1] + Math.sin(a) * ry)];
+}
+
+/**
+ * Where a seat points. `BOSS_SPAWN` is the creature's FEET — every box in `PART_HITBOXES`
+ * sits above it — so a ray at that point sails clean under the shell and terminates on the
+ * far wall, which is what twenty arrows crossing the room and leaving the pit looked like.
+ * `autoAim` is the shipped answer to the same question (nearest live part, or the open
+ * core), so the harness asks it rather than keeping a second one. `null` — nothing on the
+ * creature is reachable — falls back to the spawn, which is the shot's own fallback too.
+ */
+function aimAtBoss(x: number, y: number, boss: BossAccount): number {
+  const a = autoAim(x, y, boss);
+  return a === null ? aimByte(BOSS_SPAWN[0] - x, BOSS_SPAWN[1] - y) : aimByte(a[0], a[1]);
+}
+
 /** 20 seats spread over the room named by `zone`, mixed skins and classes. `damage` is
  *  per seat, for the results panel's placing; the default is a spread nobody ties on. */
-function playersBytes(zone: number, tick: number, seats: number, at?: number[][], damage?: number[], localHp?: number) {
+function playersBytes(zone: number, tick: number, seats: number, boss: BossAccount, at?: number[][], damage?: number[], localHp?: number, ring?: boolean) {
   const { d, v } = blank(PLAYERS.size, DISC_PLAYERS);
   if (at) {
     // art-judge: explicit world placements [x, y, skin, isArcher]. Everything else matches
@@ -112,10 +194,13 @@ function playersBytes(zone: number, tick: number, seats: number, at?: number[][]
     v.setUint8(s + PLAYER_SLOT.offsets.zone, zone);
     v.setUint8(s + PLAYER_SLOT.offsets.skin_id, seat % 3);
     v.setUint8(s + PLAYER_SLOT.offsets.facing, seat % 8);
-    v.setUint8(s + PLAYER_SLOT.offsets.class_aim, (seat % 2 ? CLASS_MASK : 0) | 0x18);
     const col = seat % 5, row = (seat / 5) | 0;
-    const x = zone === ZONE_ARENA ? 180 + col * 168 + row * 22 : 150 + col * 180 + row * 26;
-    const y = zone === ZONE_ARENA ? 430 + row * 44 : 700 + row * 72;
+    const [rx, ry] = ringSeat(seat, seats);
+    const x = ring ? rx : zone === ZONE_ARENA ? 180 + col * 168 + row * 22 : 150 + col * 180 + row * 26;
+    const y = ring ? ry : zone === ZONE_ARENA ? 430 + row * 44 : 700 + row * 72;
+    // Aim at the boss from where this seat actually stands, so twenty arrows converge
+    // instead of twenty arrows all leaving down-right (the old flat `0x18`).
+    v.setUint8(s + PLAYER_SLOT.offsets.class_aim, (seat % 2 ? CLASS_MASK : 0) | aimAtBoss(x, y, boss));
     v.setInt16(s + PLAYER_SLOT.offsets.x, x, true);
     v.setInt16(s + PLAYER_SLOT.offsets.y, y, true);
     // Seat 0 is the local seat (`/api/session/init` below); `localHp` 0 is the fallen card.
@@ -123,7 +208,12 @@ function playersBytes(zone: number, tick: number, seats: number, at?: number[][]
     v.setUint16(s + PLAYER_SLOT.offsets.hp, hp, true);
     v.setUint16(s + PLAYER_SLOT.offsets.hp_max, 100, true);
     v.setUint16(s + PLAYER_SLOT.offsets.deaths, hp === 0 ? 1 : 0, true);
-    v.setUint32(s + PLAYER_SLOT.offsets.last_shot_tick, tick > 4 ? tick - 1 : 0, true);
+    // `Shot.tsx` launches a REMOTE arrow on a VALUE DIFF of this, so what matters is that
+    // it CHANGES, on the archer's 4-tick period, at a different tick per seat. `seat * 3`
+    // against a period of 4 is coprime, so consecutive seats land on all four phases and
+    // five of twenty loose on any given tick — a continuous volley, never a salvo.
+    v.setUint32(s + PLAYER_SLOT.offsets.last_shot_tick,
+      tick > 4 ? 1 + Math.floor((tick + seat * 3) / 4) : 0, true);
     v.setUint32(s + PLAYER_SLOT.offsets.damage_dealt, damage?.[seat] ?? seat * 137, true);
   }
   return decodePlayers(d);
@@ -157,6 +247,8 @@ interface SceneOpts {
   dead?: number[];
   /** The local seat's hp; 0 photographs the fallen card over its corpse. */
   localHp?: number;
+  /** Stand the seats in a combat arc around the boss instead of the default 5-column grid. */
+  ring?: boolean;
 }
 
 /**
@@ -177,12 +269,18 @@ function Bridge() {
     w.__scene = (which: 'lobby' | 'arena', opts: SceneOpts = {}) => {
       const arena = which === 'arena';
       const tick = opts.tick ?? (arena ? (opts.beam ? BEAM_TICK[opts.beam] : 900) : 0);
+      // The boss first: the seats aim at the shell this scene actually has, so a stripped
+      // part re-targets the raid the way `autoAim` re-targets a real player.
+      const boss = bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, !!opts.beam, opts.dead);
       store.setWorld({
         from: '11111111111111111111111111111111',
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,
-          arena ? (opts.bullets ?? 10) : 0, opts.outcome ?? 0, opts.incarnation ?? 0),
-        boss: bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, !!opts.beam, opts.dead),
-        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, opts.at, opts.damage, opts.localHp),
+          arena ? (opts.bullets ?? 10) : 0, opts.outcome ?? 0, opts.incarnation ?? 0,
+          // The same `dead` the boss is built from: a torn-off thorn stops emitting here
+          // exactly as it stops on chain.
+          opts.dead ?? (opts.fury ? [7, 8, 3] : opts.hurt ? [7] : [])),
+        boss,
+        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, boss, opts.at, opts.damage, opts.localHp, opts.ring),
       });
     };
     w.__PHASE = { PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING };

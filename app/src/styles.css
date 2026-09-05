@@ -908,6 +908,10 @@ h3 {
   .hr-vent-open .hr-boss-vent,
   .hr-fury .hr-boss-aura,
   .hr-smoke-wisp,
+  .hr-fire-pool,
+  .hr-fire-lip,
+  .hr-flame,
+  .hr-ember,
   .room-light circle,
   .room-motes,
   .fury-wash.is-on {
@@ -1262,42 +1266,176 @@ h3 {
 }
 
 /* --------------------------------------------------------------------------
-   beam — the 50 % phase's sweep (`Arena.tsx`, `beamAt`)
+   ground fire — every danger area in room B (`Arena.tsx`'s `GroundFire`)
 
-   The one telegraph coloured from a stylesheet class rather than inline attributes: it
-   is the first scene shape in `--ember`, the HUD's state red, and `PAL` has no ember —
-   the tokens do. Three rules, all colour and weight; every position, size and seek is
-   `Arena.tsx`'s, in world units, where the lanes are. Restraint is the design: a tint
-   the floor still shows through, a 2 px keyline, one drop-shadow on the beam itself
-   for the soft edge, and nothing else glowing.
+   The slam's lane, the beam's doomed half and the beam's sweeping wall are ONE shape:
+   the stone the attack is about to land on, burning. They used to be flat translucent
+   rectangles with dashed edges, which read as a UI overlay pasted onto the room rather
+   than as anything happening in the dungeon. Heat coming off the floor reads as the room.
 
-   No reduced-motion rule here: both animations are WAAPI, created and seeked by
-   `Arena.tsx` with the preference resolved once in JS — under it the tint is drawn at
-   rest and the beam steps a lane per tick, the same information without the glide
-   (the governing rule in the reduced-motion block above).
+   The telegraphs coloured from a stylesheet rather than inline attributes, because the
+   fire is in `--ember` and `--torch`, the HUD's state red and its torch amber, and `PAL`
+   has no ember — the tokens do. Every position, size and seek stays `Arena.tsx`'s, in
+   world units, where the lanes are.
+
+   What is DANGER and what is DECORATION is the load-bearing split. The pool and the two
+   edge lines are the rect the chain named: no rule below moves or resizes them, because a
+   player reads that rect to know where not to stand. Only the tongues and the embers
+   move, by `transform` and `opacity`, on their own nodes — nothing re-rasterises, nothing
+   forces layout, and no `filter` appears anywhere: 27 blurred nodes cost `Boss.tsx`
+   0.9 ms/frame, which is why the fire is soft by GRADIENT exactly as the smoke is.
+
+   How HARD it burns is not here. That is one seeked WAAPI opacity on the group
+   (`Arena.tsx`, `SLAM_KEYFRAMES` / `BEAM_WARN_KEYFRAMES`), so the wind-up runs on the
+   chain's clock and no other; under reduced motion it is drawn at rest instead and the
+   pool carries the countdown in its height (the block above cancels the loops below).
    -------------------------------------------------------------------------- */
 
-/* The doomed lanes: the whole half during the warning, the lanes still to come during
-   the sweep. 0.14 sits under the slam lane's 0.5 claim on purpose — the slam is one
-   lane to leave, this is four lanes to have left already. */
-.beam-lane {
-  fill: var(--ember);
-  fill-opacity: 0.14;
+/* The hot floor: a pool of heat brightest at the middle of the lane, dying toward its
+   rim without ever going out — a lane the fire has left entirely is a lane a player
+   walks into. Radial rather than a horizontal ramp because the flat top and bottom edges
+   of a ramped rect are exactly the "box pasted on the room" this stopped being. */
+.hr-fire-pool-core {
+  stop-color: color-mix(in srgb, var(--torch) 58%, var(--ember));
+  stop-opacity: 0.66;
+}
+.hr-fire-pool-mid {
+  stop-color: var(--ember);
+  stop-opacity: 0.36;
+}
+.hr-fire-pool-rim {
+  stop-color: var(--ember);
+  stop-opacity: 0.13;
+}
+.hr-fire-pool {
+  animation: hr-fire-breathe 2.3s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i, 0) * -0.71s);
 }
 
-/* The lane the sweep starts from, keylined, and the chevron saying which way it runs. */
-.beam-warn-edge,
+/* The two lane boundaries — the one place in the picture that has to be exact, because
+   the fire is soft everywhere else and "roughly over there" is not a dodge. Two lips and
+   not a box: the top and bottom of the rect are the pit's own walls, so drawing them
+   would add a rectangle and no fact, and a rectangle is what this stopped being. */
+.hr-fire-lip-hot {
+  stop-color: color-mix(in srgb, var(--torch) 78%, #fff);
+  stop-opacity: 0.62;
+}
+.hr-fire-lip-out {
+  stop-color: var(--ember);
+  stop-opacity: 0;
+}
+.hr-fire-lip {
+  animation: hr-fire-breathe 1.9s ease-in-out infinite alternate;
+}
+@keyframes hr-fire-breathe {
+  from { opacity: 0.74; }
+  to { opacity: 1; }
+}
+
+/* A tongue, guttering about its own base — the origin is a world-unit point `Arena.tsx`
+   sets per instance, because the flame must lick UPWARD off the spot it stands on and
+   never slide across the lane. Three duration buckets over the `--i` delay: twelve
+   tongues on one duration breathe as one animal instead of twelve. */
+.hr-flame {
+  animation: hr-flame-gutter 0.94s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * -0.137s);
+}
+/* Three heights as well as three periods. Fourteen tongues cut from one pattern read as
+   fourteen stickers however well each one is drawn. */
+.hr-flame:nth-of-type(3n) {
+  animation-name: hr-flame-tall;
+  animation-duration: 1.21s;
+}
+.hr-flame:nth-of-type(3n + 1) {
+  animation-name: hr-flame-small;
+  animation-duration: 0.76s;
+}
+/* A static lean, on `rotate` so it composes with the animated `scale` about the same base
+   point instead of fighting it. Fourteen tongues standing perfectly upright read as a
+   picket fence. */
+.hr-flame:nth-of-type(2n) { rotate: 7deg; }
+.hr-flame:nth-of-type(5n) { rotate: -9deg; }
+@keyframes hr-flame-gutter {
+  0% { scale: 0.84 0.7; opacity: 0.5; }
+  27% { scale: 1.05 1.08; opacity: 0.95; }
+  53% { scale: 0.9 0.82; opacity: 0.66; }
+  78% { scale: 1.09 1.2; opacity: 1; }
+  100% { scale: 0.84 0.7; opacity: 0.5; }
+}
+@keyframes hr-flame-tall {
+  0% { scale: 0.93 1; opacity: 0.55; }
+  31% { scale: 1.11 1.47; opacity: 1; }
+  62% { scale: 0.99 1.15; opacity: 0.72; }
+  100% { scale: 0.93 1; opacity: 0.55; }
+}
+@keyframes hr-flame-small {
+  0% { scale: 0.6 0.46; opacity: 0.45; }
+  24% { scale: 0.78 0.76; opacity: 0.92; }
+  58% { scale: 0.65 0.58; opacity: 0.6; }
+  100% { scale: 0.6 0.46; opacity: 0.45; }
+}
+/* Hot at the stone, red at the tip: a tongue that is one flat red all the way up reads as
+   a petal. The whole flame is this ramp, which is also why it needs no blur to be soft. */
+.hr-flame-base {
+  stop-color: color-mix(in srgb, var(--torch) 52%, #fff);
+  stop-opacity: 1;
+}
+.hr-flame-hot {
+  stop-color: var(--torch);
+  stop-opacity: 0.92;
+}
+.hr-flame-body {
+  stop-color: var(--ember);
+  stop-opacity: 0.62;
+}
+.hr-flame-tip {
+  stop-color: var(--ember);
+  stop-opacity: 0;
+}
+.hr-flame-foot-hot {
+  stop-color: var(--torch);
+  stop-opacity: 0.62;
+}
+.hr-flame-foot-out {
+  stop-color: var(--ember);
+  stop-opacity: 0;
+}
+
+/* Embers off the pool. `translate`, not a `y` write — one composited property, no layout. */
+.hr-ember {
+  fill: var(--torch);
+  animation: hr-ember-rise 2.7s linear infinite;
+  animation-delay: calc(var(--i, 0) * -0.83s);
+}
+@keyframes hr-ember-rise {
+  0% { translate: 0 0; opacity: 0; }
+  14% { opacity: 0.85; }
+  70% { opacity: 0.5; }
+  100% { translate: 7px -104px; opacity: 0; }
+}
+
+/* The sweep, the one fire that is a WALL: the same pool and the same tongues, driven
+   harder. Its group carries the seeked glide, so the wall never brightens or dims — it
+   arrives already roaring, which is the difference between "this will burn" and "this is
+   burning". The chevron on the warning's start lane points the way it will run. */
+.hr-fire-wall .hr-fire-pool { animation-name: hr-fire-roar; }
+.hr-fire-wall .hr-fire-lip { opacity: 1; animation-name: none; }
+.hr-fire-wall .hr-flame { animation-name: hr-flame-roar; }
+@keyframes hr-fire-roar {
+  from { opacity: 0.9; }
+  to { opacity: 1; }
+}
+@keyframes hr-flame-roar {
+  0% { scale: 1 1.16; opacity: 0.85; }
+  26% { scale: 1.15 1.74; opacity: 1; }
+  57% { scale: 1.02 1.36; opacity: 0.88; }
+  100% { scale: 1 1.16; opacity: 0.85; }
+}
 .beam-warn-chevron {
   fill: none;
-  stroke: var(--ember);
-  stroke-width: 2px;
-}
-
-/* The beam: ember core, one 6 px shadow for the soft edge. */
-.beam-sweep {
-  fill: var(--ember);
-  fill-opacity: 0.85;
-  filter: drop-shadow(0 0 6px var(--ember));
+  stroke: var(--torch);
+  stroke-width: 3px;
+  stroke-opacity: 0.9;
 }
 
 /* --------------------------------------------------------------------------

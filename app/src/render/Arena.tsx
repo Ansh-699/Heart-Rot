@@ -76,7 +76,7 @@
  *      telegraphs. What it must NOT do is hand a seat a value that churns without being
  *      drawn — `predictedSlot` below is the one place that could, and does not.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import {
   BEAM_LANE_TICKS,
@@ -489,11 +489,164 @@ function sweepDir(beam: BeamState): 1 | -1 {
   return beam.outward === (beam.half === 1) ? 1 : -1;
 }
 
-/** A `>` the size of a knight's head at the start lane's centre, pointing along `dir`. */
+/**
+ * A `>` at the start lane's centre, pointing along `dir` — which way the wall will run,
+ * and the one thing the fire itself cannot say. Sized against a knight rather than a
+ * knight's head: it now sits over a burning lane instead of a flat tint, and at the old
+ * 20 units it was lost in the flames it is supposed to be read against.
+ */
 function chevronPath(lane: number, dir: 1 | -1): string {
   const cx = lane * SLAM_LANE_W + SLAM_LANE_W / 2;
   const cy = PIT_TOP + LANE_H / 2;
-  return `M${cx - 6 * dir} ${cy - 10} L${cx + 6 * dir} ${cy} L${cx - 6 * dir} ${cy + 10}`;
+  return `M${cx - 15 * dir} ${cy - 26} L${cx + 15 * dir} ${cy} L${cx - 15 * dir} ${cy + 26}`;
+}
+
+/**
+ * One flame tongue, base at the origin, 44 units tall — mounted once in `<defs>` and
+ * instanced with `<use>`. Soft by GRADIENT, never `filter: blur`: 27 blurred nodes cost
+ * `Boss.tsx` 0.9 ms/frame and a beam warning draws twenty of these at once.
+ */
+const FLAME_PATH =
+  'M0 0C-9 -5 -8 -20 -2.5 -44C-1.5 -30 2 -28 3.5 -21C7 -26 9 -13 6.5 -6C5.5 -2.5 3 0 0 0Z';
+
+/**
+ * How wide the hot lip on each lane boundary is. It is a GRADIENT and not a stroke: its
+ * brightest column is one unit wide and sits exactly on the boundary, so the rect still
+ * reads to the pixel, but it arrives out of a glow instead of as a drawn line — which is
+ * the difference between the edge of a fire and the edge of a dialog box.
+ */
+const LIP_W = 14;
+
+/**
+ * Where tongues root inside ONE lane, normalised to it. Ordered so that any PREFIX is
+ * still spread over the whole lane — {@link GroundFire} takes the first `per` of these,
+ * and a fire whose first three tongues all sat along the bottom edge would read as a row
+ * of pilot lights instead of a patch of burning floor.
+ */
+const FIRE_SPOTS: ReadonlyArray<readonly [number, number]> = [
+  [0.5, 0.55],
+  [0.18, 0.87],
+  [0.79, 0.24],
+  [0.33, 0.14],
+  [0.66, 0.95],
+  [0.09, 0.42],
+  [0.9, 0.68],
+  [0.44, 0.34],
+  [0.24, 0.63],
+  [0.71, 0.46],
+  [0.55, 0.78],
+  [0.38, 0.06],
+  [0.85, 0.88],
+  [0.13, 0.2],
+];
+
+/**
+ * A patch of floor on fire over EXACTLY `[x, x + w] × [PIT_TOP, PIT_BOT]` — the rect the
+ * chain's danger is. Every telegraph in room B is this one shape: a flat translucent
+ * rectangle reads as an overlay pasted onto the room, heat coming off the stone reads as
+ * the room.
+ *
+ * The DANGER GEOMETRY is the pool and the two boundary lips. They are on the true rect
+ * and nothing animates their position or size, because a player reads them to know where
+ * not to stand and a danger area that drifts costs somebody their run. The tongues and
+ * the embers are decoration rooted inside it, free to lick past the top edge.
+ *
+ * One pool per lane rather than one wide gradient, so a four-lane half reads as four hot
+ * lanes and not one smear, and so "brightest down the middle of the lane" stays true at
+ * every width. `fill` is the reduced-motion path's countdown: the pool covers the top
+ * `fill` of the lane and the tongues below the line are not lit yet, which is the same
+ * information the seeked opacity carries, held still (spec: no information may exist only
+ * in motion). The lips stay full height at every `fill` — they ARE the rect.
+ *
+ * `lips` is off for a fire drawn INSIDE another one — the beam's warning banks a second,
+ * denser fire on the lane its wall starts from, and a boundary drawn there would cut the
+ * doomed half into two danger areas when it is one.
+ *
+ * Nodes: `cols` pools + `cols × per` tongues + `cols × embers` embers + 2 boundary lips.
+ * All motion is CSS `transform`/`opacity` on these nodes ("ground fire" in `styles.css`);
+ * nothing here is per frame in JS, on the rAF loop, or on the notification path.
+ */
+function GroundFire({
+  x,
+  w,
+  per,
+  fill = 1,
+  lips = true,
+}: {
+  x: number;
+  w: number;
+  per: number;
+  fill?: number;
+  lips?: boolean;
+}): ReactNode {
+  const cols = Math.max(1, Math.round(w / SLAM_LANE_W));
+  const lane = w / cols;
+  const embers = Math.ceil(per / 3);
+  const lit = PIT_TOP + LANE_H * fill;
+  const spots = FIRE_SPOTS.slice(0, per);
+  return (
+    <>
+      {Array.from({ length: cols }, (_, c) => (
+        <rect
+          key={`p${c}`}
+          className="hr-fire-pool"
+          x={x + c * lane}
+          y={PIT_TOP}
+          width={lane}
+          height={LANE_H * fill}
+          fill="url(#hr-fire-pool-g)"
+          style={{ '--i': c } as CSSProperties}
+        />
+      ))}
+      {Array.from({ length: cols }, (_, c) =>
+        spots.map(([fx, fy], i) => {
+          const fyw = PIT_TOP + fy * LANE_H;
+          const fxw = x + (c + fx) * lane;
+          return fyw > lit ? null : (
+            <use
+              key={`f${c}-${i}`}
+              className="hr-flame"
+              href="#hr-flame"
+              x={fxw}
+              y={fyw}
+              // The guttering `scale` has to happen about the tongue's OWN base or the
+              // flame slides sideways as it breathes — `transform-box: fill-box` does not
+              // pick up a `<use>`'s x/y in Chrome, and the first cut of this threw tongues
+              // 200 units clear of the lane, which for a danger area is the whole bug.
+              // World units against the default `view-box` box instead: unambiguous.
+              style={{ transformOrigin: `${fxw}px ${fyw}px`, '--i': c * per + i } as CSSProperties}
+            />
+          );
+        }),
+      )}
+      {Array.from({ length: cols }, (_, c) =>
+        FIRE_SPOTS.slice(0, embers).map(([fx, fy], i) => {
+          const fyw = PIT_TOP + (1 - fy) * LANE_H;
+          return fyw > lit ? null : (
+            <circle
+              key={`e${c}-${i}`}
+              className="hr-ember"
+              cx={x + (c + 1 - fx) * lane}
+              cy={fyw}
+              r={3}
+              style={{ '--i': c * embers + i } as CSSProperties}
+            />
+          );
+        }),
+      )}
+      {(lips ? [x, x + w] : []).map((ex) => (
+        <rect
+          key={`l${ex}`}
+          className="hr-fire-lip"
+          x={ex - LIP_W / 2}
+          y={PIT_TOP}
+          width={LIP_W}
+          height={LANE_H}
+          fill="url(#hr-fire-lip-g)"
+        />
+      ))}
+    </>
+  );
 }
 
 /**
@@ -841,7 +994,7 @@ export function Arena({
   const windupMs = SLAM_TELEGRAPH_TICKS * tickMs;
 
   const slam = slamTelegraph(arena, boss);
-  const slamRef = useRef<SVGRectElement | null>(null);
+  const slamRef = useRef<SVGGElement | null>(null);
   const slamElapsed = slam === null || reduced ? null : (SLAM_TELEGRAPH_TICKS - slam.ticksToImpact) * tickMs;
   useSeeked(slamRef, SLAM_KEYFRAMES, windupMs, slamElapsed);
   // The slam's two cues, off the same derivation the lane is drawn from: the warn when a
@@ -882,7 +1035,7 @@ export function Arena({
     BEAM_WARN_TICKS * tickMs,
     beam?.stage === 'warning' && !reduced ? beamT * tickMs : null,
   );
-  const beamRef = useRef<SVGRectElement | null>(null);
+  const beamRef = useRef<SVGGElement | null>(null);
   const sweepFrames = useMemo(() => sweepKeyframes(beamDir), [beamDir]);
   useSeeked(
     beamRef,
@@ -999,6 +1152,38 @@ export function Arena({
               inside an SVG parent; it is a build artefact of `tools/gen_ordnance.py`, not
               anything a user can reach. */}
           <g dangerouslySetInnerHTML={ORDNANCE_HTML} />
+          {/* The ground fire's two gradients and its one tongue, mounted once for every
+              telegraph that burns (`GroundFire`). Both gradients are `objectBoundingBox`,
+              which is what lets ONE pool gradient stay "brightest down the middle" on a
+              128-unit slam lane and on a 512-unit doomed half alike. The colours are the
+              stylesheet's — `--ember` and `--torch` are tokens and `PAL` has no ember, the
+              same reason the beam has always been the one telegraph coloured from CSS. */}
+          <radialGradient id="hr-fire-pool-g">
+            <stop className="hr-fire-pool-core" offset="0" />
+            <stop className="hr-fire-pool-mid" offset="0.58" />
+            <stop className="hr-fire-pool-rim" offset="1" />
+          </radialGradient>
+          <linearGradient id="hr-fire-lip-g" x1="0" y1="0" x2="1" y2="0">
+            <stop className="hr-fire-lip-out" offset="0" />
+            <stop className="hr-fire-lip-hot" offset="0.5" />
+            <stop className="hr-fire-lip-out" offset="1" />
+          </linearGradient>
+          <radialGradient id="hr-fire-foot-g">
+            <stop className="hr-flame-foot-hot" offset="0" />
+            <stop className="hr-flame-foot-out" offset="1" />
+          </radialGradient>
+          <linearGradient id="hr-flame-g" x1="0" y1="1" x2="0" y2="0">
+            <stop className="hr-flame-base" offset="0" />
+            <stop className="hr-flame-hot" offset="0.22" />
+            <stop className="hr-flame-body" offset="0.55" />
+            <stop className="hr-flame-tip" offset="1" />
+          </linearGradient>
+          {/* The tongue and the scorch it stands in, as one instance: a flame with no
+              ground contact reads as a leaf floating over the floor. */}
+          <g id="hr-flame">
+            <ellipse className="hr-flame-foot" cy={-2} rx={21} ry={6} fill="url(#hr-fire-foot-g)" />
+            <path d={FLAME_PATH} fill="url(#hr-flame-g)" />
+          </g>
         </defs>
 
         {/* `#camera` rests at IDENTITY. It carries no transform from this file, ever — it
@@ -1072,75 +1257,64 @@ export function Arena({
           {/* Row 10. Over the boss because the hand that lands in the lane is drawn over it
               too, and a wind-up you cannot see through the mace is not a wind-up. Under the
               knights, because the player is on top of everything the scene does.
-              Under reduced motion the same shape FILLS by height instead of scaling. */}
+
+              The lane BURNS: `GroundFire` over exactly the rect the chain names, and the
+              seeked opacity above takes it from a smoulder to a roar over the 1.5 s. That
+              ramp is the whole wind-up cue and it is `ease-in`, so the flare arrives late,
+              where the countdown is worth reading. The tongues cross the eye's threshold
+              after the pool does — their gradient is half air — so the floor heats first
+              and the fire erupts out of it, on ONE animation and one clock.
+              Under reduced motion the pool FILLS by height instead. */}
           {shown === 'arena' && slam !== null && (
-            <g aria-hidden="true">
-              <rect
-                ref={slamRef}
+            <g ref={slamRef} className="hr-fire" aria-hidden="true" opacity={reduced ? 0.9 : 0}>
+              <GroundFire
                 x={slam.lane * SLAM_LANE_W}
-                y={PIT_TOP}
-                width={SLAM_LANE_W}
-                height={reduced ? LANE_H * slamFill : LANE_H}
-                fill={PAL.partLive}
-                opacity={reduced ? 0.35 : 0}
-                style={reduced ? undefined : { transformBox: 'fill-box', transformOrigin: 'top' }}
-              />
-              <rect
-                x={slam.lane * SLAM_LANE_W}
-                y={PIT_TOP}
-                width={SLAM_LANE_W}
-                height={LANE_H}
-                fill="none"
-                stroke={PAL.bossEdge}
-                strokeWidth={3}
-                strokeDasharray="12 10"
-                opacity={0.85}
+                w={SLAM_LANE_W}
+                per={14}
+                fill={reduced ? slamFill : 1}
               />
             </g>
           )}
 
-          {/* The 50 % phase's beam, row 10 with the slam. The warning tints the doomed
-              half, keylines the lane the sweep starts from and points a chevron the way it
-              will run — the dodge is "the other half", and the picture has to say which
-              half in its first frame. The sweep is ONE bright lane gliding across the
-              half while the tint retreats to the lanes still to come, so a swept lane
-              reads as safe again. Under reduced motion the same shapes at rest: the tint
-              at full, the rect stepping a lane per tick. Nothing outside phase 2 — that
-              gate is `beamTelegraph`'s. */}
+          {/* The 50 % phase's beam, row 10 with the slam, and the same fire as the slam's
+              lane — the two dangers are one danger drawn at two sizes. The warning sets
+              the doomed half smouldering, banks a second, denser fire on the lane the
+              sweep starts from (where the old keyline rect was: a lit lane says "it comes
+              from here" without drawing a box) and points a chevron the way it will run —
+              the dodge is "the other half", and the picture has to say which half in its
+              first frame. The sweep is a WALL of fire gliding across the half while the
+              smoulder retreats to the lanes still to come, so a swept lane reads as safe
+              again. Under reduced motion the same shapes at rest: the half lit at full,
+              the wall stepping a lane per tick. Nothing outside phase 2 — that gate is
+              `beamTelegraph`'s. */}
           {beam !== null && (
             <g aria-hidden="true">
-              <g ref={beamWarnRef} opacity={beam.stage === 'warning' && !reduced ? 0 : 1}>
-                <rect
-                  className="beam-lane"
+              <g ref={beamWarnRef} className="hr-fire" opacity={beam.stage === 'warning' && !reduced ? 0 : 1}>
+                <GroundFire
                   x={Math.min(beam.lane, beamFar) * SLAM_LANE_W}
-                  y={PIT_TOP}
-                  width={(Math.abs(beamFar - beam.lane) + 1) * SLAM_LANE_W}
-                  height={LANE_H}
+                  w={(Math.abs(beamFar - beam.lane) + 1) * SLAM_LANE_W}
+                  per={3}
                 />
                 {beam.stage === 'warning' && (
                   <>
-                    <rect
-                      className="beam-warn-edge"
-                      x={beam.lane * SLAM_LANE_W + 1}
-                      y={PIT_TOP + 1}
-                      width={SLAM_LANE_W - 2}
-                      height={LANE_H - 2}
-                    />
+                    <GroundFire x={beam.lane * SLAM_LANE_W} w={SLAM_LANE_W} per={8} lips={false} />
                     <path className="beam-warn-chevron" d={chevronPath(beam.lane, beamDir)} />
                   </>
                 )}
               </g>
               {beam.stage === 'sweeping' && (
-                <rect
+                <g
                   ref={beamRef}
-                  className="beam-sweep"
+                  className="hr-fire hr-fire-wall"
                   // Non-reduced: parked on the sweep's FIRST lane and carried by the seeked
                   // translate; reduced: on the lane the chain is on, stepped by React.
-                  x={(reduced ? beam.lane : beam.lane - beamDir * beam.k) * SLAM_LANE_W}
-                  y={PIT_TOP}
-                  width={SLAM_LANE_W}
-                  height={LANE_H}
-                />
+                >
+                  <GroundFire
+                    x={(reduced ? beam.lane : beam.lane - beamDir * beam.k) * SLAM_LANE_W}
+                    w={SLAM_LANE_W}
+                    per={14}
+                  />
+                </g>
               )}
             </g>
           )}
@@ -1331,17 +1505,25 @@ const BURST_TIMING: KeyframeAnimationOptions = {
   easing: `steps(${ORD_BURST.frames})`,
 };
 
-/** The lane goes from a hint to a claim as the hand comes down. */
-const SLAM_KEYFRAMES: Keyframe[] = [
-  { opacity: 0.08, transform: 'scaleY(0)' },
-  { opacity: 0.5, transform: 'scaleY(1)' },
-];
+/**
+ * The lane goes from a smoulder to a roar as the hand comes down.
+ *
+ * Opacity only — the fire may not SCALE, because the lit rect is the danger and a danger
+ * area that grows into place is one the player cannot read in its first frame.
+ *
+ * The floor is 0.32 and not 0: the wind-up is 1.5 s against a measured 1,126 ms of worst
+ * latency, so the FIRST frame is the one the dodge is decided on and a lane that fades up
+ * out of nothing spends its budget being invisible. It cost a third of the budget here
+ * once — at 0.16 the lane was not readable until a third of the way in. The flare lives
+ * in the second half instead: flat-ish to the midpoint, then better than double.
+ */
+const SLAM_KEYFRAMES: Keyframe[] = [{ opacity: 0.32 }, { opacity: 0.48, offset: 0.5 }, { opacity: 1 }];
 
 /** The aim lines brighten into the shot. */
 const VOLLEY_KEYFRAMES: Keyframe[] = [{ opacity: 0.1 }, { opacity: 0.8 }];
 
-/** The doomed half goes from a hint to a claim as the warning runs, like the slam's lane. */
-const BEAM_WARN_KEYFRAMES: Keyframe[] = [{ opacity: 0.35 }, { opacity: 1 }];
+/** The doomed half catches the same way the slam's lane does, over the same 1.5 s. */
+const BEAM_WARN_KEYFRAMES: Keyframe[] = [{ opacity: 0.34 }, { opacity: 0.5, offset: 0.5 }, { opacity: 1 }];
 
 /**
  * The sweep: `BEAM_SWEEP_LANES − 1` lane widths in as many lane steps, then held on the
