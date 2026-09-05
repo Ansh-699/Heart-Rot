@@ -109,8 +109,11 @@ use crate::hitboxes::{Rect, CORE_RADIUS_SQ, CORE_X, CORE_Y, PART_HITBOXES};
 use crate::map::{MAP_TILES, TILE, WALLS};
 use crate::state::{
     charged_damage, load_mut, super_damage, vent_pct, Arena, Boss, PlayerSlot, Players,
-    CHARGED_SHOT_BIT, CHARGE_SLOTS, CLASS_COOLDOWN_TICKS as CLASS_COOLDOWN, CLASS_DAMAGE,
-    N_PARTS, OUTCOME_WIN, PHASE_FIGHTING, SEED_BOSS, SEED_PLAYERS, SUPER_SHOT_BIT, SUPER_SLOTS,
+    CHARGED_SHOT_BIT, CHARGE_SLOTS, CLASS_COOLDOWN_SLOTS, CLASS_COOLDOWN_TICKS as CLASS_COOLDOWN,
+    CLASS_DAMAGE,
+    N_PARTS, OUTCOME_WIN, PHASE_FIGHTING, PHASE_LOBBY, PHASE_MUSTERING, SEED_BOSS, SEED_PLAYERS,
+    SUPER_SHOT_BIT, SUPER_SLOTS,
+    ZONE_LOBBY,
     ZONE_ARENA,
 };
 
@@ -507,12 +510,32 @@ fn raycast_beam(from_x: i16, from_y: i16, dx: i8, dy: i8, boss: &Boss) -> Beam {
 ///
 /// It is a named function rather than an inline `!=` so the answer for *every* phase is
 /// testable without an `AccountView` fixture — the same reason [`fire`] is split out of
-/// [`process`]. Relaxing it was considered and refused (§6.1): a lobby shot would spend
-/// three write locks and a whole transaction to change no state, at up to 25/s across a
-/// full raid. The waiting-area trigger is answered in the browser with a practice arrow
-/// that sends nothing.
+/// [`process`].
 const fn phase_takes_fire(phase: u8) -> bool {
     phase == PHASE_FIGHTING
+}
+
+/// Phases in which a seat *in the waiting area* may loose a practice arrow.
+///
+/// §6.1 refused this once, and the reason was cost: a lobby shot spends three write locks
+/// and a whole transaction to change no state, at up to 25/s across a full raid. What it
+/// bought was silence — a practice arrow that "sends nothing" is an arrow **only the
+/// shooter can see**, because a peer reconstructs every shot from account bytes and there
+/// were none. Two players standing in the waiting area shooting at each other each saw an
+/// empty room. That is the whole of the bug reported on Sep 5 2026, and no client change
+/// could reach it.
+///
+/// So the trade is taken, with the cost bounded rather than unbounded: [`practice`] writes
+/// three bytes and one `u32` on one account, never touches `Boss` or `Arena`, and is rate
+/// limited on the ER slot at the same period the fight uses. It is the *only* write in
+/// this file that costs no raycast.
+///
+/// `PHASE_MUSTERING` is included for the seats still in the lobby while others muster;
+/// [`practice`] refuses anyone already through the gate, so weapons still stay down in the
+/// pit for the whole muster window, which is the rule §6.1's paragraph was really about.
+/// Every settled phase is excluded: the match is over and a write there races the settle.
+const fn phase_takes_practice(phase: u8) -> bool {
+    phase == PHASE_LOBBY || phase == PHASE_MUSTERING
 }
 
 /// The wire's `tier` byte, 0 / 1 / 2, as the three shots it names. Each held tier owns
@@ -596,6 +619,12 @@ fn fire(
     if slot.hp == 0 {
         return Err(HeartrotError::PlayerDead.into());
     }
+    // The waiting area's own path, and it leaves before anything that needs a boss. A
+    // seat already through the gate falls through to the refusal below, so the muster's
+    // weapons-down rule is unchanged for everyone in the pit.
+    if !phase_takes_fire(arena.phase) {
+        return practice(slot, facing, dx, dy, tier, slot_now);
+    }
     if slot.zone != ZONE_ARENA {
         return Err(HeartrotError::WrongZone.into());
     }
@@ -624,7 +653,20 @@ fn fire(
 
     // Rate limit, in ticks. `saturating_add` rather than `+`: a `last_shot_tick`
     // close to u32::MAX must fail the comparison, not wrap into "ready".
-    if arena.tick <= slot.last_shot_tick.saturating_add(CLASS_COOLDOWN[class]) {
+    //
+    // `last_shot` and not the field: [`practice`] stamps the same field with an ER SLOT,
+    // which is ~569 million against an arena tick that never reaches 4,000 — so a seat
+    // that practised in the lobby and walked through the gate would be refused every shot
+    // of the fight, for good. `enter_gate` clears the stamp, and this is the second guard
+    // in case a path is ever added that does not: the two clocks are five orders of
+    // magnitude apart, so `> arena.tick` is unreachable for a stamp this fight made and
+    // is a total, unambiguous discriminator between them.
+    let last_shot = if slot.last_shot_tick > arena.tick {
+        0
+    } else {
+        slot.last_shot_tick
+    };
+    if arena.tick <= last_shot.saturating_add(CLASS_COOLDOWN[class]) {
         return Err(HeartrotError::RateLimited.into());
     }
     slot.last_shot_tick = arena.tick;
@@ -747,6 +789,57 @@ fn parse_shot(data: &[u8]) -> Result<(u8, i8, i8, Tier), ProgramError> {
 /// the deployed key is a deploy-time fact the Worker carries in `PROGRAM_ID`, and a
 /// constant baked in here would be one more thing to get wrong on a redeploy.
 ///
+/// A practice arrow in the waiting area: the shot that changes nothing but says it happened.
+///
+/// It exists because a peer reconstructs every shot from account bytes — `(x, y)`,
+/// `class_aim` and a `last_shot_tick` that CHANGED — and a shot the client never sent
+/// leaves none of that, so a friend standing next to you saw an empty room. See
+/// [`phase_takes_practice`] for why §6.1's refusal was reversed.
+///
+/// **The stamp is an ER slot, not an arena tick, and that is forced.** The crank does not
+/// start until the muster, so `arena.tick` is frozen at 0 for the whole of the waiting
+/// area: stamping it would write the same value every time and a peer would diff nothing.
+/// The slot moves every 50 ms whether or not anyone is cranking, which makes it the only
+/// clock available here — and the same value then serves as the rate limiter, so the
+/// practice path needs no field of its own in a slot that has none left to give. The
+/// fight's limiter is guarded against the value ([`fire`]) and `enter_gate` clears it.
+///
+/// No `Boss`, no `Arena`, no raycast, no damage: three bytes and a `u32` on one seat.
+fn practice(
+    slot: &mut PlayerSlot,
+    facing: u8,
+    dx: i8,
+    dy: i8,
+    tier: Tier,
+    slot_now: u32,
+) -> ProgramResult {
+    // Through the gate already: the muster's weapons-down rule, unchanged. A seat in the
+    // pit during `MUSTERING` reaches here and is refused exactly as it was before.
+    if slot.zone != ZONE_LOBBY {
+        return Err(HeartrotError::WrongZone.into());
+    }
+    let class = class_of(slot);
+    // The same hold the fight asks for, measured on the same clock, so the ladder the
+    // client descends on `NotCharged` behaves identically in the waiting area.
+    if let Some(hold) = tier.hold_slots() {
+        if slot_now.wrapping_sub(slot.last_move_tick) < hold {
+            return Err(HeartrotError::NotCharged.into());
+        }
+    }
+    // Slots, not ticks. A seat that has never fired reads 0 and the difference is the
+    // whole slot counter, which is far past any cooldown — the honest answer for "has not
+    // shot". `wrapping_sub` because both sides are the slot truncated to 32 bits.
+    if slot_now.wrapping_sub(slot.last_shot_tick) < CLASS_COOLDOWN_SLOTS[class] {
+        return Err(HeartrotError::RateLimited.into());
+    }
+    slot.last_shot_tick = slot_now;
+    // Byte for byte what `fire` writes, and for the same reason: the tier's flags ride
+    // bits 3 and 4, a step clears them, and `set_aim` is the only writer of the aim byte.
+    slot.facing = facing | tier.facing_bits();
+    slot.set_aim(dx, dy);
+    Ok(())
+}
+
 /// See `docs/architecture/05-wire-abi.md` for the block, and [`parse_shot`] for the parser.
 pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
     let [arena_account, boss_account, players_account, authority, ..] = accounts else {
@@ -805,7 +898,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
         players.bump,
     )?;
 
-    if !phase_takes_fire(arena.phase) {
+    if !phase_takes_fire(arena.phase) && !phase_takes_practice(arena.phase) {
         return Err(HeartrotError::WrongPhase.into());
     }
 
@@ -824,9 +917,12 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
     // measured in mollusk against the pre-charge handler on identical fixtures, a plain
     // shot is +73..+93 CU and a charged one +202..+222, the 129 CU between them being this
     // one call — and the plain shot is the hot path, a raider holding fire while walking.
+    // A practice shot reads it for every tier: the slot is both its rate limiter and the
+    // only thing that changes when it fires, so a plain tap cannot skip the syscall the
+    // way the fight's hot path does.
     let slot_now = match tier {
-        Tier::Plain => 0,
-        Tier::Charged | Tier::Super => Clock::get()?.slot as u32,
+        Tier::Plain if phase_takes_fire(arena.phase) => 0,
+        _ => Clock::get()?.slot as u32,
     };
 
     fire(arena, boss, slot, dx, dy, tier, slot_now)
@@ -1807,6 +1903,102 @@ mod tests {
         assert_eq!(slot.damage_dealt, 50, "a charged shot stops at the first part");
         assert_eq!(boss.parts.iter().filter(|&&hp| hp != 1_000).count(), 1);
         assert_eq!(boss.core_hp, 100);
+    }
+
+    /// The waiting area's arrow. Everything a peer needs to draw it must land on the
+    /// seat, nothing else may move, and the fight it precedes must not be poisoned by it.
+    #[test]
+    fn a_practice_arrow_is_stamped_and_costs_the_boss_nothing() {
+        let s = survey();
+        let mut arena = Arena::zeroed(); // PHASE_LOBBY, and tick frozen at 0
+        let mut boss = standing_boss();
+        let before = boss;
+        let mut slot = archer(&s);
+        slot.zone = ZONE_LOBBY;
+        let at = 569_636_879u32; // a real ER slot, five orders of magnitude past any tick
+
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, at)
+            .expect("a seat in the waiting area may practise");
+
+        // The three facts a peer reconstructs an arrow from, and the change that says it
+        // happened at all: with the crank stopped, `arena.tick` would have stamped 0 every
+        // time and no client could have told two shots apart.
+        assert_eq!(slot.last_shot_tick, at, "the ER slot is the only clock running here");
+        assert_eq!(slot.facing & 7, octant(s.aim.0, s.aim.1).unwrap() & 7);
+        assert_ne!(slot.class_aim & !CLASS_MASK, 0, "the aim byte carries the direction");
+        assert_eq!(slot.class_aim & CLASS_MASK, CLASS_MASK, "and the class survives it");
+
+        // Nothing else moved: no damage, no vent, no outcome, no clock.
+        assert_eq!(boss.parts, before.parts);
+        assert_eq!(boss.core_hp, before.core_hp);
+        assert_eq!(boss.vent_open, before.vent_open);
+        assert_eq!(slot.damage_dealt, 0, "a practice arrow scores nothing");
+        assert_eq!((arena.tick, arena.phase, arena.outcome), (0, PHASE_LOBBY, OUTCOME_UNDECIDED));
+    }
+
+    /// The rate limit the waiting area has instead of a tick, and the muster rule it must
+    /// not break for the seats already through the gate.
+    #[test]
+    fn practice_is_slot_limited_and_the_pit_stays_weapons_down() {
+        let s = survey();
+        let mut arena = Arena::zeroed();
+        let mut boss = standing_boss();
+        let mut slot = archer(&s);
+        slot.zone = ZONE_LOBBY;
+        let at = 1_000_000u32;
+        let cd = CLASS_COOLDOWN_SLOTS[class_of(&slot)];
+
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, at).expect("first");
+        // One slot short of the period is refused, and the stamp does not move.
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, at + cd - 1)
+                .unwrap_err(),
+            HeartrotError::RateLimited.into(),
+        );
+        assert_eq!(slot.last_shot_tick, at, "a refused practice shot spends nothing");
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, at + cd)
+            .expect("the period is up");
+        assert_eq!(slot.last_shot_tick, at + cd);
+
+        // A seat that walked through the gate during the muster is still weapons-down: the
+        // rule §6.1 was really about, unchanged by the waiting area's new one.
+        let mut mustering = Arena::zeroed();
+        mustering.phase = PHASE_MUSTERING;
+        let mut entered = archer(&s); // `shooter` seats it in ZONE_ARENA
+        assert_eq!(
+            fire(&mut mustering, &mut boss, &mut entered, s.aim.0, s.aim.1, Tier::Plain, at)
+                .unwrap_err(),
+            HeartrotError::WrongZone.into(),
+        );
+        // ...while a seat still in the lobby beside them may practise.
+        let mut waiting = archer(&s);
+        waiting.zone = ZONE_LOBBY;
+        fire(&mut mustering, &mut boss, &mut waiting, s.aim.0, s.aim.1, Tier::Plain, at)
+            .expect("the waiting area is not the pit");
+    }
+
+    /// The stamp is an ER slot and the fight's limiter counts arena ticks. A raider who
+    /// practised and walked through the gate must not be refused every shot of the raid.
+    #[test]
+    fn a_practice_stamp_cannot_follow_a_raider_into_the_fight() {
+        let s = survey();
+        let mut boss = standing_boss();
+        let mut arena = arena_fighting();
+        arena.tick = 300;
+        let mut slot = archer(&s); // in the pit, as `enter_gate` leaves it
+        slot.last_shot_tick = 569_636_879; // the clear was missed: the guard is what is left
+
+        fire(&mut arena, &mut boss, &mut slot, s.aim.0, s.aim.1, Tier::Plain, 0)
+            .expect("a slot-shaped stamp reads as no previous shot, not as a shot 5 million ticks hence");
+        assert_eq!(slot.last_shot_tick, arena.tick, "and the fight re-stamps it in its own clock");
+
+        // The guard is only for the impossible value: a real tick stamp still rate limits.
+        let mut fresh = archer(&s);
+        fresh.last_shot_tick = arena.tick;
+        assert_eq!(
+            fire(&mut arena, &mut boss, &mut fresh, s.aim.0, s.aim.1, Tier::Plain, 0).unwrap_err(),
+            HeartrotError::RateLimited.into(),
+        );
     }
 
     /// Tag 7's wire block, byte for byte: four bytes and only four, and `tier` is 0, 1 or 2.

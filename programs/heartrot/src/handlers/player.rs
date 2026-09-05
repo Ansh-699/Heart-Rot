@@ -1029,6 +1029,11 @@ pub fn enter_gate(
     slot.facing = 0;
     slot.hp = slot.hp_max;
     slot.respawn_at_tick = 0;
+    // The practice stamp goes with the waiting area. `shoot::practice` leaves an ER SLOT
+    // here — ~569 million against an arena tick that never reaches 4,000 — and the fight's
+    // limiter compares this field to the tick, so carrying it through the gate would
+    // refuse every shot of the raid. `fire` guards the value as well; this is the clear.
+    slot.last_shot_tick = 0;
 
     // Cap rather than wrap: `alive_count` drives `bullets_per_volley = 3 + alive_count`,
     // and a wrapped count would fill the pool on the next volley.

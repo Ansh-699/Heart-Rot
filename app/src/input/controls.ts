@@ -144,6 +144,7 @@ import {
   PHASE_FIGHTING,
   PHASE_MUSTERING,
   PHASE_LOBBY,
+  ZONE_LOBBY,
   SUPER_MS,
   TICK_MS,
   ZONE_ARENA,
@@ -583,17 +584,31 @@ export function attachControls(cfg: ControlsConfig): () => void {
     const tier = nextShot(queued, held, still, tap);
     if (tier === null) return;
 
-    // `shoot` is Fighting-only AND arena-only on chain: outside either, the transaction is
-    // built, signed, sent and refused with nothing to show for it. So it is not sent — the
-    // trigger still fires, and only the send is dropped.
+    // Two shapes of shot the chain accepts, and they are paced by different clocks.
+    //
+    // `live` is the raid's: Fighting, in the pit, rate limited on the crank tick.
+    //
+    // `practice` is the waiting area's, and it is why a friend can see your arrows there
+    // at all. It used to be refused on chain, so the client never sent it and the arrow
+    // existed only in the shooter's own browser — two players shooting at each other in
+    // the lobby each saw an empty room, which is the bug this pair of gates closes. The
+    // chain limits it on the ER slot, because the crank has not started and `arena.tick`
+    // is frozen at 0; the wall clock below is this side's mirror of that same period.
+    // Anyone already through the gate is refused: weapons stay down in the pit.
     const live = phase === PHASE_FIGHTING && (zone ?? ZONE_ARENA) === ZONE_ARENA;
+    const practice =
+      (phase === PHASE_LOBBY || phase === PHASE_MUSTERING) && (zone ?? ZONE_LOBBY) === ZONE_LOBBY;
 
     // The two clocks, each pacing the trigger it can see. Inside a live cooldown nothing is
     // drawn at all: the ring is already on screen counting it down, and an arrow there
     // would claim a shot the chain never took. The chain's stamp of the last shot, off the
     // roster, can be later than the tick this client saw at the send — pace against the
     // later of the two, or the next send is `RateLimited` and the shot is lost.
-    if (stamped !== undefined) lastShotTick = Math.max(lastShotTick, stamped);
+    // Only while `live`. A practice shot stamps the same field with an ER SLOT — ~569
+    // million against a tick that never reaches 4,000 — so folding that in would close
+    // this gate for the rest of the page. The chain clears the stamp at the gate and
+    // guards the value besides; this is the client's half of the same rule.
+    if (live && stamped !== undefined) lastShotTick = Math.max(lastShotTick, stamped);
     if (live ? !shotAllowed(tick, lastShotTick, klass) : now - lastFireAt < periodMsFor(klass)) {
       // Refused, not dropped: the first pump the gate opens for fires it, and the send
       // below clears the queue, so it fires exactly once.
@@ -613,7 +628,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // Draw first, send second: the arrow is client-side either way, and a practice arrow
     // and a real one are the same arrow.
     cfg.onTrigger?.(dx, dy, tier);
-    if (live) cfg.onShoot(dx, dy, tier);
+    if (live || practice) cfg.onShoot(dx, dy, tier);
   }
 
   /** The hold begins with whichever of the two fire inputs goes down first. */

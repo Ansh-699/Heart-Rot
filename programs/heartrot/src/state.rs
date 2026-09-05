@@ -1213,6 +1213,16 @@ pub const CLASS_COOLDOWN_TICKS: [u32; N_CLASSES as usize] = [
     ticks_for(CLASS_PERIOD_MS[1]) - 1,
 ];
 
+/// The same cooldown in ER slots, for the one path that has no crank tick to count: a
+/// practice shot in the waiting area, where the arena's clock is frozen at 0 because the
+/// crank does not start until the muster. Derived from the same period as the tick table
+/// above, never typed, so a balance pass moves both. No `- 1`: the comparison there is
+/// `slot_now - last_shot < cooldown`, not `>`.
+pub const CLASS_COOLDOWN_SLOTS: [u32; N_CLASSES as usize] = [
+    CLASS_PERIOD_MS[0] / SLOT_MS,
+    CLASS_PERIOD_MS[1] / SLOT_MS,
+];
+
 const _: () = {
     // Class 0 is the knight exactly as it plays today. If either of these moves, every
     // account on devnet silently changes weapon.
