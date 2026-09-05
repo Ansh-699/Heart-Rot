@@ -53,6 +53,8 @@ import {
   initLeaderboard,
   leaderboardPda,
   leaveSeat,
+  ZONE_LOBBY,
+  type PlayersAccount,
   matchPdas,
   nextIncarnation,
   rollDeadlineTick,
@@ -869,6 +871,85 @@ function arenaIdField(body: unknown): bigint {
  * already serving, capped at one arena so a join never pays for a backlog, and it runs in
  * `waitUntil` so the player's response has already gone. No cron, no polling, no schedule.
  */
+/**
+ * How long a seat may sit in the waiting area doing nothing before it is freed.
+ *
+ * Five minutes, in ER slots at 50 ms. The problem it solves is not idleness, it is
+ * ABANDONMENT: a browser that closes without its unload beacon — a killed tab, a crashed
+ * page, a phone that backgrounded — leaves `session_pubkey` set, and nothing on chain
+ * notices. The crank does not run in a lobby, so no on-chain clock can reap them either.
+ * Observed on devnet Sep 5 2026: ten such seats in one arena, all at spawn, none having
+ * ever moved, filling the room for everyone who came after.
+ *
+ * A real player idling here is bounced and their client takes a seat again, which costs
+ * them a loader and nothing else; an abandoned one has no client left to rejoin.
+ */
+const IDLE_SLOTS = (5 * 60 * 1000) / 50;
+
+/** At most this many freed per request, so one join never pays for a whole dead lobby. */
+const IDLE_SWEEP_MAX = 6;
+
+/**
+ * Free the seats in this arena's waiting area that nobody is sitting in any more.
+ *
+ * `leave_seat` is authorised by the arena's crank authority — the treasury key this Worker
+ * holds — and not by the player's session key, which is what makes an eviction possible at
+ * all without the departed player's cooperation. The seat's own `last_move_tick` is the
+ * clock: an ER slot, stamped by every step AND by the claim itself, so "never moved" and
+ * "left an hour ago" are finally different numbers. `last_shot_tick` counts too, but only
+ * when it is slot-shaped — in a fight that field holds an arena tick, five orders of
+ * magnitude smaller, and reading one as a slot would make every fighter look idle.
+ *
+ * Background, capped, and attached to a request already being served: the same shape as
+ * {@link reapOne}, for the same reason. No cron and no timer.
+ */
+function sweepIdleSeats(
+  c: Ctx,
+  ctx: RouteContext,
+  args: { pdas: MatchPdas; erFqdn: string; roster: PlayersAccount; keep: number },
+): void {
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const er = createRpc(args.erFqdn);
+        const now = Number(await er.getSlot().send());
+        // Slot-shaped means "within a plausible distance of the clock we just read".
+        const active = (slot: PlayersAccount['slots'][number]): number => {
+          const shot =
+            slot.lastShotTick <= now && now - slot.lastShotTick < 10_000_000 ? slot.lastShotTick : 0;
+          return Math.max(slot.lastMoveTick, shot);
+        };
+        const stale = args.roster.slots
+          .filter(
+            (slot) =>
+              slot.occupied &&
+              slot.seat !== args.keep &&
+              slot.zone === ZONE_LOBBY &&
+              now - active(slot) >= IDLE_SLOTS,
+          )
+          .slice(0, IDLE_SWEEP_MAX);
+        for (const slot of stale) {
+          const ix = leaveSeat({
+            programId: c.programId,
+            arena: args.pdas.arena,
+            players: args.pdas.players,
+            treasury: c.treasury.address,
+            seat: slot.seat,
+            identity: slot.identity,
+          });
+          await confirmSignature(er, await sendInstructions(er, c.treasury, [ix]), {
+            timeoutMs: ER_CONFIRM_MS,
+          });
+          console.log(`sweepIdleSeats: freed seat ${slot.seat}, idle ${now - active(slot)} slots`);
+        }
+      } catch (error) {
+        // Best effort by design: the seat is still there for the next join to try again.
+        console.error('sweepIdleSeats failed', error);
+      }
+    })(),
+  );
+}
+
 function reapOne(c: Ctx, ctx: RouteContext, dead: { arenaId: bigint; erFqdn: string }): void {
   ctx.waitUntil(
     (async () => {
@@ -993,7 +1074,17 @@ export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): P
     // so a seat must be free in both before it is handed out.
     const free = freeSeats(arena.seatOccupied).filter((seat) => !roster.slots[seat]?.occupied);
     const seat = existing ? existing.seat : free[0];
-    if (seat === undefined) return json({ error: 'arena_full' }, 409);
+    if (seat === undefined) {
+      // Full — but a room full of abandoned seats is the most likely reason, so sweep
+      // before giving up. The next attempt (or the next player) finds the space.
+      sweepIdleSeats(c, ctx, { pdas, erFqdn, roster, keep: -1 });
+      return json({ error: 'arena_full' }, 409);
+    }
+    // Every join tidies the room it lands in, not only the join that finds it full: ten
+    // abandoned seats in a twenty-seat lobby never fill it, they just make it look busy
+    // and crowd the spawn. `keep` is our own seat, which is about to become the least
+    // idle one here but has not been claimed yet.
+    sweepIdleSeats(c, ctx, { pdas, erFqdn, roster, keep: seat });
 
     const ix = claimSeat({
       programId: c.programId,

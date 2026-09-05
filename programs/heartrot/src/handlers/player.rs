@@ -193,6 +193,7 @@ fn claim_seat(
     class: u8,
     session_pubkey: [u8; 32],
     identity: [u8; 32],
+    now: u32,
 ) -> Result<(), ProgramError> {
     let (x, y) = lobby_spawn(seat);
     *slot = PlayerSlot {
@@ -202,6 +203,14 @@ fn claim_seat(
         y,
         hp: PLAYER_HP_MAX,
         hp_max: PLAYER_HP_MAX,
+        // THE IDLE CLOCK STARTS HERE. Every other writer of this field is a step, so a
+        // seat that is claimed and never moved would read 0 and be indistinguishable from
+        // one abandoned an hour ago — and the sweep that frees abandoned seats has nothing
+        // else to measure against. Stamping the claim makes "idle since" total: a seat's
+        // last activity is always a real ER slot from the moment it exists. It costs the
+        // new player the same 50 ms slot a step would (their first move lands in the next
+        // one) and starts the charge hold at the join, which is where standing still began.
+        last_move_tick: now,
         session_pubkey,
         identity,
         ..PlayerSlot::zeroed()
@@ -753,6 +762,9 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
         // wipe; if switching mid-match is ever wanted, gate it on `last_shot_tick == 0`.
         slot.session_pubkey = session_pubkey;
         slot.skin_id = skin_id;
+        // A re-join is activity: it is the same human asking for the same seat, and the
+        // idle sweep must not free a seat out from under a player who just reconnected.
+        slot.last_move_tick = move_clock(arena)?;
         return Ok(());
     }
 
@@ -770,7 +782,7 @@ pub fn join(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> 
     if slot.session_pubkey != UNCLAIMED {
         return Err(HeartrotError::SeatOccupied.into());
     }
-    claim_seat(slot, seat, skin_id, class, session_pubkey, identity)?;
+    claim_seat(slot, seat, skin_id, class, session_pubkey, identity, move_clock(arena)?)?;
 
     // The bitmask is the Worker's cheap read of occupancy; `session_pubkey` above is
     // the authority. They are written together so they cannot drift.
@@ -1058,6 +1070,25 @@ mod tests {
     /// bit 3 dies with the arrow it describes — "charging accrues only while standing
     /// still" is a property of this one write, not a rule anyone maintains. And no octant
     /// the quantiser can answer reaches the flag, so a step can never set it by accident.
+    /// The idle clock has to start at the claim, or a seat nobody ever moved is
+    /// indistinguishable from one abandoned an hour ago and the sweep that frees
+    /// abandoned seats has nothing to measure.
+    #[test]
+    fn a_claimed_seat_carries_the_slot_it_was_taken_in() {
+        let mut slot = PlayerSlot::zeroed();
+        let at = 571_931_214u32;
+        claim_seat(&mut slot, 3, 0, 1, [1u8; 32], [2u8; 32], at).unwrap();
+        assert_eq!(slot.last_move_tick, at, "a fresh seat is active as of its claim");
+        assert_eq!(slot.last_shot_tick, 0, "and has fired nothing");
+        assert_eq!(slot.zone, ZONE_LOBBY);
+
+        // Nothing else about the claim moved: the stamp rides along with the zeroing.
+        let (x, y) = lobby_spawn(3);
+        assert_eq!((slot.x, slot.y), (x, y));
+        assert_eq!(slot.hp, PLAYER_HP_MAX);
+        assert_eq!(slot.identity, [2u8; 32]);
+    }
+
     #[test]
     fn a_step_clears_the_charged_shot_flag() {
         let mut slot = PlayerSlot::zeroed();
@@ -1099,7 +1130,7 @@ mod tests {
         // both. A claim that kept either would hand a new player the old one's weapon.
         used.class_aim = 0xFF;
 
-        claim_seat(&mut used, 3, 7, 1, [1u8; 32], [2u8; 32]).unwrap();
+        claim_seat(&mut used, 3, 7, 1, [1u8; 32], [2u8; 32], 0).unwrap();
 
         assert_eq!(used.session_pubkey, [1u8; 32]);
         assert_eq!(used.identity, [2u8; 32]);
@@ -1117,7 +1148,7 @@ mod tests {
         // forgotten here fails this line — a per-field assertion would not, since it would
         // be the same forgotten list a second time.
         let mut fresh = PlayerSlot::zeroed();
-        claim_seat(&mut fresh, 3, 7, 1, [1u8; 32], [2u8; 32]).unwrap();
+        claim_seat(&mut fresh, 3, 7, 1, [1u8; 32], [2u8; 32], 0).unwrap();
         assert_eq!(bytemuck::bytes_of(&used), bytemuck::bytes_of(&fresh));
         assert_eq!(
             (used.deaths, used.damage_dealt, used.respawn_at_tick),
@@ -1149,7 +1180,7 @@ mod tests {
             assert_eq!((key, identity), ([7u8; 32], [9u8; 32]));
 
             let mut slot = PlayerSlot::zeroed();
-            claim_seat(&mut slot, seat, skin_id, class, key, identity).unwrap();
+            claim_seat(&mut slot, seat, skin_id, class, key, identity, 0).unwrap();
             assert_eq!(slot.class_aim >> 7, class, "the class must land in bit 7");
             assert_eq!(
                 slot.class_aim & !CLASS_MASK,
@@ -1268,7 +1299,7 @@ mod tests {
         for seat in 0..MAX_SEATS as u8 {
             let key = [seat.wrapping_add(1); 32];
             let slot = players.slots.get_mut(seat as usize).expect("seat in range");
-            claim_seat(slot, seat, 0, 0, key, key).unwrap();
+            claim_seat(slot, seat, 0, 0, key, key, 0).unwrap();
             slot.deaths = 3;
             slot.damage_dealt = 500;
         }
@@ -1841,7 +1872,7 @@ mod tests {
     fn leaving_frees_the_seat_and_only_for_its_owner() {
         let mut slot = PlayerSlot::zeroed();
         let identity = [7u8; 32];
-        claim_seat(&mut slot, 0, 0, 1, [1u8; 32], identity).unwrap();
+        claim_seat(&mut slot, 0, 0, 1, [1u8; 32], identity, 0).unwrap();
         assert!(slot.session_pubkey != UNCLAIMED, "seated to begin with");
 
         // A stranger's identity must not free it. This is the whole reason the identity
@@ -1872,7 +1903,7 @@ mod tests {
     #[test]
     fn the_gate_is_one_way_and_only_from_the_gate() {
         let mut slot = PlayerSlot::zeroed();
-        claim_seat(&mut slot, 0, 0, 0, [1u8; 32], [2u8; 32]).unwrap();
+        claim_seat(&mut slot, 0, 0, 0, [1u8; 32], [2u8; 32], 0).unwrap();
 
         // Walking up to it is not standing on it. The client retries this instruction the
         // whole way in, so the refusal has to be its own code or "not there yet" is

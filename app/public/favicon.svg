@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="HEARTROT">
+  <!-- The boss's core: the vent every raid is trying to open, and the one shape in this
+       game that still reads at 16 px. Colours are the stylesheet's own --cyan on the
+       page's own background, so the tab matches the room. -->
+  <rect width="32" height="32" rx="7" fill="#0b0a0c"/>
+  <circle cx="16" cy="16" r="10.2" fill="none" stroke="#6fe3ff" stroke-opacity=".22" stroke-width="1.6"/>
+  <circle cx="16" cy="16" r="7.4" fill="#04141c" stroke="#6fe3ff" stroke-width="3.2"/>
+</svg>
