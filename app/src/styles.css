@@ -908,10 +908,13 @@ h3 {
   .hr-vent-open .hr-boss-vent,
   .hr-fury .hr-boss-aura,
   .hr-smoke-wisp,
-  .hr-fire-pool,
-  .hr-fire-lip,
+  .hr-aoe-haze,
+  .hr-aoe-burn,
+  .hr-zone-fire,
   .hr-flame,
-  .hr-ember,
+  .hr-aoe-front,
+  .hr-rain-fall,
+  .hr-rain-splash,
   .room-light circle,
   .room-motes,
   .fury-wash.is-on {
@@ -1266,69 +1269,47 @@ h3 {
 }
 
 /* --------------------------------------------------------------------------
-   ground fire — every danger area in room B (`Arena.tsx`'s `GroundFire`)
+   fire — everything the boss burns in room B (`Arena.tsx`: `FireZone`, the comets)
 
-   The slam's lane, the beam's doomed half and the beam's sweeping wall are ONE shape:
-   the stone the attack is about to land on, burning. They used to be flat translucent
-   rectangles with dashed edges, which read as a UI overlay pasted onto the room rather
-   than as anything happening in the dungeon. Heat coming off the floor reads as the room.
+   The slam's lane, the beam's doomed half and the beam's sweeping wall are ONE picture:
+   the stone the attack is about to land on catching fire, and a shower of comets falling
+   into it. The volley is the same comet, thrown. Nothing here is a box or a tint: every
+   shape is a gradient, every motion is `transform` or `opacity` on its own node, nothing
+   re-rasterises, nothing forces layout, and no `filter` appears anywhere (27 blurred
+   nodes cost `Boss.tsx` 0.9 ms/frame).
 
-   The telegraphs coloured from a stylesheet rather than inline attributes, because the
-   fire is in `--ember` and `--torch`, the HUD's state red and its torch amber, and `PAL`
-   has no ember — the tokens do. Every position, size and seek stays `Arena.tsx`'s, in
-   world units, where the lanes are.
-
-   What is DANGER and what is DECORATION is the load-bearing split. The pool and the two
-   edge lines are the rect the chain named: no rule below moves or resizes them, because a
-   player reads that rect to know where not to stand. Only the tongues and the embers
-   move, by `transform` and `opacity`, on their own nodes — nothing re-rasterises, nothing
-   forces layout, and no `filter` appears anywhere: 27 blurred nodes cost `Boss.tsx`
-   0.9 ms/frame, which is why the fire is soft by GRADIENT exactly as the smoke is.
-
-   How HARD it burns is not here. That is one seeked WAAPI opacity on the group
-   (`Arena.tsx`, `SLAM_KEYFRAMES` / `BEAM_WARN_KEYFRAMES`), so the wind-up runs on the
-   chain's clock and no other; under reduced motion it is drawn at rest instead and the
-   pool carries the countdown in its height (the block above cancels the loops below).
+   What carries MEANING is not here. The extent of a zone is its rect (`Arena.tsx`, in
+   world units, where the lanes are), how far into the wind-up it is is the size of its
+   fire (one seeked WAAPI transform on a clip circle, on the chain's clock and no other),
+   and when a comet lands is a WAAPI one-shot on a pooled node. This file only makes the
+   fire move like fire. The reduced-motion block above cancels every loop below and the
+   zone is drawn lit in full, no rain.
    -------------------------------------------------------------------------- */
 
-/* The hot floor: a pool of heat brightest at the middle of the lane, dying toward its
-   rim without ever going out — a lane the fire has left entirely is a lane a player
-   walks into. Radial rather than a horizontal ramp because the flat top and bottom edges
-   of a ramped rect are exactly the "box pasted on the room" this stopped being. */
-.hr-fire-pool-core {
-  stop-color: color-mix(in srgb, var(--torch) 58%, var(--ember));
-  stop-opacity: 0.66;
+/* The haze over the whole rect, from the first frame: warm, soft, no edge. */
+.hr-aoe-haze {
+  animation: hr-fire-breathe 2.4s ease-in-out infinite alternate;
 }
-.hr-fire-pool-mid {
-  stop-color: var(--ember);
-  stop-opacity: 0.36;
+/* The burning floor: the circle out of the centre, pulsing like a bed of coals. Its size
+   is `Arena.tsx`'s seeked transform; only the breathe is here. */
+.hr-aoe-burn {
+  animation: hr-fire-breathe 1.15s ease-in-out infinite alternate;
 }
-.hr-fire-pool-rim {
-  stop-color: var(--ember);
-  stop-opacity: 0.13;
+/* A spot's fire switches on the instant its first comet lands (`--f`, set once at mount)
+   and stays. One-shot with a positive delay is "not yet"; a negative one is "already". */
+.hr-zone-fire {
+  opacity: 0;
+  animation: hr-spot-on 140ms linear var(--f, 0ms) forwards;
 }
-.hr-fire-pool {
-  animation: hr-fire-breathe 2.3s ease-in-out infinite alternate;
-  animation-delay: calc(var(--i, 0) * -0.71s);
+@keyframes hr-spot-on {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-
-/* The two lane boundaries — the one place in the picture that has to be exact, because
-   the fire is soft everywhere else and "roughly over there" is not a dodge. Two lips and
-   not a box: the top and bottom of the rect are the pit's own walls, so drawing them
-   would add a rectangle and no fact, and a rectangle is what this stopped being. */
-.hr-fire-lip-hot {
-  stop-color: color-mix(in srgb, var(--torch) 78%, #fff);
-  stop-opacity: 0.62;
-}
-.hr-fire-lip-out {
-  stop-color: var(--ember);
-  stop-opacity: 0;
-}
-.hr-fire-lip {
-  animation: hr-fire-breathe 1.9s ease-in-out infinite alternate;
+.hr-aoe-burn-wall {
+  animation-duration: 0.5s;
 }
 @keyframes hr-fire-breathe {
-  from { opacity: 0.74; }
+  from { opacity: 0.78; }
   to { opacity: 1; }
 }
 
@@ -1340,8 +1321,6 @@ h3 {
   animation: hr-flame-gutter 0.94s ease-in-out infinite;
   animation-delay: calc(var(--i, 0) * -0.137s);
 }
-/* Three heights as well as three periods. Fourteen tongues cut from one pattern read as
-   fourteen stickers however well each one is drawn. */
 .hr-flame:nth-of-type(3n) {
   animation-name: hr-flame-tall;
   animation-duration: 1.21s;
@@ -1350,9 +1329,6 @@ h3 {
   animation-name: hr-flame-small;
   animation-duration: 0.76s;
 }
-/* A static lean, on `rotate` so it composes with the animated `scale` about the same base
-   point instead of fighting it. Fourteen tongues standing perfectly upright read as a
-   picket fence. */
 .hr-flame:nth-of-type(2n) { rotate: 7deg; }
 .hr-flame:nth-of-type(5n) { rotate: -9deg; }
 @keyframes hr-flame-gutter {
@@ -1374,66 +1350,56 @@ h3 {
   58% { scale: 0.65 0.58; opacity: 0.6; }
   100% { scale: 0.6 0.46; opacity: 0.45; }
 }
-/* Hot at the stone, red at the tip: a tongue that is one flat red all the way up reads as
-   a petal. The whole flame is this ramp, which is also why it needs no blur to be soft. */
-.hr-flame-base {
-  stop-color: color-mix(in srgb, var(--torch) 52%, #fff);
-  stop-opacity: 1;
-}
-.hr-flame-hot {
-  stop-color: var(--torch);
-  stop-opacity: 0.92;
-}
-.hr-flame-body {
-  stop-color: var(--ember);
-  stop-opacity: 0.62;
-}
-.hr-flame-tip {
-  stop-color: var(--ember);
-  stop-opacity: 0;
-}
-.hr-flame-foot-hot {
-  stop-color: var(--torch);
-  stop-opacity: 0.62;
-}
-.hr-flame-foot-out {
-  stop-color: var(--ember);
-  stop-opacity: 0;
-}
-
-/* Embers off the pool. `translate`, not a `y` write — one composited property, no layout. */
-.hr-ember {
-  fill: var(--torch);
-  animation: hr-ember-rise 2.7s linear infinite;
-  animation-delay: calc(var(--i, 0) * -0.83s);
-}
-@keyframes hr-ember-rise {
-  0% { translate: 0 0; opacity: 0; }
-  14% { opacity: 0.85; }
-  70% { opacity: 0.5; }
-  100% { translate: 7px -104px; opacity: 0; }
-}
-
-/* The sweep, the one fire that is a WALL: the same pool and the same tongues, driven
-   harder. Its group carries the seeked glide, so the wall never brightens or dims — it
-   arrives already roaring, which is the difference between "this will burn" and "this is
-   burning". The chevron on the warning's start lane points the way it will run. */
-.hr-fire-wall .hr-fire-pool { animation-name: hr-fire-roar; }
-.hr-fire-wall .hr-fire-lip { opacity: 1; animation-name: none; }
+/* The wall's tongues, driven harder: it arrives already roaring. */
 .hr-fire-wall .hr-flame { animation-name: hr-flame-roar; }
-@keyframes hr-fire-roar {
-  from { opacity: 0.9; }
-  to { opacity: 1; }
-}
 @keyframes hr-flame-roar {
   0% { scale: 1 1.16; opacity: 0.85; }
   26% { scale: 1.15 1.74; opacity: 1; }
   57% { scale: 1.02 1.36; opacity: 0.88; }
   100% { scale: 1 1.16; opacity: 0.85; }
 }
+
+/* The shower. One spot is a `<g>` at the landing point carrying `--d` (when the fire
+   reaches it), `--p` (its own period) and `--sx` (where in the sky its comet starts,
+   leaning away from the creature). The comet falls in the first 38 % of the period and
+   the splash takes over at the instant it lands; the rest of the period is dark, so the
+   spots do not read as a metronome. Both loops on `--d`, so they cannot drift apart. */
+.hr-rain-fall {
+  opacity: 0;
+  animation: hr-rain-fall var(--p, 1000ms) linear infinite;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes hr-rain-fall {
+  0% { translate: var(--sx, 0px) -300px; opacity: 0; }
+  7% { opacity: 1; }
+  38% { translate: 0 0; opacity: 1; }
+  38.5%, 100% { translate: 0 0; opacity: 0; }
+}
+.hr-rain-splash {
+  opacity: 0;
+  animation: hr-rain-splash var(--p, 1000ms) linear infinite;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes hr-rain-splash {
+  0%, 37% { opacity: 0; scale: 0.3; }
+  38% { opacity: 1; scale: 0.6; }
+  50% { opacity: 1; scale: 1.05; }
+  70% { opacity: 0.7; scale: 1.2; }
+  84%, 100% { opacity: 0; scale: 1.3; }
+}
+
+/* The front ring pulses a little harder than the coals behind it. */
+.hr-aoe-front {
+  animation: hr-fire-breathe 0.7s ease-in-out infinite alternate;
+}
+
+/* The comet in flight carries NO animation of its own: the frame loop moves it ~7 units a
+   frame already, and 64 extra transform animations on the tails and cores measured
+   +10 ms at p95 for a flicker nobody can see at that speed. */
+
 .beam-warn-chevron {
   fill: none;
-  stroke: var(--torch);
+  stroke: #ffc24a;
   stroke-width: 3px;
   stroke-opacity: 0.9;
 }

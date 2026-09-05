@@ -119,7 +119,7 @@ import { useSeatInterpolation, type PredictedSelf, type Predictor } from '../net
 import { BOSS_ARENA } from './BossArena';
 import { Boss } from './Boss';
 import { Knight, knightDrawOrder } from './Knight';
-import { ORDNANCE_DEFS, ORD_BULLET, ORD_BURST } from './ordnance.gen';
+import { ORDNANCE_DEFS } from './ordnance.gen';
 import { play } from './sfx';
 import { Shot } from './Shot';
 import { Spawn } from './Spawn';
@@ -510,141 +510,192 @@ const FLAME_PATH =
   'M0 0C-9 -5 -8 -20 -2.5 -44C-1.5 -30 2 -28 3.5 -21C7 -26 9 -13 6.5 -6C5.5 -2.5 3 0 0 0Z';
 
 /**
- * How wide the hot lip on each lane boundary is. It is a GRADIENT and not a stroke: its
- * brightest column is one unit wide and sits exactly on the boundary, so the rect still
- * reads to the pixel, but it arrives out of a glow instead of as a drawn line — which is
- * the difference between the edge of a fire and the edge of a dialog box.
+ * The comet's tail: a teardrop from the tip at −x to its widest just behind the core at
+ * the origin. Velocity is +x — every instance sits inside a `<g>` rotated to its own
+ * heading, so ONE drawing serves every angle exactly, where the old atlas had sixteen.
  */
-const LIP_W = 14;
+const TRAIL_PATH = 'M-146 0C-110 -3.5 -58 -11.5 -12 -14C-2 -14 -2 14 -12 14C-58 11.5 -110 3.5 -146 0Z';
+/** The soft sheath around it, wider and dimmer — the feathered edge a gradient along the length cannot give. */
+const TRAIL_SOFT_PATH = 'M-122 0C-98 -8 -80 -4 -62 -14C-46 -22 -26 -19 -8 -20C0 -20 0 20 -8 20C-26 19 -46 22 -62 14C-80 4 -98 8 -122 0Z';
+/** The hotter, shorter streak inside it. */
+const TRAIL_CORE_PATH = 'M-80 0C-58 -1.5 -28 -5 -6 -5.5C0 -5.5 0 5.5 -6 5.5C-28 5 -58 1.5 -80 0Z';
+
+/** How far a shower comet falls before it lands, in units. */
+const RAIN_DROP = 300;
+/** The part of a spot's period the comet spends falling; the splash and the fire start there (`styles.css` keyframes agree). */
+const RAIN_FALL = 0.38;
 
 /**
- * Where tongues root inside ONE lane, normalised to it. Ordered so that any PREFIX is
- * still spread over the whole lane — {@link GroundFire} takes the first `per` of these,
- * and a fire whose first three tongues all sat along the bottom edge would read as a row
- * of pilot lights instead of a patch of burning floor.
+ * Where the shower lands inside ONE zone, normalised to its rect and ORDERED so that any
+ * prefix is still spread over the whole of it — a zone takes the first `n`. The centre
+ * spots come first because the fire grows out of the centre and the first comets fall
+ * where it already burns.
  */
-const FIRE_SPOTS: ReadonlyArray<readonly [number, number]> = [
-  [0.5, 0.55],
-  [0.18, 0.87],
-  [0.79, 0.24],
-  [0.33, 0.14],
-  [0.66, 0.95],
-  [0.09, 0.42],
-  [0.9, 0.68],
-  [0.44, 0.34],
-  [0.24, 0.63],
-  [0.71, 0.46],
-  [0.55, 0.78],
-  [0.38, 0.06],
-  [0.85, 0.88],
-  [0.13, 0.2],
+const RAIN_SPOTS: ReadonlyArray<readonly [number, number]> = [
+  [0.5, 0.5],
+  [0.34, 0.42],
+  [0.66, 0.6],
+  [0.42, 0.66],
+  [0.6, 0.36],
+  [0.26, 0.58],
+  [0.74, 0.44],
+  [0.5, 0.26],
+  [0.52, 0.76],
+  [0.2, 0.32],
+  [0.8, 0.7],
+  [0.36, 0.86],
+  [0.66, 0.14],
+  [0.16, 0.78],
+  [0.84, 0.24],
+  [0.48, 0.06],
+  [0.5, 0.94],
+  [0.12, 0.5],
+  [0.88, 0.52],
+  [0.3, 0.16],
 ];
 
+/** A stable pseudo-random in [0, 1) off two small integers, for stagger and lean. */
+function jitter(a: number, b: number): number {
+  const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+  return v - Math.floor(v);
+}
+
 /**
- * A patch of floor on fire over EXACTLY `[x, x + w] × [PIT_TOP, PIT_BOT]` — the rect the
- * chain's danger is. Every telegraph in room B is this one shape: a flat translucent
- * rectangle reads as an overlay pasted onto the room, heat coming off the stone reads as
- * the room.
+ * A patch of floor the boss is about to burn, over EXACTLY `[x, x + w] × [PIT_TOP, PIT_BOT]`
+ * — the rect the chain's danger is. Three layers, oldest to newest:
  *
- * The DANGER GEOMETRY is the pool and the two boundary lips. They are on the true rect
- * and nothing animates their position or size, because a player reads them to know where
- * not to stand and a danger area that drifts costs somebody their run. The tongues and
- * the embers are decoration rooted inside it, free to lick past the top edge.
+ * 1. The HAZE: a soft warm glow over the whole rect from the first frame. The wind-up is
+ *    1.5 s against a measured 1,126 ms of worst latency, so the dodge is decided on the
+ *    first frame, and the whole extent has to be readable then. It is a gradient with no
+ *    edge, not a box: a box read as a dialog pasted on the room.
+ * 2. The BURN: the stone catching, as a circle growing out of the rect's centre until it
+ *    fills it on the landing tick — the countdown IS the size of the fire. The circle is a
+ *    clip on the pool and a ring at its front (`growRef`, `frontRef`: two nodes on one
+ *    seek in `Arena`), hemmed by the rect's own clip so the danger never spills past it.
+ * 3. The SHOWER: comets falling into the burning part, bursting on the stone, and leaving
+ *    a fire there that gutters for as long as the zone lives. Each spot starts when the
+ *    front reaches it (`--d`, one delay per spot, set ONCE at mount off `elapsed0` — never
+ *    rewritten by a render, or every tick would restart the rain) and loops on its own
+ *    period after that. CSS only; nothing per frame in JS.
  *
- * One pool per lane rather than one wide gradient, so a four-lane half reads as four hot
- * lanes and not one smear, and so "brightest down the middle of the lane" stays true at
- * every width. `fill` is the reduced-motion path's countdown: the pool covers the top
- * `fill` of the lane and the tongues below the line are not lit yet, which is the same
- * information the seeked opacity carries, held still (spec: no information may exist only
- * in motion). The lips stay full height at every `fill` — they ARE the rect.
+ * `wall` is the sweep's moving lane: no growth, no delays, everything burning at once.
+ * Under reduced motion the pool is drawn lit in full (the information is the extent) and
+ * the shower is not drawn at all.
  *
- * `lips` is off for a fire drawn INSIDE another one — the beam's warning banks a second,
- * denser fire on the lane its wall starts from, and a boundary drawn there would cut the
- * doomed half into two danger areas when it is one.
- *
- * Nodes: `cols` pools + `cols × per` tongues + `cols × embers` embers + 2 boundary lips.
- * All motion is CSS `transform`/`opacity` on these nodes ("ground fire" in `styles.css`);
- * nothing here is per frame in JS, on the rAF loop, or on the notification path.
+ * Nodes: 1 haze + 2 clips + 1 pool + 1 front + 9 × `rain`, all motion on `transform` and
+ * `opacity`, no filter and no mask anywhere (a mask here measured 1 ms p50 / 4 ms p95).
  */
-function GroundFire({
+function FireZone({
+  id,
   x,
   w,
-  per,
-  fill = 1,
-  lips = true,
+  rain,
+  growRef,
+  frontRef,
+  elapsed0,
+  windupMs,
+  wall = false,
+  reduced,
 }: {
+  id: string;
   x: number;
   w: number;
-  per: number;
-  fill?: number;
-  lips?: boolean;
+  rain: number;
+  growRef?: React.RefObject<SVGCircleElement | null>;
+  frontRef?: React.RefObject<SVGGElement | null>;
+  elapsed0: number;
+  windupMs: number;
+  wall?: boolean;
+  reduced: boolean;
 }): ReactNode {
-  const cols = Math.max(1, Math.round(w / SLAM_LANE_W));
-  const lane = w / cols;
-  const embers = Math.ceil(per / 3);
-  const lit = PIT_TOP + LANE_H * fill;
-  const spots = FIRE_SPOTS.slice(0, per);
+  // The delay of every spot is fixed at mount: the rain must not restart on a render.
+  const start = useRef(elapsed0).current;
+  const cx = x + w / 2;
+  const cy = PIT_TOP + LANE_H / 2;
+  const rMax = Math.hypot(w / 2, LANE_H / 2);
+  const laneId = `hr-lane-${id}`;
+  const growId = `hr-grow-${id}`;
+  const grown = reduced || wall || growRef === undefined;
+  // When the fire front reaches a point of the rect, in ms from the wind-up's start.
+  const reach = (px: number, py: number): number => (grown ? 0 : (windupMs * Math.hypot(px - cx, py - cy)) / rMax);
   return (
     <>
-      {Array.from({ length: cols }, (_, c) => (
-        <rect
-          key={`p${c}`}
-          className="hr-fire-pool"
-          x={x + c * lane}
-          y={PIT_TOP}
-          width={lane}
-          height={LANE_H * fill}
-          fill="url(#hr-fire-pool-g)"
-          style={{ '--i': c } as CSSProperties}
-        />
-      ))}
-      {Array.from({ length: cols }, (_, c) =>
-        spots.map(([fx, fy], i) => {
-          const fyw = PIT_TOP + fy * LANE_H;
-          const fxw = x + (c + fx) * lane;
-          return fyw > lit ? null : (
-            <use
-              key={`f${c}-${i}`}
-              className="hr-flame"
-              href="#hr-flame"
-              x={fxw}
-              y={fyw}
-              // The guttering `scale` has to happen about the tongue's OWN base or the
-              // flame slides sideways as it breathes — `transform-box: fill-box` does not
-              // pick up a `<use>`'s x/y in Chrome, and the first cut of this threw tongues
-              // 200 units clear of the lane, which for a danger area is the whole bug.
-              // World units against the default `view-box` box instead: unambiguous.
-              style={{ transformOrigin: `${fxw}px ${fyw}px`, '--i': c * per + i } as CSSProperties}
-            />
+      <rect className="hr-aoe-haze" x={x} y={PIT_TOP} width={w} height={LANE_H} fill="url(#hr-aoe-haze-g)" />
+      {/* The rect the chain named, as a clip. Everything that burns is inside it; the pool's
+          own gradient dies out toward the sides, so the clip's straight edge is never a
+          drawn line — only the front ring meets it, and a fire front stopping dead at the
+          lane's edge is the one hard line the picture wants. Both clips are geometry: a
+          mask here measured 1 ms p50 / 4 ms p95 on a lane and twice that on a half. */}
+      <clipPath id={laneId}>
+        <rect x={x} y={PIT_TOP} width={w} height={LANE_H} />
+      </clipPath>
+      <g clipPath={`url(#${laneId})`}>
+        {!grown && (
+          <clipPath id={growId}>
+            <circle ref={growRef} cx={cx} cy={cy} r={rMax} style={{ transformOrigin: `${cx}px ${cy}px`, transform: 'scale(0.04)' }} />
+          </clipPath>
+        )}
+        <g clipPath={grown ? undefined : `url(#${growId})`}>
+          <rect
+            className={wall ? 'hr-aoe-burn hr-aoe-burn-wall' : 'hr-aoe-burn'}
+            x={x}
+            y={PIT_TOP}
+            width={w}
+            height={LANE_H}
+            // The wall is the damage itself and burns harder than a wind-up; a reduced-motion
+            // zone has no rain and no fires to say "here", so its pool says it alone.
+            fill={wall ? 'url(#hr-aoe-wall-g)' : reduced ? 'url(#hr-aoe-still-g)' : 'url(#hr-aoe-burn-g)'}
+            // A half-floor pool at a lane's alpha is a wash over the whole raid.
+            opacity={w > SLAM_LANE_W && !reduced ? 0.7 : 1}
+          />
+        </g>
+        {/* The front: a ring at the edge of the burn, scaled by the same seek as the clip
+            circle above (`Arena` drives both off one countdown), so the eye sees a fire
+            spreading out of the centre and not a picture being uncovered. */}
+        {!grown && (
+          <g ref={frontRef} style={{ transformOrigin: `${cx}px ${cy}px`, transform: 'scale(0.04)' }}>
+            <circle className="hr-aoe-front" cx={cx} cy={cy} r={rMax} fill="url(#hr-aoe-front-g)" />
+          </g>
+        )}
+      </g>
+      {!reduced &&
+        RAIN_SPOTS.slice(0, rain).map(([fx, fy], i) => {
+          const sx = x + fx * w;
+          const sy = PIT_TOP + fy * LANE_H;
+          // The comet comes from the creature's side of the sky: a fall that leans away
+          // from the boss reads as thrown, a vertical one as weather.
+          const lean = wall ? 0.22 * Math.sign(sx - BOSS_SPAWN[0] || 1) : (sx - BOSS_SPAWN[0]) / 420;
+          const fromX = -lean * RAIN_DROP;
+          const angle = (Math.atan2(RAIN_DROP, -fromX) * 180) / Math.PI;
+          const period = (wall ? 620 : 900) + Math.round(jitter(i, 3) * (wall ? 260 : 420));
+          const delay = Math.round(reach(sx, sy) - start - (wall ? jitter(i, 5) * period : 0));
+          // The stone burns from the first landing on: `RAIN_FALL` of the period in.
+          const lit = Math.round(delay + RAIN_FALL * period);
+          const lean2 = jitter(i, 9) * 14 - 7;
+          return (
+            <g
+              key={i}
+              transform={`translate(${sx} ${sy})`}
+              style={{ '--d': `${delay}ms`, '--p': `${period}ms`, '--sx': `${Math.round(fromX)}px`, '--f': `${lit}ms` } as CSSProperties}
+            >
+              {/* What the shower leaves: a fire that stays lit, guttering, as long as the
+                  zone does. Its tongues are real nodes and not a symbol, so their gutter
+                  runs — a `<use>` of a `<use>` with an animation inside is not a bet this
+                  file makes. `transform-origin` is 0 0 = the landing point, because the
+                  spot's own translate is on the parent. */}
+              <g className="hr-zone-fire">
+                <ellipse rx={30} ry={11} fill="url(#hr-splash-g)" opacity={0.7} />
+                <use className="hr-flame" href="#hr-flame" x={-13} y={1} transform={`rotate(${lean2 - 12} -13 1) scale(0.8)`} style={{ transformOrigin: '-13px 1px', '--i': i * 3 } as CSSProperties} />
+                <use className="hr-flame" href="#hr-flame" x={2} y={-2} transform={`rotate(${lean2} 2 -2) scale(1.15)`} style={{ transformOrigin: '2px -2px', '--i': i * 3 + 1 } as CSSProperties} />
+                <use className="hr-flame" href="#hr-flame" x={15} y={2} transform={`rotate(${lean2 + 14} 15 2) scale(0.7)`} style={{ transformOrigin: '15px 2px', '--i': i * 3 + 2 } as CSSProperties} />
+              </g>
+              <g className="hr-rain-fall">
+                <use href="#hr-fb-s" transform={`rotate(${angle.toFixed(1)})`} />
+              </g>
+              <use className="hr-rain-splash" href="#hr-splash" />
+            </g>
           );
-        }),
-      )}
-      {Array.from({ length: cols }, (_, c) =>
-        FIRE_SPOTS.slice(0, embers).map(([fx, fy], i) => {
-          const fyw = PIT_TOP + (1 - fy) * LANE_H;
-          return fyw > lit ? null : (
-            <circle
-              key={`e${c}-${i}`}
-              className="hr-ember"
-              cx={x + (c + 1 - fx) * lane}
-              cy={fyw}
-              r={3}
-              style={{ '--i': c * embers + i } as CSSProperties}
-            />
-          );
-        }),
-      )}
-      {(lips ? [x, x + w] : []).map((ex) => (
-        <rect
-          key={`l${ex}`}
-          className="hr-fire-lip"
-          x={ex - LIP_W / 2}
-          y={PIT_TOP}
-          width={LIP_W}
-          height={LANE_H}
-          fill="url(#hr-fire-lip-g)"
-        />
-      ))}
+        })}
     </>
   );
 }
@@ -823,7 +874,11 @@ export function Arena({
   const pace = useRef(tickMs);
   const tickAt = useRef(0);
   // The four muzzle bursts, one strip per thorn, indexed like `MUZZLES`.
-  const burstNodes = useRef<(SVGUseElement | null)[]>([]);
+  const burstNodes = useRef<(SVGGElement | null)[]>([]);
+  // The impact pool, taken round-robin; and the position each bullet was last drawn at.
+  const splashNodes = useRef<(SVGGElement | null)[]>([]);
+  const scorchNodes = useRef<(SVGGElement | null)[]>([]);
+  const splashNext = useRef(0);
   useEffect(() => {
     const prev = bullets.current;
     const next = arena.bullets;
@@ -839,10 +894,36 @@ export function Arena({
       for (let slot = 0; slot < next.length; slot++) {
         const b = next[slot]!;
         const was = prev[slot];
-        if (b.active === 0 || (was !== undefined && was.active !== 0 && was.x === b.x && was.y === b.y)) continue;
-        for (const [i, m] of MUZZLES.entries()) {
-          if (b.x === boss.x + m.x && b.y === boss.y + m.y) fired |= 1 << i;
+        const flying = was !== undefined && was.active !== 0;
+        const same = flying && was.x === b.x && was.y === b.y;
+        let muzzle = 0;
+        if (b.active !== 0 && !same) {
+          for (const [i, m] of MUZZLES.entries()) {
+            if (b.x === boss.x + m.x && b.y === boss.y + m.y) muzzle |= 1 << i;
+          }
         }
+        // A slot that was in the air and is now free, or is now back at a muzzle, DIED
+        // this tick: on a wall or on a raider, somewhere along the step it was about to
+        // take. The impact goes where it would have got to — the chain clips the step at
+        // the wall, and half a step is as close as published state can say. A slot that
+        // merely MOVED is the same bullet a tick on, and gets nothing.
+        if (flying && (b.active === 0 || muzzle !== 0) && !reduced && shown === 'arena') {
+          const k = splashNext.current % SPLASH_POOL;
+          splashNext.current += 1;
+          const el = splashNodes.current[k] ?? null;
+          const sc = scorchNodes.current[k] ?? null;
+          const ix = was.x + was.dx * 0.5;
+          const iy = was.y + was.dy * 0.5;
+          if (el !== null) {
+            el.style.transformOrigin = `${ix}px ${iy}px`;
+            el.animate(splashKeyframes(ix, iy), SPLASH_TIMING);
+          }
+          if (sc !== null) {
+            sc.style.transformOrigin = `${ix}px ${iy}px`;
+            sc.animate(scorchKeyframes(ix, iy, 1), SCORCH_TIMING);
+          }
+        }
+        fired |= muzzle;
       }
       if (fired !== 0) {
         play('volley');
@@ -869,7 +950,7 @@ export function Arena({
     tickAt.current = performance.now();
   }, [arena.tick]);
 
-  const nodes = useRef(new Map<number, SVGUseElement>());
+  const nodes = useRef(new Map<number, SVGGElement>());
   // `Shot`'s per-frame step, driven from the ONE rAF loop in the scene. A second loop is
   // what that module exists not to add, so the driver is a mandatory prop over there and
   // this ref is the whole of the wiring.
@@ -995,18 +1076,44 @@ export function Arena({
 
   const slam = slamTelegraph(arena, boss);
   const slamRef = useRef<SVGGElement | null>(null);
+  const slamGrowRef = useRef<SVGCircleElement | null>(null);
+  const slamFrontRef = useRef<SVGGElement | null>(null);
   const slamElapsed = slam === null || reduced ? null : (SLAM_TELEGRAPH_TICKS - slam.ticksToImpact) * tickMs;
+  // Two seeked animations on one clock: the whole lane brightening, and the fire's
+  // circle growing out of the lane's centre to fill it on the landing tick.
   useSeeked(slamRef, SLAM_KEYFRAMES, windupMs, slamElapsed);
+  useSeeked(slamGrowRef, GROW_KEYFRAMES, windupMs, slamElapsed);
+  useSeeked(slamFrontRef, GROW_KEYFRAMES, windupMs, slamElapsed);
   // The slam's two cues, off the same derivation the lane is drawn from: the warn when a
-  // wind-up appears, the impact when it resolves. Room B only, like the lane, and the
-  // first render starts with nothing winding up, so a mount plays nothing.
+  // wind-up appears, the impact when it resolves — and the landing itself: the burst on
+  // the lane the wind-up was last drawn over, and a shake. Room B only, like the lane,
+  // and the first render starts with nothing winding up, so a mount plays nothing.
   const slamming = shown === 'arena' && slam !== null;
   const slamHeard = useRef(false);
+  const slamLaneLast = useRef(0);
+  if (slam !== null) slamLaneLast.current = slam.lane;
+  const slamBurstNode = useRef<SVGGElement | null>(null);
   useEffect(() => {
     if (slamming) play('slamWarn');
-    else if (slamHeard.current) play('slam');
+    else if (slamHeard.current) {
+      play('slam');
+      const el = slamBurstNode.current;
+      if (el !== null && !reduced) {
+        const bx = slamLaneLast.current * SLAM_LANE_W + SLAM_LANE_W / 2;
+        const by = PIT_TOP + LANE_H / 2;
+        el.style.transformOrigin = `${bx}px ${by}px`;
+        el.animate(slamBurstKeyframes(bx, by), SLAM_BURST_TIMING);
+        const sc = scorchNodes.current[splashNext.current % SPLASH_POOL] ?? null;
+        splashNext.current += 1;
+        if (sc !== null) {
+          sc.style.transformOrigin = `${bx}px ${by}px`;
+          sc.animate(scorchKeyframes(bx, by, 2.2), SCORCH_TIMING);
+        }
+        shake(5);
+      }
+    }
     slamHeard.current = slamming;
-  }, [slamming]);
+  }, [slamming, reduced]);
 
   const volley = volleyTelegraph(arena, boss, players);
   const volleyRef = useRef<SVGGElement | null>(null);
@@ -1029,12 +1136,12 @@ export function Arena({
   // during the warning, only the lanes still to come during the sweep.
   const beamFar = beam === null ? 0 : beam.lane + beamDir * (BEAM_SWEEP_LANES - 1 - beam.k);
   const beamWarnRef = useRef<SVGGElement | null>(null);
-  useSeeked(
-    beamWarnRef,
-    BEAM_WARN_KEYFRAMES,
-    BEAM_WARN_TICKS * tickMs,
-    beam?.stage === 'warning' && !reduced ? beamT * tickMs : null,
-  );
+  const beamGrowRef = useRef<SVGCircleElement | null>(null);
+  const beamFrontRef = useRef<SVGGElement | null>(null);
+  const beamWarnElapsed = beam?.stage === 'warning' && !reduced ? beamT * tickMs : null;
+  useSeeked(beamWarnRef, BEAM_WARN_KEYFRAMES, BEAM_WARN_TICKS * tickMs, beamWarnElapsed);
+  useSeeked(beamGrowRef, GROW_KEYFRAMES, BEAM_WARN_TICKS * tickMs, beamWarnElapsed);
+  useSeeked(beamFrontRef, GROW_KEYFRAMES, BEAM_WARN_TICKS * tickMs, beamWarnElapsed);
   const beamRef = useRef<SVGGElement | null>(null);
   const sweepFrames = useMemo(() => sweepKeyframes(beamDir), [beamDir]);
   useSeeked(
@@ -1051,11 +1158,6 @@ export function Arena({
     if (beamStage === 'warning') play('beamWarn');
     else if (beamStage === 'sweeping') play('beamSweep');
   }, [beamStage]);
-
-  // How far through the wind-up we are, 0..1 — only read on the reduced-motion path, where
-  // a telegraph becomes a shape that FILLS by attribute rather than one that animates.
-  // "No information may exist only in motion" is the rule that forces this to exist.
-  const slamFill = slam === null ? 0 : 1 - slam.ticksToImpact / SLAM_TELEGRAPH_TICKS;
 
   // ---- the static layers ------------------------------------------------
   //
@@ -1152,36 +1254,141 @@ export function Arena({
               inside an SVG parent; it is a build artefact of `tools/gen_ordnance.py`, not
               anything a user can reach. */}
           <g dangerouslySetInnerHTML={ORDNANCE_HTML} />
-          {/* The ground fire's two gradients and its one tongue, mounted once for every
-              telegraph that burns (`GroundFire`). Both gradients are `objectBoundingBox`,
-              which is what lets ONE pool gradient stay "brightest down the middle" on a
-              128-unit slam lane and on a 512-unit doomed half alike. The colours are the
-              stylesheet's — `--ember` and `--torch` are tokens and `PAL` has no ember, the
-              same reason the beam has always been the one telegraph coloured from CSS. */}
-          <radialGradient id="hr-fire-pool-g">
-            <stop className="hr-fire-pool-core" offset="0" />
-            <stop className="hr-fire-pool-mid" offset="0.58" />
-            <stop className="hr-fire-pool-rim" offset="1" />
+          {/* THE FIRE, mounted once: the comet (core, glow, tail), its impact, the shower
+              comet, one tongue and the two zone gradients. Every burning thing in room B is
+              a `<use>` of these. Soft by GRADIENT — no `filter` anywhere in the scene. */}
+          <radialGradient id="hr-fb-core-g">
+            <stop offset="0" stopColor="#fffbe8" />
+            <stop offset="0.36" stopColor="#ffe08a" />
+            <stop offset="0.72" stopColor="#ff9a2a" />
+            <stop offset="1" stopColor="#ff5a1c" stopOpacity="0.85" />
           </radialGradient>
-          <linearGradient id="hr-fire-lip-g" x1="0" y1="0" x2="1" y2="0">
-            <stop className="hr-fire-lip-out" offset="0" />
-            <stop className="hr-fire-lip-hot" offset="0.5" />
-            <stop className="hr-fire-lip-out" offset="1" />
+          <radialGradient id="hr-fb-glow-g">
+            <stop offset="0" stopColor="#ff8a2a" stopOpacity="0.66" />
+            <stop offset="0.42" stopColor="#ff4a1c" stopOpacity="0.32" />
+            <stop offset="1" stopColor="#a02418" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="hr-fb-light-g">
+            <stop offset="0" stopColor="#ff6a24" stopOpacity="0.26" />
+            <stop offset="1" stopColor="#8a3125" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id="hr-fb-trail-g" x1="1" y1="0" x2="0" y2="0">
+            <stop offset="0" stopColor="#ffb03a" stopOpacity="0.96" />
+            <stop offset="0.12" stopColor="#ff7a1c" stopOpacity="0.95" />
+            <stop offset="0.36" stopColor="#f04a18" stopOpacity="0.88" />
+            <stop offset="0.66" stopColor="#b02a18" stopOpacity="0.66" />
+            <stop offset="1" stopColor="#4a160e" stopOpacity="0" />
           </linearGradient>
+          <linearGradient id="hr-fb-trail-soft-g" x1="1" y1="0" x2="0" y2="0">
+            <stop offset="0" stopColor="#ff6a1c" stopOpacity="0.35" />
+            <stop offset="0.5" stopColor="#c8321e" stopOpacity="0.2" />
+            <stop offset="1" stopColor="#5a1a10" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="hr-fb-trail-core-g" x1="1" y1="0" x2="0" y2="0">
+            <stop offset="0" stopColor="#fff2b0" stopOpacity="1" />
+            <stop offset="0.35" stopColor="#ffd05a" stopOpacity="0.9" />
+            <stop offset="1" stopColor="#ff8c2a" stopOpacity="0" />
+          </linearGradient>
+          <g id="hr-fb-trail">
+            <path d={TRAIL_SOFT_PATH} fill="url(#hr-fb-trail-soft-g)" />
+            <path d={TRAIL_PATH} fill="url(#hr-fb-trail-g)" />
+            <path d={TRAIL_CORE_PATH} fill="url(#hr-fb-trail-core-g)" />
+          </g>
+          <g id="hr-fb-core">
+            <circle r={40} fill="url(#hr-fb-glow-g)" />
+            <circle r={13} fill="url(#hr-fb-core-g)" />
+          </g>
+          {/* The shower comet: the same creature at two thirds, falling. */}
+          <g id="hr-fb-s" transform="scale(0.66)">
+            <use href="#hr-fb-trail" />
+            <use href="#hr-fb-core" />
+          </g>
+          <radialGradient id="hr-splash-g">
+            <stop offset="0" stopColor="#fff0b0" stopOpacity="0.95" />
+            <stop offset="0.32" stopColor="#ff9a2a" stopOpacity="0.72" />
+            <stop offset="0.68" stopColor="#f04a18" stopOpacity="0.34" />
+            <stop offset="1" stopColor="#8a3125" stopOpacity="0" />
+          </radialGradient>
+          {/* The impact: a hot pool on the stone, tongues out of it, sparks off it. */}
+          <g id="hr-splash">
+            <ellipse rx={64} ry={26} fill="url(#hr-fb-light-g)" />
+            <ellipse rx={44} ry={17} fill="url(#hr-splash-g)" />
+            <use href="#hr-flame" x={-24} y={2} transform="rotate(-24 -24 2) scale(1)" />
+            <use href="#hr-flame" x={-9} y={-2} transform="scale(1.45)" />
+            <use href="#hr-flame" x={8} y={0} transform="rotate(14 8 0) scale(1.2)" />
+            <use href="#hr-flame" x={24} y={4} transform="rotate(30 24 4) scale(0.85)" />
+            <circle r={7} fill="#fff0c0" />
+            <circle cx={-32} cy={-18} r={2.4} fill="#ffd364" />
+            <circle cx={30} cy={-22} r={2} fill="#ffb03a" />
+            <circle cx={10} cy={-36} r={1.8} fill="#fff2b0" />
+            <circle cx={-14} cy={-30} r={1.6} fill="#ff8c2a" />
+            <circle cx={38} cy={-6} r={1.8} fill="#ffd364" />
+            <circle cx={-40} cy={-4} r={1.6} fill="#ff6a1c" />
+            <circle cx={22} cy={-44} r={1.4} fill="#ffd364" />
+          </g>
+          {/* A thorn firing: one flash at the muzzle, `Arena` scales it up and out. */}
+          <g id="hr-muzzle">
+            <circle r={26} fill="url(#hr-splash-g)" />
+            <circle r={9} fill="#fff2b0" />
+          </g>
+          {/* The hand landing: a ring of fire thrown out of the lane and the burst inside it. */}
+          <g id="hr-slam-burst">
+            <ellipse rx={84} ry={34} fill="none" stroke="#ffc24a" strokeWidth={6} strokeOpacity={0.9} />
+            <ellipse rx={84} ry={34} fill="url(#hr-splash-g)" />
+            <circle r={16} fill="#fff6d0" />
+            <use href="#hr-flame" x={-40} y={-4} transform="scale(1.3)" />
+            <use href="#hr-flame" x={-16} y={8} transform="scale(1.7)" />
+            <use href="#hr-flame" x={10} y={-2} transform="scale(1.5)" />
+            <use href="#hr-flame" x={36} y={6} transform="scale(1.2)" />
+          </g>
+          {/* The zone: a soft haze over the whole rect the chain named, and the burn that
+              grows to fill it. Both `objectBoundingBox`, so one pair serves a 128-unit
+              lane and a 512-unit half alike, brightest down the middle of either. */}
+          <radialGradient id="hr-aoe-haze-g">
+            <stop offset="0" stopColor="#ff8a2a" stopOpacity="0.2" />
+            <stop offset="0.55" stopColor="#ff5a20" stopOpacity="0.11" />
+            <stop offset="1" stopColor="#b02a18" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="hr-aoe-burn-g">
+            <stop offset="0" stopColor="#ff9a2a" stopOpacity="0.22" />
+            <stop offset="0.5" stopColor="#ff5a20" stopOpacity="0.18" />
+            <stop offset="0.85" stopColor="#b02a18" stopOpacity="0.08" />
+            <stop offset="1" stopColor="#8a3125" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="hr-aoe-front-g">
+            <stop offset="0.88" stopColor="#ff8c2a" stopOpacity="0" />
+            <stop offset="0.955" stopColor="#ffb03a" stopOpacity="0.55" />
+            <stop offset="0.985" stopColor="#fff1b0" stopOpacity="0.85" />
+            <stop offset="1" stopColor="#ffd364" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="hr-aoe-wall-g">
+            <stop offset="0" stopColor="#ffc24a" stopOpacity="0.5" />
+            <stop offset="0.5" stopColor="#ff6a24" stopOpacity="0.38" />
+            <stop offset="1" stopColor="#b02a18" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="hr-aoe-still-g">
+            <stop offset="0" stopColor="#ffb03a" stopOpacity="0.55" />
+            <stop offset="0.6" stopColor="#ff6a24" stopOpacity="0.4" />
+            <stop offset="1" stopColor="#b02a18" stopOpacity="0.1" />
+          </radialGradient>
           <radialGradient id="hr-fire-foot-g">
-            <stop className="hr-flame-foot-hot" offset="0" />
-            <stop className="hr-flame-foot-out" offset="1" />
+            <stop offset="0" stopColor="#ffc24a" stopOpacity="0.6" />
+            <stop offset="1" stopColor="#c8321e" stopOpacity="0" />
           </radialGradient>
           <linearGradient id="hr-flame-g" x1="0" y1="1" x2="0" y2="0">
-            <stop className="hr-flame-base" offset="0" />
-            <stop className="hr-flame-hot" offset="0.22" />
-            <stop className="hr-flame-body" offset="0.55" />
-            <stop className="hr-flame-tip" offset="1" />
+            <stop offset="0" stopColor="#fff0b0" stopOpacity="1" />
+            <stop offset="0.2" stopColor="#ffb03a" stopOpacity="0.94" />
+            <stop offset="0.52" stopColor="#ff5a1c" stopOpacity="0.72" />
+            <stop offset="1" stopColor="#b02a18" stopOpacity="0" />
           </linearGradient>
+          {/* What a fire leaves on the stone: a warm scorch that fades over seconds. */}
+          <g id="hr-scorch">
+            <ellipse rx={70} ry={28} fill="url(#hr-fb-light-g)" />
+          </g>
           {/* The tongue and the scorch it stands in, as one instance: a flame with no
               ground contact reads as a leaf floating over the floor. */}
           <g id="hr-flame">
-            <ellipse className="hr-flame-foot" cy={-2} rx={21} ry={6} fill="url(#hr-fire-foot-g)" />
+            <ellipse cy={-2} rx={21} ry={6} fill="url(#hr-fire-foot-g)" />
             <path d={FLAME_PATH} fill="url(#hr-flame-g)" />
           </g>
         </defs>
@@ -1258,62 +1465,90 @@ export function Arena({
               too, and a wind-up you cannot see through the mace is not a wind-up. Under the
               knights, because the player is on top of everything the scene does.
 
-              The lane BURNS: `GroundFire` over exactly the rect the chain names, and the
-              seeked opacity above takes it from a smoulder to a roar over the 1.5 s. That
-              ramp is the whole wind-up cue and it is `ease-in`, so the flare arrives late,
-              where the countdown is worth reading. The tongues cross the eye's threshold
-              after the pool does — their gradient is half air — so the floor heats first
-              and the fire erupts out of it, on ONE animation and one clock.
-              Under reduced motion the pool FILLS by height instead. */}
+              The lane catches: `FireZone` over exactly the rect the chain names — a haze
+              over all of it from the first frame, and a fire growing out of its centre as a
+              circle that fills the lane on the landing tick (`slamGrowRef`, seeked off the
+              chain above), with the shower falling into whatever already burns. Keyed on
+              the landing tick so each wind-up is a fresh mount and a fresh rain. Under
+              reduced motion the same rect, lit in full, no rain. */}
           {shown === 'arena' && slam !== null && (
-            <g ref={slamRef} className="hr-fire" aria-hidden="true" opacity={reduced ? 0.9 : 0}>
-              <GroundFire
+            <g key={slam.atTick} ref={slamRef} className="hr-fire" aria-hidden="true">
+              <FireZone
+                id={`slam-${slam.atTick}`}
                 x={slam.lane * SLAM_LANE_W}
                 w={SLAM_LANE_W}
-                per={14}
-                fill={reduced ? slamFill : 1}
+                rain={10}
+                growRef={slamGrowRef}
+                frontRef={slamFrontRef}
+                elapsed0={slamElapsed ?? 0}
+                windupMs={windupMs}
+                reduced={reduced}
               />
             </g>
           )}
+          {/* The hand landing, on the lane it last wound up over. One pooled node, played
+              by WAAPI on the wind-up's falling edge; React sets nothing on it after mount. */}
+          {shown === 'arena' && (
+            <g ref={slamBurstNode} className="hr-slam-burst" aria-hidden="true" style={{ opacity: 0 }}>
+              <use href="#hr-slam-burst" />
+            </g>
+          )}
 
-          {/* The 50 % phase's beam, row 10 with the slam, and the same fire as the slam's
-              lane — the two dangers are one danger drawn at two sizes. The warning sets
-              the doomed half smouldering, banks a second, denser fire on the lane the
-              sweep starts from (where the old keyline rect was: a lit lane says "it comes
-              from here" without drawing a box) and points a chevron the way it will run —
-              the dodge is "the other half", and the picture has to say which half in its
-              first frame. The sweep is a WALL of fire gliding across the half while the
-              smoulder retreats to the lanes still to come, so a swept lane reads as safe
-              again. Under reduced motion the same shapes at rest: the half lit at full,
-              the wall stepping a lane per tick. Nothing outside phase 2 — that gate is
-              `beamTelegraph`'s. */}
+          {/* The 50 % phase's beam, row 10 with the slam, and the same fire at two sizes.
+              The warning sets the doomed half alight from its centre over the same 1.5 s
+              (`beamGrowRef`), with a chevron on the start lane pointing the way the wall
+              will run — the dodge is "the other half", and the picture has to say which
+              half in its first frame. The sweep is a WALL of fire gliding across the half
+              (`beamRef`, the seeked translate) with the haze retreating to the lanes still
+              to come, so a swept lane reads as safe again. Nothing outside phase 2 — that
+              gate is `beamTelegraph`'s. */}
           {beam !== null && (
             <g aria-hidden="true">
-              <g ref={beamWarnRef} className="hr-fire" opacity={beam.stage === 'warning' && !reduced ? 0 : 1}>
-                <GroundFire
-                  x={Math.min(beam.lane, beamFar) * SLAM_LANE_W}
-                  w={(Math.abs(beamFar - beam.lane) + 1) * SLAM_LANE_W}
-                  per={3}
-                />
-                {beam.stage === 'warning' && (
-                  <>
-                    <GroundFire x={beam.lane * SLAM_LANE_W} w={SLAM_LANE_W} per={8} lips={false} />
-                    <path className="beam-warn-chevron" d={chevronPath(beam.lane, beamDir)} />
-                  </>
-                )}
-              </g>
-              {beam.stage === 'sweeping' && (
-                <g
-                  ref={beamRef}
-                  className="hr-fire hr-fire-wall"
-                  // Non-reduced: parked on the sweep's FIRST lane and carried by the seeked
-                  // translate; reduced: on the lane the chain is on, stepped by React.
-                >
-                  <GroundFire
-                    x={(reduced ? beam.lane : beam.lane - beamDir * beam.k) * SLAM_LANE_W}
-                    w={SLAM_LANE_W}
-                    per={14}
+              {beam.stage === 'warning' ? (
+                <g key={`w${Math.floor(arena.tick / BEAM_PERIOD_TICKS)}`} ref={beamWarnRef} className="hr-fire">
+                  <FireZone
+                    id={`beam-${Math.floor(arena.tick / BEAM_PERIOD_TICKS)}`}
+                    x={Math.min(beam.lane, beamFar) * SLAM_LANE_W}
+                    w={(Math.abs(beamFar - beam.lane) + 1) * SLAM_LANE_W}
+                    rain={10}
+                    growRef={beamGrowRef}
+                    frontRef={beamFrontRef}
+                    elapsed0={beamT * tickMs}
+                    windupMs={BEAM_WARN_TICKS * tickMs}
+                    reduced={reduced}
                   />
+                  <path className="beam-warn-chevron" d={chevronPath(beam.lane, beamDir)} />
+                </g>
+              ) : (
+                <g className="hr-fire">
+                  {Math.abs(beamFar - beam.lane) > 0 && (
+                    <rect
+                      className="hr-aoe-haze"
+                      x={Math.min(beam.lane + beamDir, beamFar) * SLAM_LANE_W}
+                      y={PIT_TOP}
+                      width={Math.abs(beamFar - beam.lane) * SLAM_LANE_W}
+                      height={LANE_H}
+                      fill="url(#hr-aoe-haze-g)"
+                    />
+                  )}
+                  <g
+                    key={`s${Math.floor(arena.tick / BEAM_PERIOD_TICKS)}`}
+                    ref={beamRef}
+                    className="hr-fire-wall"
+                    // Non-reduced: parked on the sweep's FIRST lane and carried by the
+                    // seeked translate; reduced: on the lane the chain is on, stepped by React.
+                  >
+                    <FireZone
+                      id={`wall-${Math.floor(arena.tick / BEAM_PERIOD_TICKS)}`}
+                      x={(reduced ? beam.lane : beam.lane - beamDir * beam.k) * SLAM_LANE_W}
+                      w={SLAM_LANE_W}
+                      rain={7}
+                      elapsed0={0}
+                      windupMs={0}
+                      wall
+                      reduced={reduced}
+                    />
+                  </g>
                 </g>
               )}
             </g>
@@ -1330,7 +1565,7 @@ export function Arena({
                   y1={y1}
                   x2={x2}
                   y2={y2}
-                  stroke={PAL.bossEdge}
+                  stroke="#ffa040"
                   strokeWidth={2}
                   strokeDasharray="6 10"
                 />
@@ -1338,62 +1573,82 @@ export function Arena({
             </g>
           )}
 
-          {/* Row 11. Each bullet is one `<use>` of the sector sprite its velocity falls in
-              (`tools/gen_ordnance.py`: a thorn seed dragging an ember tail, drawn at
-              sixteen angles — at 42 units a tick a dot jumps ~7 units a frame and strobes,
-              and the tail is what makes 420 u/s legible rather than merely correct). The
-              sector is chosen once here by React; the frame loop owns the transform and
-              nothing else about the node ever changes. */}
+          {/* Row 11. Each bullet is a comet: one `<g>` the frame loop translates, and inside
+              it a `<g>` rotated ONCE to the bullet's heading (a bullet's velocity is fixed
+              for its whole flight) holding the tail and the core. The heading is chosen
+              here by React; the frame loop owns the outer transform and nothing else about
+              the node ever changes. The tail is what makes 420 u/s legible rather than
+              merely correct — at 42 units a tick a dot jumps ~7 units a frame and strobes. */}
           <g>
             {shownBullets.map((slot) => {
               const b = arena.bullets[slot];
               if (b === undefined) return null;
               return (
-                <use
+                <g
                   key={slot}
                   ref={(el) => {
                     if (el) nodes.current.set(slot, el);
                     else nodes.current.delete(slot);
                   }}
-                  href={`#ord-b${sector(b.dx, b.dy)}`}
-                  x={-ORD_BULLET.w / 2}
-                  y={-ORD_BULLET.h / 2}
-                  width={ORD_BULLET.w}
-                  height={ORD_BULLET.h}
+                  className="hr-fb"
                   style={{
                     willChange: 'transform',
                     // The published position. The frame loop overwrites this between ticks;
                     // under reduced motion it is the only thing that ever writes it.
                     transform: `translate(${b.x}px, ${b.y}px)`,
                   }}
-                />
+                >
+                  <g transform={`rotate(${((Math.atan2(b.dy, b.dx) * 180) / Math.PI).toFixed(1)})`}>
+                    <use className="hr-fb-trail" href="#hr-fb-trail" />
+                    <use className="hr-fb-core" href="#hr-fb-core" />
+                  </g>
+                </g>
               );
             })}
-            {/* The muzzle bursts: one frame-sized window per thorn, parked over its muzzle,
-                with the three-frame strip behind it at opacity 0. The bullets effect plays
-                one by stepping the strip across the window — WAAPI is that node's only
-                writer, and React sets nothing on it after mount. Room B only, like the
-                thorns they sit on. */}
+            {/* Where the comets land: a pool of impact nodes, one taken per bullet that
+                dies, placed on the stone it died over and played by WAAPI. React sets
+                nothing on them after mount. Room B only. */}
+            {shown === 'arena' &&
+              Array.from({ length: SPLASH_POOL }, (_, i) => (
+                <g
+                  key={i}
+                  ref={(el) => {
+                    splashNodes.current[i] = el;
+                  }}
+                  aria-hidden="true"
+                  style={{ opacity: 0 }}
+                >
+                  <use href="#hr-splash" />
+                </g>
+              ))}
+            {shown === 'arena' &&
+              Array.from({ length: SPLASH_POOL }, (_, i) => (
+                <g
+                  key={`s${i}`}
+                  ref={(el) => {
+                    scorchNodes.current[i] = el;
+                  }}
+                  aria-hidden="true"
+                  style={{ opacity: 0 }}
+                >
+                  <use href="#hr-scorch" />
+                </g>
+              ))}
+            {/* The muzzle flashes: one per thorn, parked over its muzzle at opacity 0.
+                The bullets effect plays one by scaling it up and out — WAAPI is that
+                node's only writer. Room B only, like the thorns they sit on. */}
             {shown === 'arena' &&
               MUZZLES.map((m, i) => (
-                <svg
-                  key={i}
-                  aria-hidden="true"
-                  x={boss.x + m.x - ORD_BURST.w / 2}
-                  y={boss.y + m.y - ORD_BURST.h / 2}
-                  width={ORD_BURST.w}
-                  height={ORD_BURST.h}
-                >
-                  <use
+                <g key={i} aria-hidden="true" transform={`translate(${boss.x + m.x} ${boss.y + m.y})`}>
+                  <g
                     ref={(el) => {
                       burstNodes.current[i] = el;
                     }}
-                    href="#ord-burst"
-                    width={ORD_BURST.w * ORD_BURST.frames}
-                    height={ORD_BURST.h}
                     style={{ opacity: 0 }}
-                  />
-                </svg>
+                  >
+                    <use href="#hr-muzzle" />
+                  </g>
+                </g>
               ))}
           </g>
 
@@ -1491,39 +1746,80 @@ export function Arena({
 // ---------------------------------------------------------------------------
 
 /**
- * The muzzle burst: the strip stepped across its window, one frame per step. `steps`
- * jumps at the END of each interval, so frame 0 shows first; at the final instant the
- * strip has left the window, and with the default `fill: 'none'` the base opacity 0 is
- * what remains.
+ * The muzzle flash: up and out, gone in a tenth of a second. `fill: 'none'`, so the base
+ * opacity 0 is what remains.
  */
 const BURST_KEYFRAMES: Keyframe[] = [
-  { opacity: 1, transform: 'translateX(0)' },
-  { opacity: 1, transform: `translateX(${-ORD_BURST.w * ORD_BURST.frames}px)` },
+  { opacity: 1, transform: 'scale(0.4)' },
+  { opacity: 0.9, transform: 'scale(1.1)', offset: 0.4 },
+  { opacity: 0, transform: 'scale(1.5)' },
 ];
-const BURST_TIMING: KeyframeAnimationOptions = {
-  duration: BURST_MS,
-  easing: `steps(${ORD_BURST.frames})`,
-};
+const BURST_TIMING: KeyframeAnimationOptions = { duration: BURST_MS + 30, easing: 'ease-out' };
+
+/** How many impacts can be on the stone at once before the oldest is reused. */
+const SPLASH_POOL = 12;
 
 /**
- * The lane goes from a smoulder to a roar as the hand comes down.
- *
- * Opacity only — the fire may not SCALE, because the lit rect is the danger and a danger
- * area that grows into place is one the player cannot read in its first frame.
- *
- * The floor is 0.32 and not 0: the wind-up is 1.5 s against a measured 1,126 ms of worst
- * latency, so the FIRST frame is the one the dodge is decided on and a lane that fades up
- * out of nothing spends its budget being invisible. It cost a third of the budget here
- * once — at 0.16 the lane was not readable until a third of the way in. The flare lives
- * in the second half instead: flat-ish to the midpoint, then better than double.
+ * A comet landing: the pool flares, the tongues stand up, everything fades. The node's
+ * transform carries BOTH its place and its scale, so one write puts it where the bullet
+ * died and the animation grows it there (`transform-origin` set beside it, in world
+ * units, because the pool node has no position of its own).
  */
-const SLAM_KEYFRAMES: Keyframe[] = [{ opacity: 0.32 }, { opacity: 0.48, offset: 0.5 }, { opacity: 1 }];
+function splashKeyframes(x: number, y: number): Keyframe[] {
+  const at = `translate(${x}px, ${y}px)`;
+  return [
+    { opacity: 0, transform: `${at} scale(0.35)` },
+    { opacity: 1, transform: `${at} scale(0.95)`, offset: 0.16 },
+    { opacity: 0.9, transform: `${at} scale(1.15)`, offset: 0.55 },
+    { opacity: 0, transform: `${at} scale(1.3)` },
+  ];
+}
+const SPLASH_TIMING: KeyframeAnimationOptions = { duration: 700, easing: 'ease-out' };
+
+/** The scorch under it, at `size`, glowing on and then fading over seconds. */
+function scorchKeyframes(x: number, y: number, size: number): Keyframe[] {
+  const at = `translate(${x}px, ${y}px) scale(${size})`;
+  return [
+    { opacity: 0, transform: at },
+    { opacity: 1, transform: at, offset: 0.08 },
+    { opacity: 0.55, transform: at, offset: 0.4 },
+    { opacity: 0, transform: at },
+  ];
+}
+const SCORCH_TIMING: KeyframeAnimationOptions = { duration: 2600, easing: 'ease-out' };
+
+/** The hand landing: the ring thrown out of the lane, then gone. */
+function slamBurstKeyframes(x: number, y: number): Keyframe[] {
+  const at = `translate(${x}px, ${y}px)`;
+  return [
+    { opacity: 1, transform: `${at} scale(0.3)` },
+    { opacity: 1, transform: `${at} scale(1.05)`, offset: 0.35 },
+    { opacity: 0, transform: `${at} scale(1.4)` },
+  ];
+}
+const SLAM_BURST_TIMING: KeyframeAnimationOptions = { duration: 640, easing: 'ease-out' };
+
+/**
+ * The lane goes from a glow to a blaze as the hand comes down — the whole group, on top of
+ * the growth below. The floor is 0.7 and not 0: the wind-up is 1.5 s against a measured
+ * 1,126 ms of worst latency, so the FIRST frame is the one the dodge is decided on and a
+ * lane that fades up out of nothing spends its budget being invisible.
+ */
+const SLAM_KEYFRAMES: Keyframe[] = [{ opacity: 0.7 }, { opacity: 0.82, offset: 0.5 }, { opacity: 1 }];
+
+/**
+ * The fire's circle, from a spark at the centre to the corners of the rect on the landing
+ * tick. LINEAR in the radius, because `FireZone` hands every shower spot a start time from
+ * this same rule (`at = windup × distance / rMax`) and an eased growth would put the rain
+ * ahead of the fire it is supposed to fall into.
+ */
+const GROW_KEYFRAMES: Keyframe[] = [{ transform: 'scale(0.04)' }, { transform: 'scale(1)' }];
 
 /** The aim lines brighten into the shot. */
 const VOLLEY_KEYFRAMES: Keyframe[] = [{ opacity: 0.1 }, { opacity: 0.8 }];
 
 /** The doomed half catches the same way the slam's lane does, over the same 1.5 s. */
-const BEAM_WARN_KEYFRAMES: Keyframe[] = [{ opacity: 0.34 }, { opacity: 0.5, offset: 0.5 }, { opacity: 1 }];
+const BEAM_WARN_KEYFRAMES: Keyframe[] = [{ opacity: 0.7 }, { opacity: 0.82, offset: 0.5 }, { opacity: 1 }];
 
 /**
  * The sweep: `BEAM_SWEEP_LANES − 1` lane widths in as many lane steps, then held on the
