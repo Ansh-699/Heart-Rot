@@ -58,6 +58,7 @@ import {
 } from '@solana/kit';
 
 import { HEARTROT_ERRORS, HEARTROT_ERROR_HIGHEST } from './errors';
+import { SLOT_MS } from './layout';
 
 // This package is shared by the browser and by workerd, so its tsconfig carries neither
 // the DOM lib nor Node types. `fetch` and `setTimeout` are web standards present in both
@@ -474,24 +475,33 @@ export async function connectMatch(cfg: {
 // ---------------------------------------------------------------------------
 
 /**
- * How long a cached blockhash is served before a refresh is kicked off. The ER's real
- * window was probed at ~59 s (last accepted at age 58.0 s, first refused at 60.2 s, on two
- * runs), so 2 s runs at ~30x margin; base devnet's 150 blocks at 400 ms is comparable.
+ * How long a cached blockhash is served before a refresh is kicked off behind the caller.
+ * The ER's real window was probed at ~59 s (last accepted at age 58.0 s, first refused at
+ * 60.2 s, on two runs), so 2 s runs at ~30x margin; base devnet's 150 blocks at 400 ms is
+ * comparable.
  */
 const BLOCKHASH_TTL_MS = 2_000;
 
 /**
  * Past this age the caller *waits* for a new blockhash instead of being served the held
- * one. Only reachable when every background refresh since has failed, and still 2x inside
- * the measured window.
+ * one. This is the only blocking fetch left in front of an input.
+ *
+ * It was 30 s, above a comment claiming only a run of failed background refreshes could
+ * reach it. That was wrong, and it was the second of the two lags a two-player session
+ * reported: nothing but a send or {@link warmBlockhash} triggers a refresh, so a client
+ * that sends nothing for 30 s — standing in the lobby waiting for a friend — pays the
+ * fetch on its very next keypress. Measured 81, 109, 97, 119 and 142 ms for that first
+ * input, against 6-11 ms for one after a short idle.
+ *
+ * 50 s leaves ~9 s inside the probed ~59 s window for the fetch and the send it is for, so
+ * a client now blocks only when its refreshes have genuinely been failing for most of a
+ * minute — which is what the old comment claimed all along.
  */
-const BLOCKHASH_MAX_AGE_MS = 30_000;
+const BLOCKHASH_MAX_AGE_MS = 50_000;
 
 type CachedBlockhash = {
   lifetime: Parameters<typeof setTransactionMessageLifetimeUsingBlockhash>[0];
   fetchedAt: number;
-  /** Set while a background refresh is running, so only one is ever in flight. */
-  refreshing?: Promise<void>;
   /** Signatures already sent under this blockhash. See the dedupe in `sendInstructions`. */
   sent: Set<Signature>;
 };
@@ -504,11 +514,83 @@ type CachedBlockhash = {
  */
 const blockhashCache = new WeakMap<HeartrotRpc, CachedBlockhash>();
 
-async function refreshBlockhash(rpc: HeartrotRpc): Promise<CachedBlockhash> {
-  const { value } = await rpc.getLatestBlockhash().send();
-  const entry: CachedBlockhash = { lifetime: value, fetchedAt: Date.now(), sent: new Set() };
-  blockhashCache.set(rpc, entry);
-  return entry;
+/**
+ * In-flight refreshes, keyed the same way. The single-flight latch used to live on the
+ * cache entry, which left both paths that have *no* usable entry — a cold cache, and one
+ * past `BLOCKHASH_MAX_AGE_MS` — unguarded: two sends racing either one fetched two hashes,
+ * and the loser's `sent` set was discarded with its entry.
+ */
+const blockhashInFlight = new WeakMap<HeartrotRpc, Promise<CachedBlockhash>>();
+
+/**
+ * Fetch a hash and install it, at most one fetch per `rpc` at a time.
+ *
+ * A refresh that comes back with the hash already held keeps that hash's `sent` set. The
+ * ER's slot is 50 ms and `sendInstructions` now rotates about once per round trip
+ * (~85 ms), so two refreshes landing inside one slot is ordinary traffic rather than a
+ * curiosity — and a `sent` set reset there would let a repeated `shoot` past the dedupe as
+ * a genuine duplicate signature.
+ */
+/** How long a blockhash fetch may hang before it is aborted and the single-flight latch released. */
+const BLOCKHASH_FETCH_TIMEOUT_MS = 5_000;
+
+function refreshBlockhash(rpc: HeartrotRpc): Promise<CachedBlockhash> {
+  const running = blockhashInFlight.get(rpc);
+  if (running !== undefined) return running;
+
+  const pending = rpc
+    .getLatestBlockhash()
+    // BOUNDED, AND THAT IS LOAD-BEARING. The latch above is only released by one of the
+    // two handlers below, so a fetch that never settles keeps it forever — and since the
+    // blocking paths (`blockhashFor` past the max age, and the dedupe retry in
+    // `sendInstructions`) join the latch rather than issuing their own, one hung request
+    // would silently freeze every later send on this rpc: the fire key stops working,
+    // then the character stops walking, with no error and a healthy feed. Only a reload
+    // recovers it. Reproduced A/B against this file's own pre-rotation version, where the
+    // same hung fetch cost nothing because both blocking paths always fetched for
+    // themselves. Nothing else bounds it — `createDefaultRpcTransport` carries no timeout
+    // — and the rotation below puts a request in flight after every send, so the odds of
+    // owning the unlucky one went up ~8x with it. The abort takes the rejection handler,
+    // which deletes the latch, and the next call retries for real. 5 s is far past the
+    // 85 ms p50 round trip and far under any window a player would sit through.
+    .send({ abortSignal: AbortSignal.timeout(BLOCKHASH_FETCH_TIMEOUT_MS) })
+    .then(
+      ({ value }) => {
+        const prev = blockhashCache.get(rpc);
+        const entry: CachedBlockhash = {
+          lifetime: value,
+          fetchedAt: Date.now(),
+          sent: prev?.lifetime.blockhash === value.blockhash ? prev.sent : new Set(),
+        };
+        blockhashCache.set(rpc, entry);
+        blockhashInFlight.delete(rpc);
+        return entry;
+      },
+      (error: unknown) => {
+        blockhashInFlight.delete(rpc);
+        throw error;
+      },
+    );
+  blockhashInFlight.set(rpc, pending);
+  return pending;
+}
+
+/**
+ * Start a refresh nobody waits for. The failure is swallowed on purpose: the held hash is
+ * still valid, the next call retries, and an unhandled rejection here would kill a Worker
+ * request.
+ */
+function kickRefresh(rpc: HeartrotRpc): void {
+  // At most one rotation per ER slot. The hash only changes when the slot does, so a
+  // second fetch inside the same 50 ms window buys nothing and cannot make a repeated
+  // `shoot` unique either. Without it the rotation fires after every send: measured 1.3
+  // -> 11.0 getLatestBlockhash per second per seat on a replayed fight, which at twenty
+  // seats is ~195 extra requests a second landing on the same validator whose feed
+  // stalls the rest of this diff exists to recover from. With it the rate is bounded by
+  // the slot clock rather than by how fast the player moves.
+  const held = blockhashCache.get(rpc);
+  if (held !== undefined && Date.now() - held.fetchedAt < SLOT_MS) return;
+  void refreshBlockhash(rpc).catch(() => undefined);
 }
 
 /**
@@ -522,7 +604,7 @@ async function refreshBlockhash(rpc: HeartrotRpc): Promise<CachedBlockhash> {
  *
  * Stale-while-revalidate rather than a timer: a hash older than the TTL is still ~57 s
  * from expiry, so the send that notices serves the old one and lets the refresh land
- * behind it. No caller owns a timer, and an idle match makes no requests.
+ * behind it. No caller owns a timer; an idle match's freshness is `warmBlockhash`'s job.
  */
 async function blockhashFor(rpc: HeartrotRpc): Promise<CachedBlockhash> {
   const entry = blockhashCache.get(rpc);
@@ -530,17 +612,24 @@ async function blockhashFor(rpc: HeartrotRpc): Promise<CachedBlockhash> {
 
   const age = Date.now() - entry.fetchedAt;
   if (age >= BLOCKHASH_MAX_AGE_MS) return refreshBlockhash(rpc);
-  if (age >= BLOCKHASH_TTL_MS && entry.refreshing === undefined) {
-    entry.refreshing = refreshBlockhash(rpc).then(
-      () => undefined,
-      // Swallowed on purpose: the held hash is still valid, and clearing the latch lets
-      // the next send retry. An unhandled rejection here would kill a Worker request.
-      () => {
-        entry.refreshing = undefined;
-      },
-    );
-  }
+  if (age >= BLOCKHASH_TTL_MS) kickRefresh(rpc);
   return entry;
+}
+
+/**
+ * Keep `rpc`'s cache warm from outside a send, so an idle client never meets
+ * `BLOCKHASH_MAX_AGE_MS`.
+ *
+ * Sends are the only other thing that refreshes it, which is exactly why a player who
+ * stands still pays 81-142 ms on their next input (see that constant). `App.tsx` calls
+ * this on attach and every 20 s while a match is linked — well inside the 50 s, and free
+ * whenever the held hash is younger than `BLOCKHASH_TTL_MS`.
+ *
+ * Single-flight through {@link refreshBlockhash}, and it never rejects: a failed warm-up
+ * is not the caller's problem. Awaiting the result is only useful to a test.
+ */
+export function warmBlockhash(rpc: HeartrotRpc): Promise<unknown> {
+  return blockhashFor(rpc).catch(() => undefined);
 }
 
 /**
@@ -561,7 +650,8 @@ async function blockhashFor(rpc: HeartrotRpc): Promise<CachedBlockhash> {
  * keypress to one round trip instead of two. The cost of holding one is that a repeated
  * instruction becomes a byte-identical transaction with the same signature, and the node
  * refuses the repeat with `-32003 … already been processed` — so the repeat is detected
- * here and re-signed against a fresh hash rather than dropped.
+ * here and re-signed against a fresh hash rather than dropped. That re-fetch is *behind*
+ * every send and only in front of a repeat that beats it home.
  */
 export async function sendInstructions(
   rpc: HeartrotRpc,
@@ -584,12 +674,19 @@ export async function sendInstructions(
 
   if (entry.sent.has(signature)) {
     // `move` carries a monotonic u16 seq so it can never land here; `shoot` is
-    // [tag, seat, dx, dy] with no nonce, so any shooter who repeats an aim vector
+    // [tag, seat, dx, dy, tier] with no nonce, so any shooter who repeats an aim vector
     // produces the identical message. Free aim narrows this — a pointer shooter sends a
-    // near-unique pair every time — but it does not close it: a keyboard shooter holding
-    // one direction still repeats exactly. A fresh-blockhash-per-send used to make each
-    // one unique by accident. One extra round trip on a repeat beats a silently dropped
-    // shot — App.tsx swallows a `-32003` with no custom code, so the loss is invisible.
+    // near-unique pair every time — but it does not close it: a standing player
+    // auto-aiming at the same boss part repeats exactly. One extra round trip on a repeat
+    // beats a silently dropped shot — App.tsx swallows a `-32003` with no custom code, so
+    // the loss is invisible.
+    //
+    // This branch used to be the common case, not the rare one, because the only rotation
+    // was here: measured keydown→POST p50 102 ms for 9 of 10 shots in a live fight, and
+    // 216-245 ms when the ER was slower, against 6-16 ms for the first shot of a run. The
+    // rotation below is what makes it rare; at most the first repeat of a run reaches it,
+    // and even then `refreshBlockhash` usually hands back a fetch already in flight.
+    //
     // ponytail: two repeats inside one 50 ms ER slot can still collide, since the refresh
     // may return the same hash. Fix properly by giving `shoot` a u16 nonce like `move`'s,
     // which needs a byte on the wire and so is a program change, not a client one.
@@ -598,6 +695,17 @@ export async function sendInstructions(
     signature = getSignatureFromTransaction(signed);
   }
   entry.sent.add(signature);
+
+  // Rotate for the NEXT send, never for this one. The hash is the only thing that makes a
+  // repeated `shoot` unique, so fetching it behind the send is what keeps the branch above
+  // off the input path. Unconditional because nothing here can tell whether the next send
+  // will repeat, and the cheaper-looking rules do not work: "rotate only after a reused
+  // hash" just makes every second shot pay. No timer and no extra throttle either — the
+  // single-flight latch already caps this at one fetch per round trip (~85 ms p50), about
+  // one extra request per two sends at the 45 ms move pacing `controls.ts` holds. The
+  // Worker pays one per send instead, on lifecycle routes that send once or twice per
+  // request; nothing there is per-frame, and the crank runs on the ER's own scheduler.
+  kickRefresh(rpc);
 
   await rpc
     .sendTransaction(getBase64EncodedWireTransaction(signed), {
@@ -688,4 +796,78 @@ export async function probeFee(
   const base64 = getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64;
   const { value } = await rpc.getFeeForMessage(base64).send();
   return value;
+}
+
+// ---------------------------------------------------------------------------
+// Self-check
+// ---------------------------------------------------------------------------
+
+/**
+ * The blockhash cache's four rules, against a counting stub instead of a chain. Every one
+ * of them is a latency defect a player reported and nothing else in this repo can catch:
+ * a real ER answers `getLatestBlockhash` too fast and too variably to tell "served from
+ * cache" from "fetched again", and the ages that matter are 2 s and 50 s apart.
+ *
+ * An exported function rather than an import-time block, like `layoutSelfCheck`: this
+ * package has no `import.meta.env`. Runnable the same way, from the repo root — but the
+ * `.bin/esbuild` shim those two docstrings name is a broken symlink under this pnpm store
+ * (node tries to parse the ELF and dies on `SyntaxError: Invalid or unexpected token`), so
+ * reach the platform binary directly:
+ *
+ *   ES=$(ls -d node_modules/.pnpm/@esbuild+linux-x64@*)/node_modules/@esbuild/linux-x64/bin/esbuild
+ *   $ES packages/client/src/connection.ts --bundle --format=esm --outfile=/tmp/conn.mjs
+ *   node -e "import('/tmp/conn.mjs').then(m => m.connectionSelfCheck()).then(() => console.log('OK'))"
+ */
+export async function connectionSelfCheck(): Promise<void> {
+  const ok = (cond: boolean, what: string): void => {
+    if (!cond) throw new Error(`connection self-check: ${what}`);
+  };
+
+  let calls = 0;
+  let blockhash = 'hash-a';
+  const stub = {
+    getLatestBlockhash: () => ({
+      send: async () => {
+        calls += 1;
+        await sleep(0);
+        return { value: { blockhash, lastValidBlockHeight: 1n } };
+      },
+    }),
+  };
+  const rpc = stub as unknown as HeartrotRpc;
+
+  // A cold cache is single-flight: this is the path whose latch used to be on the entry
+  // that does not exist yet, so both racers fetched.
+  await Promise.all([warmBlockhash(rpc), warmBlockhash(rpc)]);
+  ok(calls === 1, 'two concurrent cold warms fetch once');
+
+  // Fresher than the TTL costs nothing at all.
+  await warmBlockhash(rpc);
+  ok(calls === 1, 'a hash inside the TTL is served without a fetch');
+
+  const held = blockhashCache.get(rpc);
+  ok(held !== undefined, 'the warm installed an entry');
+  if (held === undefined) return;
+  held.sent.add('sig-1' as Signature);
+
+  // Between the TTL and the max age the caller keeps the held entry and the refresh runs
+  // behind it. This is finding 2: at 30 s this branch used to block instead.
+  held.fetchedAt = Date.now() - 30_000;
+  ok((await warmBlockhash(rpc)) === held, 'a 30 s hash is served, not awaited');
+  ok(calls === 2, 'and it kicked a refresh behind the caller');
+  await sleep(1);
+
+  // The refresh returned the same hash — same 50 ms slot — so the dedupe memory survives
+  // it. Without this a repeated `shoot` gets a fresh empty set and sends a duplicate.
+  ok(blockhashCache.get(rpc)?.sent.has('sig-1' as Signature) === true, 'same hash keeps `sent`');
+
+  // A different hash is a different transaction, so the set starts over.
+  blockhash = 'hash-b';
+  const stale = blockhashCache.get(rpc);
+  ok(stale !== undefined, 'still cached after the background refresh');
+  if (stale === undefined) return;
+  stale.fetchedAt = Date.now() - BLOCKHASH_MAX_AGE_MS;
+  const fresh = (await warmBlockhash(rpc)) as CachedBlockhash;
+  ok(calls === 3 && fresh !== stale, 'past the max age the caller waits for a new hash');
+  ok(fresh.sent.size === 0, 'a new hash starts a new `sent` set');
 }

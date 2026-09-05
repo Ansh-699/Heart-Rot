@@ -726,9 +726,9 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         y: 0,
     }; MAX_SEATS];
     let mut live_n = 0usize;
-    // Seats standing in the arena at all, alive or dead. An unclaimed seat is
-    // all-zero, so `zone` alone separates "nobody has entered yet" from "everybody
-    // died" without needing to look at `session_pubkey` or the occupancy bitmask.
+    // Seats standing in the arena at all, alive or dead — the raid-size high-water mark
+    // in stage 1b reads this and nothing else does. An unclaimed seat is all-zero, so
+    // `zone` alone counts them without looking at `session_pubkey` or the bitmask.
     let mut arena_occupants = 0u32;
 
     for seat in 0..MAX_SEATS {
@@ -738,8 +738,8 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
         }
         arena_occupants += 1;
 
-        // A corpse stays on the floor — it counts as an occupant, so a raid whose every
-        // seat is dead is a wipe and not "nobody here" — but it is never a target.
+        // A corpse stays on the floor and stays an occupant — it is what the raid was
+        // sized against — but it is never a target.
         if slot.hp == 0 {
             continue;
         }
@@ -1002,12 +1002,27 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // where the last point of core HP was removed by a transaction that then failed to
     // land its own write.
     //
-    // Wipe: every player who is *in* the arena is dead. Death is final, so there is no
-    // "coming back" to wait for: the tick the last live raider falls on is the tick the
-    // raid ends. `arena_occupants > 0` is what stops a match that has been armed but not
-    // yet entered from settling on tick 1 — there is no grace timer and no extra field,
-    // just the distinction between "nobody here" and "nobody left". Corpses count as
-    // occupants, so twenty dead seats are a wipe and an empty arena is not.
+    // Wipe: no live raider is left standing in the arena. Death is final and so is
+    // leaving, so there is no "coming back" to wait for: the tick the pit empties is the
+    // tick the raid ends.
+    //
+    // **`live_n == 0` alone, with no occupant test.** This used to read
+    // `arena_occupants > 0 && live_n == 0`, and `leave_seat` zeroes the whole slot — so a
+    // fight everybody walked out of had *no* occupants and read as "nobody has entered
+    // yet, do not settle". Observed on devnet: the crank then ran the full six minutes to
+    // enrage over an empty room, holding the arena and its rent, and the players who left
+    // could not be given the room back until it timed out. The condition the old guard was
+    // protecting — a match armed over an empty pit — has not been reachable since
+    // `begin_muster` gained `assert_any_raider` (guards.rs): a FIGHTING arena is one at
+    // least one raider walked into, so `live_n == 0` there means they died or they left,
+    // and both are the raid being over.
+    //
+    // WIPE and not ENRAGE for an abandoned fight, out of the two bytes the client's
+    // verdict table already knows. ENRAGE means one specific thing — "the enrage tick
+    // passed with the core still alive", which is what the HUD says out loud — and
+    // settling on tick 300 of 3,800 would make that line a lie. WIPE's is "every raider in
+    // the arena was down", which an empty pit satisfies, and the boss is left standing
+    // either way. Nobody is watching this verdict: the last client is the one that left.
     //
     // Enrage: the six-minute timeout, kept distinct from a wipe because "you ran out of
     // time" and "you all died" are different end screens and nothing else on chain
@@ -1022,7 +1037,7 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // nothing, and the win does not become an enrage one tick later.
     let outcome = if boss.core_hp == 0 {
         OUTCOME_WIN
-    } else if arena_occupants > 0 && live_n == 0 {
+    } else if live_n == 0 {
         OUTCOME_WIPE
     } else if arena.enrage_at_tick != 0 && tick >= arena.enrage_at_tick {
         OUTCOME_ENRAGE
@@ -1386,9 +1401,9 @@ mod tests {
     // are what the assertions read; the handler itself names none of the three — it writes
     // phases only through the `Arena` helpers, which is the point.
     use crate::state::{
-        Bullet, BOSS_CORE_HP, BULLET_DAMAGE_FULL, BULLET_DAMAGE_SOLO, ENRAGE_TICKS, MUSTER_TICKS,
-        N_PARTS, PHASE_SETTLING, ROLL_TIMEOUT_TICKS, SLAM_DAMAGE_FULL, SLAM_DAMAGE_SOLO,
-        TIER_EASY, TIER_HARD, ZONE_LOBBY,
+        Bullet, PlayerSlot, BOSS_CORE_HP, BULLET_DAMAGE_FULL, BULLET_DAMAGE_SOLO, ENRAGE_TICKS,
+        MUSTER_TICKS, N_PARTS, PHASE_SETTLING, ROLL_TIMEOUT_TICKS, SLAM_DAMAGE_FULL,
+        SLAM_DAMAGE_SOLO, TIER_EASY, TIER_HARD, ZONE_LOBBY,
     };
     use bytemuck::Zeroable;
 
@@ -1596,8 +1611,8 @@ mod tests {
         }
     }
 
-    /// Damage → death, death is final, and the wipe rule that has to distinguish
-    /// "everybody died" from "nobody has walked through the gate yet".
+    /// Damage → death, death is final, and a wipe that must not land one seat early: the
+    /// fight runs on while a corpse and a live raider share the pit.
     #[test]
     fn damage_kills_for_good_and_wipes() {
         let (mut arena, mut boss, mut players) = fight();
@@ -1614,18 +1629,14 @@ mod tests {
             py - 300
         };
 
-        // Nobody in the arena: the boss ticks, but an empty arena is not a wipe.
-        tick_once(&mut arena, &mut boss, &mut players);
-        assert_eq!(arena.tick, 1);
-        assert_eq!(arena.phase, PHASE_FIGHTING);
-        assert_eq!(arena.alive_count, 0);
-        assert_eq!(boss.target_seat, NO_TARGET);
-
-        // Two players enter, seat 3 standing where the shot lands.
+        // Two players, seat 3 standing where the shot lands. They are seated before the
+        // first tick on purpose: an empty pit is now the *end* of a fight, not a fight
+        // waiting to start, and `an_empty_pit_is_a_wipe_the_tick_it_empties` owns that.
         seat_in_arena(&mut players, 3, px, py);
         seat_in_arena(&mut players, 7, px, far_y);
         arena.bullets[0] = shot;
         tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.tick, 1);
         assert_eq!(players.slots[3].hp, 100 - bullet_damage(arena.raid_size, arena.difficulty));
         assert_eq!(players.slots[7].hp, 100, "one bullet, one hit");
         assert_eq!(
@@ -1729,6 +1740,71 @@ mod tests {
             arena.outcome, OUTCOME_ENRAGE,
             "the clock still ends the match"
         );
+    }
+
+    /// The last raider *leaving* mid-fight ends the raid, exactly as the last raider
+    /// dying does.
+    ///
+    /// This is the bug the six-minute empty rooms on devnet were: `leave_seat` zeroes the
+    /// whole slot, so the old `arena_occupants > 0 && live_n == 0` read an abandoned
+    /// arena as "nobody has entered yet" and refused to settle it. The crank then ticked
+    /// an empty room to enrage while it held the arena and its rent, and nobody could be
+    /// given the room back until it did.
+    ///
+    /// Both halves are asserted because the fix is one conjunct wide and either half
+    /// alone would pass a weaker one: the raid must survive a partial exodus, and must end
+    /// on the tick the *last* seat goes — not one tick later, and not at enrage.
+    #[test]
+    fn an_empty_pit_is_a_wipe_the_tick_it_empties() {
+        let (mut arena, mut boss, mut players) = fight();
+        // No thorns and no hands: nothing spawns, so the only thing that can end this
+        // fight is the roster.
+        boss.parts = [0; N_PARTS];
+        seat_in_arena(&mut players, 2, 400, 512);
+        seat_in_arena(&mut players, 9, 440, 512);
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.phase, PHASE_FIGHTING);
+        assert_eq!(arena.alive_count, 2);
+
+        // Seat 2 leaves. `release_seat` zeroes the whole slot, which is what makes the
+        // seat unclaimed *and* un-occupied in one write — the state the old rule could
+        // not tell from an arena nobody had entered.
+        players.slots[2] = PlayerSlot::zeroed();
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(
+            arena.phase, PHASE_FIGHTING,
+            "one raider leaving is not the end of the raid"
+        );
+        assert_eq!(arena.outcome, OUTCOME_UNDECIDED);
+        assert_eq!(arena.alive_count, 1);
+
+        // The last one leaves. The pit is empty and the raid is over on this tick, not
+        // 3,600 ticks later at enrage.
+        players.slots[9] = PlayerSlot::zeroed();
+        let left_on = arena.tick + 1;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.tick, left_on);
+        assert!(
+            arena.tick < arena.enrage_at_tick,
+            "the fixture's enrage deadline is still ahead, so this settle is not the clock"
+        );
+        assert_eq!(
+            arena.phase, PHASE_SETTLING,
+            "an abandoned fight settles the tick the pit empties"
+        );
+        assert_eq!(
+            arena.outcome, OUTCOME_WIPE,
+            "an abandoned fight is a wipe, not an enrage: the enrage tick has not passed"
+        );
+        assert_eq!(arena.alive_count, 0);
+        assert_eq!(boss.target_seat, NO_TARGET, "nothing left to aim at");
+
+        // And the crank keeps firing at it, changing nothing but the clock — an arena
+        // that settled itself must not then settle again under a different outcome.
+        let after = arena.tick;
+        tick_once(&mut arena, &mut boss, &mut players);
+        assert_eq!(arena.tick, after + 1);
+        assert_eq!(arena.outcome, OUTCOME_WIPE, "the outcome is written once");
     }
 
     /// A bullet whose step ends inside a wall used to be deleted before anything asked

@@ -657,6 +657,11 @@ export function Arena({
   // `tickMs`, not the `TICK_MS` default: the ceiling on the interpolation window has to be
   // the crank period the worker actually reports, or every remote seat paces itself against
   // a 100 ms the crank never promised (`docs/review/render.md`, minor 1).
+  //
+  // And a crank period, not `MOVE_MS`. That swap has been tried and measured against two
+  // guests in one live arena: it leaves the p50 settle exactly where it is (46.6 → 47.5 ms)
+  // and adds stalled frames (37.2 → 38.5%), because the ceiling is not on the p50 path at
+  // all. `retarget`'s doc in `net/predict.ts` carries the table.
   const seats = useSeatInterpolation(players, reduced, tickMs);
 
   // Latest snapshot and the moment its tick landed, read by the rAF loop without the loop

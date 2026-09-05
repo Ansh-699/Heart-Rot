@@ -41,6 +41,7 @@ import { useEffect, useReducer, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
+  CLASS_COOLDOWN_TICKS,
   PHASE_LOBBY,
   PHASE_SETTLED,
   PHASE_SETTLING,
@@ -59,6 +60,7 @@ import {
   refusalOf,
   sendInstructions,
   shoot,
+  warmBlockhash,
   type HeartrotRpc,
   type SessionSigner,
   type ShotTier,
@@ -600,12 +602,15 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // the crank runs every `tickMs` whether or not the feed has said so, and the
         // notification that carried this tick took at least one tick to arrive. Pacing a
         // shot against the stale view spent that lag again on every arrow (measured: 766 ms
-        // between sends against a 400 ms gate). One tick of credit and no more: with
-        // `SHOT_MARGIN_TICKS` the view may run a tick ahead of the chain and a shot still
-        // lands past the cooldown; two ahead and it would not. Capped, so a stalled feed
-        // cannot run the clock ahead by more than a few ticks — a refused shot at worst.
+        // between sends against a 400 ms gate). In the steady state the credit is one tick
+        // and the cap never binds: with `SHOT_MARGIN_TICKS` the view may run a tick ahead
+        // of the chain and a shot still lands past the cooldown. The cap is only for a feed
+        // that has stopped — see `AHEAD_CAP_TICKS`.
         const ahead = arena
-          ? Math.min(5, Math.floor((performance.now() - tickAt + NOTIFY_LAG_MS) / tickMs))
+          ? Math.min(
+              AHEAD_CAP_TICKS,
+              Math.floor((performance.now() - tickAt + NOTIFY_LAG_MS) / tickMs),
+            )
           : 0;
         return {
           phase: arena?.phase ?? PHASE_LOBBY,
@@ -846,9 +851,35 @@ type Link = {
 /** The least a notification takes to come back: one tick, the credit the pump's clock gives itself. */
 const NOTIFY_LAG_MS = 100;
 
+/**
+ * How far the pump's clock may credit itself past the last notified tick while the feed is
+ * silent. Derived, never typed: the longest class cooldown (knight, 7 ticks) plus the gate's
+ * own `SHOT_MARGIN_TICKS` plus the one tick its `>` demands, so one whole cooldown still
+ * clears during a stall.
+ *
+ * This was 5, which is UNDER the knight's 7+1, so once the feed stalled — measured at 0.3
+ * to 2.5 s per connection, while HTTP to the same ER kept answering in ~90 ms — the credit
+ * froze below the gate and every tap for the rest of the stall was refused with nothing on
+ * screen. A credit that runs too far ahead costs one refused shot and one resend; a frozen
+ * one costs every shot in the stall.
+ */
+const AHEAD_CAP_TICKS = Math.max(...CLASS_COOLDOWN_TICKS) + 2;
+
 /** How long the roster may lack our own seat before the accounts are re-read, and after how many re-reads the seat is re-claimed instead. */
 const SEAT_SEEN_MS = 3_000;
 const SEAT_SEEN_TRIES = 4;
+
+/**
+ * How often to poke the ER with one `getLatestBlockhash` while nobody is pressing anything.
+ *
+ * Two measured stalls, one request: after 30 s still the cached hash is stale and the first
+ * input waits 81-142 ms on a serial fetch, and past the ER nginx's 75.3 s idle close the
+ * browser's only h2 connection is gone, so that first keypress pays connect+TLS+hash —
+ * 270-320 ms, which is the "he pressed a key and the character moved much later" the owner
+ * saw while the two of them stood talking. 20 s keeps the hash inside its refresh window and
+ * puts three keepalives inside the 75.3 s close, for 96 bytes a poke.
+ */
+const WARM_MS = 20_000;
 
 function useMatchLink(onFeedDrop: () => void): Link {
   const store = useStore();
@@ -865,6 +896,7 @@ function useMatchLink(onFeedDrop: () => void): Link {
     let cancelled = false;
     let subscription: MatchSubscription | null = null;
     let seatCheck = 0;
+    let warmCheck = 0;
     let seatSeen = false;
     let seatRetry = 0;
     const predictor = createPredictor();
@@ -888,6 +920,11 @@ function useMatchLink(onFeedDrop: () => void): Link {
           ownerProgram: addr(match.programId),
         });
         if (cancelled) return;
+
+        // Keep the blockhash cache and the h2 socket warm for the whole life of the link —
+        // see `WARM_MS`. Single-flight and it never throws, so it can be fired and dropped.
+        void warmBlockhash(er);
+        warmCheck = window.setInterval(() => void warmBlockhash(er), WARM_MS);
 
         // THE SEAT MUST APPEAR, AND STAY. The Worker confirmed the claim before it
         // answered, but the roster the feed shows can still lack our seat: a snapshot
@@ -981,6 +1018,10 @@ function useMatchLink(onFeedDrop: () => void): Link {
           },
         });
       } catch (error) {
+        // The keepalive goes with the match it was keeping alive. The cleanup below clears
+        // it too, but that only runs when the effect re-runs or unmounts, and a match that
+        // has already failed has nothing left to keep warm in the meantime.
+        window.clearInterval(warmCheck);
         if (cancelled) return;
         // Fatal for this match: no ER means no world and no gameplay, and a silent retry
         // loop would look exactly like a frozen game.
@@ -991,6 +1032,7 @@ function useMatchLink(onFeedDrop: () => void): Link {
     return () => {
       cancelled = true;
       window.clearInterval(seatCheck);
+      window.clearInterval(warmCheck);
       subscription?.close();
       setLink(null);
     };

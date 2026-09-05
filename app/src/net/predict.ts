@@ -377,6 +377,29 @@ function trackAt(track: SeatTrack, alpha: number, out: { x: number; y: number })
  * early the drawn point is short of it and starting from the stored slot would step the
  * sprite backwards. `ceiling` caps the window so a seat that stood still for five seconds
  * and then took one step does not crawl that step over five seconds.
+ *
+ * **The ceiling is the CRANK period, not the ER slot, and that has now been measured
+ * twice.** It is tempting to pass `MOVE_MS` (50 ms, the chain's move floor) on the
+ * argument that motion arrives on the 50 ms slot and a 100 ms window is therefore twice
+ * what a step needs. It is not: `span` is already the *observed* gap, and the ceiling only
+ * binds in the tail. Two guests in one live arena, one holding a key while the other
+ * sampled its seat's transform every frame — 220 real position changes, both ceilings
+ * replayed over the identical captured arrival stream:
+ *
+ * | | ceiling 100 ms (this) | ceiling 50 ms |
+ * |---|---|---|
+ * | frame lands → seat is AT it, p50 | **46.6 ms** | 47.5 ms |
+ * | …p95 / max | 74.2 / 108.5 ms | 64.0 / 65.9 ms |
+ * | frames in which the seat does not move at all | **37.2%** | 38.5% |
+ *
+ * The p50 does not move because the ceiling is not on the p50 path at all — the arrival
+ * gap p50 is 51.6 ms, so the window is the gap and 100 never binds. All the change buys is
+ * 10 ms off p95, and it pays for it by reaching each step early and then holding still:
+ * more stalled frames, which is the chop this whole track exists to remove. Replaying the
+ * four recorded feeds in `docs/perf/feedshape-*.jsonl` (2,982 steps, ER and router, lobby
+ * and fight) agrees on every one: p50 within 0.7 ms, p95 2-17 ms better, stalled frames
+ * 0.5-1.9 points worse. A lower ceiling is a smoothness regression bought with tail
+ * latency nobody sees.
  */
 function retarget(track: SeatTrack, to: PlayerSlot, now: number, ceiling: number): void {
   if (teleported(track.slot, to)) {

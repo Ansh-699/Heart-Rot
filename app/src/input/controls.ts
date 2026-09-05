@@ -27,7 +27,9 @@
  * charged shot always left first. A release short of tier 1 fires nothing — the tap already
  * answered that press — so a quick press-release is one arrow, never two. A release inside
  * the cooldown is QUEUED, one deep, and the first pump past the gate fires it: the stand
- * was paid for and the cooldown ring is the only reason the shot has not left. The hold is
+ * was paid for and the cooldown ring is the only reason the shot has not left. So is the
+ * TAP inside the cooldown, and for the same reason ({@link queueAfterRefusal}) — it used to
+ * be dropped in silence, which measured 4 sends from 8 taps at 930 ms. The hold is
  * measured from the later of the press and the last step (`max(fireDownAt, lastMoveAt)`):
  * charge accrues ONLY while standing still, and a step restarts it. That is the rule of the
  * mechanic, not a lock on the keys — suppressing `onMove` instead would break
@@ -68,9 +70,10 @@
  * The split between the two callbacks is the whole contract, and it is deliberate that
  * neither can do the other's job: `onTrigger` draws, `onShoot` sends. A trigger the chain
  * accepts calls both, in that order; a trigger it would refuse calls only `onTrigger`; a
- * trigger inside the cooldown calls neither, because the cooldown ring is already on
- * screen saying so. Prediction owns no number — the arrow is the answer to "is the key
- * bound", and `damageDealt` off the roster is the answer to "did it hurt anything".
+ * trigger inside the cooldown calls neither YET — the ring is already on screen saying why
+ * — and is queued, so the pump the gate opens for calls both. Prediction owns no number —
+ * the arrow is the answer to "is the key bound", and `damageDealt` off the roster is the
+ * answer to "did it hurt anything".
  *
  * The dead gate is prevention, not reaction, and it has to be: gameplay is sent with
  * `skipPreflight` and never confirmed, so `Custom(7)`/`Custom(8)` are not observable on
@@ -103,6 +106,32 @@
  *    per pump: 24-29 lost slots per 400 moves and a 100 ms worst-case gap, i.e. 18.5-18.75
  *    moves/s against the 20 the chain allows. `nextMoveDeadline` advances the deadline by
  *    exactly one period instead, which measures 19.95/s with zero lost slots.
+ * 3. *Pump schedule.* The pump used to run on a fixed `setInterval(pump, PUMP_MS)` grid,
+ *    which is a different clock from the move deadline. `nextMoveDeadline` claws back at
+ *    most `MOVE_MS - MIN_GAP_MS` = 5 ms of lateness, so a tick later than that re-anchors
+ *    and the next move slips a whole slot. Nothing on an idle machine (cadence p50 50.0,
+ *    p95 51.5 ms) and one lost move per late tick on a busy one — the second player's
+ *    laptop measured timer gaps p90 74 ms and 34 of 72 send gaps over 60 ms — and every
+ *    lost slot is 50 ms of extra lag on the peer's screen that compounds while walking.
+ *    The pump reschedules itself on the deadline instead ({@link pumpDelay}), so a late
+ *    tick is followed by an EARLY one that takes the stolen slot back. `MIN_GAP_MS`'s own
+ *    harness, pooled over two runs of 15 s cells with the 6 ms-per-frame block:
+ *
+ *    | keys/s | fixed grid | on the deadline | refusals/s, grid -> deadline |
+ *    |---|---|---|---|
+ *    | 0 | 19.59 | 19.70 accepted moves/s | 0.04 -> 0.17 |
+ *    | 8 | 19.53 | 19.73 | 0.10 -> 0.17 |
+ *    | 16 | 19.56 | 19.80 | 0.07 -> 0.10 |
+ *
+ *    The refusals ARE the recovery, not a regression: the send the floor allows 45 ms after
+ *    a late one shares that slot with probability `(MOVE_MS - MIN_GAP_MS) / MOVE_MS`, so a
+ *    tenth of the reclaimed slots come back refused and nine tenths come back as moves. The
+ *    fixed grid bought its cleaner refusal count by never attempting the recovery at all.
+ *    Net accepted is up in every cell, the whole band stays under 0.4 refusals/s — inside
+ *    what the shipped floor already measures above — and the minimum gap never fell below
+ *    45.0 ms in any cell. A hitch far past the floor (60 ms every 500 ms, measured 17.9/s)
+ *    is not recoverable by either arm: 5 ms per send is all the floor will give back, and
+ *    the floor is the chain's one-move-per-slot rule, not a tunable.
  */
 
 import {
@@ -266,15 +295,30 @@ function tierReached(now: number, fireDownAt: number, lastMoveAt: number): ShotT
 }
 
 /**
- * What a pump has to fire, if anything: a queued release first — it was earned, and only
- * the cooldown held it — else the tap at a press or the walking auto-repeat, plain. A
- * standing hold with no tap fires nothing; its shot is the release. Pure, for the
- * self-check, because both wrong answers are silent: a dropped queue is a super the player
- * stood 2.5 s for and never saw, and a tap that also fires on release is two arrows.
+ * What a pump has to fire, if anything: whatever is queued first — a release that was
+ * earned or a tap the gate refused, and in both cases only the cooldown held it — else the
+ * tap at a press or the walking auto-repeat, plain. A standing hold with no tap fires
+ * nothing; its shot is the release. Pure, for the self-check, because both wrong answers
+ * are silent: a dropped queue is a super the player stood 2.5 s for and never saw, and a
+ * tap that also fires on release is two arrows.
  */
 function nextShot(queued: ShotTier | null, held: boolean, still: boolean, tap: boolean): ShotTier | null {
   if (queued !== null) return queued;
   return held && (tap || !still) ? 0 : null;
+}
+
+/**
+ * The queue after a trigger the cooldown refused. A tap is queued rather than dropped, and
+ * that is the loudest of this module's silent losses: dropped, a press a little early left
+ * no arrow, no ring and no error at all — measured live, 8 taps at 930 ms against the
+ * knight's 900 ms effective gate sent 4 and the other 4 simply vanished, which reads as the
+ * game ignoring the player. A tier already queued outranks it: the queue is one deep, and a
+ * release was stood 1.25-2.75 s for while a tap costs one keypress. An auto-repeat queues
+ * nothing — the next pump repeats it anyway, and queuing it would fire an arrow after the
+ * key came up. Pure, for the self-check.
+ */
+function queueAfterRefusal(queued: ShotTier | null, tap: boolean): ShotTier | null {
+  return queued === null && tap ? 0 : queued;
 }
 
 /**
@@ -346,6 +390,23 @@ function moveAllowed(now: number, lastMoveAt: number): boolean {
  */
 function nextMoveDeadline(now: number, lastMoveAt: number): number {
   return Math.max(lastMoveAt + MOVE_MS, now - MOVE_MS + MIN_GAP_MS);
+}
+
+/**
+ * How long until the next pump, one having just run at `now`. The pump rides the move
+ * deadline rather than a fixed 50 ms grid, so a tick the browser delivered late is followed
+ * by an EARLY one that takes the stolen slot back instead of losing it — header,
+ * "Keypress-to-wire" 3, where the two arms are measured.
+ *
+ * A full `PUMP_MS` when nothing is due: an idle seat, or a phase that takes no step, leaves
+ * the deadline in the past, and rescheduling at 0 there would spin the pump at the timer's
+ * own floor for the whole lobby rather than recovering anything. Early is safe in either
+ * case — the gate is re-read on every pump and `MIN_GAP_MS` is still the floor under it, so
+ * an early pump either sends inside the rule or does nothing.
+ */
+function pumpDelay(now: number, lastMoveAt: number): number {
+  const due = lastMoveAt + MOVE_MS - now;
+  return due > 0 ? Math.min(PUMP_MS, due) : PUMP_MS;
 }
 
 export interface ControlsConfig {
@@ -437,9 +498,14 @@ export function attachControls(cfg: ControlsConfig): () => void {
   let fireDownAt = Number.NEGATIVE_INFINITY;
   // The last value handed to `onCharge`, so the edge fires once per change.
   let hold: ShotTier | null = null;
-  // A released tier the cooldown is still holding. One deep: a second release needs a
-  // second press, and a press inside the cooldown is the tap the gate already drops.
+  // A released tier the cooldown is still holding, or a tap it refused. One deep: a second
+  // release needs a second press, and a tap never displaces a release ({@link
+  // queueAfterRefusal}). `queuedAt` is the wall clock it went in at, and it bounds a TAP
+  // only: one class period late, `periodMsFor`, an arrow is a shot the player has stopped
+  // expecting, so it is dropped instead of fired. A release is never dropped — the stand
+  // was paid for, and the gate it waits on is one class period wide anyway.
   let queued: ShotTier | null = null;
+  let queuedAt = 0;
 
   const fireHeld = (): boolean => pointerDown || fireKeyDown;
 
@@ -500,9 +566,22 @@ export function attachControls(cfg: ControlsConfig): () => void {
     const still = dir === null;
     const held = fireHeld();
     setHold(held && still ? tierReached(now, fireDownAt, lastMoveAt) : null);
+    const klass = cls ?? CLASS_ARCHER;
+    // A queued tap the gate never opened for is stale — see the declaration. Only a tap:
+    // a queued release outlives everything but a death.
+    //
+    // The window is the GATE's width plus one pump, not the period's. A tap refused at the
+    // very top of a cooldown waits the whole of it plus `SHOT_MARGIN_TICKS`, so a window of
+    // one bare period expires the tap BEFORE the gate it is queued for ever opens, and the
+    // press is lost exactly as it was before the queue existed — measured, knight: four
+    // presses inside one cooldown produced no arrow at all. The extra `PUMP_MS` is not
+    // slack: this drop runs EARLIER IN THE SAME PUMP than the gate check below, so a window
+    // equal to the gate loses the tap to a tie on the one pump that could have fired it.
+    if (queued === 0 && now - queuedAt >= periodMsFor(klass) + SHOT_MARGIN_TICKS * TICK_MS + PUMP_MS) {
+      queued = null;
+    }
     const tier = nextShot(queued, held, still, tap);
     if (tier === null) return;
-    const klass = cls ?? CLASS_ARCHER;
 
     // `shoot` is Fighting-only AND arena-only on chain: outside either, the transaction is
     // built, signed, sent and refused with nothing to show for it. So it is not sent — the
@@ -515,7 +594,17 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // roster, can be later than the tick this client saw at the send — pace against the
     // later of the two, or the next send is `RateLimited` and the shot is lost.
     if (stamped !== undefined) lastShotTick = Math.max(lastShotTick, stamped);
-    if (live ? !shotAllowed(tick, lastShotTick, klass) : now - lastFireAt < periodMsFor(klass)) return;
+    if (live ? !shotAllowed(tick, lastShotTick, klass) : now - lastFireAt < periodMsFor(klass)) {
+      // Refused, not dropped: the first pump the gate opens for fires it, and the send
+      // below clears the queue, so it fires exactly once.
+      //
+      // Stamped from the LAST press, not the first. A player still pressing has plainly
+      // not stopped expecting an arrow, and stamping once let one early tap start a clock
+      // that expired every later tap in the same cooldown with it.
+      if (queued === null || tap) queuedAt = now;
+      queued = queueAfterRefusal(queued, tap);
+      return;
+    }
 
     queued = null;
     if (live) lastShotTick = tick;
@@ -617,10 +706,23 @@ export function attachControls(cfg: ControlsConfig): () => void {
   cfg.surface.addEventListener('pointerdown', onPointerDown);
   cfg.surface.addEventListener('pointerup', onPointerUp);
   cfg.surface.addEventListener('pointercancel', onPointerUp);
-  const pumpTimer = setInterval(pump, PUMP_MS);
+  // Not a fixed grid: each pump schedules the next on the move deadline, so a tick the
+  // browser delivered late is followed by an early one that recovers the slot instead of
+  // losing it. {@link pumpDelay}, and "Keypress-to-wire" 3 for the two arms measured.
+  // `finally`, because the reschedule IS the loop. `setInterval` was self-healing: one
+  // throw skipped one tick and the next still came. A chained timeout whose reschedule
+  // sits after the call would end input for the rest of the match on a single exception,
+  // with the world still animating around a player whose keys do nothing.
+  let pumpTimer = setTimeout(function tick() {
+    try {
+      pump();
+    } finally {
+      pumpTimer = setTimeout(tick, pumpDelay(performance.now(), lastMoveAt));
+    }
+  }, PUMP_MS);
 
   return () => {
-    clearInterval(pumpTimer);
+    clearTimeout(pumpTimer);
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('keyup', onKeyUp);
     window.removeEventListener('blur', onBlur);
@@ -668,6 +770,16 @@ if (import.meta.env.DEV) {
   assert(!moveAllowed(9999 + MIN_GAP_MS - 1, nextMoveDeadline(9999, 0)), 'two sends stay MIN_GAP_MS apart');
   assert(moveAllowed(9999 + MIN_GAP_MS, nextMoveDeadline(9999, 0)), 'and no further apart than that');
   assert(nextMoveDeadline(0, Number.NEGATIVE_INFINITY) === -MOVE_MS + MIN_GAP_MS, 'the first move is finite');
+
+  // The pump rides that deadline instead of a fixed grid, so a late tick is followed by an
+  // early one. Both failures are silent: a grid loses the whole slot a late tick stole
+  // (19.56 -> 19.80 moves/s at 16 keys/s, measured), and rescheduling at 0 with nothing due
+  // spins the timer at its own floor for as long as the player stands still.
+  assert(pumpDelay(0, 0) === MOVE_MS, 'a move just sent puts the next pump one slot out');
+  assert(pumpDelay(10, 0) === MOVE_MS - 10, 'a pump 10 ms late is followed by one 10 ms early');
+  assert(pumpDelay(0, Number.NEGATIVE_INFINITY) === PUMP_MS, 'nothing due waits a period rather than spinning');
+  assert(pumpDelay(999, 0) === PUMP_MS, 'and so does a long idle');
+  assert(pumpDelay(0, 999) === PUMP_MS, 'no pump is ever more than a period away');
 
   // Shots: strictly greater, so the chain's next accepted shot is `cooldown + 1` ticks
   // later — one class period, whatever TICK_MS is — and this mirror waits one tick more.
@@ -725,6 +837,18 @@ if (import.meta.env.DEV) {
   assert(nextShot(null, true, true, false) === null, 'a standing hold fires nothing by itself');
   assert(nextShot(null, true, false, false) === 0, 'walking auto-repeats plain');
   assert(nextShot(null, false, true, false) === null, 'nothing held, nothing queued, nothing fired');
+
+  // And what a trigger the cooldown refused leaves behind. Dropping it was this module's
+  // loudest silent loss — 8 taps at 930 ms against the knight's 900 ms gate sent 4, and the
+  // other 4 left nothing on screen at all. It fires EXACTLY ONCE: `nextShot` takes the queue
+  // ahead of everything, the send clears it, and the pump after that finds the line above.
+  assert(queueAfterRefusal(null, true) === 0, 'a tap inside the cooldown is queued, not dropped');
+  assert(queueAfterRefusal(2, true) === 2, 'and never displaces a queued release');
+  assert(queueAfterRefusal(null, false) === null, 'an auto-repeat queues nothing: the next pump repeats it anyway');
+  assert(
+    nextShot(queueAfterRefusal(null, true), false, true, false) === 0,
+    'the queued tap fires on the next allowed pump, key up or not',
+  );
 
   for (let dir = 0; dir < 8; dir += 1) {
     const [sx, sy] = octantAim(dir);

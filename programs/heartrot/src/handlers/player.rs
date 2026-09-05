@@ -52,7 +52,7 @@ use pinocchio::{
 use crate::body::in_body;
 use crate::error::HeartrotError;
 use crate::guards::{
-    assert_owned_by, assert_pda, assert_session_authority, assert_signer, assert_writable,
+    assert_owned_by, assert_pda_at_bump, assert_session_authority, assert_signer, assert_writable,
 };
 use crate::map::{gate_at, DAIS, PIT_BOT, PIT_TOP, WALLS};
 use crate::state::{
@@ -483,9 +483,10 @@ fn commit_move(slot: &mut PlayerSlot, dir: u8, (x, y): (i16, i16), seq: u16, now
     slot.last_move_tick = now;
 }
 
-/// Accounts must be validated before any state is touched, and every guard below
-/// takes `&AccountView` — which means all of them have to run *before* the `RefMut`
-/// borrows, not interleaved with them.
+/// Accounts must be validated before any state is touched, which means this whole
+/// function runs *before* a caller's `RefMut` borrows, not interleaved with them. It
+/// takes `&AccountView` rather than `&mut`, so the one borrow it does take for itself —
+/// reading the `Players` bump — is immutable, scoped, and released before it returns.
 ///
 /// `players` is bound to `arena` by re-deriving its PDA from the arena address, which
 /// is what stops a caller pairing match A's arena with match B's players. `arena`
@@ -513,10 +514,32 @@ fn validate_pair(
     assert_owned_by(players_ai, program_id)?;
 
     let arena_key = *arena_ai.address();
-    // `assert_pda` searches for the canonical bump itself (guards.rs) — the stored bump
-    // is never a seed. Passing it as one derives a different address entirely, which
-    // rejects every legitimate call.
-    assert_pda(players_ai, &[SEED_PLAYERS, arena_key.as_ref()], program_id)?;
+    // The bump comes off the account rather than out of a `find_program_address` search,
+    // which is the trade `shoot` and `boss_tick` already made and the last O(bump) search
+    // on a player's hot path. The search's price is `arena_id` luck — ~1,500 CU per
+    // candidate it rejects — so `move` cost whatever bump the roll happened to land on.
+    // Measured in mollusk against this tree's own `cargo build-sbf` ELF, `move` p50:
+    // 2,128 → 816 CU on an arena whose `players` PDA sits at bump 255, and 5,128 → 816 on
+    // one at bump 253. One `sol_sha256` either way, so the spread is gone with it.
+    //
+    // It is not the weaker check: `assert_owned_by` above proves only this program wrote
+    // byte 2, `state::load` proves it is the bump field of a `Players` and not some other
+    // layout's, and the derivation proves that bump reproduces this exact address. The
+    // guard's own docs argue why no account at a non-canonical bump can reach it.
+    //
+    // The borrow is immutable and scoped, because the bump is only readable through the
+    // data and `try_borrow_mut` takes `&mut self`: the `Ref` is dropped before this
+    // returns, so every caller's own `try_borrow_mut` still finds the account free.
+    let players_bump = {
+        let players_data = players_ai.try_borrow()?;
+        state::load::<Players>(&players_data)?.bump
+    };
+    assert_pda_at_bump(
+        players_ai.address(),
+        &[SEED_PLAYERS, arena_key.as_ref()],
+        program_id,
+        players_bump,
+    )?;
     Ok(arena_key)
 }
 

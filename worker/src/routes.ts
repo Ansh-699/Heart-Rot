@@ -59,6 +59,7 @@ import {
   rollSeed,
   sendInstructions,
   settle,
+  warmBlockhash,
   type ArenaAccount,
   type DecodedTransactionError,
   type HeartrotRpc,
@@ -354,6 +355,17 @@ function warmArena(c: Ctx, ctx: RouteContext, arenaId: bigint): void {
   ctx.waitUntil(
     (async () => {
       try {
+        // The tier is read in PARALLEL with the scan now, so it is no longer proven
+        // before the scan queues this. `init_arena` is the one background send that pays
+        // rent (~0.0245 SOL), and a tier-4 treasury holds under 5 matches' worth — it
+        // cannot fund the rent and would burn the failed transaction's fee on every
+        // request instead. Read it here, where the wait is Cloudflare's and not a
+        // player's.
+        const { tier } = await treasuryTier(c);
+        if (tier === 4) {
+          console.warn(`warmArena: ${arenaId} skipped; treasury at tier ${tier}`);
+          return;
+        }
         const pdas = await matchPdas(c.programId, arenaId);
         await ensureArena(c, arenaId, 1, pdas);
         console.log(`warmArena: ${arenaId} is warm`);
@@ -457,6 +469,18 @@ async function readWave(c: Ctx, wave: MatchPdas[]): Promise<PromiseSettledResult
         if (!status.isDelegated || status.fqdn === undefined) {
           throw new Error('between layers: base husk, router says undelegated');
         }
+        // THE VALIDATOR PIN, and the only thing enforcing it now that a wave read is
+        // trusted straight through to the seat claim (`connectOpen`). `connectMatch`
+        // used to re-check this per account inside `ensureArena`; that call is gone for
+        // an arena this request already read, so the check moves to the one read that
+        // remains. An arena delegated to somebody else's ER answers reads from that ER
+        // with correctly-owned but silently frozen data — no error, a motionless boss —
+        // so it is a busy id, never the open lobby.
+        if (status.delegationRecord?.authority !== c.validatorIdentity) {
+          throw new Error(
+            `delegated elsewhere: ${status.delegationRecord?.authority ?? 'no record'}, not ${c.validatorIdentity}`,
+          );
+        }
         const data = await accountData(createRpc(status.fqdn), pdas.arena);
         if (!data) throw new Error('between layers: router says delegated, ER has no account');
         return { pdas, state: decodeOrNull(data), erFqdn: status.fqdn };
@@ -517,11 +541,17 @@ async function childBumpsCanonical(programId: Address, arena: Address): Promise<
  * in place: a won raid's next boss is the same arena at N+1, not a new address. Only a
  * chain that has ended — a wipe, an enrage, or a roll the oracle never answered — moves
  * the scan on, and a raid already running on an id leaves the next one untouched.
+ *
+ * `erFqdn` is the ER the lobby was actually decoded from, handed back rather than thrown
+ * away: the caller's `ensureArena` used to re-derive it with a base read, a router status
+ * and a second ER read of the arena this walk had just read — ~950 ms of the 1,091 and
+ * 1,573 ms 'Play → in the lobby' runs measured from India, where every hop is ~150 ms.
+ * `undefined` means the lobby is still on the base layer and genuinely needs delegating.
  */
 async function openArena(
   c: Ctx,
   ctx: RouteContext,
-): Promise<{ arenaId: bigint; incarnation: number } | null> {
+): Promise<{ arenaId: bigint; incarnation: number; erFqdn?: string } | null> {
   const board = await accountData(c.base, await leaderboardPda(c.programId));
   // A leaderboard that exists but has recorded nothing reads `last_arena_id == 0`, which
   // is not an arena id at all — `arenaIdField` rejects 0 on the way in, so returning it
@@ -597,7 +627,9 @@ async function openArena(
         continue;
       }
 
-      if (state.phase === PHASE_LOBBY) return { arenaId, incarnation: state.incarnation };
+      if (state.phase === PHASE_LOBBY) {
+        return { arenaId, incarnation: state.incarnation, erFqdn };
+      }
 
       if (state.phase === PHASE_SETTLED) {
         // A won arena can roll into its next incarnation — but that is a transaction,
@@ -728,6 +760,33 @@ async function ensureArena(
     ownerProgram: c.programId,
   });
   return { er: connections.er, erFqdn: connections.erFqdn };
+}
+
+/**
+ * The ER for the arena `openArena` just handed back.
+ *
+ * A scan that returned an `erFqdn` has, in this same request, asked the router where the
+ * arena lives, checked its delegation record names OUR validator (`readWave`), read the
+ * account from that ER and decoded it as `LOBBY`. `ensureArena` then re-established
+ * exactly that: a base read, a router status, `getRoutes`, `getIdentity` and two more
+ * router/ER rounds inside `connectMatch` — six of `sessionInit`'s sixteen round trips,
+ * ~950 ms of it, re-verifying what the walk had already proven.
+ *
+ * `delegate` moves all three accounts in ONE instruction, so an arena cloned onto the ER
+ * brings `Boss` and `Players` with it; the callers read the roster off `er` immediately
+ * anyway, and a missing one is already `try_again` rather than a wrong answer.
+ *
+ * `ensureArena` stays for the case that has genuinely not been proven: a lobby still on
+ * the base layer, which has to be delegated and waited for before anyone can be seated.
+ */
+function connectOpen(
+  c: Ctx,
+  open: { arenaId: bigint; incarnation: number; erFqdn?: string },
+  pdas: { arena: Address; boss: Address; players: Address },
+): Promise<{ er: HeartrotRpc; erFqdn: string }> {
+  const { erFqdn } = open;
+  if (erFqdn !== undefined) return Promise.resolve({ er: createRpc(erFqdn), erFqdn });
+  return ensureArena(c, open.arenaId, open.incarnation, pdas);
 }
 
 /**
@@ -884,14 +943,19 @@ export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): P
   const identity = await resolveIdentity(body, env);
 
   const c = await context(env);
-  const treasury = await preClaim(() => treasuryTier(c));
+  // Two base-layer reads of unrelated accounts — the treasury's balance and the
+  // leaderboard the scan starts from — with no ordering between them. Serially they cost
+  // two hops of ~150 ms each from this ISP; the gauge is not needed until the gate below,
+  // which still runs before anything is claimed or spent.
+  const [treasury, open] = await preClaim(() =>
+    Promise.all([treasuryTier(c), openArena(c, ctx)]),
+  );
   if (treasury.tier === 4) return json({ error: 'treasury_low', tier: treasury.tier }, 503);
 
-  const open = await preClaim(() => openArena(c, ctx));
   if (!open) return json({ error: 'no_open_arena' }, 503);
-  const { arenaId, incarnation } = open;
+  const { arenaId } = open;
   const pdas = await matchPdas(c.programId, arenaId);
-  const { er, erFqdn } = await preClaim(() => ensureArena(c, arenaId, incarnation, pdas));
+  const { er, erFqdn } = await preClaim(() => connectOpen(c, open, pdas));
 
   // The next player must not pay what this one just might have. Background, never inline.
   prewarmNext(c, ctx, arenaId);
@@ -901,9 +965,15 @@ export async function sessionInit(env: Env, body: unknown, ctx: RouteContext): P
   // and our write is rejected on chain, and the retry re-reads the roster.
   for (let attempt = 0; attempt < 2; attempt++) {
     const { arena, roster } = await preClaim(async () => {
+      // The claim's blockhash is fetched alongside the roster it does not depend on.
+      // `er` is a connection nothing has sent on, so `sendInstructions` would otherwise
+      // open with a cold `getLatestBlockhash` — one more ~150 ms hop, strictly after
+      // these two reads, for a value that was available before them. Same cache and the
+      // same handle the send uses, so this is a hop moved, never a hop added.
       const [arenaBytes, playersBytes] = await Promise.all([
         accountData(er, pdas.arena),
         accountData(er, pdas.players),
+        warmBlockhash(er),
       ]);
       // Undelegated between the scan and here: the arena changing hands, which is the
       // one thing `try_again`'s copy describes.
@@ -1006,21 +1076,26 @@ export async function matchStart(env: Env, body: unknown, ctx: RouteContext): Pr
   await resolveIdentity(body, env);
 
   const c = await context(env);
-  const treasury = await preClaim(() => treasuryTier(c));
+  // See `sessionInit`: same two independent base reads, same gate order — the tier is
+  // checked before this route sends anything.
+  const [treasury, open] = await preClaim(() =>
+    Promise.all([treasuryTier(c), openArena(c, ctx)]),
+  );
   if (treasury.tier === 4) return json({ error: 'treasury_low', tier: treasury.tier }, 503);
 
-  const open = await preClaim(() => openArena(c, ctx));
   if (!open) return json({ error: 'no_open_arena' }, 503);
-  const { arenaId, incarnation } = open;
+  const { arenaId } = open;
   if (requested !== arenaId) {
     return json({ error: 'wrong_arena', arenaId: arenaId.toString() }, 409);
   }
 
   const pdas = await matchPdas(c.programId, arenaId);
-  const { er, erFqdn } = await preClaim(() => ensureArena(c, arenaId, incarnation, pdas));
+  const { er, erFqdn } = await preClaim(() => connectOpen(c, open, pdas));
 
   const before = await preClaim(async () => {
-    const bytes = await accountData(er, pdas.arena);
+    // The same overlap as the claim's: `begin_muster`'s blockhash does not depend on the
+    // phase read that gates it, and this `er` has never been sent on either.
+    const [bytes] = await Promise.all([accountData(er, pdas.arena), warmBlockhash(er)]);
     if (!bytes) throw new Error('arena unreadable before start');
     return decodeArena(bytes);
   });

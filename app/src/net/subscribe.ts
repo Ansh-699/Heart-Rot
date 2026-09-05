@@ -6,37 +6,27 @@
  * `Subscribe`** — and each rule is here because breaking it fails silently rather than
  * loudly (`realtime-sync.md`, `01-architecture.md` §6.2):
  *
- * - **The pinned ER's WS, not the router's.** The old note here claimed the router cost a
- *   p50 of −4 ms over 488 matched slots. It does not reproduce. Raced properly — both
- *   sockets open at once on the same six oracle-written accounts, so every sample is one
- *   identical write observed twice and the submit half cancels — the router is **+26.8 ms
- *   p50** (p10 +20.3, p90 +33.0, ER first on 96% of 2,361 paired writes).
- *
- *   The cause is not a proxy hop, and this is the part that decides the whole question:
- *   the router is behind Cloudflare, whose IPv6 anycast is ~163 ms further from this ISP
- *   than its IPv4 edge (TCP connect p50 190.5 vs 27.4 ms), while the ER is identical on
- *   both families (118.6 vs 120.9) because its AAAA is a DNS64-synthesised `64:ff9b::`
- *   address taking the same path as its A. Resolve the router IPv4-first and it is a few
- *   ms *faster* than the ER; resolve verbatim and it is 27 ms slower. The OS resolver here
- *   returns the AAAA first, so a browser reaches the router over the slow family — which
- *   is why this is worth changing and why the number is a property of the player's network,
- *   not of the router.
- *
- *   The fqdn is never guessed: it is the one the *router itself* published for the
- *   identity the already-pinned `rpc` reports, so both halves of this file talk to exactly
- *   one ER, resolved through the same chain `connectMatch` used. If that resolution fails,
- *   or the identity is not in the routes table, this falls back to the router — which is
- *   never the *wrong* ER (it resolves the delegation record per account), only a slower
- *   one. `wsUrl` still overrides everything, and is never re-resolved.
+ * - **The router's WS, not the pinned ER's.** This bullet used to argue the opposite of
+ *   the code below it, on a race that put the router at +26.8 ms p50 with the ER first on
+ *   96% of frames. Three fresh runs, 2026-09-05, both sockets open at once on the same
+ *   accounts so every sample is one write observed twice: the router costs **at most
+ *   ~6 ms p50**, and it removes a tail where roughly **one update in ten reached this ISP
+ *   1-3 s late**. Six milliseconds of median to delete a multi-second tail is not a trade
+ *   worth thinking about. The address-family reading behind the old number, and the
+ *   per-family latencies, are in `resolveWsUrl`; `wsUrl` still overrides everything.
  *
  *   The router supports **only** `accountSubscribe` and `signatureSubscribe`;
  *   `programSubscribe`, `logsSubscribe` and `slotSubscribe` are all `-32601`, so a client
  *   that assumes pubsub parity gets nothing and no error. The ER serves all of them.
  *
- *   What is given up: the router follows a mid-match re-delegation to another validator
- *   and a pinned socket does not. The snapshot was already pinned to `rpc`, so that half
- *   never followed one either — this makes the two agree instead of letting them describe
- *   different worlds. The tick watchdog below is the backstop.
+ *   The router also follows a mid-match re-delegation to another validator, which a pinned
+ *   socket cannot. The snapshot is still pinned to `rpc`, so the two halves would describe
+ *   different worlds if that ever happened; the tick watchdog below is the backstop.
+ * - **Snapshot when the frames stop, not when the tick goes stale.** The crank does not
+ *   miss ticks (761 of 761 over one run), but the socket carrying them withholds 0.3-2.5 s
+ *   at a time while plain HTTP RPC to the same ER answers in ~90 ms throughout — every
+ *   remote seat freezes, then lurches. {@link FRAME_STALL_MS} pulls a snapshot 300 ms into
+ *   that, ten times sooner than {@link TICK_STALL_SOFT_MS} would.
  * - **`encoding: 'base64'` explicitly.** The ER's default is base58.
  * - **Commitment is ignored.** `processed`, `confirmed` and `finalized` returned the same
  *   subscription id — one validator, no consensus. It is not passed here at all rather
@@ -102,6 +92,29 @@ export const TICK_STALL_HARD_MS = 45_000;
 
 const WATCHDOG_POLL_MS = 500;
 const RESNAPSHOT_MIN_GAP_MS = 2_000;
+
+/**
+ * Socket stall, not crank stall: no frame of any kind applied for this long while the
+ * crank is armed. The crank writes `Arena` every 100 ms (one tick, two ER slots) and the
+ * router repeats each notification, so a healthy feed applies a frame about every tick.
+ * 300 ms is three missed ticks — inside the shortest stall measured (0.3 s) and clear of
+ * ordinary delivery jitter, which never reached 200 ms over 761 ticks.
+ */
+const FRAME_STALL_MS = 300;
+
+/**
+ * ...and at most one recovery snapshot per 500 ms while it lasts. The snapshot is ~90 ms
+ * of HTTP to the same ER that is stalling on WS, so this caps the cost at two extra
+ * requests a second and turns a 2.5 s freeze into ~400 ms of staleness.
+ */
+const FRAME_STALL_RESNAPSHOT_MS = 500;
+
+/**
+ * Recovery pulls in a row before the socket is replaced rather than papered over. Six at
+ * the 500 ms floor is ~3 s of silence, the same budget {@link TICK_STALL_SOFT_MS} spends
+ * before it calls a feed stalled.
+ */
+const STALL_PULLS_MAX = 6;
 const BACKOFF_BASE_MS = 250;
 const BACKOFF_CAP_MS = 5_000;
 
@@ -199,6 +212,33 @@ export function watchdogHealth(phase: number, anchorAge: number): MatchHealth | 
 }
 
 /**
+ * Should a live-looking feed be re-read over HTTP because the socket has gone quiet?
+ * Pure for the same reason as {@link watchdogHealth}: its failures are a hammered ER on
+ * one side and a two-second freeze on the other, and neither is visible in a screenshot.
+ */
+export function frameStalled(now: number, lastFrameAt: number, lastResnapshotAt: number): boolean {
+  return now - lastFrameAt > FRAME_STALL_MS && now - lastResnapshotAt >= FRAME_STALL_RESNAPSHOT_MS;
+}
+
+/**
+ * Whether an arriving frame is older than the state already applied for its account, and
+ * so must be dropped rather than delivered.
+ *
+ * Pure, and extracted for the same reason {@link frameStalled} is: the wrong answer is
+ * silent and it is the most damaging one in this file. A stalled socket does not lose its
+ * frames, it withholds them, and the recovery snapshot reads the current state over HTTP
+ * during that silence — so the backlog arrives AFTER newer state and would replay over it,
+ * rewinding every player up to two seconds at the instant the freeze ends.
+ *
+ * `known === 0` is "nothing applied yet" and `slot === 0` is a frame the router sent with
+ * no context slot; neither can be ordered, so both pass. Equal slots pass too: two writes
+ * can share a slot, and the byte-identical dedupe is what folds real duplicates.
+ */
+export function frameIsStale(slot: number, known: number): boolean {
+  return slot > 0 && known > 0 && slot < known;
+}
+
+/**
  * Subscribe to one match. Returns a handle whose `close()` is the only thing that stops
  * the reconnect loop — a socket that closes on its own is always retried.
  */
@@ -275,6 +315,18 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
   /** When the arena entered a cranking phase. The watchdog's other anchor — see `deliver`. */
   let crankingAt = 0;
   let lastResnapshotAt = 0;
+  /** When any frame last reached the store — the socket's liveness, not the crank's. */
+  let lastFrameAt = 0;
+  /** One recovery snapshot at a time; a stalled socket must not queue a request per poll. */
+  let resnapshotting = false;
+  /**
+   * Consecutive recovery pulls with no frame in between. A socket can sit OPEN and silent
+   * for good — the recovery snapshot then keeps the world fresh over HTTP and, because
+   * delivering a frame is what marks the feed healthy, reports `live` forever over a
+   * socket that will never speak again. Past {@link STALL_PULLS_MAX} the fault is called
+   * what it is and the socket is closed, which hands it to the existing reconnect backoff.
+   */
+  let stallPulls = 0;
   let previousPlayers: PlayersAccount | null = null;
 
   function setHealth(next: MatchHealth): void {
@@ -292,6 +344,11 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
   function deliverEncoded(kind: AccountKind, encoded: string): void {
     if (lastPayload.get(kind) === encoded) return;
     lastPayload.set(kind, encoded);
+    // Stamped on the frames that change something, not on every byte that arrives: a
+    // socket delivering only repeats of what the world already shows is stalled from the
+    // player's side, which is the side the watchdog is judging.
+    lastFrameAt = performance.now();
+    stallPulls = 0;
     deliver(kind, fromBase64(encoded));
   }
 
@@ -381,9 +438,18 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     if (result?.value?.owner !== undefined && result.value.owner !== cfg.owner) return;
     const slot = Number(result?.context?.slot ?? 0);
     if (anchorSlot !== null && Number.isFinite(slot) && Math.abs(slot - anchorSlot) > SLOT_DOMAIN) return;
+    // ORDERING, NOT JUST BOOKKEEPING. A socket that stalls does not lose its frames, it
+    // withholds them: when it wakes it delivers the whole backlog at once. The recovery
+    // snapshot below reads the CURRENT state over HTTP during that silence, so the
+    // backlog lands after it and, without this, replayed state the snapshot had already
+    // moved past — every player visibly rewinding up to two seconds at the exact instant
+    // the freeze ended, which is worse than the freeze. Strictly older only: two writes
+    // can share a slot, and the byte-identical dedupe below is what folds real duplicates.
+    const known = lastSlot.get(kind) ?? 0;
+    if (frameIsStale(slot, known)) return;
     // Before the dedupe returns: a duplicate is still proof the feed is delivering, and
     // `snapshot` must know this kind has been heard from, and at what slot.
-    lastSlot.set(kind, Math.max(slot, lastSlot.get(kind) ?? 0));
+    lastSlot.set(kind, Math.max(slot, known));
     deliverEncoded(kind, encoded);
   }
 
@@ -464,7 +530,8 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
 
   const watchdog = setInterval(() => {
     if (tickAt === 0) return;
-    const verdict = watchdogHealth(phase, performance.now() - Math.max(tickAt, crankingAt));
+    const now = performance.now();
+    const verdict = watchdogHealth(phase, now - Math.max(tickAt, crankingAt));
     if (verdict === null) return;
     if (verdict === 'dead') {
       setHealth('dead');
@@ -472,23 +539,50 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     }
     if (verdict === 'stalled') {
       setHealth('stalled');
-      const now = performance.now();
       if (now - lastResnapshotAt >= RESNAPSHOT_MIN_GAP_MS) {
         lastResnapshotAt = now;
-        lastSlot.clear();
+        // The map is NOT cleared: it is the ordering guard `handle` reads, and clearing it
+        // is what let a woken socket's backlog overwrite this snapshot. A snapshot reads
+        // the current slot, which is newer than anything applied, so it delivers anyway.
         void snapshot().catch(() => undefined);
       }
       return;
     }
     // Only claim `live` while the pipe carrying the world is actually open.
-    if (socket?.readyState === WebSocket.OPEN) setHealth('live');
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    setHealth('live');
+    // An open socket that has gone quiet is the common case, and until now nothing caught
+    // it: the crank never missed a tick over a 761-tick run, but the WS withheld frames
+    // for 0.3-2.5 s at a time while HTTP RPC to the same ER kept answering in ~90 ms
+    // (2026-09-05). Every remote seat freezes for the whole stall and then lurches.
+    // Reading the truth over HTTP costs one round trip, so do it 300 ms in rather than
+    // waiting for TICK_STALL_SOFT_MS, which is ten times further away. Same two lines the
+    // `stalled` branch runs. A socket that is genuinely gone never reaches here — that is
+    // the reconnect's snapshot-on-open, and `dead` above, and neither wants company.
+    if (resnapshotting || !frameStalled(now, lastFrameAt, lastResnapshotAt)) return;
+    lastResnapshotAt = now;
+    resnapshotting = true;
+    stallPulls += 1;
+    // Not cleared, for the reason the `stalled` branch above gives.
+    void snapshot()
+      .catch(() => undefined)
+      .finally(() => {
+        resnapshotting = false;
+      });
+    // Recovering by snapshot is a patch over a socket, not a substitute for one. Past the
+    // budget the `stalled` verdict spends anyway, say so and close: silence this long is
+    // a socket that has stopped delivering, and only a new one fixes it.
+    if (stallPulls >= STALL_PULLS_MAX) {
+      stallPulls = 0;
+      setHealth('stalled');
+      socket?.close();
+    }
   }, WATCHDOG_POLL_MS);
 
   void connect();
 
   return {
     resnapshot() {
-      lastSlot.clear();
       void snapshot().catch(() => undefined);
     },
     close() {
@@ -543,6 +637,40 @@ if (import.meta.env.DEV) {
     const actual = watchdogHealth(phase, age);
     if (actual !== expected) {
       throw new Error(`subscribe self-check: ${name} should be '${expected}', got '${actual}'`);
+    }
+  }
+
+  // The socket-stall pull, same table shape. Both of its failure directions are silent:
+  // never firing leaves the 0.3-2.5 s freezes this exists to end, and firing every poll
+  // aims 2 req/s per client at an ER that is already struggling.
+  const stalls: readonly (readonly [string, number, number, boolean])[] = [
+    // [name, lastFrameAt, lastResnapshotAt, expected]
+    ['a frame one tick ago is a working socket', NOW - 100, 0, false],
+    ['three missed ticks is a stalled socket', NOW - 400, 0, true],
+    ['exactly 300 ms is still jitter, not a stall', NOW - FRAME_STALL_MS, 0, false],
+    ['one pull per 500 ms, however long the stall runs', NOW - 2_500, NOW - 200, false],
+    ['a stall outliving the rate limit is pulled again', NOW - 2_500, NOW - 600, true],
+  ];
+
+  for (const [name, frameAt, resnapAt, expected] of stalls) {
+    if (frameStalled(NOW, frameAt, resnapAt) !== expected) {
+      throw new Error(`subscribe self-check: ${name} should be ${expected}`);
+    }
+  }
+
+  // Frame ordering, the branch that pairs with the pull above: the recovery snapshot is
+  // only safe because the backlog the woken socket dumps afterwards cannot replay over it.
+  const ordering: readonly (readonly [string, number, number, boolean])[] = [
+    // [name, arriving slot, slot already applied, expected stale]
+    ['the backlog a woken socket dumps over a newer snapshot', 150, 200, true],
+    ['a frame newer than what is applied', 250, 200, false],
+    ['two writes sharing one slot', 200, 200, false],
+    ['the first frame of a kind, nothing applied yet', 150, 0, false],
+    ['a frame the router sent with no context slot', 0, 200, false],
+  ];
+  for (const [name, slot, known, expected] of ordering) {
+    if (frameIsStale(slot, known) !== expected) {
+      throw new Error(`subscribe self-check: ${name} should be ${expected ? 'dropped' : 'delivered'}`);
     }
   }
 

@@ -148,6 +148,23 @@ const STICK_FADE_MS = 120;
  */
 const ARROW_MAX_MS = Math.min(...CLASS_PERIOD_MS) - STICK_FADE_MS;
 
+/**
+ * The floor under a tracer's flight, and the answer to "I cannot see his arrows".
+ *
+ * At {@link ARROW_UNITS_PER_SEC} the flight is derived from the range, and the ranges a peer
+ * actually shoots at are short: a remote arrow measured 70-122 ms, **3 frames p50** at 60 Hz,
+ * and a shooter standing on the creature (range ~15 units) flies for 6 ms — under one frame,
+ * so the node is never painted at all and the peer sees a 110 ms muzzle dot and a spark with
+ * nothing in between. 90 ms is ~5 frames: enough of the shaft, at enough of the way across,
+ * to read WHO shot and WHERE. It costs the arrival nothing that matters — the number it was
+ * timed against (`write-to-visible 129.8 ms p50`) is still later than this.
+ *
+ * Bounded above by the pool, not by taste: `MIN_TRACER_MS + STICK_FADE_MS` has to stay under
+ * the shortest class period or one node per seat is no longer enough. Asserted below, because
+ * the next period change is the one that would break it silently.
+ */
+const MIN_TRACER_MS = 90;
+
 /** The loose flash at the bow, at the moment of input. */
 const MUZZLE_MS = 110;
 
@@ -221,6 +238,25 @@ const BEAM_CORE_SPOT = PART_HITBOXES.length;
 // `VISIBLE_BULLETS`, joined only by the `budget` prop — so halving one of them left the
 // scene drawing the full 32 nodes again with no error anywhere.
 
+/**
+ * Player arrows this file draws even when the boss has spent the whole projectile cap.
+ *
+ * The budget is shared and ordnance ranks first, so a full volley (`budget ===
+ * VISIBLE_PROJECTILES`, reachable at twenty seats) left `cap` at exactly 0 — and at 0 every
+ * REMOTE launch returned before it drew anything while the local seat's exemption kept
+ * drawing the player's own. That is the owner's report, "I cannot see his arrows", produced
+ * by construction the moment the fight gets busy: you see yours, never your allies'. Six is
+ * the shooter and five allies, a party that fits in the pit.
+ *
+ * A floor on THIS file's accounting only, and that is the honest ceiling of it: `budget` is
+ * already spent by the time `launch` runs, so under a full volley the scene can hold
+ * `VISIBLE_PROJECTILES + ARROW_FLOOR` nodes for up to {@link ARROW_MAX_MS}. A follow-up that
+ * wants the 32 to be the true total has to reserve on the other side — `Arena.tsx` drawing at
+ * most `VISIBLE_PROJECTILES - ARROW_FLOOR` bullets — because this file cannot un-draw a
+ * bullet it never drew.
+ */
+const ARROW_FLOOR = 6;
+
 interface Flight {
   t0: number;
   /** The Bezier: bow, control point, terminus. The control point IS the midpoint for a knight. */
@@ -276,7 +312,8 @@ export function fireLocal(shot: LocalShot): void {
  * The local seat's last super was refused and is being resent as a charged or plain
  * shot. Call it from `App.tsx`'s downgrade, before the resend: the chain's `damageDealt`
  * diff for the shot that actually lands is then drawn, at the terminus the plain ray
- * finds — not swallowed as the beam's sum, and not floated over the beam's wall.
+ * finds — not swallowed as the beam's sum, and not floated over the beam's wall. The beam
+ * itself is cancelled with it, so the shooter stops seeing a line no peer ever drew.
  */
 export function beamDowngraded(): void {
   unbeam?.();
@@ -533,8 +570,12 @@ export function Shot({
     }
   };
 
-  /** What is left of {@link VISIBLE_PROJECTILES} once `Arena` has drawn its bullets. */
-  const cap = Math.max(0, VISIBLE_PROJECTILES - budget);
+  /**
+   * What is left of {@link VISIBLE_PROJECTILES} once `Arena` has drawn its bullets — never
+   * below {@link ARROW_FLOOR}, so a volley that eats the whole cap cannot take the allies'
+   * arrows with it.
+   */
+  const cap = Math.max(ARROW_FLOOR, VISIBLE_PROJECTILES - budget);
 
   /** Start a seat's arrow. The one place a `Flight` is created, local or remote. */
   const launch = (
@@ -553,13 +594,12 @@ export function Shot({
     // exempt: its own arrow is the one the player is looking for, and this is the only
     // place that exemption can actually hold.
     if (seat !== localSeat) {
-      // Nothing left at all. Returning BEFORE the raycast is where the cost goes: the ray
-      // and the three one-shots are the whole of a spawn.
-      if (cap === 0) return;
       const { live, oldest } = flightCut(flights.current, localSeat);
-      // Full: drop the arrow that has been in the air LONGEST. It is nearest its terminus,
-      // so its loss costs the least information; dropping the newest would drop the shot
-      // that was just fired, which is the one the player is watching for.
+      // Full: drop the arrow that has been in the air LONGEST, never the arriving one. It is
+      // nearest its terminus, so its loss costs the least information; dropping the newest
+      // would drop the shot that was just fired, which is the one the player is watching for.
+      // There is no refusal branch any more — `cap` has {@link ARROW_FLOOR} under it, so the
+      // answer to a full scene is which arrow leaves, never whether this one is drawn.
       //
       // ponytail: ONE eviction per launch, so a `cap` that falls mid-volley — the bullet
       // pool filling — is absorbed by arrows expiring rather than by a mass vanish, and the
@@ -604,7 +644,9 @@ export function Shot({
     const cdx = end.x - x;
     const cdy = end.y - y;
     const range = Math.hypot(cdx, cdy);
-    const ms = Math.min((range / ARROW_UNITS_PER_SEC) * 1000, ARROW_MAX_MS);
+    // Floor first, ceiling second: a point-blank shot is stretched to a legible tracer, and a
+    // pool-breaking one is still cut back to {@link ARROW_MAX_MS}.
+    const ms = Math.min(Math.max((range / ARROW_UNITS_PER_SEC) * 1000, MIN_TRACER_MS), ARROW_MAX_MS);
 
     const node = arrow.current[seat];
     const spot = impactAt.current[seat];
@@ -680,6 +722,12 @@ export function Shot({
       const shot = localShot.current;
       if (localSeat === undefined || shot === null || !beamed.current[localSeat]) return;
       beamed.current[localSeat] = false;
+      // The super never happened, so neither did its beam: no peer draws one — they draw a
+      // charged arrow from the resend's bytes — and the shooter is the only screen with a
+      // line across the room. Cancelling the fade and the two swells drops the lines back to
+      // the `opacity: 0` they rest at, because a WAAPI one-shot here fills `none`.
+      const g = beam.current[localSeat];
+      if (g) for (const a of g.getAnimations({ subtree: true })) a.cancel();
       // The beam's arrow keeps flying to its wall; only the NUMBER moves, to where the
       // shot the chain took stops — the same ray tiers 0 and 1 launch with.
       const b = bossRef.current;
@@ -1028,6 +1076,14 @@ if (import.meta.env.DEV) {
     'the longest real shot is being clamped — it will look slow, and 2200 u/s is derived',
   );
   ok(ARROW_MAX_MS === Math.min(...CLASS_PERIOD_MS) - STICK_FADE_MS, 'the ceiling is the shortest period, whichever class holds it');
+  // The other end of the same invariant. The FLOOR can break the pool too — a period cut to
+  // 200 ms would put a stretched tracer and its spark past the next shot out of that bow, and
+  // one node per seat would then be drawing two arrows. It fails the way the ceiling does:
+  // silently, as an arrow that flickers.
+  ok(
+    MIN_TRACER_MS + STICK_FADE_MS < Math.min(...CLASS_PERIOD_MS),
+    'the shortest tracer plus its spark outlives the shortest period — one node per seat is no longer enough',
+  );
   ok(LOB_FRACTION < 0.5, 'a lob past half the range stalls the tangent on a vertical shot');
 
   // The cut under the projectile cap keeps the local seat and drops the OLDEST. A shot the
