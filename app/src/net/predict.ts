@@ -350,6 +350,13 @@ interface SeatTrack {
   at: number;
   /** Milliseconds to cross. The observed inter-arrival gap of this seat's motion. */
   span: number;
+  /**
+   * The seat's own on-cadence gap, remembered across pauses: the first step after a pause
+   * used to be stretched to the ceiling (the pause's length clamps to it), so the second
+   * step re-anchored from the drawn midpoint and ran three times as fast — a hitch at every
+   * walk start. That first step now runs at the pace the seat last walked at.
+   */
+  pace: number;
 }
 
 /**
@@ -411,7 +418,10 @@ function retarget(track: SeatTrack, to: PlayerSlot, now: number, ceiling: number
     const alpha = tickAlpha(track.at, now, track.span);
     track.fromX = track.fromX + (track.slot.x - track.fromX) * alpha;
     track.fromY = track.fromY + (track.slot.y - track.fromY) * alpha;
-    track.span = clamp(now - track.at, MIN_SPAN_MS, ceiling);
+    const gap = now - track.at;
+    // Past three ceilings of silence this is a walk starting, not a late step of one.
+    if (gap <= ceiling) track.pace = clamp(gap, MIN_SPAN_MS, ceiling);
+    track.span = gap > 3 * ceiling ? track.pace : clamp(gap, MIN_SPAN_MS, ceiling);
     track.at = now;
   }
   track.slot = to;
@@ -454,7 +464,7 @@ function foldTracks(
     // First sight of a seat: there is nothing to lerp from, and drawing the halfway
     // point of a guess is worse than being one update stale.
     if (track === undefined) {
-      tracks.set(to.seat, { slot: to, fromX: to.x, fromY: to.y, at: now, span: ceiling });
+      tracks.set(to.seat, { slot: to, fromX: to.x, fromY: to.y, at: now, span: ceiling, pace: ceiling });
     } else {
       retarget(track, to, now, ceiling);
     }
@@ -733,7 +743,7 @@ if (import.meta.env.DEV) {
   const here = slot({ x: 100, y: 100, occupied: true, zone: 1 });
   const step = slot({ x: 100 + TILE, y: 100, occupied: true, zone: 1 });
   const out = { x: 0, y: 0 };
-  const track: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 50 };
+  const track: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 50, pace: 50 };
   trackAt(track, 0.5, out);
   ok(out.x === 100 + TILE / 2, 'seat lerps to the midpoint');
   trackAt(track, tickAlpha(track.at, 500, track.span), out);
@@ -743,7 +753,7 @@ if (import.meta.env.DEV) {
   // The chop, and the only assertion in this file that is about the *fight*. A crank write
   // rewrites `Players` without moving anybody; folding one in must not touch the running
   // lerp, or the seat holds for a window and then jumps the distance it owed.
-  const cranked: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 50 };
+  const cranked: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 50, pace: 50 };
   retarget(cranked, slot({ ...step, hp: 40, occupied: true, zone: 1 }), 25, TICK_MS);
   ok(cranked.at === 0 && cranked.span === 50 && cranked.fromX === here.x, 'a crank write does not re-anchor');
   trackAt(cranked, tickAlpha(cranked.at, 25, cranked.span), out);
@@ -751,14 +761,18 @@ if (import.meta.env.DEV) {
   ok(cranked.slot.hp === 40, 'a crank write still updates the stored slot');
 
   // Motion arrives on the 50 ms ER slot; the window must follow that, not the 100 ms crank.
-  const paced: SeatTrack = { slot: here, fromX: here.x, fromY: here.y, at: 0, span: TICK_MS };
+  const paced: SeatTrack = { slot: here, fromX: here.x, fromY: here.y, at: 0, span: TICK_MS, pace: TICK_MS };
   retarget(paced, step, 50, TICK_MS);
   ok(paced.span === 50 && paced.at === 50, 'window is the observed motion cadence');
   retarget(paced, slot({ x: 100 + 2 * TILE, y: 100, occupied: true, zone: 1 }), 5_000, TICK_MS);
-  ok(paced.span === TICK_MS, 'a long pause is capped at the ceiling, not crawled across');
+  ok(paced.span === 50, 'the first step after a long pause runs at the pace the seat last walked at, not crawled across');
+  // A seat that has never walked on cadence has no pace of its own: the ceiling, as before.
+  const unpaced: SeatTrack = { slot: here, fromX: here.x, fromY: here.y, at: 0, span: TICK_MS, pace: TICK_MS };
+  retarget(unpaced, step, 5_000, TICK_MS);
+  ok(unpaced.span === TICK_MS, 'a long pause with no remembered pace is capped at the ceiling');
 
   // A re-anchor starts from the drawn point, so an early snapshot never steps backwards.
-  const early: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 100 };
+  const early: SeatTrack = { slot: step, fromX: here.x, fromY: here.y, at: 0, span: 100, pace: 100 };
   retarget(early, slot({ x: 100 + 2 * TILE, y: 100, occupied: true, zone: 1 }), 50, TICK_MS);
   ok(early.fromX === 100 + TILE / 2, 're-anchor starts where the seat is drawn');
   // The crank period is a target, not a contract; `MatchInfo.tickMs` overrides it.

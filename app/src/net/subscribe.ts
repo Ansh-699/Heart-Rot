@@ -90,7 +90,10 @@ export const TICK_STALL_SOFT_MS = 3_000;
  */
 export const TICK_STALL_HARD_MS = 45_000;
 
-const WATCHDOG_POLL_MS = 500;
+// 100, not 500: `frameStalled` is only evaluated on this tick, so a stall was noticed
+// 300 ms plus up to a whole poll late -- 550 ms mean, 800 worst. At 10 Hz the check is
+// three compares; the pull rate is still capped by `FRAME_STALL_RESNAPSHOT_MS`.
+const WATCHDOG_POLL_MS = 100;
 const RESNAPSHOT_MIN_GAP_MS = 2_000;
 
 /**
@@ -520,6 +523,17 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
       if (closed || socket !== ws) return;
       socket = null;
       setHealth('connecting');
+      // The world is refreshed now, over HTTP, rather than only by the replacement socket's
+      // own snapshot after its backoff, handshake and first round trip -- 430-925 ms of
+      // frozen remote seats otherwise. Guarded like every other pull.
+      if (!resnapshotting) {
+        resnapshotting = true;
+        void snapshot()
+          .catch(() => undefined)
+          .finally(() => {
+            resnapshotting = false;
+          });
+      }
       // Exponential with jitter. The jitter is not decoration: twenty clients dropped by
       // one ER blip must not all come back on the same millisecond.
       const delay = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** attempt);

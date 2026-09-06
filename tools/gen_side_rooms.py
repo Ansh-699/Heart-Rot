@@ -760,6 +760,13 @@ def build() -> tuple[dict[str, bytes], bytes, str]:
 // tool or arena.json's `doors` block, then re-run the command above.
 {imports}
 import propsPng from './siderooms-props.png';
+
+// Warm the paintings at import, as rooms.gen.ts warms the hall's: the first crossing into a
+// room otherwise shows its veil and nothing else until the PNG lands, 0.3-1.5 s on the
+// owner's own route.
+if (typeof Image !== 'undefined') {{
+  for (const src of [{', '.join(f'{name}Png' for name, *_ in entries)}, propsPng]) new Image().src = src;
+}}
 import type {{ ImgRect, RoomLight, WorldRect }} from './rooms.gen';
 
 export type SideRoomName = {names};

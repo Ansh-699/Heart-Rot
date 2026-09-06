@@ -13,7 +13,8 @@
  * This file draws the chrome (the wordmark, the error bar, the void card) and owns two things
  * nothing else can own, because nothing else sees both the store and the match:
  *
- *   **In** — `useMatchLink` pins the ER with `connectMatch`, opens `subscribeMatch` and
+ *   **In** — `useMatchLink` pins the ER with `assertErIdentity` (the Worker already proved
+ *   the rest), opens `subscribeMatch` and
  *   feeds every account notification into `store.setWorld`. Without it `arena`, `boss` and
  *   `players` stay `null` for the life of the page and the world never moves.
  *
@@ -51,7 +52,8 @@ import {
   autoAim,
   classOf,
   confirmSignature,
-  connectMatch,
+  assertErIdentity,
+  createRpc,
   createSessionSigner,
   enterGate,
   gateAt,
@@ -81,7 +83,7 @@ import { CharacterSelect } from './screens/CharacterSelect';
 import { gateOpen } from './screens/Gate';
 import { Leaderboard } from './screens/Leaderboard';
 import { Onboarding, SeatLoader } from './screens/Onboarding';
-import { mySeatSlot, screenOf, useSelect, useStore } from './state/store';
+import { mySeatSlot, screenOf, useSelect, useStore, type WorldUpdate } from './state/store';
 import { Hud } from './ui/Hud';
 
 /**
@@ -89,7 +91,7 @@ import { Hud } from './ui/Hud';
  * edge every slot; the chain rate-limits `use_door` on the move clock anyway, so this only
  * spares the wire, and a knock that lands closes the question by flipping the zone.
  */
-const KNOCK_MS = 600;
+const KNOCK_MS = 100;
 
 /**
  * `Address` without importing `@solana/kit`: `app/package.json` does not depend on it
@@ -462,6 +464,8 @@ function World({
   feedEpoch: number;
 }) {
   const wantTier = useSelect((s) => s.wantTier);
+  // Subscribed for its edge only: a predicted step re-renders the world (`pokePredicted`).
+  useSelect((s) => s.predictedAt);
   const arena = useSelect((s) => s.arena);
   const boss = useSelect((s) => s.boss);
   const players = useSelect((s) => s.players);
@@ -526,6 +530,8 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
     const session = signer.address;
     const common = { programId: match.programId, arena: match.arena, players: match.players };
     let lastKnock = -Infinity;
+    let pendingHold: ShotTier | null = null;
+    let holdFrame = 0;
 
     const { post: notice, clear: clearNotice } = transientNotice(store);
 
@@ -583,11 +589,14 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           // above, and a timeout is the ER being slow, not a refusal.
           // `WrongPhase` (6) is the end of a match: a send that left before the SETTLED
           // notification arrived, or a key still held on the results screen.
+          // `NotOnGate` (15) is a knock that lost the slot race to a step, re-sent on the
+          // next pump (`KNOCK_MS`).
           if (
             decoded.code === 6 ||
             decoded.code === 7 ||
             decoded.code === 8 ||
             decoded.code === 14 ||
+            decoded.code === 15 ||
             decoded.code === undefined
           ) {
             return;
@@ -679,6 +688,9 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // in flight and ages into the unacked bucket rather than vanishing.
         const txId = recordSend(seq, 'move');
         send(movePlayer({ ...common, session, seat: match.seat, dir, seq }), undefined, txId);
+        // After the send, never before it: the world re-renders so the knight's facing and
+        // gait fold on the next frame rather than on the chain's echo of this step.
+        store.pokePredicted();
       },
       onTrigger: (dx, dy, tier) => {
         // Every accepted trigger, live or practice, drawn at 0 ms from the exact pair that
@@ -713,7 +725,19 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // The hold's edge, for the local archer only: the draw pose, the arcs and the ready
         // cues are `Knight`'s, played there as each tier lands; the draw itself is cued
         // here, on the stand's first pump, so the two cannot double up.
-        chargeLocal(hold);
+        //
+        // The pose is committed on the next frame, not under the keydown: `chargeLocal`
+        // is a React state write, and React flushes a discrete-event update synchronously
+        // — ahead of the shot's signature and its POST. One frame later is invisible; the
+        // send is the thing the key is for. Last value wins, in order, so a release that
+        // lands in the same task as a draw cannot leave the archer drawn.
+        pendingHold = hold;
+        if (holdFrame === 0) {
+          holdFrame = requestAnimationFrame(() => {
+            holdFrame = 0;
+            chargeLocal(pendingHold);
+          });
+        }
         if (hold === 0) play('chargeStart');
       },
     });
@@ -925,6 +949,27 @@ function useMatchLink(onFeedDrop: () => void): Link {
     let subscription: MatchSubscription | null = null;
     let seatCheck = 0;
     let warmCheck = 0;
+    let onVisible: (() => void) | null = null;
+    // One React render per animation frame, not one per WebSocket message. Every payload
+    // used to be its own SyncLane render of World -> Passage -> Arena; at twenty seats that
+    // is hundreds a second against sixty frames. The merge keeps the newest of each
+    // account; nothing downstream diffs events, only values, so a merged pair reads as one.
+    // Prediction still reconciles per payload, below. A hidden tab gets a timer instead.
+    let pending: WorldUpdate | null = null;
+    let flush: { id: number; timer: boolean } | null = null;
+    const runFlush = (): void => {
+      flush = null;
+      const update = pending;
+      pending = null;
+      if (update !== null && !cancelled) store.setWorld(update);
+    };
+    const queue = (update: Omit<WorldUpdate, 'from'>): void => {
+      pending = { ...(pending ?? { from: match.arenaPda }), ...update };
+      if (flush !== null) return;
+      flush = document.hidden
+        ? { id: window.setTimeout(runFlush, 0), timer: true }
+        : { id: requestAnimationFrame(runFlush), timer: false };
+    };
     let seatSeen = false;
     let seatRetry = 0;
     const predictor = createPredictor();
@@ -940,19 +985,25 @@ function useMatchLink(onFeedDrop: () => void): Link {
         // the ER itself is resolved from the router by `validatorIdentity`, which is the
         // one thing that must never be guessed: the wrong ER answers with correctly-owned,
         // silently frozen data.
-        const { er } = await connectMatch({
-          baseUrl: match.erEndpoint,
-          routerUrl: match.routerEndpoint,
-          accounts: [accounts.arena, accounts.boss, accounts.players],
-          validatorIdentity: addr(match.validatorIdentity),
-          ownerProgram: addr(match.programId),
-        });
-        if (cancelled) return;
+        // The Worker already resolved this ER by the arena's validator identity, read and
+        // wrote the three accounts on it and confirmed the claim before it answered; the
+        // client used to re-prove all of that here — four serial round trips, two of them on
+        // a router connection opened only for them — before the first frame. One check
+        // stays, and runs beside the feed's opening rather than ahead of it: the endpoint
+        // answers as the validator the arena names, the one thing never to be guessed.
+        const er = createRpc(match.erEndpoint);
+        const pinned = assertErIdentity(er, addr(match.validatorIdentity));
 
         // Keep the blockhash cache and the h2 socket warm for the whole life of the link —
         // see `WARM_MS`. Single-flight and it never throws, so it can be fired and dropped.
         void warmBlockhash(er);
         warmCheck = window.setInterval(() => void warmBlockhash(er), WARM_MS);
+        // And on the way back from a hidden tab, where the interval was throttled or frozen:
+        // the first key after a return otherwise paid the stale hash and the closed socket.
+        onVisible = () => {
+          if (document.visibilityState === 'visible') void warmBlockhash(er);
+        };
+        document.addEventListener('visibilitychange', onVisible);
 
         // THE SEAT MUST APPEAR, AND STAY. The Worker confirmed the claim before it
         // answered, but the roster the feed shows can still lack our seat: a snapshot
@@ -990,15 +1041,15 @@ function useMatchLink(onFeedDrop: () => void): Link {
           owner: addr(match.programId),
           onArena: (arena, tickAt) => {
             if (cancelled) return;
-            store.setWorld({ arena, tickAt, from: match.arenaPda });
+            queue({ arena, tickAt });
           },
           onBoss: (boss) => {
             if (cancelled) return;
-            store.setWorld({ boss, from: match.arenaPda });
+            queue({ boss });
           },
           onPlayers: (players) => {
             if (cancelled) return;
-            store.setWorld({ players, from: match.arenaPda });
+            queue({ players });
             const slot = players.slots[match.seat];
             seatSeen = slot?.occupied === true;
             // The reconcile is what drains the prediction buffer. Without it every input
@@ -1033,6 +1084,11 @@ function useMatchLink(onFeedDrop: () => void): Link {
           },
         });
 
+        // The pin resolves in the same round trip the feed spends opening. A mismatch is
+        // fatal for the match, as it always was; the feed it would have fed is closed.
+        await pinned;
+        if (cancelled) return;
+
         setLink({
           er,
           signer: createSessionSigner(session),
@@ -1050,6 +1106,9 @@ function useMatchLink(onFeedDrop: () => void): Link {
         // it too, but that only runs when the effect re-runs or unmounts, and a match that
         // has already failed has nothing left to keep warm in the meantime.
         window.clearInterval(warmCheck);
+        if (onVisible !== null) document.removeEventListener('visibilitychange', onVisible);
+        subscription?.close();
+        subscription = null;
         if (cancelled) return;
         // Fatal for this match: no ER means no world and no gameplay, and a silent retry
         // loop would look exactly like a frozen game.
@@ -1061,6 +1120,8 @@ function useMatchLink(onFeedDrop: () => void): Link {
       cancelled = true;
       window.clearInterval(seatCheck);
       window.clearInterval(warmCheck);
+      if (onVisible !== null) document.removeEventListener('visibilitychange', onVisible);
+      if (flush !== null) (flush.timer ? window.clearTimeout : cancelAnimationFrame)(flush.id);
       subscription?.close();
       setLink(null);
     };

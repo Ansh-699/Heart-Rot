@@ -131,6 +131,9 @@ export type State = {
   /** The tier the verdict's "Raid again" asked for: the next lobby lights that gate and
    *  the hint names it, until the seat walks through a gate. `null` otherwise. */
   wantTier: number | null;
+  /** Bumped after every accepted predicted step, so the local knight's facing and gait fold
+   *  on the next frame rather than on the chain's echo (`App.tsx` onMove, `World`). */
+  predictedAt: number;
   /**
    * Always `CLASS_ARCHER`: the archer is the only class this client sends. Still a field
    * because it travels inside `claim_seat` and `App.tsx` compares it to a returning seat's
@@ -234,6 +237,8 @@ export type Store = {
   leaveMatch(): Promise<void>;
   /** "Raid again": remember this raid's tier, then leave for the next open arena's lobby. */
   raidAgain(): Promise<void>;
+  /** See `State.predictedAt`. */
+  pokePredicted(): void;
 
   /**
    * The JSON body of `/api/match/leave` for the held seat, for the closing-tab beacon —
@@ -471,6 +476,7 @@ const INITIAL: State = {
   skinChosen: false,
   seeking: false,
   wantTier: null,
+  predictedAt: 0,
   classId: CLASS_ARCHER,
   match: null,
   status: 'idle',
@@ -826,6 +832,10 @@ export function createStore(): Store {
       set({ wantTier: state.arena?.difficulty ?? null });
       await release();
       if (state.authenticated && state.skinChosen) await join();
+    },
+
+    pokePredicted() {
+      set({ predictedAt: state.predictedAt + 1 });
     },
 
     async changeMarker() {

@@ -705,14 +705,17 @@ export async function sendInstructions(
   // one extra request per two sends at the 45 ms move pacing `controls.ts` holds. The
   // Worker pays one per send instead, on lifecycle routes that send once or twice per
   // request; nothing there is per-frame, and the crank runs on the ER's own scheduler.
-  kickRefresh(rpc);
-
-  await rpc
+  // The send's own fetch is handed to the network first; the rotation's follows it. Kit
+  // reaches `fetch()` synchronously inside `.send()`, so the order here is the order on
+  // the socket.
+  const posted = rpc
     .sendTransaction(getBase64EncodedWireTransaction(signed), {
       encoding: 'base64',
       skipPreflight: true,
     })
     .send();
+  kickRefresh(rpc);
+  await posted;
   return signature;
 }
 

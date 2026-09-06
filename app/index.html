@@ -24,6 +24,12 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- The first request to the rollup and to its router otherwise pays DNS, TCP and TLS cold
+         at link time (~150 ms measured). These hosts are also VALIDATOR/ROUTER vars in
+         worker/wrangler.jsonc; a move there must move here. `crossorigin`: the client's fetches
+         are uncredentialed CORS, and Chrome keys warm sockets by that mode. -->
+    <link rel="preconnect" href="https://devnet-as.magicblock.app" crossorigin />
+    <link rel="preconnect" href="https://devnet-router.magicblock.app" crossorigin />
     <style>
       /* Only what stops a white flash before React mounts. Real styling lives in src/. */
       html,

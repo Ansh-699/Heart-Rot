@@ -815,7 +815,6 @@ export function Arena({
   // `useGateEntry` still sends.
   const gateNodes = useRef<(SVGRectElement | null)[]>([]);
   const drawn = useRef<{ x: number; y: number } | null>(null);
-  const frameAt = useRef(0);
   // The hold, read by the frame loop rather than closed over: the loop must not be torn
   // down and rebuilt when the veil opens. `heldAt` is what makes the ceiling a WALL clock
   // and not a frame count — a backgrounded tab runs no frames at all, and that is exactly
@@ -847,7 +846,12 @@ export function Arena({
     // The loop used to bail for a reduced-motion spectator; that would leave every arrow
     // parked at its bow with no error anywhere.
     let raf = 0;
-    const frame = () => {
+    // The vsync-aligned timestamp rAF hands the callback, for the chase's step: `now`
+    // below also carries whatever main-thread task delayed this frame's callback, so a
+    // step sized from it jitters by that delay (a 10-17 ms commit on a throttled box is a
+    // 2x step followed by a 0.2x one). The other writers keep `now`.
+    let lastTs = -1;
+    const frame = (ts: number) => {
       const now = performance.now();
       // A hit stop holds the two writers below for its length; both snap forward after.
       const stopped = now < hitStopUntil;
@@ -883,7 +887,7 @@ export function Arena({
         // Real elapsed time, not an assumed 1/60: a 144 Hz screen would otherwise chase
         // 2.4× too slowly. Capped at one input period so a backgrounded tab resumes with
         // a single step rather than a sprint across the room.
-        const dt = Math.min(MOVE_MS, now - frameAt.current);
+        const dt = lastTs < 0 ? 0 : Math.min(MOVE_MS, ts - lastTs);
         chase(at, predictor.self, reduced ? Infinity : (MAP_TILE * dt) / MOVE_MS);
         el.style.transform = `translate(${at.x}px, ${at.y}px)`;
 
@@ -904,10 +908,9 @@ export function Arena({
       // `Shot` reads no state of its own from the loop beyond `now`.
       shotFrame.current?.(now);
 
-      frameAt.current = now;
+      lastTs = ts;
       raf = requestAnimationFrame(frame);
     };
-    frameAt.current = performance.now();
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
   }, [reduced, predictor]);
@@ -1126,7 +1129,10 @@ export function Arena({
             exists so `Passage` has one node to translate for the gate move and so
             `App.tsx`'s `aimOrigin` has one `getScreenCTM()` to aim through. No ref here:
             one writer, and it is not this one. */}
-        <g id="camera" className={arena.phase === PHASE_MUSTERING ? 'is-mustering' : undefined}>
+        <g
+          id="camera"
+          className={[arena.phase === PHASE_MUSTERING && 'is-mustering', inRoom && 'is-in-room'].filter(Boolean).join(' ') || undefined}
+        >
           {/* Rows 1-6: the active room, whole. Exactly one is mounted — R3 depends on it,
               and so does the frame budget: two rooms is two full scene rasters. */}
           {shown === 'lobby' ? WAITING : BOSS_ARENA}
@@ -1188,7 +1194,10 @@ export function Arena({
           {shown === 'lobby' &&
             localSlot?.occupied === true &&
             (() => {
-              const door = doorAt(localSlot.zone, localSlot.x, localSlot.y);
+              // Off the PREDICTED position, the foot the player can see: the chain's echo
+              // of the step onto the threshold is a round trip later.
+              const at = predictor !== undefined && predictor.ready ? predictor.self : localSlot;
+              const door = doorAt(localSlot.zone, at.x, at.y);
               return (
                 door !== null && (
                   <use

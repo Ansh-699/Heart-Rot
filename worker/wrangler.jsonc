@@ -8,6 +8,11 @@
   "compatibility_date": "2026-08-31",
   "compatibility_flags": ["nodejs_compat"],
 
+  // A session init is eight serial subrequests to the rollup in Singapore; run in the colo
+  // the request enters (Marseille, from the owner's ISP) that is ~160 ms a hop. Smart
+  // placement lets Cloudflare move the script next to what it talks to.
+  "placement": { "mode": "smart" },
+
   "assets": {
     // Vite's build output. Keep in step with `build.outDir` in app/vite.config.ts.
     "directory": "../app/dist",
