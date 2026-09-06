@@ -32,9 +32,12 @@
  * seam — "give me a token" — cannot express.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 
+// The painted arena, the same file `render/rooms.gen.ts` draws the room from: the first
+// screen is the dungeon, not a void.
+import arenaPng from '../render/rooms/arena.png?no-inline';
 import { useSelect, useStore } from '../state/store';
 import { SKIN_COLORS, SKIN_NAMES } from './CharacterSelect';
 
@@ -58,14 +61,30 @@ const LINK_CSS = `
 `;
 
 const LANDING_CSS = `${LINK_CSS}
+/* The room behind the card, fixed and full-bleed, at ~30 % through a wash of the page
+   ground that fades to solid at both edges. A pseudo-element: nothing in the tree, nothing
+   to hit-test, nothing to read. The shell isolates so the layer sits under its own in-flow
+   children (header, wordmark, card) and above nothing else. */
+.shell:has(> .main > .landing) { isolation: isolate; }
+.shell:has(> .main > .landing)::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(var(--ground) 0%, rgb(8 13 20 / 0.7) 18%, rgb(8 13 20 / 0.7) 82%, var(--ground) 100%), url(${arenaPng}) center / cover no-repeat; }
+.shell:has(> .main > .landing) > .header { background: none; border-bottom-color: transparent; }
+/* Two rows now, the wordmark and the card, packed to the middle instead of each centred
+   in half the window; \`safe\` so a short window scrolls from the top instead of clipping. */
+.main:has(> .landing) { align-content: safe center; row-gap: 22px; }
+.landing-mark { margin: 0; font: 56px/1 var(--pixel); letter-spacing: 0.02em; color: var(--flesh); text-align: center; }
 .card.landing { max-width: 720px; }
 .landing video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--line); }
 .landing .row { align-items: center; }
 .landing .link { margin-left: auto; }
+.landing .beats { margin: -6px 0 0; font: 11.5px/1.7 var(--mono); font-variant-caps: all-small-caps; letter-spacing: 0.08em; color: var(--muted); }
+.landing .count { margin: -8px 0 0; font: 11px var(--mono); letter-spacing: 0.06em; color: var(--muted); font-variant-numeric: tabular-nums; }
 .marker-row { gap: 8px; margin: -4px 0 2px; }
 .marker-row .fine { margin: 0 4px 0 0; }
+.marker-name { margin: 0 0 0 2px; color: var(--ink); }
 .marker-chip { width: 22px; height: 22px; border: 2px solid var(--line); cursor: pointer; padding: 0; }
 .marker-chip[aria-checked='true'] { border-color: var(--ink); outline: 2px solid var(--olive); outline-offset: 1px; }
+@media (max-width: 480px) { .landing-mark { font-size: 40px; } }
 `;
 
 export function Onboarding() {
@@ -74,6 +93,25 @@ export function Onboarding() {
   const { ready, authenticated, login } = usePrivy();
   const signedIn = useSelect((s) => s.authenticated && !s.guest);
   const skinId = useSelect((s) => s.skinId);
+  // The chip under the pointer or the focus ring, named beside the row; the chosen one when
+  // there is none.
+  const [hovered, setHovered] = useState<number | null>(null);
+
+  // "N raids recorded": the ring's write counter (`total` on `GET /api/leaderboard`), once
+  // per mount. Nothing is shown until it lands, and Play never waits for it.
+  const [total, setTotal] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch('/api/leaderboard')
+      .then((response) => (response.ok ? (response.json() as Promise<{ total?: number }>) : null))
+      .then((body) => {
+        if (live && typeof body?.total === 'number') setTotal(body.total);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /**
    * Two steps, because the proof and the key have different owners: Privy's modal proves
@@ -111,64 +149,83 @@ export function Onboarding() {
   };
 
   return (
-    <section className="card landing">
+    <>
       <style>{LANDING_CSS}</style>
-      {/* Six seconds of the fury phase with a charged shot, recorded off the harness.
-          React sets `muted` as a property and not as an attribute, and Chrome's autoplay
-          policy reads the attribute at parse time — the ref is what makes the loop actually
-          start. Decorative: the sentence below is the accessible content. */}
-      <video
-        ref={(video) => {
-          if (video) video.muted = true;
-        }}
-        src="/clip.webm"
-        poster="/clip.jpg"
-        autoPlay
-        muted
-        loop
-        playsInline
-        aria-hidden="true"
-      />
-      <p className="lede">
-        A co-op boss raid where every move and every arrow is a Solana transaction.
+      {/* Decorative: the header's h1 is the page's name in the tree. */}
+      <p className="landing-mark" aria-hidden="true">
+        HEARTROT
       </p>
-      {/* The marker, picked here: a seat is one click now, so the select screen no
-          longer stands between the landing and the lobby, and the colour had nowhere
-          to be chosen. Three chips, the same three the select still offers. */}
-      <div className="row marker-row" role="radiogroup" aria-label="Your marker colour">
-        <span className="fine">Marker</span>
-        {SKIN_COLORS.map((color, index) => (
-          <button
-            key={color}
-            className="marker-chip"
-            role="radio"
-            aria-checked={index === skinId}
-            aria-label={SKIN_NAMES[index]}
-            title={SKIN_NAMES[index]}
-            style={{ background: color }}
-            onClick={() => store.setSkin(index)}
-          />
-        ))}
-      </div>
-      <div className="row">
-        <button className="btn btn-primary" onClick={play} disabled={busy}>
-          {busy ? 'Taking a seat…' : signedIn ? 'Play' : 'Play now'}
-        </button>
-        {!signedIn && (
-          <button className="btn" onClick={connect} disabled={!ready || busy}>
-            Sign in
-          </button>
+      <section className="card landing">
+        {/* Six seconds of the fury phase with a charged shot, recorded off the harness.
+            React sets `muted` as a property and not as an attribute, and Chrome's autoplay
+            policy reads the attribute at parse time — the ref is what makes the loop actually
+            start. Decorative: the sentence below is the accessible content. */}
+        <video
+          ref={(video) => {
+            if (video) video.muted = true;
+          }}
+          src="/clip.webm"
+          poster="/clip.jpg"
+          autoPlay
+          muted
+          loop
+          playsInline
+          aria-hidden="true"
+        />
+        <p className="lede">
+          A co-op boss raid where every move and every arrow is a Solana transaction.
+        </p>
+        <p className="beats">MOVE = A TRANSACTION · ARROW = A TRANSACTION · 50 MS SLOTS ON MAGICBLOCK</p>
+        {total !== null && (
+          <p className="count">
+            {total.toLocaleString('en-US')} {total === 1 ? 'raid' : 'raids'} recorded
+          </p>
         )}
-        <button className="link" onClick={() => store.showLeaderboard()}>
-          Leaderboard
-        </button>
-      </div>
-      <p className="fine">
-        {signedIn
-          ? 'Signed in. Your name stays on the leaderboard. Devnet only; nothing to buy and nothing to approve.'
-          : 'Play now takes a seat as a guest. Signing in with a Solana wallet keeps your name on the leaderboard. Devnet only; nothing to buy and nothing to approve.'}
-      </p>
-    </section>
+        {/* The marker, picked here: a seat is one click now, so the select screen no
+            longer stands between the landing and the lobby, and the colour had nowhere
+            to be chosen. Three chips, the same three the select still offers. */}
+        <div className="row marker-row" role="radiogroup" aria-label="Your colour">
+          <span className="fine">Your colour</span>
+          {SKIN_COLORS.map((color, index) => (
+            <button
+              key={color}
+              className="marker-chip"
+              role="radio"
+              aria-checked={index === skinId}
+              aria-label={SKIN_NAMES[index]}
+              title={SKIN_NAMES[index]}
+              style={{ background: color }}
+              onClick={() => store.setSkin(index)}
+              onMouseEnter={() => setHovered(index)}
+              onMouseLeave={() => setHovered(null)}
+              onFocus={() => setHovered(index)}
+              onBlur={() => setHovered(null)}
+            />
+          ))}
+          <span className="fine marker-name" aria-hidden="true">
+            {SKIN_NAMES[hovered ?? skinId]}
+          </span>
+        </div>
+        <div className="row">
+          <button className="btn btn-primary" onClick={play} disabled={busy}>
+            {busy ? 'Taking a seat…' : signedIn ? 'Play' : 'Play now'}
+          </button>
+          {!signedIn && (
+            <button className="btn" onClick={connect} disabled={!ready || busy}>
+              Sign in
+            </button>
+          )}
+          <button className="link" onClick={() => store.showLeaderboard()}>
+            Leaderboard
+          </button>
+        </div>
+        <p className="fine">
+          {signedIn
+            ? 'Signed in. Your name stays on the leaderboard. Devnet only; nothing to buy and nothing to approve.'
+            : 'Play now takes a seat as a guest. Signing in with a Solana wallet keeps your name on the leaderboard. Devnet only; nothing to buy and nothing to approve.'}
+        </p>
+      </section>
+    </>
   );
 }
 
@@ -236,7 +293,7 @@ export function SeatLoader() {
       <p className="fine">
         {warming
           ? 'Preparing your arena…'
-          : 'Finding the open arena and claiming your seat. Around three seconds.'}
+          : 'Finding the open arena · around three seconds.'}
       </p>
     </section>
   );

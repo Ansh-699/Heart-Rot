@@ -1768,7 +1768,10 @@ export async function leaderboard(env: Env): Promise<Response> {
       arenaId: entry.arenaId.toString(),
     };
   });
-  const response = json({ rows });
+  // `total` is the ring's own write counter, not `rows.length`: the rows are capped at
+  // fifty and the ring at 128, and the landing's "N raids recorded" wants the real number.
+  // A leaderboard PDA that does not exist yet has recorded nothing.
+  const response = json({ rows, total: board === null ? 0 : board.totalWritten });
   response.headers.set('cache-control', 'public, max-age=30');
   return response;
 }

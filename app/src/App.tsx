@@ -420,10 +420,7 @@ function WorldPending() {
             </button>
           </>
         ) : (
-          <p className="fine">
-            The rollup delivers each of the three as its own snapshot, and the room is drawn
-            when all three are in. This normally takes well under a second.
-          </p>
+          <p className="fine">Waiting for the rollup · usually under a second.</p>
         )}
       </div>
     </div>
