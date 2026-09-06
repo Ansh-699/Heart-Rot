@@ -620,13 +620,15 @@ fn fire(
     if slot.hp == 0 {
         return Err(HeartrotError::PlayerDead.into());
     }
-    // The waiting area's own path, and it leaves before anything that needs a boss. A
-    // seat already through the gate falls through to the refusal below, so the muster's
-    // weapons-down rule is unchanged for everyone in the pit.
-    if !phase_takes_fire(arena.phase) {
+    // The waiting area and the range have their own path, in every phase a seat can act
+    // in: their straw is what they are for, and a raid in the pit is no reason for the hall
+    // to lower its bows. It leaves before anything that needs a boss. A seat already through
+    // the gate is refused below outside a fight, so the muster's weapons-down rule is
+    // unchanged for everyone in the pit.
+    if slot.zone == ZONE_LOBBY || slot.zone == ZONE_RANGE {
         return practice(slot, facing, dx, dy, tier, slot_now);
     }
-    if slot.zone != ZONE_ARENA {
+    if !phase_takes_fire(arena.phase) || slot.zone != ZONE_ARENA {
         return Err(HeartrotError::WrongZone.into());
     }
 
@@ -1368,13 +1370,15 @@ mod tests {
             HeartrotError::PlayerDead.into(),
         );
 
+        // A lobby seat shoots straw in every phase, the fight included, and never the boss.
         let mut in_lobby = shooter(&s);
         in_lobby.zone = crate::state::ZONE_LOBBY;
-        assert_eq!(
-            fire(&mut arena, &mut boss, &mut in_lobby, s.aim.0, s.aim.1, Tier::Plain, 0)
-                .unwrap_err(),
-            HeartrotError::WrongZone.into(),
-        );
+        let boss_before = boss;
+        // A real ER slot, as `process` passes one: a never-fired seat reads 0 and the
+        // practice limiter measures from it.
+        fire(&mut arena, &mut boss, &mut in_lobby, s.aim.0, s.aim.1, Tier::Plain, 571_000_000)
+            .expect("the waiting area practises through a fight");
+        assert_eq!(bytemuck::bytes_of(&boss), bytemuck::bytes_of(&boss_before), "a practice arrow touches no boss");
 
         let mut live = shooter(&s);
         assert_eq!(

@@ -85,6 +85,8 @@ import {
   sideRoomOf,
   aimSelfCheck,
   chargedDamage,
+  CLASS_MASK,
+  CLASS_DAMAGE,
   classOf,
   decodeAim,
   landingOf,
@@ -289,6 +291,9 @@ interface Flight {
   /** Arrival has been played; the node is parked. */
   landed: boolean;
 }
+
+/** The class byte alone, for a seat the roster does not hold: an archer, this game's only class. */
+const ARCHER_SLOT = { classAim: CLASS_MASK } as const;
 
 /** What {@link fireLocal} needs to draw a shot the instant the key goes down. */
 export interface LocalShot {
@@ -717,7 +722,10 @@ export function Shot({
       if (node !== null && node !== undefined) node.style.opacity = '0';
       flights.current[seat] = null;
       land(seat, hit, core, tier);
-      if (dummy !== null) dummyStruck(dummy);
+      if (dummy !== null) {
+        dummyStruck(dummy);
+        showDamage(seat, strawDamage(seat, tier), classOf(players.slots[seat] ?? ARCHER_SLOT));
+      }
       return;
     }
 
@@ -827,6 +835,16 @@ export function Shot({
    * class's 2.5x, or a finishing blow that still cleared it — is the one number worth
    * reading, and `.hr-dmg-charged` (`styles.css`) draws it at 26 px in the vent's yellow.
    */
+  /**
+   * What the straw took: the tier's damage for the class — the number the boss would show
+   * for the same arrow, so the range teaches the fight's arithmetic. Client arithmetic over an
+   * on-chain shot; the chain scores no straw.
+   */
+  const strawDamage = (seat: number, tier: ShotTier): number => {
+    const cls = classOf(players.slots[seat] ?? ARCHER_SLOT);
+    return tier === 2 ? superDamage(cls) : tier === 1 ? chargedDamage(cls) : CLASS_DAMAGE[cls]!;
+  };
+
   const showDamage = (seat: number, amount: number, cls: number): void => {
     // R3 again: a number floating over the pit while you are still in the waiting area is
     // the same lie an arrow drawn there would be.
@@ -879,7 +897,10 @@ export function Shot({
           if (!f.landed) {
             f.landed = true;
             land(seat, f.hit, f.core, f.tier);
-            if (f.dummy !== null) dummyStruck(f.dummy);
+            if (f.dummy !== null) {
+              dummyStruck(f.dummy);
+              showDamage(seat, strawDamage(seat, f.tier), classOf(players.slots[seat] ?? ARCHER_SLOT));
+            }
           }
           flights.current[seat] = null;
           if (el !== null && el !== undefined && el.style.opacity !== '0') el.style.opacity = '0';

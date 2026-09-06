@@ -31,6 +31,7 @@ import {
   OUTCOME_WIPE,
   SIDE_ROOMS,
   ZONE_LOBBY,
+  aimFromVector,
   inBlock,
   raiderTag,
   sideRoomOf,
@@ -182,6 +183,26 @@ export function roomRay(zone: number, x: number, y: number, dx: number, dy: numb
     }
   });
   return { end: { x: x + ux * t, y: y + uy * t }, dummy };
+}
+
+/**
+ * The straw man to loose at from (`x`, `y`) for a seat in `zone`: the nearest by its centre,
+ * as the wire's `i8` pair, or `null` outside the range. `App.tsx`'s aim asks after the boss
+ * and before the seat's own facing, the way `autoAim` picks the creature.
+ */
+export function rangeAim(zone: number, x: number, y: number): readonly [number, number] | null {
+  const room = sideRoomOf(zone);
+  if (room === null) return null;
+  let best: WorldRect | null = null;
+  let bestD = Infinity;
+  for (const r of rangeTargets(artOf(room))) {
+    const d = (r.x + r.w / 2 - x) ** 2 + (r.y + r.h / 2 - y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = r;
+    }
+  }
+  return best === null ? null : aimFromVector(best.x + best.w / 2 - x, best.y + best.h / 2 - y);
 }
 
 /** The range's ear: `Shot.tsx` calls it when an arrow lands on straw man `i`. */

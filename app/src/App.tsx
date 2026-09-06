@@ -76,7 +76,7 @@ import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
 import { chargeLocal } from './render/Knight';
 import { Passage } from './render/Passage';
-import { knockDir } from './render/SideRooms';
+import { knockDir, rangeAim } from './render/SideRooms';
 import { play } from './render/sfx';
 import { beamDowngraded, fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
@@ -661,7 +661,10 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // exactly as accurate as the eight-way client was.
         const { boss } = store.getState();
         const picked = boss === null ? null : autoAim(predictor.self.x, predictor.self.y, boss);
-        return picked ?? octantAim(predictor.self.facing);
+        // In the range the straw is the target: the nearest man, picked the way the creature is.
+        const zone = mySeatSlot(store.getState())?.zone;
+        const straw = picked ?? (zone === undefined ? null : rangeAim(zone, predictor.self.x, predictor.self.y));
+        return straw ?? octantAim(predictor.self.facing);
       },
       onMove: (dir) => {
         // `push` returns `null` when the chain would reject the move anyway — a wall, or a
