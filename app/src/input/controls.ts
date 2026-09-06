@@ -625,11 +625,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // The range down the stairs shoots too: its straw is what it is for, and `shoot.rs`'s
     // practice path takes both zones in every phase a seat can act in — a raid in the pit
     // is no reason for the hall to lower its bows.
-    // ponytail: `playable(phase)` once the program that practises through a fight is on
-    // devnet (the deployer is short of the upload's rent); until then the old two phases,
-    // or a fight would draw refusals.
-    const practice =
-      (phase === PHASE_LOBBY || phase === PHASE_MUSTERING) && ((zone ?? ZONE_LOBBY) === ZONE_LOBBY || zone === ZONE_RANGE);
+    const practice = playable(phase) && ((zone ?? ZONE_LOBBY) === ZONE_LOBBY || zone === ZONE_RANGE);
 
     // The two clocks, each pacing the trigger it can see. Inside a live cooldown nothing is
     // drawn at all: the ring is already on screen counting it down, and an arrow there
