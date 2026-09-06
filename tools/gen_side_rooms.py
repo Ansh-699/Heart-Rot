@@ -12,8 +12,10 @@ The furniture -- banners, tablets, a chest, a mirror, a bow rack and a dummy, to
 is drawn here at `ART` px per art pixel the way the ordnance is, with a keyline and a few
 colour bands. The marks on the secret room's banners are the official SVGs rasterised once to
 assets/sprites/{solana,magicblock}-mark.png and pixelised here. This tool is the only writer
-of app/src/render/rooms/{secret,keep,crypt}.png, app/src/render/siderooms-glyphs.png and
-app/src/render/siderooms.gen.ts; `--check` diffs them all against disk.
+of app/src/render/rooms/{secret,keep,crypt}.png, app/src/render/siderooms-glyphs.png,
+app/src/render/siderooms-doors.png (each arch drawn open, the stair lit: the cue a doorway
+gives while a seat stands at it) and app/src/render/siderooms.gen.ts; `--check` diffs them
+all against disk.
 
 WHERE EACH ROOM GOES is not this tool's decision. The rooms are zones on the chain, their
 floors `doors.rooms[i].room_tiles` in assets/map/arena.json, which gen_map.py compiles to
@@ -62,13 +64,17 @@ FRONT_BAND = (150, 950, 1550, 1010)  # the south wall's top course; the calmest 
 FRONT_SIZE = (360, 60)
 TORCH = (116, 605, 152, 705)  # the standing torch beside the west door
 DOOR_E = (1575, 590, 1675, 725)  # the east wall's door, as painted
-DOOR_E_ARCH = (12, 10, 88, 130)  # the arch inside that crop, for a glow
 DOOR_W = (20, 590, 120, 725)  # the west wall's door, as painted (the whole wall thickness)
-DOOR_W_ARCH = (12, 10, 88, 130)
-ARCH_W_PX = (26, 600, 118, 720)  # the west arch alone, in the lobby: threshold and glow
-ARCH_E_PX = (1577, 600, 1669, 720)  # the east arch alone, in the lobby
+ARCH_W_PX = (32, 600, 108, 720)  # the west arch alone, in the lobby: threshold, glow, the open frame
+ARCH_E_PX = (1587, 600, 1663, 720)  # the east arch alone, in the lobby
+DOOR_W_ARCH = tuple(v - o for v, o in zip(ARCH_W_PX, (DOOR_W[0], DOOR_W[1], DOOR_W[0], DOOR_W[1])))
+DOOR_E_ARCH = tuple(v - o for v, o in zip(ARCH_E_PX, (DOOR_E[0], DOOR_E[1], DOOR_E[0], DOOR_E[1])))
 STAIRS = (757, 966, 943, 1086)  # the stair between its two pillars, the wall's exact height
 STAIRS_PX = (790, 996, 910, 1086)  # the treads alone, in the lobby: the glow on the way down
+STAIRS_ARCH = tuple(v - o for v, o in zip(STAIRS_PX, (STAIRS[0], STAIRS[1], STAIRS[0], STAIRS[1])))
+OUT_DOORS = OUT_DIR / "siderooms-doors.png"
+THROAT = (0x0C, 0x0A, 0x14)  # the dark inside an open doorway
+GLOW_RGB = (0xFF, 0xB0, 0x4A)  # the room's light spilling through it
 BANNER_REF = (22, 775, 72, 870)  # the painted banner whose cloth colour the new ones borrow
 
 # The chambers' walls, in the same pixels. Each FLOOR is sized from the chain's tiles.
@@ -430,6 +436,67 @@ def glyphs() -> Image.Image:
 # ---------------------------------------------------------------------------
 
 
+# The leaf inside an arch crop, in that crop's pixels: a rectangle with a round top. The two
+# arches are mirror images at the same place in their crops (the painting is symmetric), so
+# one shape fits both. Checked by eye against docs/art/rooms/doors-open.png.
+LEAF = (13, 20, 63, 111)  # x0, y0, x1, y1
+LEAF_R = 25  # the round top's radius
+
+
+def leaf_mask(w: int, h: int) -> np.ndarray:
+    x0, y0, x1, y1 = LEAF
+    yy, xx = np.mgrid[0:h, 0:w]
+    cx, cy = (x0 + x1) / 2, y0 + LEAF_R
+    body = (xx >= x0) & (xx < x1) & (yy >= cy) & (yy < y1)
+    top = ((xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= LEAF_R * LEAF_R) & (yy < cy)
+    return body | top
+
+
+def open_arch(lobby: Image.Image, arch: tuple[int, int, int, int]) -> Image.Image:
+    """The painted doorway with its leaf gone: the stones stay, the wood becomes a dark
+    throat with the room's light spilling up from its floor."""
+    im = np.asarray(crop(lobby, arch)).astype(np.float32)
+    h, w = im.shape[:2]
+    leaf = leaf_mask(w, h)
+    yy, xx = np.mgrid[0:h, 0:w]
+    t = yy / max(h - 1, 1)
+    throat = np.stack([np.full((h, w), c, np.float32) for c in THROAT], axis=-1)
+    d = np.sqrt(((xx + 0.5 - w / 2) / (w * 0.55)) ** 2 + ((yy + 0.5 - h * 0.95) / (h * 0.6)) ** 2)
+    glow = np.clip(1 - d, 0, 1) ** 1.5 * 0.85
+    lit = throat + (np.array(GLOW_RGB, np.float32) - throat) * glow[..., None]
+    lit += 16 * t[..., None]  # the floor catches more than the lintel
+    # A step of lit stone at the sill, so the throat has a floor.
+    sill = leaf & (yy >= LEAF[3] - 6)
+    lit = np.where(sill[..., None], im * 0.9 + np.array(GLOW_RGB, np.float32) * 0.25, lit)
+    out = np.where(leaf[..., None], lit, im)
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGB")
+
+
+def lit_stairs(lobby: Image.Image) -> Image.Image:
+    """The stair treads with light coming up them from below."""
+    im = np.asarray(crop(lobby, STAIRS_PX)).astype(np.float32)
+    h, w = im.shape[:2]
+    t = (np.arange(h, dtype=np.float32) / max(h - 1, 1))[:, None, None]
+    out = im * (1.05 + 0.4 * t) + np.array(GLOW_RGB, np.float32) * (0.06 + 0.2 * t)
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGB")
+
+
+def door_frames(lobby: Image.Image) -> tuple[Image.Image, dict[str, tuple[int, int, int, int]]]:
+    """The three open frames side by side in one atlas: west arch, east arch, stairs.
+    Returns the atlas and each frame's rect in it."""
+    frames = [("west", open_arch(lobby, ARCH_W_PX)), ("east", open_arch(lobby, ARCH_E_PX)), ("stairs", lit_stairs(lobby))]
+    W = sum(f.width for _, f in frames)
+    H = max(f.height for _, f in frames)
+    atlas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    rects = {}
+    x = 0
+    for name, f in frames:
+        atlas.paste(f, (x, 0))
+        rects[name] = (x, 0, f.width, f.height)
+        x += f.width
+    return atlas, rects
+
+
 def lobby_fit() -> tuple[float, float, float, float]:
     """`LOBBY_IMG` off rooms.gen.ts: (x, y, w, h) in world units."""
     m = re.search(r"LOBBY_IMG: ImgRect = \{ src: lobbyPng, x: ([\d.]+), y: ([\d.]+), w: ([\d.]+), h: ([\d.]+) \}", ROOMS_TS.read_text())
@@ -606,9 +673,12 @@ def dress_crypt(shell: Shell, lobby: Image.Image) -> None:
 DRESS = {"secret": dress_secret, "keep": dress_keep, "crypt": dress_crypt}
 DOOR = {2: door_east, 6: door_west, 0: stairs_north}  # by the room's `leave` octant
 LEAVE_OF = {"W": 2, "E": 6, "S": 0, "N": 4}
+# The open frame drawn at each of a room's two doorways, by knock: the lobby's arch, and
+# the room's own door, which is the opposite arch (or the same stair).
+DOOR_KINDS = {"W": ("west", "east"), "E": ("east", "west"), "S": ("stairs", "stairs")}
 
 
-def build() -> tuple[dict[str, bytes], bytes, str]:
+def build() -> tuple[dict[str, bytes], bytes, bytes, str]:
     lobby = Image.open(LOBBY).convert("RGB")
     fx, fy, fw, fh = lobby_fit()
     s = fw / lobby.width
@@ -658,10 +728,13 @@ def build() -> tuple[dict[str, bytes], bytes, str]:
         buf = io.BytesIO()
         shell.im.save(buf, "PNG", optimize=True)
         pngs[name] = buf.getvalue()
-        entries.append((name, shell, lobby_rect(LOBBY_GLOW[knock]), arch_room))
+        entries.append((name, shell, lobby_rect(LOBBY_GLOW[knock]), arch_room, DOOR_KINDS[knock]))
 
     gbuf = io.BytesIO()
     glyphs().save(gbuf, "PNG", optimize=True)
+    doors_atlas, door_rects = door_frames(lobby)
+    dbuf = io.BytesIO()
+    doors_atlas.save(dbuf, "PNG", optimize=True)
 
     def f4(v: float) -> str:
         return f"{round(v, 4):g}"
@@ -670,7 +743,7 @@ def build() -> tuple[dict[str, bytes], bytes, str]:
         return f"{{ x: {f4(r[0])}, y: {f4(r[1])}, w: {f4(r[2])}, h: {f4(r[3])} }}"
 
     parts = []
-    for name, sh, glow_lobby, arch_room in entries:
+    for name, sh, glow_lobby, arch_room, (door_lobby, door_room) in entries:
         def block(items: list[str], open_: str, close: str) -> str:
             return open_ + close if not items else open_ + "\n" + "".join(f"      {it},\n" for it in items) + "    " + close
 
@@ -685,10 +758,16 @@ def build() -> tuple[dict[str, bytes], bytes, str]:
             f"    labels: {labels},\n"
             f"    archLobby: {rect(glow_lobby)},\n"
             f"    archRoom: {rect(arch_room)},\n"
+            f"    doorLobby: '{door_lobby}',\n"
+            f"    doorRoom: '{door_room}',\n"
             f"    anchors: {anchors},\n"
             f"  }},"
         )
     imports = "\n".join(f"import {name}Png from './rooms/{name}.png?no-inline';" for name, *_ in entries)
+    door_rects_ts = ", ".join(f"{k}: {{ x: {x}, y: {y}, w: {w}, h: {h} }}" for k, (x, y, w, h) in door_rects.items())
+    door_defs = " +\n  ".join(
+        f"`<symbol id=\"door-{k}-open\" viewBox=\"{x} {y} {w} {h}\">${{DOOR_IMG}}</symbol>`" for k, (x, y, w, h) in door_rects.items()
+    )
     names = " | ".join(f"'{name}'" for name, *_ in entries)
     src = f"""// @generated from assets/map/arena.json `doors`, assets/rooms/lobby.png and assets/sprites/*-mark.png
 // by `python3 tools/gen_side_rooms.py` -- DO NOT EDIT.
@@ -699,9 +778,13 @@ def build() -> tuple[dict[str, bytes], bytes, str]:
 // tool or arena.json's `doors` block, then re-run the command above.
 {imports}
 import glyphsPng from './siderooms-glyphs.png';
+import doorsPng from './siderooms-doors.png';
 import type {{ ImgRect, RoomLight, WorldRect }} from './rooms.gen';
 
 export type SideRoomName = {names};
+
+/** The three doorways a seat can stand at, drawn open: the two painted arches and the stair. */
+export type DoorKind = 'west' | 'east' | 'stairs';
 
 export interface SideRoomArt {{
   /** The chamber, its floor on the chain's block. Mount with `imageRendering: 'auto'`. */
@@ -716,6 +799,9 @@ export interface SideRoomArt {{
   readonly archLobby: WorldRect;
   /** The painted doorway in the ROOM it is left by: the glow when a seat stands at the exit. */
   readonly archRoom: WorldRect;
+  /** Which open frame each doorway shows: `archLobby`'s and `archRoom`'s. */
+  readonly doorLobby: DoorKind;
+  readonly doorRoom: DoorKind;
   /** Where the room's furniture takes text or a picture: tablets, the chest, the mirror, the slabs. */
   readonly anchors: Readonly<Record<string, WorldRect>>;
 }}
@@ -723,6 +809,15 @@ export interface SideRoomArt {{
 export const SIDE_ROOM_ART: Readonly<Record<SideRoomName, SideRoomArt>> = {{
 {chr(10).join(parts)}
 }};
+
+/** The open frames' rects in `siderooms-doors.png`: each arch with its leaf gone, the stair lit. */
+export const DOOR_FRAMES: Readonly<Record<DoorKind, {{ x: number; y: number; w: number; h: number }}>> = {{ {door_rects_ts} }};
+
+const DOOR_IMG = `<image href="${{doorsPng}}" width="{doors_atlas.width}" height="{doors_atlas.height}"/>`;
+
+/** The `<defs>` markup for the open doorways, mounted once by whichever component owns the arena `<svg>`. */
+export const DOOR_DEFS =
+  {door_defs};
 
 /** The crypt's outcome glyphs, `w` x `w` each, three across: skull (wipe), crown (kill), hourglass (enrage). */
 export const CRYPT_GLYPH = {{ w: {GLYPH}, names: ['skull', 'crown', 'hourglass'] }} as const;
@@ -735,16 +830,16 @@ export const CRYPT_GLYPH_DEFS =
   `<symbol id="crypt-crown" viewBox="{GLYPH} 0 {GLYPH} {GLYPH}">${{GLYPH_IMG}}</symbol>` +
   `<symbol id="crypt-hourglass" viewBox="{GLYPH * 2} 0 {GLYPH} {GLYPH}">${{GLYPH_IMG}}</symbol>`;
 """
-    return pngs, gbuf.getvalue(), src
+    return pngs, gbuf.getvalue(), dbuf.getvalue(), src
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true", help="fail if the checked-in files are stale")
     args = ap.parse_args()
-    pngs, glyph_png, src = build()
+    pngs, glyph_png, doors_png, src = build()
     outputs = [(OUT_DIR / "rooms" / f"{name}.png", png) for name, png in pngs.items()]
-    outputs += [(OUT_GLYPHS, glyph_png), (OUT_TS, src.encode())]
+    outputs += [(OUT_GLYPHS, glyph_png), (OUT_DOORS, doors_png), (OUT_TS, src.encode())]
     if args.check:
         stale = [p.relative_to(ROOT) for p, want in outputs if not p.exists() or p.read_bytes() != want]
         if stale:

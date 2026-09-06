@@ -671,7 +671,7 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
           if (zone !== undefined && dir === knockDir(zone, predictor.self.x, predictor.self.y) && now - lastKnock >= KNOCK_MS) {
             lastKnock = now;
             send(useDoor({ ...common, session, seat: match.seat }), undefined, recordSend(undefined, 'gate'));
-            play('gate');
+            play('door');
           }
           return;
         }

@@ -42,7 +42,7 @@ import { Sprite } from './Knight';
 import { FRAMES, KNIGHT_SKINS, type SkinId } from './knights.gen';
 import { roomGlow } from './RoomLight';
 import { VOID, type WorldRect } from './rooms.gen';
-import { CRYPT_GLYPH, SIDE_ROOM_ART, type SideRoomArt, type SideRoomName } from './siderooms.gen';
+import { CRYPT_GLYPH, SIDE_ROOM_ART, type DoorKind, type SideRoomArt, type SideRoomName } from './siderooms.gen';
 import { ARENA_UNITS, PAL } from './sprites';
 
 /** Nothing of the hall shows behind a room: the veil is the void itself. */
@@ -75,17 +75,43 @@ export function knockDir(zone: number, x: number, y: number): number | null {
   return room !== null && inBlock(room.exit, x, y) ? room.leave : null;
 }
 
-/** The painted doorway a seat standing at (`x`, `y`) in `zone` is about to push, for the glow. */
-export function archAt(zone: number, x: number, y: number): WorldRect | null {
+/** A doorway a seat is standing at: which open frame to draw, and where. */
+export interface DoorAt {
+  readonly kind: DoorKind;
+  readonly rect: WorldRect;
+}
+
+/**
+ * The painted doorway a seat standing at (`x`, `y`) in `zone` is about to push, drawn OPEN:
+ * the arch with its leaf gone and the room's light in it, or the stair lit. A picture in
+ * the painting's own hand, not a tint — the one cue the doors give, from both sides.
+ */
+export function doorAt(zone: number, x: number, y: number): DoorAt | null {
   if (zone === ZONE_LOBBY) {
-    for (const room of SIDE_ROOMS) if (inBlock(room.door, x, y)) return artOf(room).archLobby;
+    for (const room of SIDE_ROOMS) {
+      if (inBlock(room.door, x, y)) {
+        const art = artOf(room);
+        return { kind: art.doorLobby, rect: art.archLobby };
+      }
+    }
     return null;
   }
   const room = sideRoomOf(zone);
-  return room !== null && inBlock(room.exit, x, y) ? artOf(room).archRoom : null;
+  if (room === null || !inBlock(room.exit, x, y)) return null;
+  const art = artOf(room);
+  return { kind: art.doorRoom, rect: art.archRoom };
 }
 
 const WORD: Readonly<Record<number, string>> = { 0: 'north', 2: 'east', 4: 'south', 6: 'west' };
+
+/** The hint's "PUSH … " for a lobby seat standing at a door, or `null` anywhere else. A string, so a selector returning it is stable. */
+export function pushWay(zone: number, x: number, y: number): string | null {
+  if (zone !== ZONE_LOBBY) return null;
+  for (const room of SIDE_ROOMS) {
+    if (inBlock(room.door, x, y)) return `${WORD[room.knock] ?? ''} ${room.name === 'crypt' ? 'down the stairs' : 'into the door'}`;
+  }
+  return null;
+}
 
 /** The hint's "WALK … to leave" for a seat in `zone`, or `null` outside every room. A string, so a selector returning it is stable. */
 export function leaveWay(zone: number): string | null {

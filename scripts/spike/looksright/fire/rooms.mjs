@@ -27,7 +27,7 @@ const probe = () => pg.evaluate(() => ({
   you: document.querySelectorAll('.room-text.is-you').length,
   glyphs: document.querySelectorAll('.secret-room use[href^="#crypt-"]').length,
   hint: document.querySelector('.hud-hint')?.textContent ?? null,
-  arch: (() => { const r = document.querySelector('rect.gate-wanted'); return r ? { x: r.getAttribute('x'), y: r.getAttribute('y') } : null; })(),
+  door: (() => { const u = document.querySelector('use.door-open'); return u ? { href: u.getAttribute('href'), x: u.getAttribute('x'), y: u.getAttribute('y') } : null; })(),
   zone: window.__store.getState().players?.slots[0]?.zone,
 }));
 const out = {};

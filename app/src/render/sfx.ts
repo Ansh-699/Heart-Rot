@@ -37,6 +37,7 @@ export type SfxName =
   | 'hurt'
   | 'fall'
   | 'gate'
+  | 'door'
   | 'win'
   | 'lose';
 
@@ -284,6 +285,11 @@ const RECIPES: Readonly<Record<SfxName, Recipe>> = {
   gate: (c, o, t) => {
     noise(c, o, t, 'lowpass', 350, 0.6, 0.6);
     tone(c, o, t, 'sine', 90, 45, 0.6, 0.4);
+  },
+  // A side room's door: a short wooden creak rising, and the latch after it.
+  door: (c, o, t) => {
+    tone(c, o, t, 'sawtooth', 70, 150, 0.3, 0.1);
+    noise(c, o, t + 0.06, 'lowpass', 600, 0.16, 0.22);
   },
   win: (c, o, t) =>
     [523, 659, 784, 1047].forEach((f, i) => tone(c, o, t + i * 0.12, 'triangle', f, f, 0.3, 0.3)),

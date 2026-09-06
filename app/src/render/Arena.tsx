@@ -125,8 +125,9 @@ import { Shot } from './Shot';
 import { Spawn } from './Spawn';
 import { WAITING } from './WaitingRoom';
 import { useViewport, type Room } from './viewport';
-import { DOOR_GLOW, SideRoom, archAt } from './SideRooms';
-import { CRYPT_GLYPH_DEFS } from './siderooms.gen';
+import { VOID } from './rooms.gen';
+import { SideRoom, doorAt } from './SideRooms';
+import { CRYPT_GLYPH_DEFS, DOOR_DEFS } from './siderooms.gen';
 import { ARENA_UNITS, PAL, SELF_SNAP, VISIBLE_PROJECTILES } from './sprites';
 
 /**
@@ -222,6 +223,7 @@ const NO_BULLETS: readonly number[] = [];
 const ORDNANCE_HTML = { __html: ORDNANCE_DEFS } as const;
 const FIRE_HTML = { __html: FIRE_DEFS } as const;
 const GLYPH_HTML = { __html: CRYPT_GLYPH_DEFS } as const;
+const DOOR_HTML = { __html: DOOR_DEFS } as const;
 
 function visibleBullets(bullets: readonly Bullet[], slots: readonly PlayerSlot[]): number[] {
   const live: number[] = [];
@@ -1012,6 +1014,16 @@ export function Arena({
   // area otherwise (and for a spectator).
   const side = localSlot?.occupied === true && sideRoomOf(localSlot.zone) !== null ? localSlot.zone : ZONE_LOBBY;
   const inRoom = shown === 'lobby' && side !== ZONE_LOBBY;
+  // A door crossing is a hard cut on the chain — the seat is on one side of the wall, then
+  // the other — and the beat that covers it is one dark frame fading out: a rect keyed on
+  // the crossing count, opacity only, remounted per crossing, none under reduced motion.
+  const sideWas = useRef(side);
+  const [doorBeat, setDoorBeat] = useState(0);
+  useEffect(() => {
+    if (sideWas.current === side) return;
+    sideWas.current = side;
+    setDoorBeat((n) => n + 1);
+  }, [side]);
   const drawOrder = useMemo(
     () => roomSeats(players.slots, shown, holdSeat, side),
     [players, shown, holdSeat, side],
@@ -1092,6 +1104,7 @@ export function Arena({
           <g dangerouslySetInnerHTML={ORDNANCE_HTML} />
           <g dangerouslySetInnerHTML={FIRE_HTML} />
           <g dangerouslySetInnerHTML={GLYPH_HTML} />
+          <g dangerouslySetInnerHTML={DOOR_HTML} />
           {/* HELLFIRE's light: the glow on the stone and the growing fill, both soft by
               GRADIENT. The fire and the ring themselves are pixel art from the atlas above. */}
           <radialGradient id="hr-hell-glow-g">
@@ -1171,25 +1184,25 @@ export function Arena({
             />
           )}
           {/* A side room's door answers a seat standing at either of its thresholds — the
-              one hint the rooms give, from both sides. The wanted gate's pulse, in the
-              torch's own light, on the painted doorway about to be pushed. */}
+              one hint the rooms give, from both sides: the painted doorway drawn OPEN, its
+              leaf gone and the room's light in it (or the stair lit), exactly over the
+              paint. A picture, not a tint; it fades in and stays while the seat stands there. */}
           {shown === 'lobby' &&
             localSlot?.occupied === true &&
             (() => {
-              const arch = archAt(localSlot.zone, localSlot.x, localSlot.y);
+              const door = doorAt(localSlot.zone, localSlot.x, localSlot.y);
               return (
-                arch !== null && (
-                  <rect
-                    className="gate-wanted"
+                door !== null && (
+                  <use
+                    key={`${door.kind}-${door.rect.x}`}
+                    className="door-open"
                     aria-hidden="true"
-                    x={arch.x}
-                    y={arch.y}
-                    width={arch.w}
-                    height={arch.h}
-                    fill={DOOR_GLOW}
-                    stroke={DOOR_GLOW}
-                    strokeWidth={3}
-                    style={{ pointerEvents: 'none' }}
+                    href={`#door-${door.kind}-open`}
+                    x={door.rect.x}
+                    y={door.rect.y}
+                    width={door.rect.w}
+                    height={door.rect.h}
+                    style={{ pointerEvents: 'none', imageRendering: 'auto' }}
                   />
                 )
               );
@@ -1425,6 +1438,21 @@ export function Arena({
               {!reduced && <rect ref={flashRef} x={0} y={0} width={ARENA_UNITS} height={PIT_BOT + 1} fill="#fff" opacity={0} />}
               <g className="room-light">{RAIN}</g>
             </g>
+          )}
+
+          {/* The door beat: the dark frame a side-room crossing cuts through, over every mover. */}
+          {doorBeat > 0 && !reduced && (
+            <rect
+              key={`door-veil-${doorBeat}`}
+              className="door-veil"
+              aria-hidden="true"
+              x={-ARENA_UNITS}
+              y={-ARENA_UNITS}
+              width={3 * ARENA_UNITS}
+              height={3 * ARENA_UNITS}
+              fill={VOID.lobby}
+              style={{ pointerEvents: 'none' }}
+            />
           )}
 
           {/* Row 16. After `Spawn`, so the veil covers the flare when both fire. */}

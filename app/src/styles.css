@@ -1340,6 +1340,13 @@ h3 {
 .room-text { font: 600 5.6px var(--mono); fill: #e6d9bd; }
 .room-text.is-dim { fill: #a99f8c; font-weight: 500; }
 .room-text.is-you { fill: #f2cf6b; }
+/* The open doorway drawn over its arch while a seat stands at the threshold, and the dark
+   frame a crossing cuts through (render/SideRooms.tsx, Arena.tsx). Opacity only. */
+.door-open { animation: door-open 180ms ease-out both; }
+@keyframes door-open { from { opacity: 0; } to { opacity: 1; } }
+.door-veil { animation: door-veil 260ms ease-out both; }
+@keyframes door-veil { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .door-open { animation: none; } }
 @media (prefers-reduced-motion: reduce) { .secret-room { animation: none; } }
 
 .gate-mark-halo {

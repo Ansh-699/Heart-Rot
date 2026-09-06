@@ -9,9 +9,13 @@ import secretPng from './rooms/secret.png?no-inline';
 import keepPng from './rooms/keep.png?no-inline';
 import cryptPng from './rooms/crypt.png?no-inline';
 import glyphsPng from './siderooms-glyphs.png';
+import doorsPng from './siderooms-doors.png';
 import type { ImgRect, RoomLight, WorldRect } from './rooms.gen';
 
 export type SideRoomName = 'secret' | 'keep' | 'crypt';
+
+/** The three doorways a seat can stand at, drawn open: the two painted arches and the stair. */
+export type DoorKind = 'west' | 'east' | 'stairs';
 
 export interface SideRoomArt {
   /** The chamber, its floor on the chain's block. Mount with `imageRendering: 'auto'`. */
@@ -26,6 +30,9 @@ export interface SideRoomArt {
   readonly archLobby: WorldRect;
   /** The painted doorway in the ROOM it is left by: the glow when a seat stands at the exit. */
   readonly archRoom: WorldRect;
+  /** Which open frame each doorway shows: `archLobby`'s and `archRoom`'s. */
+  readonly doorLobby: DoorKind;
+  readonly doorRoom: DoorKind;
   /** Where the room's furniture takes text or a picture: tablets, the chest, the mirror, the slabs. */
   readonly anchors: Readonly<Record<string, WorldRect>>;
 }
@@ -43,8 +50,10 @@ export const SIDE_ROOM_ART: Readonly<Record<SideRoomName, SideRoomArt>> = {
       { x: 578.415, y: 691.924, text: 'MAGICBLOCK' },
       { x: 512, y: 791.547, text: 'every step and every arrow is a transaction' },
     ],
-    archLobby: { x: 15.7716, y: 682.431, w: 55.5727, h: 72.4862 },
+    archLobby: { x: 19.396, y: 682.431, w: 45.9079, h: 72.4862 },
     archRoom: { x: 679.245, y: 677.434, w: 45.8868, h: 72.4528 },
+    doorLobby: 'west',
+    doorRoom: 'east',
     anchors: {},
   },
   keep: {
@@ -61,8 +70,10 @@ export const SIDE_ROOM_ART: Readonly<Record<SideRoomName, SideRoomArt>> = {
       { x: 396.377, y: 798.793, text: 'ARMOURY' },
       { x: 512, y: 855.547, text: 'what the chain remembers, what pays for it, who you are' },
     ],
-    archLobby: { x: 952.656, y: 682.431, w: 55.5727, h: 72.4862 },
+    archLobby: { x: 958.696, y: 682.431, w: 45.9079, h: 72.4862 },
     archRoom: { x: 250.868, y: 725.132, w: 45.8868, h: 72.4528 },
+    doorLobby: 'east',
+    doorRoom: 'west',
     anchors: {
       tablet0: { x: 429.585, y: 611.623, w: 43.4717, h: 48.3019 },
       tablet1: { x: 489.962, y: 611.623, w: 43.4717, h: 48.3019 },
@@ -83,6 +94,8 @@ export const SIDE_ROOM_ART: Readonly<Record<SideRoomName, SideRoomArt>> = {
     ],
     archLobby: { x: 477.267, y: 921.635, w: 72.4862, h: 54.3646 },
     archRoom: { x: 475.774, y: 617.66, w: 72.4528, h: 54.3396 },
+    doorLobby: 'stairs',
+    doorRoom: 'stairs',
     anchors: {
       slab0: { x: 373.736, y: 682.868, w: 45.8868, h: 54.3396 },
       slab1: { x: 450.415, y: 682.868, w: 45.8868, h: 54.3396 },
@@ -95,6 +108,17 @@ export const SIDE_ROOM_ART: Readonly<Record<SideRoomName, SideRoomArt>> = {
     },
   },
 };
+
+/** The open frames' rects in `siderooms-doors.png`: each arch with its leaf gone, the stair lit. */
+export const DOOR_FRAMES: Readonly<Record<DoorKind, { x: number; y: number; w: number; h: number }>> = { west: { x: 0, y: 0, w: 76, h: 120 }, east: { x: 76, y: 0, w: 76, h: 120 }, stairs: { x: 152, y: 0, w: 120, h: 90 } };
+
+const DOOR_IMG = `<image href="${doorsPng}" width="272" height="120"/>`;
+
+/** The `<defs>` markup for the open doorways, mounted once by whichever component owns the arena `<svg>`. */
+export const DOOR_DEFS =
+  `<symbol id="door-west-open" viewBox="0 0 76 120">${DOOR_IMG}</symbol>` +
+  `<symbol id="door-east-open" viewBox="76 0 76 120">${DOOR_IMG}</symbol>` +
+  `<symbol id="door-stairs-open" viewBox="152 0 120 90">${DOOR_IMG}</symbol>`;
 
 /** The crypt's outcome glyphs, `w` x `w` each, three across: skull (wipe), crown (kill), hourglass (enrage). */
 export const CRYPT_GLYPH = { w: 12, names: ['skull', 'crown', 'hourglass'] } as const;

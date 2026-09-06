@@ -66,7 +66,7 @@ import {
 import { shotAllowed } from '../input/controls';
 import { isMuted, play, setMuted, type SfxName } from '../render/sfx';
 import { SKIN_COLORS } from '../screens/CharacterSelect';
-import { leaveWay } from '../render/SideRooms';
+import { leaveWay, pushWay } from '../render/SideRooms';
 import { mySeatSlot, useSelect, useStore } from '../state/store';
 
 /**
@@ -658,6 +658,10 @@ function Hint() {
     const zone = mySeatSlot(s)?.zone;
     return zone === undefined ? null : leaveWay(zone);
   });
+  const push = useSelect((s) => {
+    const slot = mySeatSlot(s);
+    return slot ? pushWay(slot.zone, slot.x, slot.y) : null;
+  });
   if (inPit) {
     if (!mustering) return null;
     return (
@@ -678,6 +682,13 @@ function Hint() {
     return (
       <div className="hud-hint" aria-hidden="true">
         <b>WALK</b> {way} to leave
+      </div>
+    );
+  }
+  if (push !== null) {
+    return (
+      <div className="hud-hint" aria-hidden="true">
+        <b>{COARSE ? 'WALK' : 'PUSH'}</b> {push}
       </div>
     );
   }
