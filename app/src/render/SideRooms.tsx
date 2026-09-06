@@ -390,5 +390,10 @@ if (import.meta.env.DEV) {
     const wall = roomRay(zone, from.x, art.floor.y + 4, 1, 0, { x: from.x + 2000, y: art.floor.y + 4 });
     if (wall === null || wall.dummy !== null || Math.abs(wall.end.x - (art.floor.x + art.floor.w)) > 0.01) fail('an arrow along the back wall does not stop at the east wall');
     if (roomRay(ZONE_LOBBY, from.x, from.y, 1, 0, { x: 0, y: 0 }) !== null) fail('a lobby shot is cut by a room');
+    // The aim finds the nearest straw man on its own: from the firing line, level with the
+    // first, it points east and slightly at him; from the lobby it points at nothing.
+    const aim = rangeAim(zone, from.x, from.y);
+    if (aim === null || aim[0] <= 0 || Math.abs(aim[1]) > Math.abs(aim[0])) fail('the range does not aim at its straw');
+    if (rangeAim(ZONE_LOBBY, from.x, from.y) !== null) fail('the lobby aims at straw');
   }
 }
