@@ -310,10 +310,24 @@ h3 {
   min-width: 0;
 }
 
+/*
+ * No `place-items: center`: a grid-centred item taller than the cell (the landing card on
+ * a 330 px landscape phone) overflows both ways and its top is unreachable. `margin: auto`
+ * on the card centres it when it fits and collapses to 0 when it does not, so the scroller
+ * starts at the card's top.
+ */
 .main:has(> .card) {
-  place-items: center;
   padding: 24px;
   overflow: auto;
+}
+
+.main:has(> .card) > .card {
+  margin: auto;
+}
+
+@media (max-width: 480px) {
+  .main:has(> .card) { padding: 12px; }
+  .card { padding: 20px; }
 }
 
 /*
@@ -385,6 +399,13 @@ h3 {
    * else with a scroller of its own still scroll normally.
    */
   touch-action: none;
+  /*
+   * Hold-to-charge is a long press; iOS answers one over SVG <text> with the selection
+   * magnifier and the callout sheet. Unconditional: harmless with a mouse.
+   */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   /*
    * The one thing in the app that says "this surface is aimed". `docs/review/ux.md`'s
    * headline is that nothing ever tells the player click-drag aims; a crosshair over the
@@ -1498,4 +1519,53 @@ h3 {
 @keyframes hr-wisp {
   from { translate: 0 0; opacity: 0.45; }
   to { translate: 4px -10px; opacity: 0.65; }
+}
+
+/* --------------------------------------------------------------------------
+   Touch
+
+   A coarse pointer has no hover and a 44 px finger. The icons grow to the touch target
+   and stay visible (nothing reveals them), the hint moves to the bottom centre so it is
+   off the left thumb, and the telemetry cue goes: it sits exactly where the right thumb
+   taps to fire (backtick still opens the panel). The landscape prompt is CSS only —
+   pointer type and orientation are the browser's to know, not the store's — and lives
+   outside `.hud-layer`, which fades and hides.
+   -------------------------------------------------------------------------- */
+
+.hud-rotate { display: none; }
+
+/* `.hud-layer` prefixed: the base rules live in Hud.tsx's <style>, which the browser reads
+   after this sheet, so a bare `.hud-icon` here would lose the tie. */
+@media (pointer: coarse) {
+  .hud-layer .hud-icon {
+    width: 44px;
+    height: 44px;
+    padding: 10px;
+    opacity: 0.8;
+  }
+  .hud-layer .hud-corner { gap: 6px; }
+  .hud-layer .hud-hint {
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+  }
+  .dev-cue { display: none; }
+}
+
+@media (pointer: coarse) and (orientation: portrait) {
+  .hud-rotate {
+    display: grid;
+    place-items: center;
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    pointer-events: auto;
+    padding: 24px;
+    background: rgb(5 9 14 / 0.92);
+    font: 12px var(--pixel);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: center;
+    color: var(--ink);
+  }
 }

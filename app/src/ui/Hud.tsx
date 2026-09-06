@@ -344,6 +344,8 @@ const HUD_CSS = `
 .verdict .link:hover, .verdict .link:focus-visible { color: var(--olive); outline: none; }
 /* Until SETTLED lands (see Verdict): plain text, the underline is what says "link". */
 .verdict .link:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+/* A landscape phone is 330-390 px tall: at 68 % the card's buttons fall off the bottom. */
+@media (max-height: 520px) { .hud-ml.verdict { top: 50%; } }
 `;
 
 /** Quiet seconds before the layer fades. Long enough that it never fades mid-dodge. */
@@ -367,6 +369,11 @@ export function Hud() {
       </div>
       <Fallen />
       <Verdict />
+      {/* Outside .hud-layer: that layer fades and hides, this must not. CSS shows it only
+          under (pointer: coarse) and (orientation: portrait). */}
+      <div className="hud-rotate" role="status">
+        Turn your phone sideways to play
+      </div>
     </>
   );
 }
@@ -573,6 +580,9 @@ function Card() {
   );
 }
 
+/** Read once: the pointer type does not change mid-session, and SSR has no matchMedia. */
+const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
 /**
  * The controls, said twice, both times in the corner and never in the play area.
  *
@@ -594,14 +604,30 @@ function Hint() {
     if (!mustering) return null;
     return (
       <div className="hud-hint" aria-hidden="true">
-        <b>SPACE</b> shoot · <b>HOLD</b> to charge · <b>HOLD LONGER</b> for a super
+        {COARSE ? (
+          <>
+            <b>TAP</b> shoot · <b>HOLD</b> to charge · <b>HOLD LONGER</b> for a super
+          </>
+        ) : (
+          <>
+            <b>SPACE</b> shoot · <b>HOLD</b> to charge · <b>HOLD LONGER</b> for a super
+          </>
+        )}
       </div>
     );
   }
   if (moved) return null;
   return (
     <div className="hud-hint" aria-hidden="true">
-      <b>WASD</b> move · <b>SPACE</b> attack · hold to charge
+      {COARSE ? (
+        <>
+          <b>DRAG</b> left to move · <b>TAP</b> right to shoot · hold to charge
+        </>
+      ) : (
+        <>
+          <b>WASD</b> move · <b>SPACE</b> attack · hold to charge
+        </>
+      )}
     </div>
   );
 }
