@@ -57,6 +57,7 @@ import {
   gateAt,
   lockedTier,
   movePlayer,
+  useDoor,
   refusalOf,
   sendInstructions,
   shoot,
@@ -66,14 +67,14 @@ import {
   type ShotTier,
 } from '@heartrot/client';
 
-import { attachControls, dirFromVector, octantAim } from './input/controls';
+import { attachControls, octantAim } from './input/controls';
 import { recordSend, recordSignature } from './net/metrics';
 import DevPanel from './ui/DevPanel';
 import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
 import { chargeLocal } from './render/Knight';
 import { Passage } from './render/Passage';
-import { atSecretDoor } from './render/SecretRoom';
+import { knockDir } from './render/SecretRoom';
 import { play } from './render/sfx';
 import { beamDowngraded, fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
@@ -83,8 +84,12 @@ import { Onboarding, SeatLoader } from './screens/Onboarding';
 import { mySeatSlot, screenOf, useSelect, useStore } from './state/store';
 import { Hud } from './ui/Hud';
 
-/** The sector a step west quantises to — the one that knocks on the lobby's door. */
-const WEST = dirFromVector(-1, 0);
+/**
+ * The least time between two knocks on the secret door. A held key pumps the refused-step
+ * edge every slot; the chain rate-limits `use_door` on the move clock anyway, so this only
+ * spares the wire, and a knock that lands closes the question by flipping the zone.
+ */
+const KNOCK_MS = 600;
 
 /**
  * `Address` without importing `@solana/kit`: `app/package.json` does not depend on it
@@ -457,7 +462,6 @@ function World({
   feedEpoch: number;
 }) {
   const wantTier = useSelect((s) => s.wantTier);
-  const secret = useSelect((s) => s.secret);
   const arena = useSelect((s) => s.arena);
   const boss = useSelect((s) => s.boss);
   const players = useSelect((s) => s.players);
@@ -465,18 +469,6 @@ function World({
   const tickMs = useSelect((s) => s.match?.tickMs ?? 100);
 
   useGameplay(host, link);
-
-  // Escape closes the secret room. A real step closes it too (`onMove` below), and on touch
-  // that is the only way out — a thumb on the stick, walking east through the door.
-  const store = useStore();
-  useEffect(() => {
-    if (!secret) return;
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') store.setSecret(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [secret, store]);
 
   if (!host || !arena || !boss || !players) return null;
 
@@ -511,7 +503,6 @@ function World({
         predictor={link?.predictor}
         feedEpoch={feedEpoch}
         wantTier={wantTier}
-        secret={secret}
       />
     </div>,
     host,
@@ -534,6 +525,7 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
     const { er, signer, predictor, match } = link;
     const session = signer.address;
     const common = { programId: match.programId, arena: match.arena, players: match.players };
+    let lastKnock = -Infinity;
 
     const { post: notice, clear: clearNotice } = transientNotice(store);
 
@@ -670,17 +662,19 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // table and cannot disagree.
         const seq = predictor.push(dir);
         if (seq === null) {
-          // Refused before the wire: a wall. West from the threshold of the lobby's door,
-          // that wall IS the door — the knock that opens the secret room (`SecretRoom.tsx`).
-          // On the edge only: a held key pumps this every slot, and the room opens once.
-          if (dir === WEST && !store.getState().secret && atSecretDoor(predictor.self.x, predictor.self.y)) {
-            store.setSecret(true);
+          // Refused before the wire: a wall. Pushed from the secret door's threshold on
+          // either side, that wall IS the door, and the knock is a real instruction:
+          // `use_door` moves the seat through it (`SecretRoom.tsx`). The zone is the
+          // chain's, the position the prediction's — at a threshold the two agree.
+          const zone = mySeatSlot(store.getState())?.zone;
+          const now = performance.now();
+          if (zone !== undefined && dir === knockDir(zone, predictor.self.x, predictor.self.y) && now - lastKnock >= KNOCK_MS) {
+            lastKnock = now;
+            send(useDoor({ ...common, session, seat: match.seat }), undefined, recordSend(undefined, 'gate'));
             play('gate');
           }
           return;
         }
-        // Any step the chain will take is a step out of the chamber.
-        if (store.getState().secret) store.setSecret(false);
         // Recorded before the send, so a transaction that never resolves still counts as
         // in flight and ages into the unacked bucket rather than vanishing.
         const txId = recordSend(seq, 'move');

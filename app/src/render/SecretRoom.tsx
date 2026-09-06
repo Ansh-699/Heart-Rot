@@ -2,53 +2,54 @@
  * The secret room — the chamber behind the lobby's west door, hung with the banners of the
  * two things the game runs on: Solana, and MagicBlock's ephemeral rollup.
  *
- * ON CHAIN: nothing, and that is the design. There is no room in the grid the program
- * walks: the door is a wall tile, so a westward step from the threshold is refused by
- * `predictor.push` before it is ever sent, and THAT refusal is the knock (`App.tsx`'s
- * `onMove`, through {@link atSecretDoor}). The seat stays exactly where the chain has it —
- * on the threshold, a step from the arch — and every other raider sees a knight standing
- * at a door. This is a picture shown to whoever pushed; the first accepted step (any real
- * move) closes it, so nothing on screen ever claims a position the chain does not hold.
+ * ON CHAIN: a zone. `ZONE_SECRET` is a third value of `PlayerSlot.zone`, and the room's
+ * floor is `SECRET_ROOM` — a block of lobby floor tiles the chain holds a secret seat inside
+ * (`player::zone_box` / `standable`) exactly as it holds a raider on the dais. A seat gets in
+ * and out through `use_door` (tag 17): the client sends it from the edge of a REFUSED step
+ * — west into the wall from the door's threshold tiles, east into the wall from the room's
+ * exit tiles ({@link knockDir}) — so the knock is the same refusal a wall gives, and the
+ * chain moves the seat, not the client. Every step inside is a `move` like any other.
  *
- * Mounted inside `#camera` over room A, in world units, from `secret.gen.ts` — every number
- * there is `tools/gen_secret.py`'s, derived from the painting and the lobby's own fit. The
- * knight in the doorway is the local skin's idle frame from the archer atlas, flipped to
- * face the room the way `Knight.tsx` flips a west-facing seat. Pointer-transparent, and
- * nothing here writes a transform any other node owns.
+ * ON SCREEN: room A with the chamber painted over it. `secret.gen.ts` places the painting so
+ * its floor IS `SECRET_ROOM` in world units (held below at boot), so every seat in the zone
+ * is drawn by the ordinary knight layer at its chain position, with no offset anywhere; the
+ * veil under the painting hides the waiting area and `Arena.tsx`'s `seatShown` hides the
+ * seats on the other side of the wall. Mounted right after the room element, before every
+ * mover. Pointer-transparent, and nothing here writes a transform any other node owns.
  */
-import { MAP_TILE, isWall } from '@heartrot/client';
+import { SECRET_DOOR, SECRET_EXIT, SECRET_ROOM, ZONE_LOBBY, ZONE_SECRET, inBlock } from '@heartrot/client';
 
-import { ARCHER_ATLAS, ATLAS_H, ATLAS_W, FRAMES, KNIGHT_SKINS, type SkinId } from './knights.gen';
+import { dirFromVector } from '../input/controls';
 import { roomGlow } from './RoomLight';
 import { VOID } from './rooms.gen';
-import { SECRET_CAPTION, SECRET_IMG, SECRET_LABELS, SECRET_LIGHTS, SECRET_STAND, SECRET_THRESHOLD } from './secret.gen';
+import { SECRET_ARCH_LOBBY, SECRET_ARCH_ROOM, SECRET_CAPTION, SECRET_FLOOR, SECRET_IMG, SECRET_LABELS, SECRET_LIGHTS } from './secret.gen';
 import { ARENA_UNITS } from './sprites';
 
 /** How dark the hall goes behind the chamber. */
 const VEIL_OPACITY = 0.9;
 
-type Frame = readonly [number, number, number, number];
+/** The sectors a step west and east quantise to — the two the door answers. */
+const WEST = dirFromVector(-1, 0);
+const EAST = dirFromVector(1, 0);
 
-/** Is a seat at (`x`, `y`) — a tile origin, as the chain stores it — on the door's threshold? */
-export function atSecretDoor(x: number, y: number): boolean {
-  const t = SECRET_THRESHOLD;
-  return x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h;
+/**
+ * The direction that knocks from here, or `null`: west from the lobby's door tiles, east
+ * from the room's exit tiles. `App.tsx` asks this when the predictor refuses a step — refused
+ * there, in this direction, from here, it is the door being pushed — and sends `use_door`.
+ */
+export function knockDir(zone: number, x: number, y: number): number | null {
+  if (zone === ZONE_LOBBY && inBlock(SECRET_DOOR, x, y)) return WEST;
+  if (zone === ZONE_SECRET && inBlock(SECRET_EXIT, x, y)) return EAST;
+  return null;
 }
 
-export function SecretRoom({ skinId }: { skinId: number }) {
-  // The same clamp as `Knight.tsx`: the program stores the byte verbatim.
-  const skin = (Number.isInteger(skinId) && skinId >= 0 && skinId < KNIGHT_SKINS.length ? skinId : 0) as SkinId;
-  const body = FRAMES[`${skin}-e-idle`];
-  const halo = FRAMES[`halo${skin}-e-idle`];
-  const [, , w, h] = body;
-  // `Knight.tsx`'s flipped anchor: the frame is drawn mirrored about the stand's x.
-  const ox = -(w - (w >> 1));
-  const oy = -(h >> 1);
-  const frame = ([fx, fy, fw, fh]: Frame) => (
-    <svg x={ox} y={oy} width={fw} height={fh} viewBox={`${fx} ${fy} ${fw} ${fh}`}>
-      <image href={ARCHER_ATLAS} width={ATLAS_W} height={ATLAS_H} />
-    </svg>
-  );
+/** The painted arch a seat standing at (`x`, `y`) in `zone` is about to push, for the glow. */
+export function archAt(zone: number, x: number, y: number) {
+  const dir = knockDir(zone, x, y);
+  return dir === null ? null : dir === WEST ? SECRET_ARCH_LOBBY : SECRET_ARCH_ROOM;
+}
+
+export function SecretRoom() {
   return (
     <g
       className="secret-room"
@@ -75,26 +76,23 @@ export function SecretRoom({ skinId }: { skinId: number }) {
       <text className="secret-caption" x={SECRET_CAPTION.x} y={SECRET_CAPTION.y} textAnchor="middle">
         every step and every arrow is a transaction
       </text>
-      <g transform={`translate(${SECRET_STAND.x} ${SECRET_STAND.y}) scale(-1 1)`}>
-        {frame(halo)}
-        {frame(body)}
-      </g>
     </g>
   );
 }
 
 if (import.meta.env.DEV) {
-  // The generator's threshold against the grid the chain ships: floor tiles with the door's
-  // wall to their west, so a west step from any of them is exactly the refusal the knock
-  // keys on. A door that drifts off the grid fails here, at boot, not in a silent no-op.
-  const t = SECRET_THRESHOLD;
+  // The painting's floor and the chain's block are one fact: a seat in the zone is drawn
+  // on the cobbles only while these four numbers agree. And the two thresholds answer in
+  // the two directions the chain crosses them in, and nowhere else.
   const fail = (msg: string): never => {
     throw new Error(`SecretRoom: ${msg}`);
   };
-  for (let y = t.y; y < t.y + t.h; y += MAP_TILE) {
-    if (isWall(t.x, y)) fail(`threshold tile at ${t.x},${y} is wall`);
-    if (!isWall(t.x - MAP_TILE, y)) fail(`no door wall west of ${t.x},${y}`);
+  const f = SECRET_FLOOR;
+  if (f.x !== SECRET_ROOM.minX || f.y !== SECRET_ROOM.minY || f.x + f.w - 1 !== SECRET_ROOM.maxX || f.y + f.h - 1 !== SECRET_ROOM.maxY) {
+    fail('the painted floor is not SECRET_ROOM; re-run tools/gen_secret.py');
   }
-  if (!atSecretDoor(t.x, t.y) || !atSecretDoor(t.x, t.y + t.h - MAP_TILE)) fail('the threshold does not answer');
-  if (atSecretDoor(t.x + t.w, t.y) || atSecretDoor(t.x, t.y - MAP_TILE) || atSecretDoor(t.x, t.y + t.h)) fail('a tile off the threshold answers');
+  if (knockDir(ZONE_LOBBY, SECRET_DOOR.minX, SECRET_DOOR.minY) !== WEST) fail('the door threshold does not knock west');
+  if (knockDir(ZONE_SECRET, SECRET_EXIT.minX, SECRET_EXIT.maxY) !== EAST) fail('the exit does not knock east');
+  if (knockDir(ZONE_LOBBY, SECRET_EXIT.minX, SECRET_EXIT.minY) !== null) fail('a lobby seat knocks from inside the room');
+  if (knockDir(ZONE_SECRET, SECRET_ROOM.minX, SECRET_ROOM.minY) !== null) fail('the far corner knocks');
 }

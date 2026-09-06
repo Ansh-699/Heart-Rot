@@ -24,7 +24,9 @@
 //!    then writes, so a re-used index cannot inherit the last occupant's HP, damage or
 //!    death count.
 //! 2. **Entered** by `enter_gate` (tag 5), once: `ZONE_LOBBY → ZONE_ARENA` is one-way and
-//!    the reverse call is refused, which is what bounds `arena.alive_count`.
+//!    the reverse call is refused, which is what bounds `arena.alive_count`. Or, instead,
+//!    **through the secret door** by `use_door` (tag 17): `ZONE_LOBBY ⇄ ZONE_SECRET`, two-way
+//!    and repeatable, a room off the waiting area that no raid count ever sees.
 //! 3. **Killed** by `boss_tick`, which owns `hp` and `deaths`. Death is final for the
 //!    raid — there is no revive — but it does **not** release the seat: the corpse stays
 //!    in the arena at 0 HP, so the session key, the identity and the accumulated
@@ -54,10 +56,13 @@ use crate::error::HeartrotError;
 use crate::guards::{
     assert_owned_by, assert_pda_at_bump, assert_session_authority, assert_signer, assert_writable,
 };
-use crate::map::{gate_at, DAIS, PIT_BOT, PIT_TOP, WALLS};
+use crate::map::{
+    gate_at, DAIS, PIT_BOT, PIT_TOP, SECRET_DOOR, SECRET_ENTRY, SECRET_EXIT, SECRET_RETURN,
+    SECRET_ROOM, WALLS,
+};
 use crate::state::{
     self, Arena, PlayerSlot, Players, MAX_SEATS, N_CLASSES, PHASE_FIGHTING, PHASE_LOBBY,
-    PHASE_MUSTERING, SEED_PLAYERS, ZONE_ARENA, ZONE_LOBBY,
+    PHASE_MUSTERING, SEED_PLAYERS, ZONE_ARENA, ZONE_LOBBY, ZONE_SECRET,
 };
 
 // ---------------------------------------------------------------------------
@@ -276,6 +281,9 @@ fn is_wall(x: i16, y: i16) -> bool {
 fn zone_box(zone: u8) -> (i16, i16) {
     if zone == ZONE_ARENA {
         (PIT_TOP, PIT_BOT)
+    } else if zone == ZONE_SECRET {
+        // The chamber's own rows; its columns are `standable`'s question, like the dais.
+        (SECRET_ROOM.min_y, SECRET_ROOM.max_y)
     } else {
         (PIT_BOT + 1, MAP_MAX_XY)
     }
@@ -349,6 +357,11 @@ fn on_dais(x: i16, y: i16) -> bool {
 /// `map::DAIS` explains) and the boss's own body (`crate::body`, the hitbox table folded,
 /// because a wall under the boss kills every ray in its columns).
 fn standable(zone: u8, x: i16, y: i16) -> bool {
+    if zone == ZONE_SECRET {
+        // The whole room and nothing else: its walls are not in `WALLS`, because the room is
+        // laid over lobby floor that lobby seats still walk.
+        return SECRET_ROOM.contains(x, y);
+    }
     zone != ZONE_ARENA || (on_dais(x, y) && !in_body(x, y))
 }
 
@@ -1054,6 +1067,77 @@ pub fn enter_gate(
 }
 
 // ---------------------------------------------------------------------------
+// use_door
+// ---------------------------------------------------------------------------
+
+/// The octants a seat faces after the door: into the room coming in, back into the hall
+/// going out. `MOVE_STEP`'s own indices, held to it by `the_secret_room_is_a_box_for_its_own_zone_only`.
+const FACE_WEST: u8 = 6;
+const FACE_EAST: u8 = 2;
+
+/// Where `use_door` sends a seat, or why not: `(zone, (x, y), facing)`.
+///
+/// Two thresholds, one instruction, and the seat's own zone says which. A lobby seat must be
+/// standing in `map::SECRET_DOOR`, the tiles against the painted arch; a secret seat must be
+/// standing in `map::SECRET_EXIT`, the room's east column, where its door is drawn. Anywhere
+/// else is `NotOnGate` -- retryable, as for `enter_gate` -- and a seat in the pit is `WrongZone`.
+fn door_crossing(slot: &PlayerSlot) -> Result<(u8, (i16, i16), u8), ProgramError> {
+    match slot.zone {
+        ZONE_LOBBY if SECRET_DOOR.contains(slot.x, slot.y) => Ok((ZONE_SECRET, SECRET_ENTRY, FACE_WEST)),
+        ZONE_SECRET if SECRET_EXIT.contains(slot.x, slot.y) => Ok((ZONE_LOBBY, SECRET_RETURN, FACE_EAST)),
+        ZONE_LOBBY | ZONE_SECRET => Err(HeartrotError::NotOnGate.into()),
+        _ => Err(HeartrotError::WrongZone.into()),
+    }
+}
+
+/// Tag 17 — through the secret door, either way.
+///
+/// `use_door(seat)` — accounts `[arena (r), players (w), session key (signer)]`, one
+/// argument byte. A portal like `enter_gate`, and unlike it two-way and repeatable: the
+/// chamber is a room off the waiting area, not a stage of the raid, so nothing here touches
+/// `alive_count`, `hp` or `difficulty`. What it shares with `move_player` is the clock: the
+/// seat is rate limited on `last_move_tick` exactly as a step is, because a portal that
+/// writes for free at any rate is the flood `move`'s limiter exists to stop, and the client
+/// sends it from the edge of a refused step, which a held key pumps every slot.
+pub fn use_door(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
+    let [arena_ai, players_ai, authority_ai, ..] = accounts else {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    };
+    let &[seat] = data else {
+        return Err(ProgramError::InvalidInstructionData);
+    };
+    validate_pair(program_id, arena_ai, players_ai, authority_ai, false)?;
+    let now = {
+        let arena_data = arena_ai.try_borrow()?;
+        let arena = state::load::<Arena>(&arena_data)?;
+        assert_playable(arena.phase)?;
+        move_clock(arena)?
+    };
+    let mut players_data = players_ai.try_borrow_mut()?;
+    let players = state::load_mut::<Players>(&mut players_data)?;
+    let slot = players
+        .slots
+        .get_mut(seat as usize)
+        .ok_or(HeartrotError::SeatOutOfRange)?;
+    assert_session_authority(slot, authority_ai)?;
+    if slot.hp == 0 {
+        return Err(HeartrotError::PlayerDead.into());
+    }
+    if slot.last_move_tick == now {
+        return Err(HeartrotError::RateLimited.into());
+    }
+    let (zone, (x, y), facing) = door_crossing(slot)?;
+    slot.zone = zone;
+    slot.x = x;
+    slot.y = y;
+    // A bare octant, like every `facing` write outside `shoot`: the charged-shot flag dies
+    // at the door.
+    slot.facing = facing;
+    slot.last_move_tick = now;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Checks
 // ---------------------------------------------------------------------------
 
@@ -1087,6 +1171,43 @@ mod tests {
         assert_eq!((slot.x, slot.y), (x, y));
         assert_eq!(slot.hp, PLAYER_HP_MAX);
         assert_eq!(slot.identity, [2u8; 32]);
+    }
+
+    /// Tag 17's rule, both ways, and its two refusals.
+    #[test]
+    fn the_door_crosses_from_its_two_thresholds_and_nowhere_else() {
+        let mut slot = PlayerSlot::zeroed();
+        slot.zone = ZONE_LOBBY;
+        (slot.x, slot.y) = SECRET_RETURN;
+        assert_eq!(door_crossing(&slot).unwrap(), (ZONE_SECRET, SECRET_ENTRY, FACE_WEST));
+        slot.x += STEP;
+        assert_eq!(door_crossing(&slot).unwrap_err(), HeartrotError::NotOnGate.into());
+        slot.zone = ZONE_SECRET;
+        (slot.x, slot.y) = SECRET_ENTRY;
+        assert_eq!(door_crossing(&slot).unwrap(), (ZONE_LOBBY, SECRET_RETURN, FACE_EAST));
+        slot.x -= STEP;
+        assert_eq!(door_crossing(&slot).unwrap_err(), HeartrotError::NotOnGate.into());
+        slot.zone = ZONE_ARENA;
+        assert_eq!(door_crossing(&slot).unwrap_err(), HeartrotError::WrongZone.into());
+    }
+
+    /// A secret seat is held inside the room by the same three barriers a step meets, and
+    /// the lobby seat sharing its tile still walks the floor the room is laid over.
+    #[test]
+    fn the_secret_room_is_a_box_for_its_own_zone_only() {
+        let ok = |zone: u8, (x, y): (i16, i16), dir: usize| {
+            let (dx, dy) = MOVE_STEP[dir];
+            let (nx, ny) = (x + dx, y + dy);
+            !is_wall(nx, ny) && may_move_to(zone, y, ny) && may_stand_step(zone, (x, y), (nx, ny))
+        };
+        assert!(ok(ZONE_SECRET, SECRET_ENTRY, FACE_WEST as usize), "in from the door, one step west");
+        assert!(!ok(ZONE_SECRET, SECRET_ENTRY, FACE_EAST as usize), "the room's east wall holds");
+        let corner = (SECRET_ROOM.min_x, SECRET_ROOM.min_y);
+        assert!(!ok(ZONE_SECRET, corner, 6) && !ok(ZONE_SECRET, corner, 0), "the west and north walls hold");
+        assert!(ok(ZONE_SECRET, corner, 2) && ok(ZONE_SECRET, corner, 4));
+        assert!(ok(ZONE_LOBBY, corner, 6) && ok(ZONE_LOBBY, corner, 4), "a lobby seat walks through the room's west wall");
+        assert!(ok(ZONE_LOBBY, SECRET_ENTRY, 2), "and through its east wall");
+        assert!(MOVE_STEP[FACE_WEST as usize] == (-STEP, 0) && MOVE_STEP[FACE_EAST as usize] == (STEP, 0));
     }
 
     #[test]

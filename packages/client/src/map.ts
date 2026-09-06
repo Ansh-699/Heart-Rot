@@ -187,6 +187,30 @@ export const LOBBY_TOP = 640;
 export const LOBBY_BOT = 895;
 
 /**
+ * The secret room: a THIRD zone, `ZONE_SECRET` (layout.ts), laid over the lobby floor
+ * (tiles (22, 40) .. (41, 49)), so the grid is unchanged and a lobby seat and a secret seat
+ * may share a tile. `map::SECRET_ROOM` on the chain, byte for byte: `mayMoveTo` and
+ * `standable` hold a secret seat inside it, and `use_door` flips a lobby seat standing in
+ * {@link SECRET_DOOR} to {@link SECRET_ENTRY}, and a secret seat standing in
+ * {@link SECRET_EXIT} back to {@link SECRET_RETURN}. The renderer paints the chamber
+ * onto exactly this block (`secret.gen.ts`), so a seat inside it is drawn where the chain
+ * has it, with no offset anywhere.
+ */
+export const SECRET_ROOM: Gate = { minX: 352, maxX: 671, minY: 640, maxY: 799 };
+/** The lobby tiles a seat pushes WEST from: the painted arch in the lobby's west wall. */
+export const SECRET_DOOR: Gate = { minX: 80, maxX: 95, minY: 688, maxY: 751 };
+/** The room tiles a seat pushes EAST from: against the room's east wall, where its door is drawn. */
+export const SECRET_EXIT: Gate = { minX: 656, maxX: 671, minY: 672, maxY: 751 };
+/** Where `use_door` puts a seat coming in, and where it puts one going out. */
+export const SECRET_ENTRY: readonly [number, number] = [656, 704]; // tile (41, 44)
+export const SECRET_RETURN: readonly [number, number] = [80, 704]; // tile (5, 44)
+
+/** Is this arena-space point inside the block? `map::Gate::contains`, byte for byte. */
+export function inBlock(g: Gate, x: number, y: number): boolean {
+  return x >= g.minX && x <= g.maxX && y >= g.minY && y <= g.maxY;
+}
+
+/**
  * Which gate this arena-space point stands in, as its tier, or `null` off every gate --
  * `map::gate_at`, the predicate `enter_gate` runs, byte for byte.
  */

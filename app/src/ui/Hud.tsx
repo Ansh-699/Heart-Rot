@@ -57,6 +57,7 @@ import {
   VENT_PCT_FULL_BY_TIER,
   VENT_PCT_SOLO_BY_TIER,
   ZONE_ARENA,
+  ZONE_SECRET,
   fightHp,
   isFurious,
   ventPct,
@@ -651,7 +652,7 @@ function Hint() {
   const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
   const mustering = useSelect((s) => s.arena?.phase === PHASE_MUSTERING);
   const wantTier = useSelect((s) => s.wantTier);
-  const secret = useSelect((s) => s.secret);
+  const inRoom = useSelect((s) => mySeatSlot(s)?.zone === ZONE_SECRET);
   if (inPit) {
     if (!mustering) return null;
     return (
@@ -668,10 +669,10 @@ function Hint() {
       </div>
     );
   }
-  if (secret) {
+  if (inRoom) {
     return (
       <div className="hud-hint" aria-hidden="true">
-        <b>WALK</b> out to leave
+        <b>WALK</b> east through the door to leave
       </div>
     );
   }

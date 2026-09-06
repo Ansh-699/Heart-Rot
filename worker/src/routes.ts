@@ -53,7 +53,7 @@ import {
   initLeaderboard,
   leaderboardPda,
   leaveSeat,
-  ZONE_LOBBY,
+  ZONE_ARENA,
   type PlayersAccount,
   matchPdas,
   nextIncarnation,
@@ -924,7 +924,8 @@ function sweepIdleSeats(
             (slot) =>
               slot.occupied &&
               slot.seat !== args.keep &&
-              slot.zone === ZONE_LOBBY &&
+              // Idle anywhere outside the pit: the waiting area, or the room behind its door.
+              slot.zone !== ZONE_ARENA &&
               now - active(slot) >= IDLE_SLOTS,
           )
           .slice(0, IDLE_SWEEP_MAX);

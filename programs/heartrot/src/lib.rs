@@ -45,6 +45,7 @@
 //! | 4 | `player::join` | ER | treasury |
 //! | 5 | `player::enter_gate` | ER | session key |
 //! | 6 | `player::move_player` | ER | session key |
+//! | 17 | `player::use_door` | ER | session key |
 //! | 7 | `shoot::process` | ER | session key |
 //! | 8 | `tick::process` | ER | crank signer PDA (read-only) |
 //! | 9 | `settle::settle` | ER | treasury |
@@ -205,6 +206,9 @@ pub fn process_instruction(
         // Release a seat. The other half of tag 4: without it a player who leaves stays
         // occupied forever, visible to everyone else and blocking the wipe check.
         16 => handlers::player::leave_seat(program_id, accounts, data),
+        // Through the secret door, either way: a two-way portal between the lobby and the
+        // chamber behind its west wall. Rate limited on the move clock like a step.
+        17 => handlers::player::use_door(program_id, accounts, data),
 
         _ => Err(ProgramError::InvalidInstructionData),
     }
@@ -247,10 +251,10 @@ mod tests {
             );
         }
 
-        // Everything above the highest issued tag is unknown, and stays unknown. 16 is
-        // `leave_seat` now; 17 is the first that is not.
+        // Everything above the highest issued tag is unknown, and stays unknown. 17 is
+        // `use_door` now; 18 is the first that is not.
         assert_eq!(
-            process_instruction(&id, &mut none, &[17]).unwrap_err(),
+            process_instruction(&id, &mut none, &[18]).unwrap_err(),
             ProgramError::InvalidInstructionData,
         );
     }

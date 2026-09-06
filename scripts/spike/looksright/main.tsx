@@ -18,7 +18,7 @@ import { attachControls } from '../../../app/src/input/controls';
 import {
   ARENA, BOSS, BOSS_SPAWN, BULLET, MUZZLES, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
   LAYOUT_VERSION, MAX_SEATS, N_PARTS, CLASS_MASK,
-  PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING, ZONE_ARENA, ZONE_LOBBY,
+  PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING, ZONE_ARENA, ZONE_LOBBY, ZONE_SECRET,
   autoAim, decodeAim, decodeArena, decodeBoss, decodePlayers,
   type BossAccount,
 } from '@heartrot/client';
@@ -258,8 +258,9 @@ function Bridge() {
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__store = store;
-    w.__scene = (which: 'lobby' | 'arena', opts: SceneOpts = {}) => {
+    w.__scene = (which: 'lobby' | 'arena' | 'secret', opts: SceneOpts = {}) => {
       const arena = which === 'arena';
+      const zone = which === 'secret' ? ZONE_SECRET : arena ? ZONE_ARENA : ZONE_LOBBY;
       const tick = opts.tick ?? (arena ? 900 : 0);
       // The boss first: the seats aim at the shell this scene actually has, so a stripped
       // part re-targets the raid the way `autoAim` re-targets a real player.
@@ -272,7 +273,7 @@ function Bridge() {
           // exactly as it stops on chain.
           opts.dead ?? (opts.fury ? [7, 8, 3] : opts.hurt ? [7] : [])),
         boss,
-        players: playersBytes(arena ? ZONE_ARENA : ZONE_LOBBY, tick, opts.seats ?? MAX_SEATS, boss, opts.at, opts.damage, opts.localHp, opts.ring),
+        players: playersBytes(zone, tick, opts.seats ?? MAX_SEATS, boss, opts.at, opts.damage, opts.localHp, opts.ring),
       });
     };
     w.__PHASE = { PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING };

@@ -388,6 +388,70 @@ def gate_rows(gates: list[dict[str, object]]) -> set[int]:
     return {y for g in gates for y in range(g["GATE_TILES"][1], g["GATE_TILES"][3] + 1)}
 
 
+def secret_room(grid: list[str], tile: int, lobby: dict[str, int]) -> dict[str, object]:
+    """The secret room out of arena.json `secret`, in world units, proven against the grid.
+
+    A third zone laid OVER the lobby floor: `room_tiles` must be floor inside the lobby band
+    (so the walls, the pit and every existing rule are untouched), `door_tiles` must be floor
+    with wall to the WEST of every tile (the client pushes into that wall and the refusal is
+    the knock), `exit_tiles` must be the room's east column, `entry_tile` one of the exit
+    tiles (a seat that just came in can turn round and leave) and `return_tile` one of the
+    door tiles. Emitted to both mirrors as `SECRET_*`; `player::use_door` reads them.
+    """
+    doc = json.loads(MAP_JSON.read_text())
+    spec = doc.get("secret")
+    if not isinstance(spec, dict):
+        die("arena.json has no `secret` block -- the secret room's tiles live there")
+
+    def rect(key: str) -> tuple[int, int, int, int]:
+        v = spec.get(key)
+        if not (isinstance(v, list) and len(v) == 4 and all(isinstance(i, int) for i in v) and v[2] > 0 and v[3] > 0):
+            die(f"arena.json secret.{key} must be [col, row, cols, rows] with a positive size")
+        return tuple(v)  # type: ignore[return-value]
+
+    def point(key: str) -> tuple[int, int]:
+        v = spec.get(key)
+        if not (isinstance(v, list) and len(v) == 2 and all(isinstance(i, int) for i in v)):
+            die(f"arena.json secret.{key} must be [col, row]")
+        return tuple(v)  # type: ignore[return-value]
+
+    room, door, exit_ = rect("room_tiles"), rect("door_tiles"), rect("exit_tiles")
+    entry, ret = point("entry_tile"), point("return_tile")
+    n = len(grid)
+    solid = lambda x, y: x < 0 or y < 0 or x >= n or y >= n or grid[y][x] == WALL  # noqa: E731
+    tiles = lambda r: [(x, y) for y in range(r[1], r[1] + r[3]) for x in range(r[0], r[0] + r[2])]  # noqa: E731
+    inside = lambda t, r: r[0] <= t[0] < r[0] + r[2] and r[1] <= t[1] < r[1] + r[3]  # noqa: E731
+    lr0, lr1 = lobby["LOBBY_ROWS"]
+    for x, y in tiles(room):
+        if not (lr0 <= y <= lr1):
+            die(f"secret room tile ({x}, {y}) is outside the lobby floor rows {lr0}..{lr1}")
+        if solid(x, y):
+            die(f"secret room tile ({x}, {y}) is wall -- the room is laid over floor, not cut into it")
+    for x, y in tiles(door):
+        if solid(x, y):
+            die(f"secret door tile ({x}, {y}) is wall -- a seat has to stand on it to knock")
+        if not solid(x - 1, y):
+            die(f"secret door tile ({x}, {y}) has floor to its west -- the door IS the wall the client pushes into")
+        if inside((x, y), room):
+            die(f"secret door tile ({x}, {y}) is inside the room")
+    for t in tiles(exit_):
+        if not inside(t, room):
+            die(f"secret exit tile {t} is outside the room")
+        if t[0] != room[0] + room[2] - 1:
+            die(f"secret exit tile {t} is not on the room's east column {room[0] + room[2] - 1}")
+    if not inside(entry, exit_):
+        die(f"secret entry tile {entry} is not an exit tile -- a seat that just came in could not leave")
+    if not inside(ret, door):
+        die(f"secret return tile {ret} is not a door tile")
+
+    def units(r: tuple[int, int, int, int]) -> dict[str, object]:
+        return {"min_x": r[0] * tile, "max_x": (r[0] + r[2]) * tile - 1,
+                "min_y": r[1] * tile, "max_y": (r[1] + r[3]) * tile - 1, "TILES": r}
+
+    return {"ROOM": units(room), "DOOR": units(door), "EXIT": units(exit_),
+            "ENTRY": (entry[0] * tile, entry[1] * tile, entry), "RETURN": (ret[0] * tile, ret[1] * tile, ret)}
+
+
 def rooms_gates(tile: int) -> list[tuple[int, int, int, int]] | None:
     """`LOBBY_GATES` out of rooms.gen.ts as `(x0, y0, x1, y1)` tiles, by tier; `None` when
     the file does not exist yet (a fresh clone runs gen_rooms.py first, and gen_rooms.py
@@ -694,6 +758,8 @@ def validate(grid: list[str], g: dict[str, object]) -> None:
                     die(f"{zone} at ({x}, {y}) -- tile ({tx}, {ty}) -- has no legal "
                         "move: the zone box or the dais removed the last one the walls left")
 
+    secret_room(grid, tile, lobby_band(grid, tile, gates))
+
     floor = sum(row.count(c) for row in grid for c in FLOOR_CHARS)
     if len(seen) != floor:
         die(f"{floor - len(seen)} floor tiles are sealed off from the heart chamber "
@@ -728,6 +794,7 @@ def emit_rust(grid: list[str], g: dict[str, object]) -> str:
     gates = gate_boxes(grid, g["TILE"], g["N_TIERS"])
     spawn = lobby_spawn_extent(g)
     lobby = lobby_band(grid, g["TILE"], gates)
+    secret = secret_room(grid, g["TILE"], lobby)
     ptop, pbot = pit["PIT_ROWS"]
     first_gate_row = min(gate_rows(gates))
     gate_rows_span = f"{first_gate_row}..{max(gate_rows(gates))}"
@@ -954,6 +1021,23 @@ pub const LOBBY_SPAWN_Y: i16 = {spawn["LOBBY_SPAWN_Y"]};
 pub const LOBBY_TOP: i16 = {lobby["LOBBY_TOP"]}; // tile row {lobby["LOBBY_ROWS"][0]}
 pub const LOBBY_BOT: i16 = {lobby["LOBBY_BOT"]}; // tile row {lobby["LOBBY_ROWS"][1]}, last unit
 
+/// The secret room: a THIRD zone, `state::ZONE_SECRET`, laid over the lobby floor (tiles
+/// ({secret["ROOM"]["TILES"][0]}, {secret["ROOM"]["TILES"][1]}) .. ({secret["ROOM"]["TILES"][0] + secret["ROOM"]["TILES"][2] - 1}, {secret["ROOM"]["TILES"][1] + secret["ROOM"]["TILES"][3] - 1})), so the grid is unchanged and a lobby seat and a
+/// secret seat may share a tile -- the zone keeps them apart on screen. `player::zone_box`
+/// and `player::standable` hold a secret seat inside this block; `player::use_door` flips a
+/// `ZONE_LOBBY` seat standing in [`SECRET_DOOR`] to [`SECRET_ENTRY`] in `ZONE_SECRET`, and a
+/// `ZONE_SECRET` seat standing in [`SECRET_EXIT`] back to [`SECRET_RETURN`] in `ZONE_LOBBY`.
+/// Re-proved below on every `cargo check`: floor inside the lobby band, wall west of every
+/// door tile, the exit on the room's east column, the entry an exit tile.
+pub const SECRET_ROOM: Gate = Gate {{ min_x: {secret["ROOM"]["min_x"]}, max_x: {secret["ROOM"]["max_x"]}, min_y: {secret["ROOM"]["min_y"]}, max_y: {secret["ROOM"]["max_y"]} }};
+/// The lobby tiles a seat pushes WEST from: the painted arch in the lobby's west wall.
+pub const SECRET_DOOR: Gate = Gate {{ min_x: {secret["DOOR"]["min_x"]}, max_x: {secret["DOOR"]["max_x"]}, min_y: {secret["DOOR"]["min_y"]}, max_y: {secret["DOOR"]["max_y"]} }};
+/// The room tiles a seat pushes EAST from: against the room's east wall, where its door is drawn.
+pub const SECRET_EXIT: Gate = Gate {{ min_x: {secret["EXIT"]["min_x"]}, max_x: {secret["EXIT"]["max_x"]}, min_y: {secret["EXIT"]["min_y"]}, max_y: {secret["EXIT"]["max_y"]} }};
+/// Where `use_door` puts a seat coming in, and where it puts one going out.
+pub const SECRET_ENTRY: (i16, i16) = ({secret["ENTRY"][0]}, {secret["ENTRY"][1]}); // tile ({secret["ENTRY"][2][0]}, {secret["ENTRY"][2][1]})
+pub const SECRET_RETURN: (i16, i16) = ({secret["RETURN"][0]}, {secret["RETURN"][1]}); // tile ({secret["RETURN"][2][0]}, {secret["RETURN"][2][1]})
+
 /// Every entrance stands on floor in the table above.
 ///
 /// The generator proves the same thing plus reachability, but only when someone runs it.
@@ -1078,6 +1162,39 @@ const _: () = {{
         "an outermost lobby spawn stands in a wall -- redraw assets/map/arena.json and \\
          re-run tools/gen_map.py",
     );
+
+    // The secret room, a third zone over the lobby floor. Every fact `use_door` and the
+    // movement rule lean on, re-proved against the bitboard that shipped: the room is floor
+    // inside the lobby band, every door tile has wall to its west (the refusal the client
+    // knocks with), the exit is the room's east column, the entry is an exit tile and the
+    // return a door tile.
+    assert!(
+        SECRET_ROOM.min_y >= LOBBY_TOP && SECRET_ROOM.max_y <= LOBBY_BOT,
+        "the secret room is off the lobby floor band -- re-run tools/gen_map.py",
+    );
+    let mut ty = SECRET_ROOM.min_y / TILE;
+    while ty <= SECRET_ROOM.max_y / TILE {{
+        let mut tx = SECRET_ROOM.min_x / TILE;
+        while tx <= SECRET_ROOM.max_x / TILE {{
+            assert!(WALLS[ty as usize] & (1u64 << tx) == 0, "a secret room tile is wall");
+            tx += 1;
+        }}
+        ty += 1;
+    }}
+    let mut ty = SECRET_DOOR.min_y / TILE;
+    while ty <= SECRET_DOOR.max_y / TILE {{
+        assert!(WALLS[ty as usize] & (1u64 << (SECRET_DOOR.min_x / TILE)) == 0, "a secret door tile is wall");
+        assert!(
+            WALLS[ty as usize] & (1u64 << (SECRET_DOOR.min_x / TILE - 1)) != 0,
+            "no wall west of the secret door -- a step there would be taken, not refused",
+        );
+        ty += 1;
+    }}
+    assert!(SECRET_ROOM.contains(SECRET_EXIT.min_x, SECRET_EXIT.min_y) && SECRET_ROOM.contains(SECRET_EXIT.max_x, SECRET_EXIT.max_y));
+    assert!(SECRET_EXIT.max_x == SECRET_ROOM.max_x, "the secret exit is not the room's east column");
+    assert!(SECRET_EXIT.contains(SECRET_ENTRY.0, SECRET_ENTRY.1), "the secret entry is not an exit tile");
+    assert!(SECRET_DOOR.contains(SECRET_RETURN.0, SECRET_RETURN.1), "the secret return is not a door tile");
+    assert!(!SECRET_ROOM.contains(SECRET_DOOR.min_x, SECRET_DOOR.min_y), "the secret door is inside the room");
 }};
 
 #[cfg(test)]
@@ -1257,6 +1374,7 @@ def emit_ts(grid: list[str], g: dict[str, object]) -> str:
     gates = gate_boxes(grid, g["TILE"], g["N_TIERS"])
     spawn = lobby_spawn_extent(g)
     lobby = lobby_band(grid, g["TILE"], gates)
+    secret = secret_room(grid, g["TILE"], lobby)
     ptop, pbot = pit["PIT_ROWS"]
     gate_rows_span = f"{min(gate_rows(gates))}..{max(gate_rows(gates))}"
     gate_body = "\n".join(
@@ -1378,6 +1496,30 @@ export const LOBBY_SPAWN_Y = {spawn["LOBBY_SPAWN_Y"]};
  */
 export const LOBBY_TOP = {lobby["LOBBY_TOP"]};
 export const LOBBY_BOT = {lobby["LOBBY_BOT"]};
+
+/**
+ * The secret room: a THIRD zone, `ZONE_SECRET` (layout.ts), laid over the lobby floor
+ * (tiles ({secret["ROOM"]["TILES"][0]}, {secret["ROOM"]["TILES"][1]}) .. ({secret["ROOM"]["TILES"][0] + secret["ROOM"]["TILES"][2] - 1}, {secret["ROOM"]["TILES"][1] + secret["ROOM"]["TILES"][3] - 1})), so the grid is unchanged and a lobby seat and a secret seat
+ * may share a tile. `map::SECRET_ROOM` on the chain, byte for byte: `mayMoveTo` and
+ * `standable` hold a secret seat inside it, and `use_door` flips a lobby seat standing in
+ * {{@link SECRET_DOOR}} to {{@link SECRET_ENTRY}}, and a secret seat standing in
+ * {{@link SECRET_EXIT}} back to {{@link SECRET_RETURN}}. The renderer paints the chamber
+ * onto exactly this block (`secret.gen.ts`), so a seat inside it is drawn where the chain
+ * has it, with no offset anywhere.
+ */
+export const SECRET_ROOM: Gate = {{ minX: {secret["ROOM"]["min_x"]}, maxX: {secret["ROOM"]["max_x"]}, minY: {secret["ROOM"]["min_y"]}, maxY: {secret["ROOM"]["max_y"]} }};
+/** The lobby tiles a seat pushes WEST from: the painted arch in the lobby's west wall. */
+export const SECRET_DOOR: Gate = {{ minX: {secret["DOOR"]["min_x"]}, maxX: {secret["DOOR"]["max_x"]}, minY: {secret["DOOR"]["min_y"]}, maxY: {secret["DOOR"]["max_y"]} }};
+/** The room tiles a seat pushes EAST from: against the room's east wall, where its door is drawn. */
+export const SECRET_EXIT: Gate = {{ minX: {secret["EXIT"]["min_x"]}, maxX: {secret["EXIT"]["max_x"]}, minY: {secret["EXIT"]["min_y"]}, maxY: {secret["EXIT"]["max_y"]} }};
+/** Where `use_door` puts a seat coming in, and where it puts one going out. */
+export const SECRET_ENTRY: readonly [number, number] = [{secret["ENTRY"][0]}, {secret["ENTRY"][1]}]; // tile ({secret["ENTRY"][2][0]}, {secret["ENTRY"][2][1]})
+export const SECRET_RETURN: readonly [number, number] = [{secret["RETURN"][0]}, {secret["RETURN"][1]}]; // tile ({secret["RETURN"][2][0]}, {secret["RETURN"][2][1]})
+
+/** Is this arena-space point inside the block? `map::Gate::contains`, byte for byte. */
+export function inBlock(g: Gate, x: number, y: number): boolean {{
+  return x >= g.minX && x <= g.maxX && y >= g.minY && y <= g.maxY;
+}}
 
 /**
  * Which gate this arena-space point stands in, as its tier, or `null` off every gate --

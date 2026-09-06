@@ -76,6 +76,7 @@ const IX_SHOOT = 7;
 const IX_SETTLE = 9;
 const IX_WRITE_LEADERBOARD = 10;
 const IX_LEAVE_SEAT = 16;
+const IX_USE_DOOR = 17;
 const IX_COMMIT = 11;
 const IX_COMMIT_AND_UNDELEGATE = 12;
 const IX_REQUEST_ROLL = 13;
@@ -565,6 +566,35 @@ export function enterGate(p: {
     programAddress: p.programId,
     accounts: [
       { address: p.arena, role: AccountRole.WRITABLE }, // 0 arena
+      { address: p.players, role: AccountRole.WRITABLE }, // 1 players
+      { address: p.session, role: AccountRole.READONLY_SIGNER }, // 2 session key
+    ],
+    data,
+  };
+}
+
+/**
+ * Tag 17 — through the secret door, either way. ER, session-signed.
+ *
+ * Args (1 B): seat u8 @0. A lobby seat standing in `SECRET_DOOR` goes to `SECRET_ENTRY` in
+ * `ZONE_SECRET`; a secret seat standing in `SECRET_EXIT` comes back to `SECRET_RETURN`.
+ * Anywhere else is `NotOnGate`, retryable. Rate limited on the move clock exactly as a
+ * step is, so the client sends it once from the edge of a refused step, not once per pump.
+ * `Arena` is read-only, as for `movePlayer`.
+ */
+export function useDoor(p: {
+  programId: Address;
+  arena: Address;
+  players: Address;
+  session: Address;
+  seat: number;
+}): HeartrotInstruction {
+  const { data } = alloc(IX_USE_DOOR, 1);
+  data[1] = seatIndex(p.seat);
+  return {
+    programAddress: p.programId,
+    accounts: [
+      { address: p.arena, role: AccountRole.READONLY }, // 0 arena
       { address: p.players, role: AccountRole.WRITABLE }, // 1 players
       { address: p.session, role: AccountRole.READONLY_SIGNER }, // 2 session key
     ],

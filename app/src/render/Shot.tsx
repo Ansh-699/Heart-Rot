@@ -82,6 +82,7 @@ import {
   VENT_OPEN,
   ZONE_ARENA,
   ZONE_LOBBY,
+  ZONE_SECRET,
   aimSelfCheck,
   chargedDamage,
   classOf,
@@ -461,14 +462,17 @@ export function Shot({
    * would otherwise be drawn straight across the pit and the allies standing in it.
    */
   const inRoom = (seat: number): boolean => {
+    const local = localSeat === undefined ? undefined : players.slots[localSeat]?.zone;
+    // Room A has two sides of one wall — the waiting area and the secret room — and the
+    // local seat's zone says which side is on screen.
     const shown =
       room !== undefined
         ? room === 'arena'
           ? ZONE_ARENA
-          : ZONE_LOBBY
-        : localSeat === undefined
-          ? undefined
-          : players.slots[localSeat]?.zone;
+          : local === ZONE_SECRET
+            ? ZONE_SECRET
+            : ZONE_LOBBY
+        : local;
     const there = players.slots[seat]?.zone;
     return shown === undefined || there === undefined || there === shown;
   };

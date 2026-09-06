@@ -77,6 +77,7 @@
 //! | 13 | `RequestRoll` | `roll::request_roll` | ER | 1 B | 8 | `slots[seat].session_pubkey` |
 //! | 14 | `ConsumeRoll` | `roll::consume_roll` | ER | 34 B | 2 | scoped VRF identity PDA (read-only) |
 //! | 15 | `NextIncarnation` | `init::next_incarnation` | base | 0 B | 5 | `init::TREASURY` |
+//! | 17 | `UseDoor` | `player::use_door` | ER | 1 B | 3 | `slots[seat].session_pubkey` |
 //!
 //! Tags 11 and 12 are operator-only and have no client builder. Tag 14 has no client
 //! builder either, for a different reason: the VRF program builds it. One further
@@ -464,6 +465,21 @@
 //! There is no `roll_verified` flag anywhere. All-zero `next_affix_seed` is the sentinel
 //! *and* the verification: the only writer of those bytes is tag 14, which the scoped VRF
 //! identity signs, so "non-zero" already means "a proof was verified on chain".
+//!
+//! # Tag 17 — `UseDoor`, ER
+//!
+//! Args, 1 byte exactly: `seat` u8 at `[0]`. The secret door, either way: a `ZONE_LOBBY` seat
+//! standing in `map::SECRET_DOOR` goes to `map::SECRET_ENTRY` in `ZONE_SECRET`; a `ZONE_SECRET`
+//! seat standing in `map::SECRET_EXIT` comes back to `map::SECRET_RETURN`. Anywhere else is
+//! `NotOnGate`; a seat in the pit is `WrongZone`. Rate limited on `last_move_tick` exactly as
+//! `Move` is -- the client sends it from the edge of a refused step, and a held key pumps
+//! that edge every slot.
+//!
+//! | # | Account | Flags | |
+//! |---|---|---|---|
+//! | 0 | arena | `r` | read-only, as for `Move` |
+//! | 1 | players | `w` | |
+//! | 2 | session key | `s` | must equal `slots[seat].session_pubkey` |
 //!
 //! # Pre-tag route
 //!

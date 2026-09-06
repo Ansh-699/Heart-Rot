@@ -463,9 +463,13 @@ const _: () = {
     assert!(slam_damage(MAX_SEATS as u8, TIER_HARD) == 135 && bullet_damage(MAX_SEATS as u8, TIER_HARD) == 24);
 };
 
-/// `PlayerSlot.zone`.
+/// `PlayerSlot.zone`. `ZONE_SECRET` is the chamber behind the lobby's west door
+/// (`map::SECRET_ROOM`): a waiting seat that is not in the waiting area, kept out of the raid
+/// by every `== ZONE_ARENA` test and out of the lobby's practice by `shoot::practice`'s
+/// `!= ZONE_LOBBY`. `player::use_door` is its only writer, both ways.
 pub const ZONE_LOBBY: u8 = 0;
 pub const ZONE_ARENA: u8 = 1;
+pub const ZONE_SECRET: u8 = 2;
 
 /// `Boss.target_seat` when no player is alive in the arena. 0xFF is outside
 /// `0..MAX_SEATS`, so an unchecked index with it would be caught by bounds checks
@@ -1429,7 +1433,8 @@ const _: () = {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct PlayerSlot {
-    /// `ZONE_LOBBY` or `ZONE_ARENA`. The gate tile flips it.
+    /// `ZONE_LOBBY`, `ZONE_ARENA` or `ZONE_SECRET`. The gate tile flips the first to the
+    /// second, once; the secret door flips between the first and the third.
     pub zone: u8,
     /// Bits 0..2: the octant this seat last stepped or fired along, 0 N … 7 NW, y down —
     /// the sprite's body direction (the arrow is drawn from `class_aim`, at 1.90° rather

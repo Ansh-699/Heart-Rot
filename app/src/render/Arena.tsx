@@ -101,6 +101,7 @@ import {
   TICK_MS,
   ZONE_ARENA,
   ZONE_LOBBY,
+  ZONE_SECRET,
   gateAt,
   isFurious,
   onDais,
@@ -124,8 +125,8 @@ import { Shot } from './Shot';
 import { Spawn } from './Spawn';
 import { WAITING } from './WaitingRoom';
 import { useViewport, type Room } from './viewport';
-import { SECRET_DOOR, SECRET_LIGHTS } from './secret.gen';
-import { SecretRoom, atSecretDoor } from './SecretRoom';
+import { SECRET_LIGHTS } from './secret.gen';
+import { SecretRoom, archAt } from './SecretRoom';
 import { ARENA_UNITS, PAL, SELF_SNAP, VISIBLE_PROJECTILES } from './sprites';
 
 /**
@@ -385,9 +386,13 @@ export const roomOf = (zone: number): Room => (zone === ZONE_ARENA ? 'arena' : '
  * the pit no longer sees allies still in the lobby, and vice versa. They are in a different
  * room behind a shut gate, and the HUD roster already reports the count.
  */
-export function seatShown(slot: PlayerSlot, room: Room, holdSeat?: number): boolean {
+export function seatShown(slot: PlayerSlot, room: Room, holdSeat?: number, side: number = ZONE_LOBBY): boolean {
   if (holdSeat !== undefined && slot.seat === holdSeat) return true;
-  return roomOf(slot.zone) === room;
+  if (roomOf(slot.zone) !== room) return false;
+  // Room A has two sides of one wall: the waiting area, and the secret room behind its west
+  // door. `side` is the local seat's zone there, and a seat is drawn on that side only —
+  // never through the wall, in either direction.
+  return room !== 'lobby' || (slot.zone === ZONE_SECRET) === (side === ZONE_SECRET);
 }
 
 /**
@@ -397,8 +402,8 @@ export function seatShown(slot: PlayerSlot, room: Room, holdSeat?: number): bool
  * so two knights in the same room keep the depth order they had, and an empty seat is
  * dropped there rather than here.
  */
-export function roomSeats(slots: readonly PlayerSlot[], room: Room, holdSeat?: number): PlayerSlot[] {
-  return knightDrawOrder(slots).filter((s) => seatShown(s, room, holdSeat));
+export function roomSeats(slots: readonly PlayerSlot[], room: Room, holdSeat?: number, side: number = ZONE_LOBBY): PlayerSlot[] {
+  return knightDrawOrder(slots).filter((s) => seatShown(s, room, holdSeat, side));
 }
 
 /**
@@ -631,8 +636,6 @@ export interface ArenaProps {
   tickMs?: number;
   /** The verdict's "Raid again": the tier whose gate the lobby lights until it is walked. */
   wantTier?: number | null;
-  /** The secret room is open: drawn over room A. `store.secret`, client-only (`SecretRoom.tsx`). */
-  secret?: boolean;
   /**
    * Which room is on screen. `Passage` owns it, because during the 460 ms cover it and the
    * seat's own `zone` disagree ON PURPOSE — the swap hangs off `cover.finished` so the
@@ -692,7 +695,6 @@ export function Arena({
   localSeat,
   predictor,
   wantTier = null,
-  secret = false,
   tickMs = TICK_MS,
   room,
   hold = false,
@@ -1005,9 +1007,13 @@ export function Arena({
   // The local seat is kept in the room on screen while the passage is crossing — see
   // `seatShown`. That, and not the `hold` prop, is what makes the documented hold real.
   const holdSeat = holding ? localSeat : undefined;
+  // Which side of room A's west wall is on screen: the secret room while the local seat is
+  // in it, the waiting area otherwise (and for a spectator).
+  const side = localSlot?.occupied === true && localSlot.zone === ZONE_SECRET ? ZONE_SECRET : ZONE_LOBBY;
+  const inRoom = shown === 'lobby' && side === ZONE_SECRET;
   const drawOrder = useMemo(
-    () => roomSeats(players.slots, shown, holdSeat),
-    [players, shown, holdSeat],
+    () => roomSeats(players.slots, shown, holdSeat, side),
+    [players, shown, holdSeat, side],
   );
 
   // Which pool slots get a node, decided once per render rather than in the JSX: `Shot`
@@ -1112,6 +1118,11 @@ export function Arena({
               and so does the frame budget: two rooms is two full scene rasters. */}
           {shown === 'lobby' ? WAITING : BOSS_ARENA}
 
+          {/* The secret room, painted over the waiting area (its veil hides the hall) and
+              UNDER every mover: the seats in it are drawn by the layer below at their chain
+              positions, on the painting's floor, which is the chain's block. */}
+          {inRoom && <SecretRoom />}
+
           {/* The muster, on the raid's gate itself, for whoever is still in the lobby: the
               raider who walked through started a twenty-second clock the arena account
               carries, and the one still here needs to see it where the decision is made —
@@ -1119,7 +1130,7 @@ export function Arena({
               digits, not in a corner. The static room's exclamation marks stand down while
               this stands (`.is-mustering .gate-mark`). One `<text>` per tick, ten times a
               second, on a node the static layer does not own. */}
-          {shown === 'lobby' && arena.phase === PHASE_MUSTERING && raidGate !== undefined && (
+          {shown === 'lobby' && !inRoom && arena.phase === PHASE_MUSTERING && raidGate !== undefined && (
             <g
               className="gate-clock"
               aria-hidden="true"
@@ -1142,7 +1153,7 @@ export function Arena({
               path stranded players. */}
           {/* The gate "Raid again" asked for, pulsing until walked through. Its own node:
               the glow rects below are the frame loop's, and one writer per node holds. */}
-          {shown === 'lobby' && wantTier !== null && GATES[wantTier] !== undefined && (
+          {shown === 'lobby' && !inRoom && wantTier !== null && GATES[wantTier] !== undefined && (
             <rect
               className="gate-wanted"
               aria-hidden="true"
@@ -1156,22 +1167,30 @@ export function Arena({
               style={{ pointerEvents: 'none' }}
             />
           )}
-          {/* The west door answers a raider standing at its threshold — the one hint the
-              secret room gives. The wanted gate's pulse, in the torch's own light. */}
-          {shown === 'lobby' && !secret && localSlot?.occupied === true && atSecretDoor(localSlot.x, localSlot.y) && (
-            <rect
-              className="gate-wanted"
-              aria-hidden="true"
-              x={SECRET_DOOR.x}
-              y={SECRET_DOOR.y}
-              width={SECRET_DOOR.w}
-              height={SECRET_DOOR.h}
-              fill={SECRET_LIGHTS[0]!.color}
-              stroke={SECRET_LIGHTS[0]!.color}
-              strokeWidth={3}
-              style={{ pointerEvents: 'none' }}
-            />
-          )}
+          {/* The secret door answers a seat standing at either of its thresholds — the one
+              hint the room gives, from both sides. The wanted gate's pulse, in the torch's
+              own light, on the painted arch about to be pushed. */}
+          {shown === 'lobby' &&
+            localSlot?.occupied === true &&
+            (() => {
+              const arch = archAt(localSlot.zone, localSlot.x, localSlot.y);
+              return (
+                arch !== null && (
+                  <rect
+                    className="gate-wanted"
+                    aria-hidden="true"
+                    x={arch.x}
+                    y={arch.y}
+                    width={arch.w}
+                    height={arch.h}
+                    fill={SECRET_LIGHTS[0]!.color}
+                    stroke={SECRET_LIGHTS[0]!.color}
+                    strokeWidth={3}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                )
+              );
+            })()}
 
           {shown === 'lobby' &&
             GATES.map((g, tier) => (
@@ -1404,9 +1423,6 @@ export function Arena({
               <g className="room-light">{RAIN}</g>
             </g>
           )}
-
-          {/* The secret room: over room A and everyone in it, under the passage veil. */}
-          {shown === 'lobby' && secret && <SecretRoom skinId={localSlot?.skinId ?? 0} />}
 
           {/* Row 16. After `Spawn`, so the veil covers the flare when both fire. */}
           {veil}

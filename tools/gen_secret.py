@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
-"""The secret room -- a small chamber behind the lobby's west door, hung with the banners of
-the two things the game runs on -- and the table `SecretRoom.tsx` places it with.
+"""The secret room -- the chamber behind the lobby's west door, hung with the banners of
+the two things the game runs on -- painted onto exactly the tiles the chain calls it.
 
     python3 tools/gen_secret.py [--check]
 
 The chamber is cut from the LOBBY PAINTING itself (assets/rooms/lobby.png): a plain stretch
-of its west wall for the walls, a clean patch of its cobbles for the floor, the south wall's
-top course for the front wall, its standing torch twice, and its east-wall door as the way
-out -- so the room is in the painting's own hand, not a second style pasted next to it. The
-two banners and the marks on them are drawn here at `ART` px per art pixel: the marks are the
-official SVGs rasterised once to assets/sprites/{solana,magicblock}-mark.png, reduced to
+of its west wall for the walls, the calmest patch of its cobbles for the floor, the south
+wall's top course for the front wall, its standing torch twice, and its east-wall door as the
+way out -- so the room is in the painting's own hand, not a second style pasted next to it.
+The two banners and the marks on them are drawn here at `ART` px per art pixel: the marks are
+the official SVGs rasterised once to assets/sprites/{solana,magicblock}-mark.png, reduced to
 `MARK_PX` art pixels, alpha-cut, colour-quantised and outlined, the way every sprite in the
 game is. This tool is the only writer of app/src/render/rooms/secret.png and
 app/src/render/secret.gen.ts; `--check` diffs both against disk.
 
-World placement reuses the lobby's fit, parsed out of rooms.gen.ts's `LOBBY_IMG`, so the
-chamber is drawn at the hall's own units-per-pixel, and the door threshold
-(`SECRET_THRESHOLD`) is the door's painted pixels pushed through that same transform onto the
-grid the chain walks -- checked here against the grid in assets/map/arena.json.
+WHERE IT GOES is not this tool's decision. The room is a zone on the chain (`ZONE_SECRET`),
+and its floor is `secret.room_tiles` in assets/map/arena.json, which gen_map.py compiles to
+`map::SECRET_ROOM` and `map.ts`'s `SECRET_ROOM`. This tool sizes the painting's floor to
+EXACTLY that block, in world units, at the lobby's own units-per-pixel (parsed out of
+rooms.gen.ts's `LOBBY_IMG`), so a seat the chain puts inside the room is drawn on the floor
+with no offset anywhere. Its door is drawn over `secret.exit_tiles`. And the lobby door the
+seat pushes -- `secret.door_tiles` -- is re-derived here from the painted arch's pixels
+through the same transform and must agree, or the tool refuses: the arch on screen and the
+tiles the chain answers the knock from are one fact.
 """
 from __future__ import annotations
 
@@ -50,23 +55,21 @@ FRONT_BAND = (150, 950, 1550, 1010)  # the south wall's top course; the calmest 
 FRONT_SIZE = (360, 60)
 TORCH = (116, 605, 152, 705)  # the standing torch beside the west door
 DOOR_E = (1575, 590, 1675, 725)  # the east wall's door, as painted: the way back out
+DOOR_E_ARCH = (12, 10, 88, 130)  # the arch inside that crop, for the glow on the exit
 DOOR_W = (26, 600, 118, 720)  # the west door's arch: the threshold and the glow are measured off it
 BANNER_REF = (22, 775, 72, 870)  # the painted banner whose cloth colour the new ones borrow
 
-# The chamber, in the same pixels.
-W, H = 720, 460
+# The chamber's walls, in the same pixels. The FLOOR is sized from the chain's tiles.
 SIDE = WALL[2] - WALL[0]  # wall thickness: the painting's own
 BACK = 120
 FRONT_H = FRONT_SIZE[1]
 ART = 2  # px per art pixel on the banners and marks
 BANNER_W, BANNER_H = 50, 90  # art px
 BANNER_TOP = 10
-BANNER_X = (200, 420)  # left edges, px: centred on the floor at ±110 of its middle
+BANNER_GAP = 110  # each banner's centre from the floor's middle, px
 MARK_PX = 34
-TORCH_X = (132, 552)
+TORCH_INSET = 40  # the torches' distance in from the side walls
 TORCH_Y = BACK - 25
-DOOR_E_AT = (W - (DOOR_E[2] - DOOR_E[0]), BACK + 20)
-STAND = (W - SIDE - 24, 300)  # the knight, just inside the door
 LIGHT_R_PX = 95  # the lobby's torch reach, 57 units, in these pixels
 
 OUTLINE = (0x0F, 0x0D, 0x12)  # `PAL.outline`
@@ -223,9 +226,21 @@ def build() -> tuple[bytes, str]:
     if abs(s - fh / lobby.height) > 1e-3:
         raise SystemExit("gen_secret: the lobby fit is not uniform; rooms.gen.ts is stale")
     spec = json.loads(MAP.read_text())
-    tile_px, tiles = spec["tile_size"], spec["map_tiles"]
-    units = tile_px * tiles
-    grid = spec["grid"]
+    tile_px = spec["tile_size"]
+    secret = spec["secret"]
+    rc, rr, rcols, rrows = secret["room_tiles"]
+    ec, er, ecols, erows = secret["exit_tiles"]
+
+    # The floor, in world units, is the chain's block; in pixels it is that at the lobby's
+    # fit, rounded, and the per-axis scale is then whatever makes the two edges meet exactly.
+    room_x, room_y, room_w, room_h = rc * tile_px, rr * tile_px, rcols * tile_px, rrows * tile_px
+    floor_w, floor_h = round(room_w / s), round(room_h / s)
+    sx, sy = room_w / floor_w, room_h / floor_h
+    W, H = floor_w + 2 * SIDE, floor_h + BACK + FRONT_H
+    img_x, img_y = room_x - SIDE * sx, room_y - BACK * sy
+
+    def to_world(px: float, py: float) -> tuple[float, float]:
+        return img_x + px * sx, img_y + py * sy
 
     floor = crop(lobby, calmest(lobby, FLOOR_BAND, FLOOR_SIZE))
     front = crop(lobby, calmest(lobby, FRONT_BAND, FRONT_SIZE))
@@ -235,53 +250,59 @@ def build() -> tuple[bytes, str]:
     tile(room, crop(lobby, WALL), (0, 0, SIDE, H))
     tile(room, crop(lobby, WALL), (W - SIDE, 0, W, H))
     tile(room, front, (0, H - FRONT_H, W, H))
-    room.paste(crop(lobby, DOOR_E), DOOR_E_AT)
+
+    # The way out: the painted east door, on the east wall, its arch over the exit tiles.
+    if ec + ecols != rc + rcols:
+        raise SystemExit("gen_secret: exit_tiles are not the room's east column")
+    door_e = crop(lobby, DOOR_E)
+    exit_top_px = BACK + (er - rr) * tile_px / sy
+    exit_h_px = erows * tile_px / sy
+    door_at = (W - SIDE, round(exit_top_px + (exit_h_px - door_e.height) / 2))
+    room.paste(door_e, door_at)
+    ax0, ay0, ax1, ay1 = DOOR_E_ARCH
+    arch_room = (*to_world(door_at[0] + ax0, door_at[1] + ay0), (ax1 - ax0) * sx, (ay1 - ay0) * sy)
+
     torch = crop(lobby, TORCH)
     soft = feathered(torch)
-    for x in TORCH_X:
+    torch_x = (SIDE + TORCH_INSET, W - SIDE - TORCH_INSET - torch.width)
+    for x in torch_x:
         room.paste(soft, (x, TORCH_Y), soft)
 
     ref = np.asarray(crop(lobby, BANNER_REF))
     cloth = tuple(int(v) for v in np.median(ref[20:60, 12:38].reshape(-1, 3), axis=0))
+    mid = SIDE + floor_w / 2
     labels = []
-    for (key, text, path), bx in zip(MARKS, BANNER_X):
+    for (key, text, path), cx in zip(MARKS, (mid - BANNER_GAP, mid + BANNER_GAP)):
         colors = 5 if key == "solana" else 2
         b = banner(cloth, pixel_mark(path, colors))
+        bx = round(cx - BANNER_W * ART / 2)
         room.paste(b, (bx, BANNER_TOP), b)
-        labels.append((bx + BANNER_W * ART / 2, BANNER_TOP + BANNER_H * ART + 16, text))
+        labels.append((cx, BANNER_TOP + BANNER_H * ART + 16, text))
 
     # The torch's flame, read off the paint: its brightest pixel and that pixel's colour.
     t = np.asarray(torch).astype(int)
     lum = t[..., 0] * 3 + t[..., 1] * 4 + t[..., 2]
     ty, tx = np.unravel_index(int(lum.argmax()), lum.shape)
     flame = "#%02x%02x%02x" % tuple(int(v) for v in t[ty, tx])
+    lights = [dict(zip(("x", "y"), to_world(x + tx, TORCH_Y + ty))) | {"r": LIGHT_R_PX * s, "color": flame} for x in torch_x]
 
-    # World placement: centred in the lobby's view, at the lobby's own fit.
-    rw, rh = W * s, H * s
-    rx, ry = (units - rw) / 2, fy + (fh - rh) / 2
-
-    def to_world(px: float, py: float) -> tuple[float, float]:
-        return rx + px * s, ry + py * s
-
-    lights = [dict(zip(("x", "y"), to_world(x + tx, TORCH_Y + ty))) | {"r": LIGHT_R_PX * s, "color": flame} for x in TORCH_X]
-    stand = to_world(*STAND)
-
-    # The west door in the LOBBY's world, and the tiles a raider pushes west from: the first
-    # floor column right of the arch, the rows whose centre lies within it.
+    # The lobby's west door, in the LOBBY's world: the painted arch (for the glow), and the
+    # tiles a seat pushes west from -- the first floor column right of the arch, the rows
+    # whose centre lies within it -- which MUST be what arena.json calls the door.
     dx0, dy0 = fx + DOOR_W[0] * s, fy + DOOR_W[1] * s
     dx1, dy1 = fx + DOOR_W[2] * s, fy + DOOR_W[3] * s
     col = math.ceil(dx1 / tile_px)
-    rows = [r for r in range(tiles) if dy0 <= r * tile_px + tile_px / 2 < dy1]
-    if len(rows) < 3:
-        raise SystemExit(f"gen_secret: the door spans only rows {rows}; re-measure DOOR_W")
-    for r in rows:
-        if grid[r][col] == "#" or grid[r][col - 1] != "#":
-            raise SystemExit(f"gen_secret: tile ({col}, {r}) is not floor beside wall; the door has moved off the grid")
-    threshold = (col * tile_px, rows[0] * tile_px, tile_px, len(rows) * tile_px)
+    rows = [r for r in range(spec["map_tiles"]) if dy0 <= r * tile_px + tile_px / 2 < dy1]
+    derived = [col, rows[0], 1, len(rows)] if rows else None
+    if derived != secret["door_tiles"]:
+        raise SystemExit(
+            f"gen_secret: the painted arch {DOOR_W} lands on tiles {derived}, but arena.json's "
+            f"secret.door_tiles is {secret['door_tiles']} -- re-measure one of them"
+        )
 
+    buf = io.BytesIO()
     # Truecolour, not a 256-colour palette: a median cut over this much brown and grey has no
     # entries left for the marks, and the Solana bars came out one flat teal.
-    buf = io.BytesIO()
     room.save(buf, "PNG", optimize=True)
 
     def f4(v: float) -> str:
@@ -293,16 +314,21 @@ def build() -> tuple[bytes, str]:
     lights_ts = ",\n".join(f"  {{ x: {f4(l['x'])}, y: {f4(l['y'])}, r: {f4(l['r'])}, color: '{l['color']}' }}" for l in lights)
     labels_ts = ",\n".join(f"  {{ x: {f4(to_world(x, y)[0])}, y: {f4(to_world(x, y)[1])}, text: '{text}' }}" for x, y, text in labels)
     caption = to_world(W / 2, H - FRONT_H - 14)
-    src = f"""// @generated from assets/rooms/lobby.png and assets/sprites/*-mark.png by `python3 tools/gen_secret.py` -- DO NOT EDIT.
+    src = f"""// @generated from assets/map/arena.json `secret`, assets/rooms/lobby.png and assets/sprites/*-mark.png
+// by `python3 tools/gen_secret.py` -- DO NOT EDIT.
 //
-// The chamber behind the lobby's west door. Every number here is in WORLD UNITS at the
-// lobby's own fit (`LOBBY_IMG`), so the room, its lights and the door threshold move with the
-// painting. Edit the tool, then re-run the command above.
+// The chamber behind the lobby's west door, painted onto the chain's own tiles. Every number
+// here is in WORLD UNITS: the painting's floor is exactly `SECRET_ROOM` (map.ts), so a seat
+// the chain puts in `ZONE_SECRET` is drawn on the floor with no offset anywhere. Edit the
+// tool or arena.json's `secret` block, then re-run the command above.
 import secretPng from './rooms/secret.png?no-inline';
 import type {{ ImgRect, RoomLight, WorldRect }} from './rooms.gen';
 
-/** The chamber ({W}x{H} px), centred in the lobby's view. Mount with `imageRendering: 'auto'`. */
-export const SECRET_IMG: ImgRect = {{ src: secretPng, x: {f4(rx)}, y: {f4(ry)}, w: {f4(rw)}, h: {f4(rh)} }};
+/** The chamber ({W}x{H} px), its floor on `SECRET_ROOM`. Mount with `imageRendering: 'auto'`. */
+export const SECRET_IMG: ImgRect = {{ src: secretPng, x: {f4(img_x)}, y: {f4(img_y)}, w: {f4(W * sx)}, h: {f4(H * sy)} }};
+
+/** The painted floor, which `SecretRoom.tsx` holds equal to `SECRET_ROOM` at boot. */
+export const SECRET_FLOOR: WorldRect = {rect(room_x, room_y, room_w, room_h)};
 
 /** The two torches, for `roomGlow`. */
 export const SECRET_LIGHTS: readonly RoomLight[] = [
@@ -317,14 +343,11 @@ export const SECRET_LABELS: readonly {{ x: number; y: number; text: string }}[] 
 /** The one-line caption above the front wall: centre x, baseline y. */
 export const SECRET_CAPTION = {{ x: {f4(caption[0])}, y: {f4(caption[1])} }} as const;
 
-/** Where the local knight stands, just inside the door: the sprite's centre. */
-export const SECRET_STAND = {{ x: {f4(stand[0])}, y: {f4(stand[1])} }} as const;
+/** The lobby's west door, the painted arch: the glow when a seat stands in `SECRET_DOOR`. */
+export const SECRET_ARCH_LOBBY: WorldRect = {rect(dx0, dy0, dx1 - dx0, dy1 - dy0)};
 
-/** The lobby's west door, the painted arch, for the glow that answers a raider standing at it. */
-export const SECRET_DOOR: WorldRect = {rect(dx0, dy0, dx1 - dx0, dy1 - dy0)};
-
-/** The tiles a raider pushes WEST from to open the door: floor column {col}, rows {rows[0]}..{rows[-1]}. */
-export const SECRET_THRESHOLD: WorldRect = {rect(*threshold)};
+/** The room's east door, the painted arch: the glow when a seat stands in `SECRET_EXIT`. */
+export const SECRET_ARCH_ROOM: WorldRect = {rect(*arch_room)};
 """
     return buf.getvalue(), src
 
