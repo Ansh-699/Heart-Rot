@@ -911,8 +911,11 @@ h3 {
   .hr-hell-haze,
   .hr-hell-glow,
   .hr-hell-ring,
-  .hr-hell-flame,
-  .hr-hell-spark,
+  .hr-hell-halo,
+  .hr-hell-tongue,
+  .hr-hell-core,
+  .hr-hell-streak,
+  .hr-hell-ember,
   .room-light circle,
   .room-motes,
   .fury-wash.is-on {
@@ -1278,7 +1281,8 @@ h3 {
    where the lanes are); how far into the wind-up it is is the size of each ring's fill and
    the height of its pillar (seeked WAAPI transforms, on the chain's clock and no other);
    the landing is a WAAPI one-shot on pooled nodes. This file only makes the fire move
-   like fire: the ring pulses, the glow breathes, the flame gutters, the sparks rise. The
+   like fire: the ring pulses, the glow breathes, three tongues flicker on three clocks,
+   the core breathes, streaks shoot out of the foot and embers rise off it. The
    reduced-motion block above cancels every loop below and the lane is drawn lit and still.
    -------------------------------------------------------------------------- */
 
@@ -1301,30 +1305,82 @@ h3 {
   from { opacity: 0.82; }
   to { opacity: 1; }
 }
-/* The flame gutters about its own foot — the origin is the ring's centre, set per instance
-   in `Arena.tsx`, inside the seeked group that stands the pillar up, so the two compose. */
-.hr-hell-flame {
-  animation: hr-hell-gutter 0.62s ease-in-out infinite;
-  animation-delay: calc(var(--i, 0) * -0.17s);
+/* The geyser. Everything below is about the foot of the fire — the origin is the local
+   (0, 0) of a `<g>` translated to the ring's centre in `Arena.tsx`, inside the seeked group
+   that stands the pillar up, so the loops and the countdown compose. */
+.hr-hell-halo {
+  animation: hr-hell-breathe 0.5s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i, 0) * -0.19s);
 }
-@keyframes hr-hell-gutter {
-  0% { transform: scale(0.94, 0.9); opacity: 0.86; }
-  30% { transform: scale(1.05, 1.06); opacity: 1; }
-  55% { transform: scale(0.97, 0.95); opacity: 0.9; }
-  80% { transform: scale(1.03, 1.1); opacity: 1; }
-  100% { transform: scale(0.94, 0.9); opacity: 0.86; }
+/* Three tongues, three clocks: one shape on one clock reads as a sticker. Skew is the
+   wave; scale is the height; both about the foot. */
+.hr-hell-tongue {
+  transform-origin: 0 0;
+  animation: hr-hell-t0 0.72s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * -0.23s);
 }
-/* Sparks off the pillar. `translate`, not a `cy` write — one composited property, no layout. */
-.hr-hell-spark {
-  fill: #ffc24a;
-  animation: hr-hell-spark 1.4s linear infinite;
-  animation-delay: calc(var(--j, 0) * -0.35s + var(--i, 0) * -0.13s);
+.hr-hell-t1 {
+  animation-name: hr-hell-t1;
+  animation-duration: 0.53s;
 }
-@keyframes hr-hell-spark {
+.hr-hell-t2 {
+  animation-name: hr-hell-t2;
+  animation-duration: 0.41s;
+}
+@keyframes hr-hell-t0 {
+  0% { transform: skewX(-3deg) scale(0.96, 0.88); opacity: 0.9; }
+  28% { transform: skewX(3deg) scale(1.04, 1.06); opacity: 1; }
+  56% { transform: skewX(-2deg) scale(0.98, 0.94); opacity: 0.94; }
+  80% { transform: skewX(4deg) scale(1.02, 1.12); opacity: 1; }
+  100% { transform: skewX(-3deg) scale(0.96, 0.88); opacity: 0.9; }
+}
+@keyframes hr-hell-t1 {
+  0% { transform: translate(-7px, 0) skewX(4deg) scale(1, 0.84); opacity: 0.85; }
+  35% { transform: translate(-7px, 0) skewX(-4deg) scale(1.08, 1.14); opacity: 1; }
+  70% { transform: translate(-7px, 0) skewX(2deg) scale(0.94, 0.96); opacity: 0.9; }
+  100% { transform: translate(-7px, 0) skewX(4deg) scale(1, 0.84); opacity: 0.85; }
+}
+@keyframes hr-hell-t2 {
+  0% { transform: translate(9px, 0) skewX(-5deg) scale(0.9, 0.8); opacity: 0.8; }
+  40% { transform: translate(9px, 0) skewX(5deg) scale(1.1, 1.2); opacity: 1; }
+  100% { transform: translate(9px, 0) skewX(-5deg) scale(0.9, 0.8); opacity: 0.8; }
+}
+/* The white-hot core breathes fast and narrow. */
+.hr-hell-core {
+  transform-origin: 0 0;
+  animation: hr-hell-core 0.36s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i, 0) * -0.11s);
+}
+@keyframes hr-hell-core {
+  from { transform: scale(0.92, 0.94); opacity: 0.88; }
+  to { transform: scale(1.06, 1.05); opacity: 1; }
+}
+/* Streaks shoot up out of the foot and die at the tip: grown from the base, then gone.
+   Each lives in its own rotated `<g>`, so this transform is along the streak's own line. */
+.hr-hell-streak {
+  transform-origin: 0 0;
+  opacity: 0;
+  animation: hr-hell-streak 0.9s ease-out infinite;
+  animation-delay: calc(var(--j, 0) * -0.15s + var(--i, 0) * -0.07s);
+}
+@keyframes hr-hell-streak {
+  0% { transform: scale(1, 0.1); opacity: 0; }
+  10% { opacity: 1; }
+  55% { transform: scale(1, 1); opacity: 0.85; }
+  100% { transform: scale(0.6, 1.15); opacity: 0; }
+}
+/* Embers off the fire, rising and drifting out. `translate`, not a `cy` write. */
+.hr-hell-ember {
+  fill: #ffd66a;
+  opacity: 0;
+  animation: hr-hell-ember 1.5s linear infinite;
+  animation-delay: calc(var(--j, 0) * -0.19s + var(--i, 0) * -0.31s);
+}
+@keyframes hr-hell-ember {
   0% { translate: 0 0; opacity: 0; }
-  12% { opacity: 1; }
-  70% { opacity: 0.6; }
-  100% { translate: 9px -150px; opacity: 0; }
+  10% { opacity: 1; }
+  60% { opacity: 0.8; }
+  100% { translate: var(--dx, 0px) -190px; opacity: 0; }
 }
 
 /* --------------------------------------------------------------------------
