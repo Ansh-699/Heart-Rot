@@ -14,6 +14,7 @@ import App from '../../../app/src/App';
 import { StoreProvider, setAuthSource, useStore } from '../../../app/src/state/store';
 import { fireLocal } from '../../../app/src/render/Shot';
 import { chargeLocal } from '../../../app/src/render/Knight';
+import { attachControls } from '../../../app/src/input/controls';
 import {
   ARENA, BOSS, BOSS_SPAWN, BULLET, MUZZLES, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
   LAYOUT_VERSION, MAX_SEATS, N_PARTS, CLASS_MASK,
@@ -279,6 +280,19 @@ function Bridge() {
     // hold's edge, so the beam and the draw can be photographed without a chain.
     w.__fire = fireLocal;
     w.__charge = chargeLocal;
+    // touch-input: the real controls on the real stage with a lobby clock, every intent
+    // appended to `log` as [performance.now(), kind, value] so a harness can drive fingers
+    // through CDP and read what left. The app's own attach never happens here (its chain
+    // connect fails), so this is the one way to test input against the shipped listeners.
+    w.__attachControls = (log: unknown[][]) => attachControls({
+      surface: document.getElementById('stage')!,
+      clock: () => ({ phase: PHASE_LOBBY, tick: 0 }),
+      aim: () => [0, -127],
+      onMove: (dir) => log.push([performance.now(), 'move', dir]),
+      onTrigger: (_dx, _dy, tier) => log.push([performance.now(), 'trigger', tier]),
+      onShoot() {},
+      onCharge: (t) => log.push([performance.now(), 'charge', t]),
+    });
     w.__ready = true;
   }, [store]);
   return null;

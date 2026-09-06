@@ -16,7 +16,9 @@
  * step is a tile and a tile has eight neighbours. This module does not choose the pair: it
  * asks {@link ControlsConfig.aim} at the trigger, and `App.tsx` answers with
  * `@heartrot/client`'s `autoAim` off the predicted position — or the body's facing when
- * nothing is in reach. The pointer aims nothing any more; a pointer down is fire held.
+ * nothing is in reach. The pointer aims nothing any more; a pointer down is fire held —
+ * except a touch on the LEFT half of the surface, which is a virtual thumbstick: its
+ * travel from where it went down is the eight-way `dir` ({@link stickDirection}).
  *
  * **The hold is release-to-fire.** A press is one plain tap at 0 ms, exactly as before.
  * Fire kept down while standing still then accrues a tier — `CHARGE_MS` plus a send-latency
@@ -349,6 +351,19 @@ export function dirFromVector(dx: number, dy: number): number {
   return Math.round(Math.atan2(dx, -dy) / (Math.PI / 4)) & 7;
 }
 
+/** A thumb resting on the stick wobbles; travel inside this radius is standing still. */
+const STICK_DEAD_PX = 12;
+
+/**
+ * The virtual thumbstick's offset from where the thumb went down → eight-way `facing`, or
+ * `null` inside the dead zone. Screen vector, y down, the same sectors as {@link
+ * dirFromVector}, so a thumb and a key held together agree on north.
+ */
+export function stickDirection(dx: number, dy: number): number | null {
+  // ponytail: no hysteresis in stickDirection; add ±4° if the zigzag shows in playtests
+  return dx * dx + dy * dy < STICK_DEAD_PX * STICK_DEAD_PX ? null : dirFromVector(dx, dy);
+}
+
 /**
  * Inverse of `dirFromVector`: the aim vector of an eight-way facing, `AIM_MAX` long. The
  * fallback when auto-aim has nothing in reach: the shot goes along the body's own facing —
@@ -483,8 +498,17 @@ export interface ControlsConfig {
 /** Attaches every listener and the pump. The returned function removes all of them. */
 export function attachControls(cfg: ControlsConfig): () => void {
   const held = new Set<string>();
-  let pointerDown = false;
   let fireKeyDown = false;
+  // The pointer that is fire held, and the touch that is the thumbstick — by id, because a
+  // second finger's up must not release the first finger's hold. A touch on the LEFT half
+  // of the surface while no stick is down becomes the stick; every other pointer is fire,
+  // and a second fire pointer is ignored. Mouse and pen never reach the stick branch.
+  let fireId: number | null = null;
+  let stickId: number | null = null;
+  // Where the thumb went down: the stick's origin, and the sector is measured from it.
+  let stickX = 0;
+  let stickY = 0;
+  let stickDir: number | null = null;
 
   let lastMoveAt = Number.NEGATIVE_INFINITY;
   // Below any real tick by more than any class cooldown, so THIS record never gates the
@@ -508,9 +532,10 @@ export function attachControls(cfg: ControlsConfig): () => void {
   let queued: ShotTier | null = null;
   let queuedAt = 0;
 
-  const fireHeld = (): boolean => pointerDown || fireKeyDown;
+  const fireHeld = (): boolean => fireId !== null || fireKeyDown;
 
   function heldDirection(): number | null {
+    if (stickDir !== null) return stickDir;
     let dx = 0;
     let dy = 0;
     for (const code of held) {
@@ -695,23 +720,54 @@ export function attachControls(cfg: ControlsConfig): () => void {
   const onBlur = (): void => {
     held.clear();
     fireKeyDown = false;
-    pointerDown = false;
+    fireId = null;
+    stickId = null;
+    stickDir = null;
     release(performance.now());
   };
 
   const onPointerDown = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch' && stickId === null) {
+      const rect = cfg.surface.getBoundingClientRect();
+      if (event.clientX < rect.left + rect.width / 2) {
+        stickId = event.pointerId;
+        stickX = event.clientX;
+        stickY = event.clientY;
+        stickDir = null;
+        cfg.surface.setPointerCapture(event.pointerId);
+        return;
+      }
+    }
+    if (fireId !== null) return;
     fireDown(performance.now());
-    pointerDown = true;
+    fireId = event.pointerId;
     // Keeps the hold alive after the pointer leaves the viewport mid-press.
     cfg.surface.setPointerCapture(event.pointerId);
     pump(true);
   };
 
+  // The stick's sector changes are a key going down: straight to the wire, one period
+  // sooner than the next pump. Inside the dead zone the thumb is standing still, so a
+  // hold under the other finger charges exactly as it does under the spacebar.
+  const onPointerMove = (event: PointerEvent): void => {
+    if (event.pointerId !== stickId) return;
+    const dir = stickDirection(event.clientX - stickX, event.clientY - stickY);
+    if (dir === stickDir) return;
+    stickDir = dir;
+    pump();
+  };
+
   const onPointerUp = (event: PointerEvent): void => {
-    pointerDown = false;
     if (cfg.surface.hasPointerCapture(event.pointerId)) {
       cfg.surface.releasePointerCapture(event.pointerId);
     }
+    if (event.pointerId === stickId) {
+      stickId = null;
+      stickDir = null;
+      return;
+    }
+    if (event.pointerId !== fireId) return;
+    fireId = null;
     release(performance.now());
   };
 
@@ -719,6 +775,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
   cfg.surface.addEventListener('pointerdown', onPointerDown);
+  cfg.surface.addEventListener('pointermove', onPointerMove);
   cfg.surface.addEventListener('pointerup', onPointerUp);
   cfg.surface.addEventListener('pointercancel', onPointerUp);
   // Not a fixed grid: each pump schedules the next on the move deadline, so a tick the
@@ -742,6 +799,7 @@ export function attachControls(cfg: ControlsConfig): () => void {
     window.removeEventListener('keyup', onKeyUp);
     window.removeEventListener('blur', onBlur);
     cfg.surface.removeEventListener('pointerdown', onPointerDown);
+    cfg.surface.removeEventListener('pointermove', onPointerMove);
     cfg.surface.removeEventListener('pointerup', onPointerUp);
     cfg.surface.removeEventListener('pointercancel', onPointerUp);
   };
@@ -887,4 +945,10 @@ if (import.meta.env.DEV) {
       throw new Error(`controls self-check: (${dx}, ${dy}) should be facing ${dir}`);
     }
   }
+
+  // The thumbstick: a resting thumb is standing still, past the dead zone it is the same
+  // eight sectors as the keys, y down.
+  assert(stickDirection(STICK_DEAD_PX - 1, 0) === null, 'a thumb inside the dead zone is standing still');
+  assert(stickDirection(0, -20) === 0, 'a thumb pushed up is north');
+  assert(stickDirection(20, 20) === 3, 'a thumb pushed down-right is south-east');
 }
