@@ -717,10 +717,13 @@ def build() -> tuple[dict[str, bytes], bytes, bytes, str]:
         name, knock = room["name"], room["knock"]
         if knock in ("W", "E"):
             derived = arch_tiles(LOBBY_GLOW[knock], knock)
-            if derived != room["door_tiles"]:
+            dc, dr, _, drows = room["door_tiles"]
+            # The block may be taller than the arch (a seat pushing the wall a tile above or
+            # below it still goes through), but the arch must lie inside it, in its column.
+            if not (derived[0] == dc and dr <= derived[1] and derived[1] + derived[3] <= dr + drows):
                 raise SystemExit(
                     f"gen_side_rooms: {name}: the painted arch {LOBBY_GLOW[knock]} lands on tiles {derived}, "
-                    f"but arena.json says door_tiles {room['door_tiles']} -- re-measure one of them"
+                    f"outside arena.json's door_tiles {room['door_tiles']} -- re-measure one of them"
                 )
         shell = Shell(lobby, s, room, tile_px, floor, front)
         arch_room = DOOR[LEAVE_OF[knock]](shell, lobby, room)

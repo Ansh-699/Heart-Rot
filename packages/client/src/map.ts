@@ -216,7 +216,7 @@ export const SIDE_ROOMS: readonly SideRoom[] = [
   {
     name: 'secret',
     floor: { minX: 352, maxX: 671, minY: 640, maxY: 799 },
-    door: { minX: 80, maxX: 95, minY: 688, maxY: 751 },
+    door: { minX: 80, maxX: 95, minY: 672, maxY: 767 },
     exit: { minX: 656, maxX: 671, minY: 672, maxY: 751 },
     entry: [656, 704], // tile (41, 44)
     back: [80, 704], // tile (5, 44)
@@ -227,7 +227,7 @@ export const SIDE_ROOMS: readonly SideRoom[] = [
   {
     name: 'keep',
     floor: { minX: 304, maxX: 719, minY: 672, maxY: 863 },
-    door: { minX: 928, maxX: 943, minY: 688, maxY: 751 },
+    door: { minX: 928, maxX: 943, minY: 672, maxY: 767 },
     exit: { minX: 304, maxX: 319, minY: 720, maxY: 799 },
     entry: [304, 752], // tile (19, 47)
     back: [928, 704], // tile (58, 44)
@@ -238,7 +238,7 @@ export const SIDE_ROOMS: readonly SideRoom[] = [
   {
     name: 'crypt',
     floor: { minX: 352, maxX: 671, minY: 672, maxY: 831 },
-    door: { minX: 496, maxX: 543, minY: 880, maxY: 895 },
+    door: { minX: 480, maxX: 559, minY: 880, maxY: 895 },
     exit: { minX: 480, maxX: 543, minY: 672, maxY: 687 },
     entry: [496, 672], // tile (31, 42)
     back: [512, 880], // tile (32, 55)

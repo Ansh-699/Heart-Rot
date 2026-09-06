@@ -377,7 +377,7 @@ pub const ROOMS: [Room; N_ROOMS] = [
     // secret: floor tiles (22, 40)..(41, 49), knock W (6), leave 2
     Room {
         floor: Gate { min_x: 352, max_x: 671, min_y: 640, max_y: 799 },
-        door: Gate { min_x: 80, max_x: 95, min_y: 688, max_y: 751 },
+        door: Gate { min_x: 80, max_x: 95, min_y: 672, max_y: 767 },
         exit: Gate { min_x: 656, max_x: 671, min_y: 672, max_y: 751 },
         entry: (656, 704), // tile (41, 44)
         back: (80, 704), // tile (5, 44)
@@ -387,7 +387,7 @@ pub const ROOMS: [Room; N_ROOMS] = [
     // keep: floor tiles (19, 42)..(44, 53), knock E (2), leave 6
     Room {
         floor: Gate { min_x: 304, max_x: 719, min_y: 672, max_y: 863 },
-        door: Gate { min_x: 928, max_x: 943, min_y: 688, max_y: 751 },
+        door: Gate { min_x: 928, max_x: 943, min_y: 672, max_y: 767 },
         exit: Gate { min_x: 304, max_x: 319, min_y: 720, max_y: 799 },
         entry: (304, 752), // tile (19, 47)
         back: (928, 704), // tile (58, 44)
@@ -397,7 +397,7 @@ pub const ROOMS: [Room; N_ROOMS] = [
     // crypt: floor tiles (22, 42)..(41, 51), knock S (4), leave 0
     Room {
         floor: Gate { min_x: 352, max_x: 671, min_y: 672, max_y: 831 },
-        door: Gate { min_x: 496, max_x: 543, min_y: 880, max_y: 895 },
+        door: Gate { min_x: 480, max_x: 559, min_y: 880, max_y: 895 },
         exit: Gate { min_x: 480, max_x: 543, min_y: 672, max_y: 687 },
         entry: (496, 672), // tile (31, 42)
         back: (512, 880), // tile (32, 55)
