@@ -479,22 +479,26 @@ const RUNES = Array.from({ length: 8 }, (_, i) => {
   return [Math.cos(a) * RING_RX, Math.sin(a) * RING_RY] as const;
 });
 /**
- * The geyser, base at the origin, drawn upward. Three tongues of different heights with
- * jagged tips, each flickering on its own clock; a white-hot core spike; streaks fanning
- * up and out of the foot; embers. Every path is drawn ONCE here and instanced per ring as
- * real nodes (not a `<use>`), because each one carries its own CSS loop and four rings
- * flickering in lockstep read as one sticker stamped four times.
+ * The geyser, base at the origin, drawn upward — a spray fountain, as the reference: a thin
+ * white-hot spike, three short jagged flames around its foot, a fan of streaks shooting up
+ * and out of the base, embers thrown after them. Capped at about the ring's own width in
+ * height, so the four fires of a lane stand apart instead of merging into one wall. Every
+ * path is drawn ONCE here and instanced per ring as real nodes (not a `<use>`), because
+ * each one carries its own CSS loop and four rings flickering in lockstep read as one
+ * sticker stamped four times.
  */
-const TONGUE_A = 'M-26 0C-30 -30 -22 -60 -18 -92C-14 -70 -12 -110 -8 -130C-4 -150 -2 -176 0 -196C2 -176 4 -150 8 -130C12 -110 14 -70 18 -92C22 -60 30 -30 26 0Z';
-const TONGUE_B = 'M-16 0C-20 -26 -14 -50 -12 -80C-10 -66 -7 -96 -4 -120C-2 -134 -1 -146 0 -150C1 -146 2 -134 4 -120C7 -96 10 -66 12 -80C14 -50 20 -26 16 0Z';
-const TONGUE_C = 'M-11 0C-14 -20 -10 -40 -8 -62C-6 -52 -4 -78 -2 -96C-1 -104 0 -108 0 -110C0 -108 1 -104 2 -96C4 -78 6 -52 8 -62C10 -40 14 -20 11 0Z';
-const CORE_SPIKE = 'M-6 0C-8 -40 -4 -90 -2 -140C-1 -170 0 -195 0 -215C0 -195 1 -170 2 -140C4 -90 8 -40 6 0Z';
-/** One streak: a thin dart from the foot, rotated per instance to fan out. */
-const STREAK = 'M-2.2 0L2.2 0L0.6 -150L-0.6 -150Z';
-const STREAK_ANGLES = [-22, -9, 5, 18, -15, 12] as const;
-/** Embers: start x, drift x, radius. */
-const EMBERS: ReadonlyArray<readonly [number, number, number]> = [
-  [-14, -22, 2.2], [9, 18, 1.8], [-4, -8, 2.6], [16, 26, 1.6], [-20, -30, 1.7], [4, 10, 2.1], [-9, -14, 1.5], [12, 6, 2.4],
+const SPIKE = 'M-3.5 0C-4.5 -26 -2.5 -62 -1.2 -90C-0.4 -106 0 -116 0 -122C0 -116 0.4 -106 1.2 -90C2.5 -62 4.5 -26 3.5 0Z';
+const FLAME_A = 'M-9 0C-11 -14 -8 -30 -6.5 -44C-5.5 -36 -4 -52 -2.5 -62C-1.5 -68 -0.5 -72 0 -74C0.5 -72 1.5 -68 2.5 -62C4 -52 5.5 -36 6.5 -44C8 -30 11 -14 9 0Z';
+const FLAME_B = 'M-6 0C-7.5 -10 -5 -20 -4.2 -30C-3.4 -25 -2.7 -36 -1.5 -44C-0.9 -48 -0.3 -50 0 -52C0.3 -50 0.9 -48 1.5 -44C2.7 -36 3.4 -25 4.2 -30C5 -20 7.5 -10 6 0Z';
+const FLAME_C = 'M-4.5 0C-6 -7 -4 -15 -3.2 -22C-2.6 -18 -2 -27 -1.3 -33C-0.7 -36 -0.3 -37.5 0 -38C0.3 -37.5 0.7 -36 1.3 -33C2 -27 2.6 -18 3.2 -22C4 -15 6 -7 4.5 0Z';
+/** One streak: a thin dart from the foot, rotated and stretched per instance to fan out. */
+const STREAK = 'M-1.8 0L1.8 0L0.45 -90L-0.45 -90Z';
+const STREAKS: ReadonlyArray<readonly [number, number]> = [
+  [-42, 0.75], [-33, 1.1], [-24, 0.85], [-15, 1.3], [-6, 1], [4, 1.35], [13, 0.9], [22, 1.2], [31, 0.8], [40, 1.05],
+];
+/** Embers: start x, drift x, rise, radius. */
+const EMBERS: ReadonlyArray<readonly [number, number, number, number]> = [
+  [-8, -44, -70, 2], [6, 36, -96, 1.7], [-3, -14, -130, 2.3], [10, 54, -46, 1.5], [-12, -58, -38, 1.6], [3, 18, -116, 1.9], [-6, -26, -100, 1.4], [8, 40, -78, 2.1], [-2, -8, -140, 1.6], [4, 30, -60, 2.4],
 ];
 
 /**
@@ -507,7 +511,7 @@ const EMBERS: ReadonlyArray<readonly [number, number, number]> = [
  * in JS. Under reduced motion every ring is drawn full and still.
  *
  * Nodes: 1 haze + 4 × (glow, fill group + ellipse, ring, pillar group + local group, halo,
- * foot, 6 × (rotate + streak), 3 tongues, core, base, 8 embers) = 121. All motion on
+ * foot, 10 × (rotate + streak), 3 flames, spike, base, 10 embers) = 149. All motion on
  * `transform` and `opacity`; no filter, no mask.
  */
 function HellLane({
@@ -530,7 +534,7 @@ function HellLane({
         const origin = `${cx}px ${cy}px`;
         return (
           <g key={k} style={{ '--i': k } as CSSProperties}>
-            <ellipse className="hr-hell-glow" cx={cx} cy={cy} rx={RING_RX * 1.7} ry={RING_RY * 1.8} fill="url(#hr-hell-glow-g)" />
+            <ellipse className="hr-hell-glow" cx={cx} cy={cy} rx={RING_RX * 1.6} ry={RING_RY * 2.1} fill="url(#hr-hell-glow-g)" />
             <g
               ref={(el) => {
                 fills.current[k] = el;
@@ -549,26 +553,26 @@ function HellLane({
               {/* Local origin at the ring's centre: every loop below scales, skews or rises
                   about the foot of the fire with no per-node origin arithmetic. */}
               <g transform={`translate(${cx} ${cy})`}>
-                <ellipse className="hr-hell-halo" cy={-46} rx={62} ry={82} fill="url(#hr-pillar-halo-g)" />
-                <ellipse rx={42} ry={15} fill="url(#hr-pillar-foot-g)" />
-                {STREAK_ANGLES.map((a, j) => (
-                  <g key={j} transform={`rotate(${a})`}>
+                <ellipse className="hr-hell-halo" cy={-28} rx={54} ry={62} fill="url(#hr-pillar-halo-g)" />
+                <ellipse rx={30} ry={11} fill="url(#hr-pillar-foot-g)" />
+                {STREAKS.map(([a, len], j) => (
+                  <g key={j} transform={`rotate(${a}) scale(1 ${len})`}>
                     <path className="hr-hell-streak" d={STREAK} fill="url(#hr-streak-g)" style={{ '--j': j } as CSSProperties} />
                   </g>
                 ))}
-                <path className="hr-hell-tongue hr-hell-t0" d={TONGUE_A} fill="url(#hr-pillar-g)" />
-                <path className="hr-hell-tongue hr-hell-t1" d={TONGUE_B} fill="url(#hr-pillar-g)" transform="translate(-7 0)" />
-                <path className="hr-hell-tongue hr-hell-t2" d={TONGUE_C} fill="url(#hr-pillar-g)" transform="translate(9 0)" />
-                <path className="hr-hell-core" d={CORE_SPIKE} fill="url(#hr-pillar-core-g)" />
-                <ellipse rx={17} ry={6.5} fill="#fff8d8" fillOpacity={0.92} />
-                {EMBERS.map(([ox, dx, r], j) => (
+                <path className="hr-hell-tongue hr-hell-t0" d={FLAME_A} fill="url(#hr-pillar-g)" />
+                <path className="hr-hell-tongue hr-hell-t1" d={FLAME_B} fill="url(#hr-pillar-g)" />
+                <path className="hr-hell-tongue hr-hell-t2" d={FLAME_C} fill="url(#hr-pillar-g)" />
+                <path className="hr-hell-core" d={SPIKE} fill="url(#hr-pillar-core-g)" />
+                <ellipse rx={11} ry={4} fill="#fff6d0" fillOpacity={0.95} />
+                {EMBERS.map(([ox, dx, dy, r], j) => (
                   <circle
                     key={j}
                     className="hr-hell-ember"
                     cx={ox}
-                    cy={-8}
+                    cy={-6}
                     r={r}
-                    style={{ '--j': j, '--dx': `${dx}px` } as CSSProperties}
+                    style={{ '--j': j, '--dx': `${dx}px`, '--dy': `${dy}px` } as CSSProperties}
                   />
                 ))}
               </g>
@@ -1064,47 +1068,48 @@ export function Arena({
               gradients. Every burning thing in room B is a `<use>` of these. Soft by
               GRADIENT — no `filter` anywhere in the scene. */}
           <radialGradient id="hr-hell-glow-g">
-            <stop offset="0" stopColor="#ff4a1c" stopOpacity="0.5" />
-            <stop offset="0.55" stopColor="#f0301c" stopOpacity="0.2" />
-            <stop offset="1" stopColor="#8a1a10" stopOpacity="0" />
+            <stop offset="0" stopColor="#ff3014" stopOpacity="0.62" />
+            <stop offset="0.5" stopColor="#e01c0c" stopOpacity="0.3" />
+            <stop offset="1" stopColor="#7a0e08" stopOpacity="0" />
           </radialGradient>
           <radialGradient id="hr-hell-fill-g">
-            <stop offset="0" stopColor="#ff8a3a" stopOpacity="0.62" />
-            <stop offset="0.55" stopColor="#ff4a1c" stopOpacity="0.4" />
-            <stop offset="1" stopColor="#c02a18" stopOpacity="0.1" />
+            <stop offset="0" stopColor="#ff5a20" stopOpacity="0.6" />
+            <stop offset="0.6" stopColor="#ff2a12" stopOpacity="0.45" />
+            <stop offset="1" stopColor="#b0140a" stopOpacity="0.2" />
           </radialGradient>
           <radialGradient id="hr-hell-haze-g">
-            <stop offset="0" stopColor="#ff4a24" stopOpacity="0.14" />
-            <stop offset="0.6" stopColor="#e8301c" stopOpacity="0.07" />
-            <stop offset="1" stopColor="#8a1a10" stopOpacity="0" />
+            <stop offset="0" stopColor="#ff2a12" stopOpacity="0.18" />
+            <stop offset="0.6" stopColor="#d01c0c" stopOpacity="0.09" />
+            <stop offset="1" stopColor="#7a0e08" stopOpacity="0" />
           </radialGradient>
           <linearGradient id="hr-pillar-g" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0" stopColor="#fff0a0" stopOpacity="1" />
-            <stop offset="0.16" stopColor="#ffb02a" stopOpacity="1" />
-            <stop offset="0.45" stopColor="#ff6a14" stopOpacity="0.9" />
-            <stop offset="0.75" stopColor="#ff3a12" stopOpacity="0.55" />
-            <stop offset="1" stopColor="#c8241a" stopOpacity="0" />
+            <stop offset="0" stopColor="#ffd66a" stopOpacity="1" />
+            <stop offset="0.18" stopColor="#ff8a1a" stopOpacity="1" />
+            <stop offset="0.5" stopColor="#ff4a10" stopOpacity="0.9" />
+            <stop offset="0.8" stopColor="#d81c0c" stopOpacity="0.5" />
+            <stop offset="1" stopColor="#a0140a" stopOpacity="0" />
           </linearGradient>
           <linearGradient id="hr-pillar-core-g" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0" stopColor="#ffffff" stopOpacity="1" />
-            <stop offset="0.3" stopColor="#fff4b0" stopOpacity="1" />
-            <stop offset="0.65" stopColor="#ffd05a" stopOpacity="0.85" />
-            <stop offset="1" stopColor="#ffa030" stopOpacity="0" />
+            <stop offset="0" stopColor="#fff8dc" stopOpacity="1" />
+            <stop offset="0.35" stopColor="#ffe28a" stopOpacity="1" />
+            <stop offset="0.7" stopColor="#ffb43a" stopOpacity="0.85" />
+            <stop offset="1" stopColor="#ff7a1a" stopOpacity="0" />
           </linearGradient>
           <linearGradient id="hr-streak-g" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0" stopColor="#fff6d0" stopOpacity="1" />
-            <stop offset="0.5" stopColor="#ffb03a" stopOpacity="0.8" />
-            <stop offset="1" stopColor="#ff5a1c" stopOpacity="0" />
+            <stop offset="0" stopColor="#ffe28a" stopOpacity="1" />
+            <stop offset="0.45" stopColor="#ff8a1a" stopOpacity="0.95" />
+            <stop offset="0.8" stopColor="#ff3a10" stopOpacity="0.5" />
+            <stop offset="1" stopColor="#ff2a10" stopOpacity="0" />
           </linearGradient>
           <radialGradient id="hr-pillar-foot-g">
-            <stop offset="0" stopColor="#fff2b0" stopOpacity="0.9" />
-            <stop offset="0.5" stopColor="#ff9a2a" stopOpacity="0.45" />
-            <stop offset="1" stopColor="#ff4a1c" stopOpacity="0" />
+            <stop offset="0" stopColor="#ffe28a" stopOpacity="0.9" />
+            <stop offset="0.5" stopColor="#ff6a1a" stopOpacity="0.45" />
+            <stop offset="1" stopColor="#ff2a12" stopOpacity="0" />
           </radialGradient>
           <radialGradient id="hr-pillar-halo-g">
-            <stop offset="0" stopColor="#ff8a2a" stopOpacity="0.4" />
-            <stop offset="0.55" stopColor="#ff4a1c" stopOpacity="0.14" />
-            <stop offset="1" stopColor="#b02a18" stopOpacity="0" />
+            <stop offset="0" stopColor="#ff5a1c" stopOpacity="0.36" />
+            <stop offset="0.55" stopColor="#ff2a12" stopOpacity="0.14" />
+            <stop offset="1" stopColor="#8a1408" stopOpacity="0" />
           </radialGradient>
           <radialGradient id="hr-hell-burst-g">
             <stop offset="0" stopColor="#fff6d0" stopOpacity="1" />
@@ -1113,10 +1118,10 @@ export function Arena({
           </radialGradient>
           {/* The ring: a glow stroke under a hard one, a fainter line inside, eight runes. */}
           <g id="hr-hell-ring">
-            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff4a1c" strokeWidth={16} strokeOpacity={0.22} />
-            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff6a2a" strokeWidth={7} strokeOpacity={0.5} />
-            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff8a3a" strokeWidth={3} strokeOpacity={1} />
-            <ellipse rx={RING_RX - 8} ry={RING_RY - 4.5} fill="none" stroke="#ffc24a" strokeWidth={1.2} strokeOpacity={0.7} />
+            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff2a12" strokeWidth={20} strokeOpacity={0.3} />
+            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff4a1c" strokeWidth={9} strokeOpacity={0.75} />
+            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff8a3a" strokeWidth={3.5} strokeOpacity={1} />
+            <ellipse rx={RING_RX - 9} ry={RING_RY - 5} fill="none" stroke="#ffb03a" strokeWidth={1.4} strokeOpacity={0.6} />
             {RUNES.map(([rx, ry], i) => (
               <circle key={i} cx={rx} cy={ry} r={3} fill="#ffd66a" />
             ))}
@@ -1124,7 +1129,7 @@ export function Arena({
           {/* The hand landing on a ring: a flash on the stone and a spike of fire thrown up. */}
           <g id="hr-hell-burst">
             <ellipse rx={88} ry={34} fill="url(#hr-hell-burst-g)" />
-            <path d="M-14 0C-16 -60 -6 -160 0 -260C6 -160 16 -60 14 0Z" fill="url(#hr-pillar-core-g)" />
+            <path d="M-10 0C-12 -50 -4 -130 0 -200C4 -130 12 -50 10 0Z" fill="url(#hr-pillar-core-g)" />
           </g>
         </defs>
 

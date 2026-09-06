@@ -1335,15 +1335,15 @@ h3 {
   100% { transform: skewX(-3deg) scale(0.96, 0.88); opacity: 0.9; }
 }
 @keyframes hr-hell-t1 {
-  0% { transform: translate(-7px, 0) skewX(4deg) scale(1, 0.84); opacity: 0.85; }
-  35% { transform: translate(-7px, 0) skewX(-4deg) scale(1.08, 1.14); opacity: 1; }
-  70% { transform: translate(-7px, 0) skewX(2deg) scale(0.94, 0.96); opacity: 0.9; }
-  100% { transform: translate(-7px, 0) skewX(4deg) scale(1, 0.84); opacity: 0.85; }
+  0% { transform: translate(-6px, 0) skewX(4deg) scale(1, 0.84); opacity: 0.85; }
+  35% { transform: translate(-6px, 0) skewX(-4deg) scale(1.08, 1.14); opacity: 1; }
+  70% { transform: translate(-6px, 0) skewX(2deg) scale(0.94, 0.96); opacity: 0.9; }
+  100% { transform: translate(-6px, 0) skewX(4deg) scale(1, 0.84); opacity: 0.85; }
 }
 @keyframes hr-hell-t2 {
-  0% { transform: translate(9px, 0) skewX(-5deg) scale(0.9, 0.8); opacity: 0.8; }
-  40% { transform: translate(9px, 0) skewX(5deg) scale(1.1, 1.2); opacity: 1; }
-  100% { transform: translate(9px, 0) skewX(-5deg) scale(0.9, 0.8); opacity: 0.8; }
+  0% { transform: translate(7px, 0) skewX(-5deg) scale(0.9, 0.8); opacity: 0.8; }
+  40% { transform: translate(7px, 0) skewX(5deg) scale(1.1, 1.2); opacity: 1; }
+  100% { transform: translate(7px, 0) skewX(-5deg) scale(0.9, 0.8); opacity: 0.8; }
 }
 /* The white-hot core breathes fast and narrow. */
 .hr-hell-core {
@@ -1355,32 +1355,32 @@ h3 {
   from { transform: scale(0.92, 0.94); opacity: 0.88; }
   to { transform: scale(1.06, 1.05); opacity: 1; }
 }
-/* Streaks shoot up out of the foot and die at the tip: grown from the base, then gone.
+/* Streaks shoot up and out of the foot and die at the tip: grown from the base, then gone.
    Each lives in its own rotated `<g>`, so this transform is along the streak's own line. */
 .hr-hell-streak {
   transform-origin: 0 0;
   opacity: 0;
-  animation: hr-hell-streak 0.9s ease-out infinite;
-  animation-delay: calc(var(--j, 0) * -0.15s + var(--i, 0) * -0.07s);
+  animation: hr-hell-streak 0.56s ease-out infinite;
+  animation-delay: calc(var(--j, 0) * -0.067s + var(--i, 0) * -0.05s);
 }
 @keyframes hr-hell-streak {
   0% { transform: scale(1, 0.1); opacity: 0; }
-  10% { opacity: 1; }
-  55% { transform: scale(1, 1); opacity: 0.85; }
-  100% { transform: scale(0.6, 1.15); opacity: 0; }
+  12% { opacity: 1; }
+  60% { transform: scale(1, 1); opacity: 0.95; }
+  100% { transform: scale(0.4, 1.25); opacity: 0; }
 }
-/* Embers off the fire, rising and drifting out. `translate`, not a `cy` write. */
+/* Embers thrown out of the fire in arcs: up, out, gone. `translate`, not a `cy` write. */
 .hr-hell-ember {
-  fill: #ffd66a;
+  fill: #ffc24a;
   opacity: 0;
-  animation: hr-hell-ember 1.5s linear infinite;
-  animation-delay: calc(var(--j, 0) * -0.19s + var(--i, 0) * -0.31s);
+  animation: hr-hell-ember 1.1s ease-out infinite;
+  animation-delay: calc(var(--j, 0) * -0.14s + var(--i, 0) * -0.23s);
 }
 @keyframes hr-hell-ember {
   0% { translate: 0 0; opacity: 0; }
   10% { opacity: 1; }
-  60% { opacity: 0.8; }
-  100% { translate: var(--dx, 0px) -190px; opacity: 0; }
+  65% { opacity: 0.8; }
+  100% { translate: var(--dx, 0px) var(--dy, -80px); opacity: 0; }
 }
 
 /* --------------------------------------------------------------------------
