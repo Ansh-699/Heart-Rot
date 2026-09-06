@@ -935,7 +935,10 @@ export function Arena({
   // `ERUPT_MS` from the landing tick. State rather than a pooled node because the geyser
   // is two hundred nodes of CSS loops, and mounting them only for the second they burn is
   // what keeps a quiet floor quiet. Keyed on the landing so two slams a lane apart are two
-  // fires. `play('slam')` lands on the same edge.
+  // fires. `play('slam')` lands on the same edge. The key is PREFIXED: the kill's group
+  // beside it is keyed on the same clock, and two siblings with the same number for a key
+  // (a slam landing on the tick the boss dies) made React add a group a render and remove
+  // none.
   const [erupt, setErupt] = useState<{ lane: number; key: number } | null>(null);
   useEffect(() => {
     if (slamming) play('slamWarn');
@@ -1173,12 +1176,12 @@ export function Arena({
               wind-up is a fresh mount. Under reduced motion the rings are drawn lit and
               still. */}
           {shown === 'arena' && slam !== null && (
-            <g key={slam.atTick} ref={slamRef} className="hr-hell" aria-hidden="true">
+            <g key={`warn-${slam.atTick}`} ref={slamRef} className="hr-hell" aria-hidden="true">
               <HellLane lane={slam.lane} stage="warn" fills={slamFills} reduced={reduced} />
             </g>
           )}
           {shown === 'arena' && erupt !== null && (
-            <g key={erupt.key} className="hr-hell" aria-hidden="true">
+            <g key={`erupt-${erupt.key}`} className="hr-hell" aria-hidden="true">
               <HellLane lane={erupt.lane} stage="erupt" reduced={reduced} />
             </g>
           )}
@@ -1339,7 +1342,7 @@ export function Arena({
               glow (`BossArena.tsx`) keeps that sheet mounted; reduced motion hides every
               ember through the same sheet. Keyed on the kill so a second one is fresh. */}
           {shown === 'arena' && kill !== null && (
-            <g key={kill} aria-hidden="true">
+            <g key={`kill-${kill}`} aria-hidden="true">
               {!reduced && <rect ref={flashRef} x={0} y={0} width={ARENA_UNITS} height={PIT_BOT + 1} fill="#fff" opacity={0} />}
               <g className="room-light">{RAIN}</g>
             </g>
