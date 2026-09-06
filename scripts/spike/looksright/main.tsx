@@ -85,11 +85,15 @@ function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, i
  * quiet ring shows. `fury`: the same plus a core at 300 of 2,000 — with 90 shell to strip
  * the effective pool is 2,090 and 300 is under 20 % of it, so `isFurious` reads true.
  */
-function bossBytes(hurt: boolean, vent = false, fury = false, dead: number[] = [], core?: number) {
+function bossBytes(hurt: boolean, vent = false, fury = false, dead: number[] = [], core?: number, tick = 900) {
   const { d, v } = blank(BOSS.size, DISC_BOSS);
   const o = BOSS.offsets;
   v.setInt16(o.x, BOSS_SPAWN[0], true);
   v.setInt16(o.y, BOSS_SPAWN[1], true);
+  // The volley's clock, on the tick like the slam's: `attack_timer` counts down to a
+  // volley at 915 (+32 n), so 900..914 is the wind-up window `Arena.tsx` draws the
+  // lock and the thorn glow through, at seat 0 (blank `target_seat`, the local seat).
+  v.setUint8(o.attack_timer, (((915 - tick) % 32) + 32) % 32);
   const open = vent || fury;
   for (let i = 0; i < N_PARTS; i++) {
     v.setUint16(o.parts_max + i * 2, 500, true);
@@ -258,7 +262,7 @@ function Bridge() {
       const tick = opts.tick ?? (arena ? 900 : 0);
       // The boss first: the seats aim at the shell this scene actually has, so a stripped
       // part re-targets the raid the way `autoAim` re-targets a real player.
-      const boss = bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, opts.dead, opts.core);
+      const boss = bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, opts.dead, opts.core, tick);
       store.setWorld({
         from: '11111111111111111111111111111111',
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,

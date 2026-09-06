@@ -538,22 +538,6 @@ function KnightBody({ slot, mine = false, reduced = false, targeted = false }: K
     <>
       <ellipse cy={FEET_Y} rx={11} ry={4} fill={PAL.outline} opacity={0.45} />
 
-      {/* The boss is aiming here. `tools/gen_ordnance.py`'s three-frame lock, closing on
-          the body over the wind-up's 1.5 s (`.hr-lock-frames`, `styles.css`) — the same
-          information the old dashed aim lines carried, as a pixel cue on the raider it is
-          about. Mounted only while `targeted`, so it starts at the wind-up's first frame. */}
-      {targeted && (
-        <svg x={-ORD_LOCK.w / 2} y={-ORD_LOCK.h / 2 + 2} width={ORD_LOCK.w} height={ORD_LOCK.h} aria-hidden="true">
-          <use
-            className="hr-lock-frames"
-            href="#ord-lock"
-            width={ORD_LOCK.w * ORD_LOCK.frames}
-            height={ORD_LOCK.h}
-            style={{ '--strip': `${-ORD_LOCK.w * ORD_LOCK.frames}px` } as CSSProperties}
-          />
-        </svg>
-      )}
-
       {/* Cue 2 of 3 for finding yourself. Two tones, wide dark under narrow bright, because
           one of the two has to be winning on every ground the ring can land on: `#eafff4`
           is 7.94:1 against the darkest sampled floor and `#05060a` is 10.96:1 against a lit
@@ -619,6 +603,25 @@ function KnightBody({ slot, mine = false, reduced = false, targeted = false }: K
             hit circle. A symbol with a viewBox needs its size on the `<use>`. */}
         <use ref={hitRef} href="#ord-hit" x={-9} y={-9} width={18} height={18} opacity={0} />
       </g>
+
+      {/* The boss is aiming here. `tools/gen_ordnance.py`'s three-frame lock, closing on
+          the body over the wind-up's 1.5 s (`.hr-lock-frames`, `styles.css`) and holding
+          its last frame — the same information the old dashed aim lines carried, as a pixel
+          cue on the raider it is about. After the body, so it is drawn OVER it: the body
+          would hide every frame but the widest. Mounted only while `targeted`, so it starts
+          at the wind-up's first frame. `--strip` is the last frame's offset: `jump-none`
+          spreads the three frames over the run, and the strip never steps past the end. */}
+      {targeted && (
+        <svg x={-ORD_LOCK.w / 2} y={-ORD_LOCK.h / 2} width={ORD_LOCK.w} height={ORD_LOCK.h} aria-hidden="true">
+          <use
+            className="hr-lock-frames"
+            href="#ord-lock"
+            width={ORD_LOCK.w * ORD_LOCK.frames}
+            height={ORD_LOCK.h}
+            style={{ '--strip': `${-ORD_LOCK.w * (ORD_LOCK.frames - 1)}px` } as CSSProperties}
+          />
+        </svg>
+      )}
 
       {/* Cue 1 of 3, and the only one that works when you are completely hidden behind another
           archer — so it is never clipped, never faded, and never suppressed while dead: a

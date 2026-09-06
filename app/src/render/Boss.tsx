@@ -85,7 +85,7 @@ import {
 } from '@heartrot/client';
 
 import { ASH_DY, ATLAS_H, ATLAS_SCALE, ATLAS_W, BOSS_ATLAS, BOSS_PARTS, EYES_PX, type BossPart } from './boss.gen';
-import { ORD_VENT } from './ordnance.gen';
+import { ORD_SHATTER, ORD_VENT } from './ordnance.gen';
 import { play, speak, VOICE_NAMES, type VoiceName } from './sfx';
 
 /**
@@ -151,6 +151,15 @@ const VENT_KEYFRAMES: Keyframe[] = [
   { opacity: 1, transform: `translateX(${-ORD_VENT.w * ORD_VENT.frames}px)` },
 ];
 const VENT_TIMING: KeyframeAnimationOptions = { duration: 220, easing: `steps(${ORD_VENT.frames})` };
+/** The core bursting on the kill: six frames through the vent's window, then nothing —
+ *  the corpse's charred core is what remains. Reduced motion holds the last frame for the
+ *  same window: the burst as a state, not a strip. */
+const SHATTER_MS = 420;
+const SHATTER_KEYFRAMES: Keyframe[] = [
+  { opacity: 1, transform: 'translateX(0)' },
+  { opacity: 1, transform: `translateX(${-ORD_SHATTER.w * ORD_SHATTER.frames}px)` },
+];
+const SHATTER_STILL: Keyframe = { opacity: 1, transform: `translateX(${-ORD_SHATTER.w * (ORD_SHATTER.frames - 1)}px)` };
 const BREAK_MS = 520;
 /** Between one limb tearing off and the next, in the death — ten limbs in 1.4 s. */
 const DEATH_STAGGER_MS = 140;
@@ -349,6 +358,8 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
   const prev = useRef<{ parts: number[]; phase: number; vent: number; fury: boolean; core: number } | null>(null);
   /** The vent's ring strip, played on every core hit. */
   const ventRing = useRef<SVGUseElement | null>(null);
+  /** The shatter strip, played once on the kill. */
+  const shatter = useRef<SVGUseElement | null>(null);
 
   // A chain fact, derived and never stored: `Boss::is_furious` on the same integers the
   // crank halves the volley on. FIGHTING-gated so a settling corpse at 0 % fight HP and a
@@ -629,6 +640,10 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
       // and its own smoke, and the torso is what remains — a charred core in a column
       // of wisps. The result card waits for this (`Hud.tsx`, REVEAL_WIN_MS).
       if (killed) {
+        shatter.current?.animate(
+          soft ? [SHATTER_STILL, SHATTER_STILL] : SHATTER_KEYFRAMES,
+          { duration: SHATTER_MS, easing: soft ? 'linear' : `steps(${ORD_SHATTER.frames})` },
+        );
         let k = 0;
         for (let i = 0; i < N_PARTS; i++) {
           if (i === TORSO_INDEX || (now.parts[i] ?? 0) === 0) continue;
@@ -713,6 +728,11 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
       {/* Beside the breathe group, not inside it: the corpse's charring filter never
           touches it, and it does not breathe with the body it left. */}
       {smoke}
+      {/* The shatter, outside the shell for the same reason: the burst is not charred with
+          the body it leaves. The vent ring's window, centred on the core. */}
+      <svg x={CORE.x - ORD_SHATTER.w / 2} y={CORE.y - ORD_SHATTER.h / 2} width={ORD_SHATTER.w} height={ORD_SHATTER.h} aria-hidden="true">
+        <use ref={shatter} href="#ord-shatter" width={ORD_SHATTER.w * ORD_SHATTER.frames} height={ORD_SHATTER.h} style={{ opacity: 0 }} />
+      </svg>
     </g>
   );
 }

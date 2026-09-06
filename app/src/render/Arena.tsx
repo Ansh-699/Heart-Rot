@@ -88,10 +88,12 @@ import {
   MUZZLES,
   SLAM_LANES,
   NO_TARGET,
+  OUTCOME_WIN,
   PART_HITBOXES,
   PHASE_FIGHTING,
   PHASE_LOBBY,
   PHASE_MUSTERING,
+  PHASE_SETTLING,
   PIT_BOT,
   PIT_TOP,
   SLAM_LANE_W,
@@ -949,6 +951,27 @@ export function Arena({
     return () => window.clearTimeout(id);
   }, [erupt]);
 
+  // The kill landing: the pit flashes white for `FLASH_MS`, the core shatters (`Boss.tsx`,
+  // on the same edge) and embers rain over the pit for `KILL_RAIN_MS`. Mounted by state
+  // on the FIGHTING → SETTLING edge with the win byte, as the eruption is on the landing:
+  // a duplicate notification carries no edge, and a reconnect into a settled arena plays
+  // nothing. The card reveals at 4.2 s (`Hud.tsx`, REVEAL_WIN_MS); this is over by 3.
+  const [kill, setKill] = useState<number | null>(null);
+  const fought = useRef(false);
+  useEffect(() => {
+    if (fought.current && arena.phase === PHASE_SETTLING && arena.outcome === OUTCOME_WIN) setKill(Date.now());
+    fought.current = arena.phase === PHASE_FIGHTING;
+  }, [arena.phase, arena.outcome]);
+  useEffect(() => {
+    if (kill === null) return;
+    const id = window.setTimeout(() => setKill(null), KILL_RAIN_MS);
+    return () => window.clearTimeout(id);
+  }, [kill]);
+  const flashRef = useRef<SVGRectElement | null>(null);
+  useEffect(() => {
+    if (kill !== null) flashRef.current?.animate(FLASH_KEYFRAMES, { duration: FLASH_MS, easing: 'ease-out', fill: 'forwards' });
+  }, [kill]);
+
   const volley = volleyTelegraph(arena, boss, players);
   const volleyRef = useRef<SVGGElement | null>(null);
   const volleyElapsed = volley === null || reduced ? null : (SLAM_TELEGRAPH_TICKS - volley.ticksToImpact) * tickMs;
@@ -1309,6 +1332,19 @@ export function Arena({
             />
           )}
 
+          {/* The kill, over everything in the pit: the flash (opacity-only WAAPI on one
+              rect, not mounted under reduced motion — it is motion and nothing else) and
+              the ember rain, `RoomLight.tsx`'s own ember loop falling instead of rising.
+              The `room-light` class is what its keyframes are scoped to, and the arena's
+              glow (`BossArena.tsx`) keeps that sheet mounted; reduced motion hides every
+              ember through the same sheet. Keyed on the kill so a second one is fresh. */}
+          {shown === 'arena' && kill !== null && (
+            <g key={kill} aria-hidden="true">
+              {!reduced && <rect ref={flashRef} x={0} y={0} width={ARENA_UNITS} height={PIT_BOT + 1} fill="#fff" opacity={0} />}
+              <g className="room-light">{RAIN}</g>
+            </g>
+          )}
+
           {/* Row 16. After `Spawn`, so the veil covers the flare when both fire. */}
           {veil}
         </g>
@@ -1364,6 +1400,42 @@ const ERUPT_MS = 950;
 
 /** The thorns brighten into the shot. */
 const VOLLEY_KEYFRAMES: Keyframe[] = [{ opacity: 0.25 }, { opacity: 1 }];
+
+/** The kill's white flash over the pit, and how long the embers rain after it. */
+const FLASH_MS = 120;
+const FLASH_KEYFRAMES: Keyframe[] = [{ opacity: 0.85 }, { opacity: 0 }];
+const KILL_RAIN_MS = 3_000;
+/**
+ * The ember rain: thirty of `RoomLight.tsx`'s embers, born above the creature and
+ * falling through the pit (a positive `--ry`), each on its own clock and started part way
+ * through it so the first frame is already a shower. In the ordnance atlas's amber: they
+ * are the core's. Built once; the numbers are a hash of the index, so the shower is the
+ * same one every kill.
+ */
+const RAIN = Array.from({ length: 30 }, (_, i) => {
+  const a = ((Math.sin(i * 12.9898) * 43758.5453) % 1 + 1) % 1;
+  const b = ((Math.sin(i * 78.233) * 43758.5453) % 1 + 1) % 1;
+  const dur = 1.7 + a * 1.1;
+  return (
+    <circle
+      key={i}
+      className="hrl-ember"
+      cx={BOSS_SPAWN[0] - 330 + b * 660}
+      cy={PIT_TOP - 80 + a * 120}
+      r={1.5 + b * 1.5}
+      fill="#ffb020"
+      style={
+        {
+          '--dur': `${dur.toFixed(2)}s`,
+          '--del': `${(-a * dur).toFixed(2)}s`,
+          '--dx': `${((a - 0.5) * 24).toFixed(1)}px`,
+          '--ry': `${(260 + b * 160).toFixed(1)}px`,
+          '--a': (0.6 + a * 0.35).toFixed(2),
+        } as CSSProperties
+      }
+    />
+  );
+});
 
 /**
  * A SEEKED animation: built once at its true duration, played, and re-seeked from a chain
