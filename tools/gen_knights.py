@@ -155,8 +155,8 @@ def encode_png(atlas: Grid, palette: Palette) -> bytes:
     return buf.getvalue()
 
 
-def build() -> tuple[bytes, str, dict]:
-    """-> (png bytes, typescript source, stats)."""
+def build(body: str = A.SHIPPED_BODY) -> tuple[bytes, str, dict]:
+    """-> (png bytes, typescript source, stats), for one of `A.BODIES`."""
     tints = A.read_skin_colors()
     self_ring = A.read_self_ring()
     palette = Palette()
@@ -168,8 +168,8 @@ def build() -> tuple[bytes, str, dict]:
     frames: dict[str, Grid] = {}
     for d in A.DIRS:
         for pose in A.POSES:
-            chars = A.compose(d, pose)
-            check_frame(f"{d}-{pose}", chars, pose)
+            chars = A.compose(d, pose, body)
+            check_frame(f"{body}/{d}-{pose}", chars, pose)
             mask = np.array([[c != "." for c in row] for row in chars])
             ring = halo(mask)
             frames[f"sil-{d}-{pose}"] = np.where(mask, sil_idx, 0).astype(np.uint8)
@@ -240,12 +240,48 @@ export const FRAMES: Record<FrameKey, readonly [number, number, number, number]>
     return png, src, stats
 
 
+def preview(out: pathlib.Path, scale: int = 4) -> None:
+    """Every body, five directions, the poses that show a figure, side by side at `scale`,
+    for a human to judge before one becomes `SHIPPED_BODY`. Nothing here is checked in."""
+    from PIL import ImageDraw
+
+    poses = ("idle", "walk0", "walk2", "draw", "charge1")
+    tint = A.read_skin_colors()[0]
+    pal = {**A.PALETTE, **A.skin_palette(tint)}
+    cell_w, cell_h = A.W + 3, A.H + 3
+    cols = len(A.DIRS) * len(poses)
+    rows = len(A.BODIES)
+    sheet = Image.new("RGB", (cols * cell_w * scale + 8, rows * (cell_h * scale + 18) + 8), (40, 36, 48))
+    draw = ImageDraw.Draw(sheet)
+    for r, body in enumerate(A.BODIES):
+        y0 = 8 + r * (cell_h * scale + 18)
+        draw.text((8, y0), body, fill=(230, 220, 200))
+        for c, (d, pose) in enumerate((d, p) for d in A.DIRS for p in poses):
+            chars = A.compose(d, pose, body)
+            cell = Image.new("RGBA", (A.W, A.H), (0, 0, 0, 0))
+            for y, row in enumerate(chars):
+                for x, ch in enumerate(row):
+                    if ch != ".":
+                        h = pal[ch].lstrip("#")
+                        cell.putpixel((x, y), (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255))
+            big = cell.resize((A.W * scale, A.H * scale), Image.NEAREST)
+            sheet.paste(big, (8 + c * cell_w * scale, y0 + 14), big)
+    sheet.save(out)
+    print(f"gen_knights: wrote {out}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="fail if the checked-in files are stale")
+    ap.add_argument("--body", choices=sorted(A.BODIES), default=A.SHIPPED_BODY, help="which body to build the atlas from")
+    ap.add_argument("--preview", metavar="PNG", help="write a comparison sheet of every body instead of the atlas")
     args = ap.parse_args()
 
-    png, src, stats = build()
+    if args.preview:
+        preview(pathlib.Path(args.preview))
+        return
+
+    png, src, stats = build(args.body)
     if args.check:
         stale = [
             str(p.relative_to(ROOT))

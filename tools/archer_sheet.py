@@ -725,6 +725,383 @@ DIRECTIONS: dict[str, dict] = {
 
 
 # ---------------------------------------------------------------------------
+# The chibi body -- the same archer, short and round
+#
+# Same canvas, same feet row, same width rule, same parts and poses: only the proportions
+# change. The hood is most of the figure, the tunic a barrel, the legs two stubs, and the
+# bow shrinks with the archer so the grip still sits beside the hand. Everything downstream
+# (`Knight.tsx`, the halo, the hit circle) reads sizes off the atlas and needs nothing.
+# ---------------------------------------------------------------------------
+
+BOW_C = block(
+    """
+    KW...
+    .KW..
+    ..KW.
+    ..KW.
+    ...KW
+    ...KW
+    ....h
+    ....h
+    ....h
+    ....h
+    ....h
+    ...KW
+    ...KW
+    ..KW.
+    ..KW.
+    .KW..
+    KW...
+    """
+)
+BOW_C_H = len(BOW_C)
+STRING_C = ["t"] * (BOW_C_H - 2)
+
+HEAD_S_C = block(
+    """
+    .....KKKKKKK.....
+    ...KK1111111KK...
+    ..K11133333111K..
+    .K111133311111K..
+    .K11111111111111K
+    K111KKKKKKKKK111K
+    K11KsssssssssK11K
+    K11KssfKsfKssK11K
+    K11KssKKsKKssK11K
+    K11KsssssssssK11K
+    .K1KssSSSSSssK1K.
+    .K11KKKKKKKKK11K.
+    ..K11212121111K..
+    ...KK1111111KK...
+    .....KKKKKKK.....
+    """
+)
+
+TORSO_S_C = block(
+    """
+    ...KK111111111KK...
+    .KK1111111111111KK.
+    K11K11133311111K11K
+    K11K11131111111K11K
+    K22K11111111111K22K
+    KssK11111111111Ksss
+    KSsK22222222222KsS.
+    .KKKhhhhhhhhhhhKKK.
+    """
+)
+
+# Two rows of head-room so a lifted leg has somewhere to go; the torso paints over it.
+LEGS_S_C = block(
+    """
+    .............
+    .............
+    .KBBBBKBBBBK.
+    .KbbbbKbbbbK.
+    .KHHHHKHHHHK.
+    KhhhhhKhhhhhK
+    KHHHHHKHHHHHK
+    KKKKKKKKKKKKK
+    """
+)
+
+HEAD_N_C = block(
+    """
+    .....KKKKKKK.....
+    ...KK1111111KK...
+    ..K11133333111K..
+    .K111133311111K..
+    .K11111111111111K
+    K111111111111111K
+    K111111111111111K
+    K111111111111111K
+    K111111111111111K
+    K111111111111111K
+    .K1111111111111K.
+    .K1111111111111K.
+    ..K11212121111K..
+    ...KK1111111KK...
+    .....KKKKKKK.....
+    """
+)
+
+TORSO_N_C = block(
+    """
+    ...KK111111111KK...
+    .KK1111111111111KK.
+    K11K11111111111K11K
+    K11K11111111111K11K
+    K22K11111111111K22K
+    sssK11111111111KssK
+    .SsK22222222222KsSK
+    .KKKhhhhhhhhhhhKKK.
+    """
+)
+
+HEAD_E_C = block(
+    """
+    .....KKKKKK.....
+    ...KK111111KK...
+    ..K1113333111K..
+    .K111133311111K.
+    .K111111111111K.
+    K11111111KKKKKK.
+    K1111111KssssssK
+    K1111111KsfKsssK
+    K1111111KsKKsssK
+    K1111111KsssssSK
+    .K111111KsSSSSK.
+    .K1111111KKKKKK.
+    ..K1121211111K..
+    ...KK111111KK...
+    .....KKKKKK.....
+    """
+)
+
+# The bow arm extends forward to the grip; the hand is the `sss` at the far end.
+TORSO_E_C = block(
+    """
+    ..KK11111KK........
+    .K111111111K.......
+    K11133311111K......
+    K1113111111KKKKKKK.
+    K11111111K11111sssK
+    K22111111KKKKKKKKK.
+    K222222222K........
+    .KhhhhhhhhhK.......
+    """
+)
+
+LEGS_E_C_STAND = block(
+    """
+    ............
+    ............
+    .KBBBBBBBBK.
+    .KbbbbbbbbK.
+    .KHHHHHHHHK.
+    .KhhhhhhhhKK
+    .KHHHHHHHHHK
+    .KKKKKKKKKKK
+    """
+)
+
+LEGS_E_C_STEP_A = block(
+    """
+    ............
+    ............
+    .KBBBBBBBBK.
+    KBBBK.KBBBBK
+    KHHHK.KHHHHK
+    KhhhK.KhhhhK
+    KHHHK.KHHHHK
+    KKKKK.KKKKKK
+    """
+)
+
+LEGS_E_C_STEP_B = block(
+    """
+    ............
+    ............
+    .KBBBBBBBBK.
+    .KBBBBK.KBBK
+    .KHHHHK.KHHK
+    .KhhhhK.KhhK
+    .KHHHHK.KHHK
+    .KKKKKK.KKKK
+    """
+)
+
+# The drawing hand at the chest with the arrow along the bow arm, the string bent to the
+# nock: the same shape as `ARM_DRAW_E`, on the short bow.
+ARM_DRAW_E_C = block(
+    """
+    ..............t
+    .............t.
+    ............t..
+    ...........t...
+    ..........t....
+    .........t.....
+    ........t......
+    KKssfaaaaaaaaaa
+    ........t......
+    .........t.....
+    ..........t....
+    ...........t...
+    ............t..
+    .............t.
+    ..............t
+    """
+)
+
+HEAD_SE_C = block(
+    """
+    .....KKKKKKK.....
+    ...KK1111111KK...
+    ..K11133333111K..
+    .K111133311111K..
+    .K11111111111111K
+    K1111KKKKKKKKK11K
+    K111KsssssssssK1K
+    K111KssfKsfKssK1K
+    K111KssKKsKKssK1K
+    K111KsssssssssK1K
+    .K11KssSSSSSssK1K
+    .K111KKKKKKKKK1K.
+    ..K11212121111K..
+    ...KK1111111KK...
+    .....KKKKKKK.....
+    """
+)
+
+TORSO_SE_C = block(
+    """
+    ...KK111111111KK.....
+    .KK1111111111111KK...
+    K11K11133311111K11KK.
+    K11K11131111111K1111K
+    K22K11111111111KK1ssK
+    KssK11111111111K.KKK.
+    KSsK22222222222K.....
+    .KKKhhhhhhhhhhhKKK...
+    """
+)
+
+ARM_DRAW_SE_C = block(
+    """
+    .........t
+    ........t.
+    .......t..
+    ......t...
+    .....t....
+    ....t.....
+    K1KssKfaaa
+    ....t.....
+    .....t....
+    ......t...
+    .......t..
+    ........t.
+    .........t
+    """
+)
+
+HEAD_NE_C = block(
+    """
+    .....KKKKKKK.....
+    ...KK1111111KK...
+    ..K11133333111K..
+    .K111133311111K..
+    .K11111111111111K
+    K111111111111111K
+    K11111111111111sK
+    K11111111111111sK
+    K111111111111111K
+    K111111111111111K
+    .K1111111111111K.
+    .K1111111111111K.
+    ..K11212121111K..
+    ...KK1111111KK...
+    .....KKKKKKK.....
+    """
+)
+
+TORSO_NE_C = block(
+    """
+    ...KK111111111KK.....
+    .KK1111111111111KK...
+    K11K11111111111K11KK.
+    K11K11111111111K1111K
+    K22K11111111111KK1ssK
+    .ssK11111111111K.KKK.
+    .SsK22222222222K.....
+    .KKKhhhhhhhhhhhKKK...
+    """
+)
+
+_LEGS_FRONT_C = (10, 34, [LEGS_S_C, _lift_leg(LEGS_S_C, range(0, 6), 2), _lift_leg(LEGS_S_C, range(7, 13), 2)])
+_LEGS_SIDE_C = (8, 34, [LEGS_E_C_STAND, LEGS_E_C_STEP_A, LEGS_E_C_STEP_B])
+
+DIRECTIONS_CHIBI: dict[str, dict] = {
+    "s": dict(
+        parts={
+            "head": (8, 15, HEAD_S_C),
+            "torso": (7, 28, TORSO_S_C),
+            "quiver": (4, 22, QUIVER_S),
+            "bow": (26, 25, BOW_C),
+            "string": (26, 26, STRING_C),
+            "arm_draw": (13, 28, ARM_DRAW_S),
+            "arrow": (26, 32, ARROW_S),
+        },
+        legs=_LEGS_FRONT_C,
+        z=("quiver", "legs", "torso", "head", "bow", "string"),
+        z_draw=("quiver", "legs", "torso", "head", "bow", "arm_draw", "arrow"),
+        glow=(27, 33),
+    ),
+    "n": dict(
+        parts={
+            "head": (8, 15, HEAD_N_C),
+            "torso": (7, 28, TORSO_N_C),
+            "quiver": (12, 25, QUIVER_N),
+            "bow": (2, 25, mirror(BOW_C)),
+            "string": (6, 26, STRING_C),
+            "arm_draw": (19, 29, ARM_DRAW_N),
+        },
+        legs=_LEGS_FRONT_C,
+        z=("bow", "string", "legs", "torso", "quiver", "head"),
+        z_draw=("bow", "string", "legs", "torso", "quiver", "head", "arm_draw"),
+        glow=(3, 33),
+    ),
+    "e": dict(
+        parts={
+            "head": (7, 15, HEAD_E_C),
+            "torso": (8, 28, TORSO_E_C),
+            "quiver": (5, 21, QUIVER_E),
+            "bow": (26, 25, BOW_C),
+            "string": (26, 26, STRING_C),
+            "arm_draw": (12, 26, ARM_DRAW_E_C),
+            "arrow": (30, 33, ARROWHEAD_E),
+        },
+        legs=_LEGS_SIDE_C,
+        z=("quiver", "string", "legs", "torso", "head", "bow"),
+        z_draw=("quiver", "legs", "torso", "head", "bow", "arm_draw", "arrow"),
+        glow=(31, 33),
+    ),
+    "se": dict(
+        parts={
+            "head": (8, 15, HEAD_SE_C),
+            "torso": (7, 28, TORSO_SE_C),
+            "quiver": (4, 22, QUIVER_S),
+            "bow": (27, 25, BOW_C),
+            "string": (27, 26, STRING_C),
+            "arm_draw": (18, 26, ARM_DRAW_SE_C),
+            "arrow": (30, 33, ARROWHEAD_E),
+        },
+        legs=_LEGS_FRONT_C,
+        z=("quiver", "string", "legs", "torso", "head", "bow"),
+        z_draw=("quiver", "legs", "torso", "head", "bow", "arm_draw", "arrow"),
+        glow=(31, 33),
+    ),
+    "ne": dict(
+        parts={
+            "head": (8, 15, HEAD_NE_C),
+            "torso": (7, 28, TORSO_NE_C),
+            "quiver": (4, 22, mirror(QUIVER_N)),
+            "bow": (27, 25, BOW_C),
+            "string": (27, 26, STRING_C),
+            "arm_draw": (3, 29, ARM_DRAW_NE),
+        },
+        legs=_LEGS_FRONT_C,
+        z=("bow", "string", "legs", "torso", "quiver", "head"),
+        z_draw=("bow", "string", "legs", "torso", "quiver", "head", "arm_draw"),
+        glow=(30, 31),
+    ),
+}
+
+# The two bodies, and the one that ships. `gen_knights.py --body` picks either; `--check`
+# holds the atlas to the shipped one.
+BODIES: dict[str, dict[str, dict]] = {"classic": DIRECTIONS, "chibi": DIRECTIONS_CHIBI}
+SHIPPED_BODY = "classic"
+
+
+# ---------------------------------------------------------------------------
 # Composition
 # ---------------------------------------------------------------------------
 
@@ -760,14 +1137,14 @@ def _shift_up(canvas: Grid, dy: int) -> Grid:
     return canvas[dy:] + [["."] * W for _ in range(dy)]
 
 
-def compose(direction: str, pose: str) -> Grid:
-    """One 42x33 character grid for a direction and pose (skin-agnostic)."""
+def compose(direction: str, pose: str, body: str = SHIPPED_BODY) -> Grid:
+    """One 42x33 character grid for a direction and pose (skin-agnostic), in `body`."""
     if pose == "fallen":
         # The corpse: south idle, transposed. Lossless, and it lands on a 42x33 canvas.
-        idle = compose("s", "idle")
+        idle = compose("s", "idle", body)
         return [[idle[y][x] for y in range(H)] for x in range(W)]
 
-    spec = DIRECTIONS[direction]
+    spec = BODIES[body][direction]
     parts = dict(spec["parts"])
     lx, ly, legs = spec["legs"]
     walk = {"walk0": 1, "walk1": 0, "walk2": 2, "walk3": 0}
