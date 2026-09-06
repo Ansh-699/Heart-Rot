@@ -1,6 +1,6 @@
 /**
  * The side rooms off the lobby — the secret room behind the west door, the keep behind the
- * east door, the crypt down the stairs — on screen.
+ * east door, the range down the stairs — on screen.
  *
  * ON CHAIN: zones. Each room is a value of `PlayerSlot.zone` from `ZONE_SECRET` up, and its
  * floor is `SIDE_ROOMS[i].floor` — a block of lobby floor tiles the chain holds a room seat
@@ -19,9 +19,11 @@
  *
  * What the rooms SHOW is the chain's, read through the Worker: the keep's tablets are the
  * leaderboard ring, its chest the treasury that pays for every match, its mirror the local
- * seat's own atlas frame; the crypt's slabs are the ring grouped by incarnation.
+ * seat's own atlas frame. The range's straw men are the one thing a practice arrow — an
+ * on-chain shot, `shoot.rs`'s practice path — can stop on: {@link roomRay} cuts the tracer
+ * where the room's own geometry says, as the boss raycast does in the pit.
  */
-import { useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   OUTCOME_ENRAGE,
@@ -36,13 +38,13 @@ import {
   type SideRoom as SideRoomSpec,
 } from '@heartrot/client';
 
-import { useLeaderboard, type LeaderboardRow } from '../net/leaderboard';
+import { useLeaderboard } from '../net/leaderboard';
 import { useTreasury } from '../net/treasury';
 import { Sprite } from './Knight';
 import { FRAMES, KNIGHT_SKINS, type SkinId } from './knights.gen';
 import { roomGlow } from './RoomLight';
 import { VOID, type WorldRect } from './rooms.gen';
-import { CRYPT_GLYPH, SIDE_ROOM_ART, type DoorKind, type SideRoomArt, type SideRoomName } from './siderooms.gen';
+import { SIDE_ROOM_ART, type DoorKind, type SideRoomArt, type SideRoomName } from './siderooms.gen';
 import { ARENA_UNITS, PAL } from './sprites';
 
 /** Nothing of the hall shows behind a room: the veil is the void itself. */
@@ -108,7 +110,7 @@ const WORD: Readonly<Record<number, string>> = { 0: 'north', 2: 'east', 4: 'sout
 export function pushWay(zone: number, x: number, y: number): string | null {
   if (zone !== ZONE_LOBBY) return null;
   for (const room of SIDE_ROOMS) {
-    if (inBlock(room.door, x, y)) return `${WORD[room.knock] ?? ''} ${room.name === 'crypt' ? 'down the stairs' : 'into the door'}`;
+    if (inBlock(room.door, x, y)) return `${WORD[room.knock] ?? ''} ${room.name === 'range' ? 'down the stairs' : 'into the door'}`;
   }
   return null;
 }
@@ -117,50 +119,78 @@ export function pushWay(zone: number, x: number, y: number): string | null {
 export function leaveWay(zone: number): string | null {
   const room = sideRoomOf(zone);
   if (room === null) return null;
-  return `${WORD[room.leave] ?? ''} ${room.name === 'crypt' ? 'up the stairs' : 'through the door'}`;
+  return `${WORD[room.leave] ?? ''} ${room.name === 'range' ? 'up the stairs' : 'through the door'}`;
 }
 
 // ---------------------------------------------------------------------------
-// The crypt's reading of the ring
+// The range: where an arrow stops inside a room
 // ---------------------------------------------------------------------------
 
-export interface Incarnation {
-  arenaId: string;
-  incarnation: number;
-  outcome: number;
-  raiders: number;
-  survivors: number;
-  damage: number;
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Where a room's geometry stops an arrow, and the straw man it struck, if any. */
+export interface RoomRay {
+  readonly end: Point;
+  readonly dummy: number | null;
+}
+
+/** The straw men's rects, in world units — the sprites' boxes are their hitboxes. */
+export function rangeTargets(art: SideRoomArt): WorldRect[] {
+  return Object.keys(art.anchors)
+    .filter((k) => k.startsWith('dummy'))
+    .sort()
+    .map((k) => art.anchors[k]!);
+}
+
+/** The ray's entry and exit distances through a rect; the slab test, both axes. */
+function slab(r: WorldRect, x: number, y: number, ux: number, uy: number): [number, number] {
+  const span = (lo: number, hi: number, o: number, u: number): [number, number] => {
+    if (u === 0) return o >= lo && o <= hi ? [-Infinity, Infinity] : [Infinity, -Infinity];
+    const a = (lo - o) / u;
+    const b = (hi - o) / u;
+    return a < b ? [a, b] : [b, a];
+  };
+  const [x0, x1] = span(r.x, r.x + r.w, x, ux);
+  const [y0, y1] = span(r.y, r.y + r.h, y, uy);
+  return [Math.max(x0, y0), Math.min(x1, y1)];
 }
 
 /**
- * The ring's rows — one per seated raider per settle — folded into one entry per
- * incarnation, newest first (the newest arena, then its latest incarnation). Pure.
+ * A shot from (`x`, `y`) along (`dx`, `dy`) by a seat in `zone`, whose ray the grid would
+ * end at `end`: cut to the room's floor (its walls are the painting's, not the grid's) and,
+ * in the range, to the first straw man it crosses. `null` outside every room. Client
+ * geometry over an on-chain shot — the same standing the boss raycast has in the pit.
  */
-export function incarnationsOf(rows: readonly LeaderboardRow[]): Incarnation[] {
-  const by = new Map<string, Incarnation>();
-  for (const r of rows) {
-    const key = `${r.arenaId}:${r.incarnation}`;
-    const inc = by.get(key) ?? { arenaId: r.arenaId, incarnation: r.incarnation, outcome: r.outcome, raiders: 0, survivors: 0, damage: 0 };
-    inc.raiders += 1;
-    inc.survivors += r.survived ? 1 : 0;
-    inc.damage += r.damage;
-    by.set(key, inc);
-  }
-  return [...by.values()].sort((a, b) => {
-    const A = BigInt(a.arenaId);
-    const B = BigInt(b.arenaId);
-    return A === B ? b.incarnation - a.incarnation : A < B ? 1 : -1;
+export function roomRay(zone: number, x: number, y: number, dx: number, dy: number, end: Point): RoomRay | null {
+  const room = sideRoomOf(zone);
+  if (room === null) return null;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return null;
+  const ux = dx / len;
+  const uy = dy / len;
+  const art = artOf(room);
+  let t = Math.min(Math.hypot(end.x - x, end.y - y), Math.max(slab(art.floor, x, y, ux, uy)[1], 0));
+  let dummy: number | null = null;
+  rangeTargets(art).forEach((r, i) => {
+    const [enter, exit] = slab(r, x, y, ux, uy);
+    if (enter <= exit && exit >= 0 && Math.max(enter, 0) < t) {
+      t = Math.max(enter, 0);
+      dummy = i;
+    }
   });
+  return { end: { x: x + ux * t, y: y + uy * t }, dummy };
 }
 
-const GLYPH_OF: Readonly<Record<number, (typeof CRYPT_GLYPH.names)[number] | undefined>> = {
-  [OUTCOME_WIN]: 'crown',
-  [OUTCOME_WIPE]: 'skull',
-  [OUTCOME_ENRAGE]: 'hourglass',
-};
+/** The range's ear: `Shot.tsx` calls it when an arrow lands on straw man `i`. */
+let struck: ((i: number) => void) | null = null;
+export function dummyStruck(i: number): void {
+  struck?.(i);
+}
 
-/** `41,250` under five digits, `41.3k` above: the slabs are narrow. */
+/** `41,250` under five digits, `41.3k` above: the tablets are narrow. */
 function short(n: number): string {
   return n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : n.toLocaleString('en-US');
 }
@@ -243,33 +273,44 @@ function Keep({ art, local }: { art: SideRoomArt; local: PlayerSlot | undefined 
   );
 }
 
-function Crypt({ art }: { art: SideRoomArt }) {
-  const { rows } = useLeaderboard(true);
-  const incarnations = useMemo(() => (rows === null ? [] : incarnationsOf(rows)), [rows]);
-  const slabs = Array.from({ length: 8 }, (_, i) => art.anchors[`slab${i}`]).filter((s): s is WorldRect => s !== undefined);
-  const g = CRYPT_GLYPH.w;
+function Range({ art }: { art: SideRoomArt }) {
+  const targets = rangeTargets(art);
+  const [tally, setTally] = useState<number[]>(() => targets.map(() => 0));
+  const nodes = useRef<(SVGGElement | null)[]>([]);
+  useEffect(() => {
+    struck = (i) => {
+      const el = nodes.current[i];
+      if (el) {
+        // Restart the flinch on a straw man already flinching: drop the class, flush, add it.
+        el.classList.remove('is-hit');
+        void el.getBoundingClientRect();
+        el.classList.add('is-hit');
+      }
+      setTally((n) => n.map((v, k) => (k === i ? v + 1 : v)));
+    };
+    return () => {
+      struck = null;
+    };
+  }, []);
   return (
     <>
-      {slabs.map((box, i) => {
-        const inc = incarnations[i];
-        if (inc === undefined) return null;
-        const glyph = GLYPH_OF[inc.outcome];
-        return (
-          <g key={i}>
-            {glyph !== undefined && <use href={`#crypt-${glyph}`} x={box.x + box.w / 2 - g / 2} y={box.y + 2} width={g} height={g} />}
-            <Lines
-              box={box}
-              top={g + 4 + LINE_TOP}
-              lines={[
-                { text: `INC ${inc.incarnation}` },
-                { text: `${inc.raiders} raider${inc.raiders === 1 ? '' : 's'}`, dim: true },
-                { text: `${inc.survivors} lived`, dim: true },
-                { text: `${short(inc.damage)} dmg`, dim: true },
-              ]}
-            />
+      {targets.map((r, i) => (
+        <g key={i}>
+          <g
+            ref={(el) => {
+              nodes.current[i] = el;
+            }}
+            className="range-dummy"
+          >
+            <use href="#range-dummy" x={r.x} y={r.y} width={r.w} height={r.h} />
           </g>
-        );
-      })}
+          {(tally[i] ?? 0) > 0 && (
+            <text className="room-text is-you" x={r.x + r.w / 2} y={r.y - 4} textAnchor="middle">
+              {`\u00d7${tally[i]}`}
+            </text>
+          )}
+        </g>
+      ))}
     </>
   );
 }
@@ -289,7 +330,7 @@ export function SideRoom({ zone, local }: { zone: number; local: PlayerSlot | un
         </text>
       ))}
       {room.name === 'keep' && <Keep art={art} local={local} />}
-      {room.name === 'crypt' && <Crypt art={art} />}
+      {room.name === 'range' && <Range art={art} />}
     </g>
   );
 }
@@ -312,17 +353,21 @@ if (import.meta.env.DEV) {
     if (knockDir(ZONE_LOBBY, room.exit.minX, room.exit.minY) !== null) fail(`a lobby seat knocks from inside ${room.name}`);
     if (knockDir(zone, room.floor.minX, room.floor.minY) !== null && !inBlock(room.exit, room.floor.minX, room.floor.minY)) fail(`${room.name}'s far corner knocks`);
   }
-  // The crypt's fold: two arenas, three incarnations, newest first, counted right.
-  const row = (arenaId: string, incarnation: number, outcome: number, damage: number, survived: boolean): LeaderboardRow => ({
-    rank: 1, raider: 'aaaa…zzzz', damage, outcome, incarnation, survived, arenaId,
-  });
-  const folded = incarnationsOf([
-    row('1', 3, OUTCOME_WIPE, 100, false),
-    row('1', 3, OUTCOME_WIPE, 250, true),
-    row('1', 4, OUTCOME_WIN, 900, true),
-    row('2', 1, OUTCOME_ENRAGE, 5, false),
-  ]);
-  if (folded.length !== 3 || folded[0]!.arenaId !== '2' || folded[1]!.incarnation !== 4 || folded[2]!.raiders !== 2 || folded[2]!.survivors !== 1 || folded[2]!.damage !== 350) {
-    fail('incarnationsOf folds the ring wrong');
+  // The range's geometry: an arrow from the west end flies to the first straw man in its
+  // path and no further; one aimed along the back wall stops at the east wall; outside a
+  // room the ray is untouched.
+  const range = SIDE_ROOMS.find((r) => r.name === 'range');
+  if (range !== undefined) {
+    const art = artOf(range);
+    const targets = rangeTargets(art);
+    if (targets.length < 3) fail('the range has fewer than three straw men');
+    const t0 = targets[0]!;
+    const zone = ZONE_LOBBY + 2 + SIDE_ROOMS.indexOf(range);
+    const from = { x: art.floor.x + 8, y: t0.y + t0.h / 2 };
+    const shot = roomRay(zone, from.x, from.y, 1, 0, { x: from.x + 2000, y: from.y });
+    if (shot === null || shot.dummy !== 0 || Math.abs(shot.end.x - t0.x) > 0.01) fail('a level arrow does not stop on the first straw man');
+    const wall = roomRay(zone, from.x, art.floor.y + 4, 1, 0, { x: from.x + 2000, y: art.floor.y + 4 });
+    if (wall === null || wall.dummy !== null || Math.abs(wall.end.x - (art.floor.x + art.floor.w)) > 0.01) fail('an arrow along the back wall does not stop at the east wall');
+    if (roomRay(ZONE_LOBBY, from.x, from.y, 1, 0, { x: 0, y: 0 }) !== null) fail('a lobby shot is cut by a room');
   }
 }

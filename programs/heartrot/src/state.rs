@@ -464,21 +464,22 @@ const _: () = {
 };
 
 /// `PlayerSlot.zone`. The three side rooms off the lobby -- the secret room behind the west
-/// door, the keep behind the east door, the crypt down the stairs -- are `map::ROOMS`, one
+/// door, the keep behind the east door, the range down the stairs -- are `map::ROOMS`, one
 /// zone each from `ZONE_SECRET` up: a waiting seat that is not in the waiting area, kept out
-/// of the raid by every `== ZONE_ARENA` test and out of the lobby's practice by
-/// `shoot::practice`'s `!= ZONE_LOBBY`. `player::use_door` is their only writer, both ways.
+/// of the raid by every `== ZONE_ARENA` test. `shoot::practice` takes the lobby and the
+/// range (its straw is what the range is for) and refuses the other two. `player::use_door`
+/// is their only writer, both ways.
 pub const ZONE_LOBBY: u8 = 0;
 pub const ZONE_ARENA: u8 = 1;
 pub const ZONE_SECRET: u8 = 2;
 pub const ZONE_KEEP: u8 = 3;
-pub const ZONE_CRYPT: u8 = 4;
+pub const ZONE_RANGE: u8 = 4;
 
 // One zone per side room, contiguous from `ZONE_SECRET`: `player::room_of` indexes the table
 // by `zone - ZONE_SECRET`, and a room without a zone (or a zone without a room) is a seat
 // the movement rule would treat as a lobby seat with no walls of its own.
 const _: () = assert!(
-    crate::map::N_ROOMS == (ZONE_CRYPT - ZONE_SECRET + 1) as usize && ZONE_KEEP == ZONE_SECRET + 1,
+    crate::map::N_ROOMS == (ZONE_RANGE - ZONE_SECRET + 1) as usize && ZONE_KEEP == ZONE_SECRET + 1,
     "map::ROOMS and the ZONE_* constants disagree -- add a zone per room, or a room per zone"
 );
 

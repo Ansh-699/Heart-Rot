@@ -132,11 +132,11 @@ export const ZONE_ARENA = 1;
 /**
  * The three side rooms off the lobby, one zone each from `SIDE_ZONE_BASE` in `SIDE_ROOMS`
  * order (`map.ts`): the secret room behind the west door, the keep behind the east door, the
- * crypt down the stairs. `use_door` is their only writer, both ways.
+ * range down the stairs. `use_door` is their only writer, both ways.
  */
 export const ZONE_SECRET = SIDE_ZONE_BASE;
 export const ZONE_KEEP = SIDE_ZONE_BASE + 1;
-export const ZONE_CRYPT = SIDE_ZONE_BASE + 2;
+export const ZONE_RANGE = SIDE_ZONE_BASE + 2;
 
 /**
  * May a seat in `zone` step from `y` to `ny`? The mirror of `handlers::player::may_move_to`,

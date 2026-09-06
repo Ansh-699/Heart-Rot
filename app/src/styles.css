@@ -1347,6 +1347,12 @@ h3 {
 .door-veil { animation: door-veil 260ms ease-out both; }
 @keyframes door-veil { from { opacity: 1; } to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .door-open { animation: none; } }
+/* The range's straw men flinch when an arrow lands (render/SideRooms.tsx): a rotate about the
+   foot, CSS only, on a node nothing else transforms. */
+.range-dummy { transform-box: fill-box; transform-origin: 50% 100%; }
+.range-dummy.is-hit { animation: dummy-hit 320ms ease-out; }
+@keyframes dummy-hit { 0% { transform: rotate(0); } 30% { transform: rotate(-8deg); } 65% { transform: rotate(4deg); } 100% { transform: rotate(0); } }
+@media (prefers-reduced-motion: reduce) { .range-dummy.is-hit { animation: none; } }
 @media (prefers-reduced-motion: reduce) { .secret-room { animation: none; } }
 
 .gate-mark-halo {

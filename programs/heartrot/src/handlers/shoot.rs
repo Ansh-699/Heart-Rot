@@ -115,6 +115,7 @@ use crate::state::{
     SUPER_SHOT_BIT, SUPER_SLOTS,
     ZONE_LOBBY,
     ZONE_ARENA,
+    ZONE_RANGE,
 };
 
 // ---------------------------------------------------------------------------
@@ -814,8 +815,10 @@ fn practice(
     slot_now: u32,
 ) -> ProgramResult {
     // Through the gate already: the muster's weapons-down rule, unchanged. A seat in the
-    // pit during `MUSTERING` reaches here and is refused exactly as it was before.
-    if slot.zone != ZONE_LOBBY {
+    // pit during `MUSTERING` reaches here and is refused exactly as it was before. The
+    // waiting area and the range down its stairs are the two rooms with straw to shoot at;
+    // the other side rooms keep their weapons down.
+    if slot.zone != ZONE_LOBBY && slot.zone != ZONE_RANGE {
         return Err(HeartrotError::WrongZone.into());
     }
     let class = class_of(slot);

@@ -25,7 +25,7 @@ const probe = () => pg.evaluate(() => ({
   labels: [...document.querySelectorAll('.secret-label')].map((t) => t.textContent),
   texts: document.querySelectorAll('.room-text').length,
   you: document.querySelectorAll('.room-text.is-you').length,
-  glyphs: document.querySelectorAll('.secret-room use[href^="#crypt-"]').length,
+  dummies: document.querySelectorAll('.range-dummy').length,
   hint: document.querySelector('.hud-hint')?.textContent ?? null,
   door: (() => { const u = document.querySelector('use.door-open'); return u ? { href: u.getAttribute('href'), x: u.getAttribute('x'), y: u.getAttribute('y') } : null; })(),
   zone: window.__store.getState().players?.slots[0]?.zone,
@@ -39,7 +39,7 @@ for (const [name, x, y] of [['west', 80, 704], ['east', 928, 704], ['stairs', 51
   out[`lobby-${name}`] = await probe();
   await pg.screenshot({ path: path.join(OUT, `lobby-${name}.png`) });
 }
-for (const name of ['secret', 'keep', 'crypt']) {
+for (const name of ['secret', 'keep', 'range']) {
   await pg.evaluate((n) => window.__scene(n, { seats: 3 }), name);
   await pg.waitForTimeout(900);
   out[name] = await probe();

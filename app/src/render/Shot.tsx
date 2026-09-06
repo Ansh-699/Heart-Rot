@@ -102,6 +102,7 @@ import {
 import { hitStop, shake } from './Arena';
 import { ORD_CHIP } from './ordnance.gen';
 import { play } from './sfx';
+import { dummyStruck, roomRay } from './SideRooms';
 import { FACING_UNIT, PAL, VISIBLE_PROJECTILES } from './sprites';
 import type { Room } from './viewport';
 
@@ -283,6 +284,8 @@ interface Flight {
   core: boolean;
   /** Tier 1 and up are drawn big, and the local seat's hit stops the frame. */
   tier: ShotTier;
+  /** The straw man the arrow lands on, in the range; the room flinches it at arrival. */
+  dummy: number | null;
   /** Arrival has been played; the node is parked. */
   landed: boolean;
 }
@@ -638,6 +641,7 @@ export function Shot({
     let end: { readonly x: number; readonly y: number };
     let hit: Landing;
     let core: boolean;
+    let dummy: number | null = null;
     if (tier === 2) {
       // The beam does not stop on the creature, so its END is a wall or the ray's full
       // length and the arrow's arrival there is a miss by construction; what it struck is
@@ -656,6 +660,17 @@ export function Shot({
       // the same reason the position is — this is the state the shot was fired into.
       hit = landingOf(ray, b.ventOpen);
       core = ray.core;
+      // Inside a side room the walls are the painting's, not the grid's, and the range has
+      // straw to stop an arrow: the room cuts the ray where its own geometry says, and a
+      // struck straw man lands as a hit. Client geometry over an on-chain shot, as above.
+      const zone = players.slots[seat]?.zone;
+      const room = zone === undefined ? null : roomRay(zone, x, y, dx, dy, end);
+      if (room !== null) {
+        end = room.end;
+        hit = room.dummy === null ? 'miss' : 'hit';
+        core = false;
+        dummy = room.dummy;
+      }
     }
     endAt.current[seat] = { x: end.x, y: end.y };
 
@@ -702,6 +717,7 @@ export function Shot({
       if (node !== null && node !== undefined) node.style.opacity = '0';
       flights.current[seat] = null;
       land(seat, hit, core, tier);
+      if (dummy !== null) dummyStruck(dummy);
       return;
     }
 
@@ -720,6 +736,7 @@ export function Shot({
       hit,
       core,
       tier,
+      dummy,
       landed: false,
     };
   };
@@ -862,6 +879,7 @@ export function Shot({
           if (!f.landed) {
             f.landed = true;
             land(seat, f.hit, f.core, f.tier);
+            if (f.dummy !== null) dummyStruck(f.dummy);
           }
           flights.current[seat] = null;
           if (el !== null && el !== undefined && el.style.opacity !== '0') el.style.opacity = '0';
@@ -1128,7 +1146,8 @@ if (import.meta.env.DEV) {
     hit: 'miss',
     core: false,
     tier: 0,
-    landed: false,
+    dummy: null,
+      landed: false,
   });
   const cut = flightCut([fake(30), null, fake(10), fake(20)], 0);
   ok(cut.live === 3, 'every arrow in the air counts against the cap, the local one included');

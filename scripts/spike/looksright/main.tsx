@@ -273,7 +273,7 @@ function Bridge() {
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__store = store;
-    w.__scene = (which: 'lobby' | 'arena' | 'secret' | 'keep' | 'crypt', opts: SceneOpts = {}) => {
+    w.__scene = (which: 'lobby' | 'arena' | 'secret' | 'keep' | 'range', opts: SceneOpts = {}) => {
       const arena = which === 'arena';
       const room = SIDE_ROOMS.findIndex((r) => r.name === which);
       const zone = room >= 0 ? ZONE_SECRET + room : arena ? ZONE_ARENA : ZONE_LOBBY;

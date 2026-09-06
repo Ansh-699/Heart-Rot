@@ -7,15 +7,16 @@
 // tool or arena.json's `doors` block, then re-run the command above.
 import secretPng from './rooms/secret.png?no-inline';
 import keepPng from './rooms/keep.png?no-inline';
-import cryptPng from './rooms/crypt.png?no-inline';
-import glyphsPng from './siderooms-glyphs.png';
-import doorsPng from './siderooms-doors.png';
+import rangePng from './rooms/range.png?no-inline';
+import propsPng from './siderooms-props.png';
 import type { ImgRect, RoomLight, WorldRect } from './rooms.gen';
 
-export type SideRoomName = 'secret' | 'keep' | 'crypt';
+export type SideRoomName = 'secret' | 'keep' | 'range';
 
 /** The three doorways a seat can stand at, drawn open: the two painted arches and the stair. */
 export type DoorKind = 'west' | 'east' | 'stairs';
+/** Everything in the props atlas: the three open doorways and the range's straw man. */
+export type PropKind = DoorKind | 'dummy';
 
 export interface SideRoomArt {
   /** The chamber, its floor on the chain's block. Mount with `imageRendering: 'auto'`. */
@@ -82,51 +83,37 @@ export const SIDE_ROOM_ART: Readonly<Record<SideRoomName, SideRoomArt>> = {
       mirror: { x: 383.698, y: 680.453, w: 53.1321, h: 94.1887 },
     },
   },
-  crypt: {
-    img: { src: cryptPng, x: 291.623, y: 599.547, w: 440.755, h: 268.679 },
-    floor: { x: 352, y: 672, w: 320, h: 160 },
+  range: {
+    img: { src: rangePng, x: 179.623, y: 599.547, w: 664.755, h: 300.679 },
+    floor: { x: 240, y: 672, w: 544, h: 192 },
     lights: [
-      { x: 385.811, y: 667.17, r: 57.3849, color: '#ffef7e' },
-      { x: 635.774, y: 667.17, r: 57.3849, color: '#ffef7e' },
+      { x: 273.811, y: 667.17, r: 57.3849, color: '#ffef7e' },
+      { x: 747.774, y: 667.17, r: 57.3849, color: '#ffef7e' },
     ],
     labels: [
-      { x: 512, y: 823.547, text: 'every incarnation the chain has buried' },
+      { x: 512, y: 663.547, text: 'THE RANGE' },
+      { x: 512, y: 855.547, text: 'loose at the straw · every arrow is a transaction' },
     ],
     archLobby: { x: 477.267, y: 921.635, w: 72.4862, h: 54.3646 },
-    archRoom: { x: 475.774, y: 617.66, w: 72.4528, h: 54.3396 },
+    archRoom: { x: 483.925, y: 617.66, w: 72.4528, h: 54.3396 },
     doorLobby: 'stairs',
     doorRoom: 'stairs',
     anchors: {
-      slab0: { x: 373.736, y: 682.868, w: 45.8868, h: 54.3396 },
-      slab1: { x: 450.415, y: 682.868, w: 45.8868, h: 54.3396 },
-      slab2: { x: 527.698, y: 682.868, w: 45.8868, h: 54.3396 },
-      slab3: { x: 604.377, y: 682.868, w: 45.8868, h: 54.3396 },
-      slab4: { x: 373.736, y: 760.151, w: 45.8868, h: 54.3396 },
-      slab5: { x: 450.415, y: 760.151, w: 45.8868, h: 54.3396 },
-      slab6: { x: 527.698, y: 760.151, w: 45.8868, h: 54.3396 },
-      slab7: { x: 604.377, y: 760.151, w: 45.8868, h: 54.3396 },
+      dummy0: { x: 689.811, y: 684.076, w: 26.566, h: 53.1321 },
+      dummy1: { x: 689.811, y: 741.434, w: 26.566, h: 53.1321 },
+      dummy2: { x: 689.811, y: 798.793, w: 26.566, h: 53.1321 },
     },
   },
 };
 
-/** The open frames' rects in `siderooms-doors.png`: each arch with its leaf gone, the stair lit. */
-export const DOOR_FRAMES: Readonly<Record<DoorKind, { x: number; y: number; w: number; h: number }>> = { west: { x: 0, y: 0, w: 76, h: 120 }, east: { x: 76, y: 0, w: 76, h: 120 }, stairs: { x: 152, y: 0, w: 120, h: 90 } };
+/** The props' rects in `siderooms-props.png`: each arch with its leaf gone, the stair lit, the straw man. */
+export const PROP_FRAMES: Readonly<Record<PropKind, { x: number; y: number; w: number; h: number }>> = { west: { x: 0, y: 0, w: 76, h: 120 }, east: { x: 76, y: 0, w: 76, h: 120 }, stairs: { x: 152, y: 0, w: 120, h: 90 }, dummy: { x: 272, y: 0, w: 44, h: 88 } };
 
-const DOOR_IMG = `<image href="${doorsPng}" width="272" height="120"/>`;
+const PROP_IMG = `<image href="${propsPng}" width="316" height="120"/>`;
 
-/** The `<defs>` markup for the open doorways, mounted once by whichever component owns the arena `<svg>`. */
-export const DOOR_DEFS =
-  `<symbol id="door-west-open" viewBox="0 0 76 120">${DOOR_IMG}</symbol>` +
-  `<symbol id="door-east-open" viewBox="76 0 76 120">${DOOR_IMG}</symbol>` +
-  `<symbol id="door-stairs-open" viewBox="152 0 120 90">${DOOR_IMG}</symbol>`;
-
-/** The crypt's outcome glyphs, `w` x `w` each, three across: skull (wipe), crown (kill), hourglass (enrage). */
-export const CRYPT_GLYPH = { w: 12, names: ['skull', 'crown', 'hourglass'] } as const;
-
-const GLYPH_IMG = `<image href="${glyphsPng}" width="36" height="12"/>`;
-
-/** The `<defs>` markup, mounted once by whichever component owns the arena `<svg>`. */
-export const CRYPT_GLYPH_DEFS =
-  `<symbol id="crypt-skull" viewBox="0 0 12 12">${GLYPH_IMG}</symbol>` +
-  `<symbol id="crypt-crown" viewBox="12 0 12 12">${GLYPH_IMG}</symbol>` +
-  `<symbol id="crypt-hourglass" viewBox="24 0 12 12">${GLYPH_IMG}</symbol>`;
+/** The `<defs>` markup for the props, mounted once by whichever component owns the arena `<svg>`. */
+export const PROP_DEFS =
+  `<symbol id="door-west-open" viewBox="0 0 76 120">${PROP_IMG}</symbol>` +
+  `<symbol id="door-east-open" viewBox="76 0 76 120">${PROP_IMG}</symbol>` +
+  `<symbol id="door-stairs-open" viewBox="152 0 120 90">${PROP_IMG}</symbol>` +
+  `<symbol id="range-dummy" viewBox="272 0 44 88">${PROP_IMG}</symbol>`;

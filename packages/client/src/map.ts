@@ -234,13 +234,13 @@ export const SIDE_ROOMS: readonly SideRoom[] = [
     knock: 2,
     leave: 6,
   },
-  // crypt: floor tiles (22, 42)..(41, 51), knock S
+  // range: floor tiles (15, 42)..(48, 53), knock S
   {
-    name: 'crypt',
-    floor: { minX: 352, maxX: 671, minY: 672, maxY: 831 },
+    name: 'range',
+    floor: { minX: 240, maxX: 783, minY: 672, maxY: 863 },
     door: { minX: 480, maxX: 559, minY: 880, maxY: 895 },
-    exit: { minX: 480, maxX: 543, minY: 672, maxY: 687 },
-    entry: [496, 672], // tile (31, 42)
+    exit: { minX: 480, maxX: 559, minY: 672, maxY: 687 },
+    entry: [512, 672], // tile (32, 42)
     back: [512, 880], // tile (32, 55)
     knock: 4,
     leave: 0,

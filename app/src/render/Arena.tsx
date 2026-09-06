@@ -127,7 +127,7 @@ import { WAITING } from './WaitingRoom';
 import { useViewport, type Room } from './viewport';
 import { VOID } from './rooms.gen';
 import { SideRoom, doorAt } from './SideRooms';
-import { CRYPT_GLYPH_DEFS, DOOR_DEFS } from './siderooms.gen';
+import { PROP_DEFS } from './siderooms.gen';
 import { ARENA_UNITS, PAL, SELF_SNAP, VISIBLE_PROJECTILES } from './sprites';
 
 /**
@@ -222,8 +222,7 @@ const NO_BULLETS: readonly number[] = [];
  */
 const ORDNANCE_HTML = { __html: ORDNANCE_DEFS } as const;
 const FIRE_HTML = { __html: FIRE_DEFS } as const;
-const GLYPH_HTML = { __html: CRYPT_GLYPH_DEFS } as const;
-const DOOR_HTML = { __html: DOOR_DEFS } as const;
+const PROP_HTML = { __html: PROP_DEFS } as const;
 
 function visibleBullets(bullets: readonly Bullet[], slots: readonly PlayerSlot[]): number[] {
   const live: number[] = [];
@@ -1103,8 +1102,7 @@ export function Arena({
               anything a user can reach. */}
           <g dangerouslySetInnerHTML={ORDNANCE_HTML} />
           <g dangerouslySetInnerHTML={FIRE_HTML} />
-          <g dangerouslySetInnerHTML={GLYPH_HTML} />
-          <g dangerouslySetInnerHTML={DOOR_HTML} />
+          <g dangerouslySetInnerHTML={PROP_HTML} />
           {/* HELLFIRE's light: the glow on the stone and the growing fill, both soft by
               GRADIENT. The fire and the ring themselves are pixel art from the atlas above. */}
           <radialGradient id="hr-hell-glow-g">

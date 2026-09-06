@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The side rooms off the lobby -- the secret room, the keep, the crypt -- painted onto exactly
+"""The side rooms off the lobby -- the secret room, the keep, the range -- painted onto exactly
 the tiles the chain calls them, and the table `SideRooms.tsx` places them with.
 
     python3 tools/gen_side_rooms.py [--check]
@@ -8,14 +8,14 @@ Every chamber is cut from the LOBBY PAINTING itself (assets/rooms/lobby.png): a 
 of its west wall for the walls, the calmest patch of its cobbles for the floor, the south
 wall's top course for the front wall, its standing torch, and its own doors and stairs as the
 way out -- so each room is in the painting's own hand, not a second style pasted next to it.
-The furniture -- banners, tablets, a chest, a mirror, a bow rack and a dummy, tombstones --
+The furniture -- banners, tablets, a chest, a mirror, a bow rack, hay bales, the straw men --
 is drawn here at `ART` px per art pixel the way the ordnance is, with a keyline and a few
 colour bands. The marks on the secret room's banners are the official SVGs rasterised once to
 assets/sprites/{solana,magicblock}-mark.png and pixelised here. This tool is the only writer
-of app/src/render/rooms/{secret,keep,crypt}.png, app/src/render/siderooms-glyphs.png,
-app/src/render/siderooms-doors.png (each arch drawn open, the stair lit: the cue a doorway
-gives while a seat stands at it) and app/src/render/siderooms.gen.ts; `--check` diffs them
-all against disk.
+of app/src/render/rooms/{secret,keep,range}.png, app/src/render/siderooms-props.png (each
+arch drawn open and the stair lit -- the cue a doorway gives while a seat stands at it -- and
+the range's straw man, a sprite so it can flinch) and app/src/render/siderooms.gen.ts;
+`--check` diffs them all against disk.
 
 WHERE EACH ROOM GOES is not this tool's decision. The rooms are zones on the chain, their
 floors `doors.rooms[i].room_tiles` in assets/map/arena.json, which gen_map.py compiles to
@@ -54,7 +54,6 @@ MARKS = (
 )
 OUT_DIR = ROOT / "app" / "src" / "render"
 OUT_TS = OUT_DIR / "siderooms.gen.ts"
-OUT_GLYPHS = OUT_DIR / "siderooms-glyphs.png"
 
 # Crops, in lobby.png pixels: (x0, y0, x1, y1).
 WALL = (20, 730, 120, 800)  # a plain stretch of the west wall's face, the wall's full thickness
@@ -72,7 +71,7 @@ DOOR_E_ARCH = tuple(v - o for v, o in zip(ARCH_E_PX, (DOOR_E[0], DOOR_E[1], DOOR
 STAIRS = (757, 966, 943, 1086)  # the stair between its two pillars, the wall's exact height
 STAIRS_PX = (790, 996, 910, 1086)  # the treads alone, in the lobby: the glow on the way down
 STAIRS_ARCH = tuple(v - o for v, o in zip(STAIRS_PX, (STAIRS[0], STAIRS[1], STAIRS[0], STAIRS[1])))
-OUT_DOORS = OUT_DIR / "siderooms-doors.png"
+OUT_PROPS = OUT_DIR / "siderooms-props.png"
 THROAT = (0x0C, 0x0A, 0x14)  # the dark inside an open doorway
 GLOW_RGB = (0xFF, 0xB0, 0x4A)  # the room's light spilling through it
 BANNER_REF = (22, 775, 72, 870)  # the painted banner whose cloth colour the new ones borrow
@@ -89,7 +88,6 @@ MARK_PX = 34
 TORCH_INSET = 40  # the torches' distance in from the side walls
 TORCH_Y = BACK - 25
 LIGHT_R_PX = 95  # the lobby's torch reach, 57 units, in these pixels
-GLYPH = 12  # art px, the crypt's outcome glyphs
 
 OUTLINE = (0x0F, 0x0D, 0x12)  # `PAL.outline`
 ROD = (0x5A, 0x3A, 0x22)
@@ -375,60 +373,19 @@ def dummy() -> Image.Image:
     return art.image()
 
 
-def slab(variant: int) -> Image.Image:
-    """A tombstone for the crypt: a rounded slab, a darker inscribed panel where the room
-    writes, a crack per variant so eight are not one stamp."""
-    w, h = 50, 58
+def bale() -> Image.Image:
+    """A hay bale, two rope bands round it: the range's backstop."""
+    w, h = 30, 18
     art = Art(w, h)
-    art.put(0, h - 4, w, h, STONE[3])  # the base
-    rounded(art, 2, 0, w - 2, h - 4, 11, STONE[1])
-    rounded(art, 4, 2, w - 4, h - 6, 10, STONE[2])
-    rounded(art, 6, 5, w - 6, h - 8, 8, STONE[0])
-    cx = 6 + (variant * 7) % (w - 12)
-    for i in range(3 + variant % 3):
-        art.dot(cx + (i % 2), 4 + i, STONE[3])
-    art.dot(w - 6 - variant % 3, h - 7, STONE[3])
+    rounded(art, 1, 1, w - 1, h - 1, 4, STRAW[1])
+    art.put(2, h - 4, w - 2, h - 1, STRAW[0])
+    art.put(3, 2, w - 3, 4, STRAW[2])
+    for x in (9, 20):
+        art.put(x, 1, x + 2, h - 1, WOOD[0])
+    for i in range(6):  # loose stalks
+        art.dot(4 + i * 4, 6 + (i % 3), STRAW[2])
     art.outline()
     return art.image()
-
-
-def glyphs() -> Image.Image:
-    """The crypt's three outcome glyphs, `GLYPH` art px each, side by side: skull (wipe),
-    crown (kill), hourglass (enrage). Mounted as `<symbol>`s like the ordnance."""
-    strip = Art(GLYPH * 3, GLYPH)
-    skull = Art(GLYPH, GLYPH)
-    rounded(skull, 2, 1, 10, 8, 3, BONE[1])
-    skull.put(3, 8, 9, 10, BONE[0])
-    skull.put(4, 4, 6, 6, OUTLINE)
-    skull.put(7, 4, 9, 6, OUTLINE)
-    skull.dot(6, 7, OUTLINE)
-    skull.put(4, 10, 5, 11, BONE[0])
-    skull.put(6, 10, 7, 11, BONE[0])
-    skull.put(8, 10, 9, 11, BONE[0])
-    skull.outline()
-    crown = Art(GLYPH, GLYPH)
-    crown.put(2, 6, 10, 10, GOLD[1])
-    crown.put(2, 3, 3, 6, GOLD[1])
-    crown.put(5, 2, 7, 6, GOLD[1])
-    crown.put(9, 3, 10, 6, GOLD[1])
-    crown.put(2, 9, 10, 10, GOLD[0])
-    crown.dot(4, 7, RUBY)
-    crown.dot(7, 7, RUBY)
-    crown.dot(6, 2, GOLD[2])
-    crown.outline()
-    hour = Art(GLYPH, GLYPH)
-    hour.put(2, 1, 10, 2, WOOD[2])
-    hour.put(2, 10, 10, 11, WOOD[2])
-    for i in range(4):
-        hour.put(3 + i, 2 + i, 9 - i, 3 + i, GLASS[2])
-        hour.put(3 + i, 9 - i, 9 - i, 10 - i, GLASS[2])
-    hour.put(4, 8, 8, 10, SAND[0])
-    hour.put(5, 3, 7, 4, SAND[1])
-    hour.dot(6, 6, SAND[1])
-    hour.outline()
-    for i, g in enumerate((skull, crown, hour)):
-        strip.blit(g, i * GLYPH, 0)
-    return Image.fromarray(strip.px, "RGBA")
 
 
 # ---------------------------------------------------------------------------
@@ -481,10 +438,10 @@ def lit_stairs(lobby: Image.Image) -> Image.Image:
     return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGB")
 
 
-def door_frames(lobby: Image.Image) -> tuple[Image.Image, dict[str, tuple[int, int, int, int]]]:
-    """The three open frames side by side in one atlas: west arch, east arch, stairs.
-    Returns the atlas and each frame's rect in it."""
-    frames = [("west", open_arch(lobby, ARCH_W_PX)), ("east", open_arch(lobby, ARCH_E_PX)), ("stairs", lit_stairs(lobby))]
+def prop_frames(lobby: Image.Image) -> tuple[Image.Image, dict[str, tuple[int, int, int, int]]]:
+    """The props side by side in one atlas: the west arch and east arch drawn open, the stair
+    lit, and the range's straw man. Returns the atlas and each frame's rect in it."""
+    frames = [("west", open_arch(lobby, ARCH_W_PX)), ("east", open_arch(lobby, ARCH_E_PX)), ("stairs", lit_stairs(lobby)), ("dummy", dummy())]
     W = sum(f.width for _, f in frames)
     H = max(f.height for _, f in frames)
     atlas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -651,26 +608,48 @@ def dress_keep(shell: Shell, lobby: Image.Image) -> None:
     shell.label(shell.W / 2, shell.H - FRONT_H - 14, "what the chain remembers, what pays for it, who you are")
 
 
-def dress_crypt(shell: Shell, lobby: Image.Image) -> None:
-    """Eight slabs in two rows, the newest nearest the stairs."""
-    shell.torches(lobby)
-    s_img = slab(0)
-    cols, rows = 4, 2
-    gap_x = (shell.floor_w - 20) / cols
-    x_start = SIDE + 10 + gap_x / 2 - s_img.width / 2
-    y_rows = (BACK + 8, BACK + shell.floor_h / 2 + 4)
-    i = 0
-    for row in range(rows):
-        for col in range(cols):
-            s = slab(i)
-            x, y = round(x_start + col * gap_x), round(y_rows[row])
-            shell.paste(s, x, y)
-            shell.anchor(f"slab{i}", x + 6 * ART, y + 5 * ART, x + (50 - 6) * ART, y + (58 - 8) * ART)
-            i += 1
-    shell.label(shell.W / 2, shell.H - FRONT_H - 14, "every incarnation the chain has buried")
+def dress_range(shell: Shell, lobby: Image.Image) -> None:
+    """A long hall: a firing line of posts and rope a quarter in from the west wall, hay bales
+    stacked against the east wall, and three straw men in front of them. The straw men are
+    NOT painted -- `SideRooms.tsx` draws them from the props atlas so they can flinch -- only
+    their stands are, and their rects are the anchors that are also their hitboxes."""
+    shell.torches(lobby, (SIDE + 40, shell.W - SIDE - 40 - (TORCH[2] - TORCH[0])))
+    post = Art(6, 20)
+    post.put(2, 0, 4, 18, WOOD[1])
+    post.put(2, 0, 4, 2, WOOD[2])
+    post.put(1, 17, 5, 20, WOOD[0])
+    post.outline()
+    p_img = post.image()
+    line_x = SIDE + round(shell.floor_w * 0.28)
+    y0, y1 = BACK + 6, shell.H - FRONT_H - 6
+    rope = Image.new("RGBA", (ART, y1 - y0), (*WOOD[2], 255))
+    shell.paste(rope, line_x + 2 * ART, y0)
+    for y in range(y0, y1 - p_img.height, 56):
+        shell.paste(p_img, line_x, y)
+    b_img = bale()
+    bx = shell.W - SIDE - b_img.width - 8
+    for i, y in enumerate(range(BACK + 10, shell.H - FRONT_H - b_img.height, b_img.height + 6)):
+        shell.paste(b_img, bx - (8 if i % 2 else 0), y)
+    dw, dh = 22 * ART, 44 * ART
+    dx = bx - 44 - dw
+    for i, frac in enumerate((0.2, 0.5, 0.8)):
+        dy = round(BACK + shell.floor_h * frac - dh / 2)
+        shell.anchor(f"dummy{i}", dx, dy, dx + dw, dy + dh)
+        stand = Art(16, 4)
+        stand.put(0, 0, 16, 4, STONE[0])
+        stand.put(1, 0, 15, 1, STONE[2])
+        stand.outline()
+        st = stand.image()
+        shell.paste(st, dx + (dw - st.width) // 2, dy + dh - st.height + 2)
+        for k in range(16):
+            sx = dx + (k * 19) % (dw + 36) - 18
+            sy = dy + dh - 4 + (k * 5) % 12
+            shell.im.putpixel((max(0, min(shell.W - 1, sx)), max(0, min(shell.H - 1, sy))), STRAW[1 if k % 3 else 2])
+    shell.label(SIDE + shell.floor_w / 2, BACK - 14, "THE RANGE")
+    shell.label(shell.W / 2, shell.H - FRONT_H - 14, "loose at the straw \u00b7 every arrow is a transaction")
 
 
-DRESS = {"secret": dress_secret, "keep": dress_keep, "crypt": dress_crypt}
+DRESS = {"secret": dress_secret, "keep": dress_keep, "range": dress_range}
 DOOR = {2: door_east, 6: door_west, 0: stairs_north}  # by the room's `leave` octant
 LEAVE_OF = {"W": 2, "E": 6, "S": 0, "N": 4}
 # The open frame drawn at each of a room's two doorways, by knock: the lobby's arch, and
@@ -678,7 +657,7 @@ LEAVE_OF = {"W": 2, "E": 6, "S": 0, "N": 4}
 DOOR_KINDS = {"W": ("west", "east"), "E": ("east", "west"), "S": ("stairs", "stairs")}
 
 
-def build() -> tuple[dict[str, bytes], bytes, bytes, str]:
+def build() -> tuple[dict[str, bytes], bytes, str]:
     lobby = Image.open(LOBBY).convert("RGB")
     fx, fy, fw, fh = lobby_fit()
     s = fw / lobby.width
@@ -733,11 +712,9 @@ def build() -> tuple[dict[str, bytes], bytes, bytes, str]:
         pngs[name] = buf.getvalue()
         entries.append((name, shell, lobby_rect(LOBBY_GLOW[knock]), arch_room, DOOR_KINDS[knock]))
 
-    gbuf = io.BytesIO()
-    glyphs().save(gbuf, "PNG", optimize=True)
-    doors_atlas, door_rects = door_frames(lobby)
+    props_atlas, prop_rects = prop_frames(lobby)
     dbuf = io.BytesIO()
-    doors_atlas.save(dbuf, "PNG", optimize=True)
+    props_atlas.save(dbuf, "PNG", optimize=True)
 
     def f4(v: float) -> str:
         return f"{round(v, 4):g}"
@@ -767,9 +744,10 @@ def build() -> tuple[dict[str, bytes], bytes, bytes, str]:
             f"  }},"
         )
     imports = "\n".join(f"import {name}Png from './rooms/{name}.png?no-inline';" for name, *_ in entries)
-    door_rects_ts = ", ".join(f"{k}: {{ x: {x}, y: {y}, w: {w}, h: {h} }}" for k, (x, y, w, h) in door_rects.items())
-    door_defs = " +\n  ".join(
-        f"`<symbol id=\"door-{k}-open\" viewBox=\"{x} {y} {w} {h}\">${{DOOR_IMG}}</symbol>`" for k, (x, y, w, h) in door_rects.items()
+    prop_rects_ts = ", ".join(f"{k}: {{ x: {x}, y: {y}, w: {w}, h: {h} }}" for k, (x, y, w, h) in prop_rects.items())
+    symbol_ids = {"west": "door-west-open", "east": "door-east-open", "stairs": "door-stairs-open", "dummy": "range-dummy"}
+    prop_defs = " +\n  ".join(
+        f"`<symbol id=\"{symbol_ids[k]}\" viewBox=\"{x} {y} {w} {h}\">${{PROP_IMG}}</symbol>`" for k, (x, y, w, h) in prop_rects.items()
     )
     names = " | ".join(f"'{name}'" for name, *_ in entries)
     src = f"""// @generated from assets/map/arena.json `doors`, assets/rooms/lobby.png and assets/sprites/*-mark.png
@@ -780,14 +758,15 @@ def build() -> tuple[dict[str, bytes], bytes, bytes, str]:
 // the chain puts in a room's zone is drawn on its floor with no offset anywhere. Edit the
 // tool or arena.json's `doors` block, then re-run the command above.
 {imports}
-import glyphsPng from './siderooms-glyphs.png';
-import doorsPng from './siderooms-doors.png';
+import propsPng from './siderooms-props.png';
 import type {{ ImgRect, RoomLight, WorldRect }} from './rooms.gen';
 
 export type SideRoomName = {names};
 
 /** The three doorways a seat can stand at, drawn open: the two painted arches and the stair. */
 export type DoorKind = 'west' | 'east' | 'stairs';
+/** Everything in the props atlas: the three open doorways and the range's straw man. */
+export type PropKind = DoorKind | 'dummy';
 
 export interface SideRoomArt {{
   /** The chamber, its floor on the chain's block. Mount with `imageRendering: 'auto'`. */
@@ -813,36 +792,25 @@ export const SIDE_ROOM_ART: Readonly<Record<SideRoomName, SideRoomArt>> = {{
 {chr(10).join(parts)}
 }};
 
-/** The open frames' rects in `siderooms-doors.png`: each arch with its leaf gone, the stair lit. */
-export const DOOR_FRAMES: Readonly<Record<DoorKind, {{ x: number; y: number; w: number; h: number }}>> = {{ {door_rects_ts} }};
+/** The props' rects in `siderooms-props.png`: each arch with its leaf gone, the stair lit, the straw man. */
+export const PROP_FRAMES: Readonly<Record<PropKind, {{ x: number; y: number; w: number; h: number }}>> = {{ {prop_rects_ts} }};
 
-const DOOR_IMG = `<image href="${{doorsPng}}" width="{doors_atlas.width}" height="{doors_atlas.height}"/>`;
+const PROP_IMG = `<image href="${{propsPng}}" width="{props_atlas.width}" height="{props_atlas.height}"/>`;
 
-/** The `<defs>` markup for the open doorways, mounted once by whichever component owns the arena `<svg>`. */
-export const DOOR_DEFS =
-  {door_defs};
-
-/** The crypt's outcome glyphs, `w` x `w` each, three across: skull (wipe), crown (kill), hourglass (enrage). */
-export const CRYPT_GLYPH = {{ w: {GLYPH}, names: ['skull', 'crown', 'hourglass'] }} as const;
-
-const GLYPH_IMG = `<image href="${{glyphsPng}}" width="{GLYPH * 3}" height="{GLYPH}"/>`;
-
-/** The `<defs>` markup, mounted once by whichever component owns the arena `<svg>`. */
-export const CRYPT_GLYPH_DEFS =
-  `<symbol id="crypt-skull" viewBox="0 0 {GLYPH} {GLYPH}">${{GLYPH_IMG}}</symbol>` +
-  `<symbol id="crypt-crown" viewBox="{GLYPH} 0 {GLYPH} {GLYPH}">${{GLYPH_IMG}}</symbol>` +
-  `<symbol id="crypt-hourglass" viewBox="{GLYPH * 2} 0 {GLYPH} {GLYPH}">${{GLYPH_IMG}}</symbol>`;
+/** The `<defs>` markup for the props, mounted once by whichever component owns the arena `<svg>`. */
+export const PROP_DEFS =
+  {prop_defs};
 """
-    return pngs, gbuf.getvalue(), dbuf.getvalue(), src
+    return pngs, dbuf.getvalue(), src
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true", help="fail if the checked-in files are stale")
     args = ap.parse_args()
-    pngs, glyph_png, doors_png, src = build()
+    pngs, props_png, src = build()
     outputs = [(OUT_DIR / "rooms" / f"{name}.png", png) for name, png in pngs.items()]
-    outputs += [(OUT_GLYPHS, glyph_png), (OUT_DOORS, doors_png), (OUT_TS, src.encode())]
+    outputs += [(OUT_PROPS, props_png), (OUT_TS, src.encode())]
     if args.check:
         stale = [p.relative_to(ROOT) for p, want in outputs if not p.exists() or p.read_bytes() != want]
         if stale:

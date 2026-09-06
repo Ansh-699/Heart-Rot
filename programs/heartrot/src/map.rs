@@ -394,12 +394,12 @@ pub const ROOMS: [Room; N_ROOMS] = [
         knock: 2,
         leave: 6,
     },
-    // crypt: floor tiles (22, 42)..(41, 51), knock S (4), leave 0
+    // range: floor tiles (15, 42)..(48, 53), knock S (4), leave 0
     Room {
-        floor: Gate { min_x: 352, max_x: 671, min_y: 672, max_y: 831 },
+        floor: Gate { min_x: 240, max_x: 783, min_y: 672, max_y: 863 },
         door: Gate { min_x: 480, max_x: 559, min_y: 880, max_y: 895 },
-        exit: Gate { min_x: 480, max_x: 543, min_y: 672, max_y: 687 },
-        entry: (496, 672), // tile (31, 42)
+        exit: Gate { min_x: 480, max_x: 559, min_y: 672, max_y: 687 },
+        entry: (512, 672), // tile (32, 42)
         back: (512, 880), // tile (32, 55)
         knock: 4,
         leave: 0,

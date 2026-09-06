@@ -99,7 +99,7 @@
     "rooms": [
       { "name": "secret", "knock": "W", "room_tiles": [22, 40, 20, 10], "door_tiles": [5, 42, 1, 6],  "exit_tiles": [41, 42, 1, 5], "entry_tile": [41, 44], "return_tile": [5, 44] },
       { "name": "keep",   "knock": "E", "room_tiles": [19, 42, 26, 12], "door_tiles": [58, 42, 1, 6], "exit_tiles": [19, 45, 1, 5], "entry_tile": [19, 47], "return_tile": [58, 44] },
-      { "name": "crypt",  "knock": "S", "room_tiles": [22, 42, 20, 10], "door_tiles": [30, 55, 5, 1], "exit_tiles": [30, 42, 4, 1], "entry_tile": [31, 42], "return_tile": [32, 55] }
+      { "name": "range",  "knock": "S", "room_tiles": [15, 42, 34, 12], "door_tiles": [30, 55, 5, 1], "exit_tiles": [30, 42, 5, 1], "entry_tile": [32, 42], "return_tile": [32, 55] }
     ]
   },
   "rooms": {

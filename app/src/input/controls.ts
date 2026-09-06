@@ -147,6 +147,7 @@ import {
   PHASE_MUSTERING,
   PHASE_LOBBY,
   ZONE_LOBBY,
+  ZONE_RANGE,
   SUPER_MS,
   TICK_MS,
   ZONE_ARENA,
@@ -621,8 +622,10 @@ export function attachControls(cfg: ControlsConfig): () => void {
     // is frozen at 0; the wall clock below is this side's mirror of that same period.
     // Anyone already through the gate is refused: weapons stay down in the pit.
     const live = phase === PHASE_FIGHTING && (zone ?? ZONE_ARENA) === ZONE_ARENA;
+    // The range down the stairs shoots too: its straw is what it is for, and `shoot.rs`'s
+    // practice path takes both zones.
     const practice =
-      (phase === PHASE_LOBBY || phase === PHASE_MUSTERING) && (zone ?? ZONE_LOBBY) === ZONE_LOBBY;
+      (phase === PHASE_LOBBY || phase === PHASE_MUSTERING) && ((zone ?? ZONE_LOBBY) === ZONE_LOBBY || zone === ZONE_RANGE);
 
     // The two clocks, each pacing the trigger it can see. Inside a live cooldown nothing is
     // drawn at all: the ring is already on screen counting it down, and an arrow there
