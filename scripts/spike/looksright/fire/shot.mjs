@@ -45,8 +45,6 @@ const scenes = {
   slamhit: async () => {
     await crank(944, 960, { seats: 20, ring: true, bullets: 0 }); await pg.waitForTimeout(60);
   },
-  beamwarn: async () => { await crank(12 * 80, 12 * 80 + 8, { seats: 20, ring: true, bullets: 6, beam: 'warn' }); },
-  beamsweep: async () => { await crank(12 * 80 + 10, 12 * 80 + 15 + 4 + 1, { seats: 20, ring: true, bullets: 6, beam: 'sweep' }); },
 };
 const want = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(scenes);
 for (const name of want) {

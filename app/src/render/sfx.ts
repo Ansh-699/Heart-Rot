@@ -34,8 +34,6 @@ export type SfxName =
   | 'volley'
   | 'slamWarn'
   | 'slam'
-  | 'beamWarn'
-  | 'beamSweep'
   | 'hurt'
   | 'fall'
   | 'gate'
@@ -277,21 +275,6 @@ const RECIPES: Readonly<Record<SfxName, Recipe>> = {
   slam: (c, o, t) => {
     noise(c, o, t, 'lowpass', 220, 0.55, 0.8);
     tone(c, o, t, 'sine', 70, 28, 0.55, 0.7);
-  },
-  // The half-floor warning (`Arena.tsx`, `beamAt`): one low sine rising an octave over
-  // 1.2 s, a fifth above it for body. A hum, not a growl — `slamWarn`'s beat is the
-  // hand's, and the two warnings overlap once every 24 s, so they have to read as two
-  // things with the eyes on the floor. Quiet: it is 1.5 s of "cross the centre line",
-  // and a loud warning that long is a siren.
-  beamWarn: (c, o, t) => {
-    tone(c, o, t, 'sine', 55, 110, 1.2, 0.22);
-    tone(c, o, t, 'sine', 82, 164, 1.2, 0.1);
-  },
-  // The sweep: `looseSuper`'s wind an octave down and half as long, over a low bed — a
-  // roar of air with no pitch in it, so it cannot be mistaken for the player's own beam.
-  beamSweep: (c, o, t) => {
-    gust(c, o, t, 'bandpass', 160, 900, 0.5, 0.06, 0.6, 1.2);
-    noise(c, o, t, 'lowpass', 260, 0.45, 0.4);
   },
   hurt: (c, o, t) => {
     tone(c, o, t, 'square', 320, 140, 0.13, 0.25);

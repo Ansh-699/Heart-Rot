@@ -16,7 +16,6 @@ import { fireLocal } from '../../../app/src/render/Shot';
 import { chargeLocal } from '../../../app/src/render/Knight';
 import {
   ARENA, BOSS, BOSS_SPAWN, BULLET, MUZZLES, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
-  BEAM_LANE_TICKS, BEAM_PERIOD_TICKS, BEAM_WARN_TICKS,
   LAYOUT_VERSION, MAX_SEATS, N_PARTS, CLASS_MASK,
   PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING, ZONE_ARENA, ZONE_LOBBY,
   autoAim, decodeAim, decodeArena, decodeBoss, decodePlayers,
@@ -85,15 +84,13 @@ function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, i
  * `vent`: the shell sits just under the solo threshold (98 %) so the vent is open and the
  * quiet ring shows. `fury`: the same plus a core at 300 of 2,000 — with 90 shell to strip
  * the effective pool is 2,090 and 300 is under 20 % of it, so `isFurious` reads true.
- * `beam`: the same open shell with the core at 1,000 — under half of 2,090 and over a
- * fifth, so `isPhase2` reads true and `isFurious` false: the beam without the fury wash.
  */
-function bossBytes(hurt: boolean, vent = false, fury = false, beam = false, dead: number[] = []) {
+function bossBytes(hurt: boolean, vent = false, fury = false, dead: number[] = []) {
   const { d, v } = blank(BOSS.size, DISC_BOSS);
   const o = BOSS.offsets;
   v.setInt16(o.x, BOSS_SPAWN[0], true);
   v.setInt16(o.y, BOSS_SPAWN[1], true);
-  const open = vent || fury || beam;
+  const open = vent || fury;
   for (let i = 0; i < N_PARTS; i++) {
     v.setUint16(o.parts_max + i * 2, 500, true);
     // `dead` names the destroyed parts outright (the heads, for the torn-off shot); the
@@ -103,7 +100,7 @@ function bossBytes(hurt: boolean, vent = false, fury = false, beam = false, dead
     v.setUint16(o.parts + i * 2, hp, true);
   }
   v.setUint8(o.vent_open, open ? 1 : 0);
-  v.setUint16(o.core_hp, fury ? 300 : beam ? 1000 : 2000, true);
+  v.setUint16(o.core_hp, fury ? 300 : 2000, true);
   v.setUint16(o.core_hp_max, 2000, true);
   return decodeBoss(d);
 }
@@ -239,9 +236,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 interface SceneOpts {
   hurt?: boolean; vent?: boolean; fury?: boolean; bullets?: number; seats?: number; phase?: number; at?: number[][];
   outcome?: number; incarnation?: number; damage?: number[];
-  /** The 50 % phase: drop the boss under half and freeze on a tick in the named stage. */
-  beam?: 'warn' | 'sweep';
-  /** An explicit tick, over the defaults below — e.g. one tick on from `beam: 'sweep'`. */
+  /** An explicit tick, over the default (900 in the arena, 0 in the lobby). */
   tick?: number;
   /** Which `Boss.parts` slots are destroyed, over the fury default (4 crown, 5 wolf, 6 beast). */
   dead?: number[];
@@ -251,16 +246,6 @@ interface SceneOpts {
   ring?: boolean;
 }
 
-/**
- * The beam is stateless in the tick, so a stage is a tick. Period 12 (tick 960) is one
- * where no slam telegraph overlaps the warning or the sweep, so the shot is the beam
- * alone: 0.7 s into the warning, and one tick into the sweep's second lane.
- */
-const BEAM_TICK = {
-  warn: 12 * BEAM_PERIOD_TICKS + 7,
-  sweep: 12 * BEAM_PERIOD_TICKS + BEAM_WARN_TICKS + BEAM_LANE_TICKS + 1,
-};
-
 function Bridge() {
   const store = useStore();
   useEffect(() => {
@@ -268,10 +253,10 @@ function Bridge() {
     w.__store = store;
     w.__scene = (which: 'lobby' | 'arena', opts: SceneOpts = {}) => {
       const arena = which === 'arena';
-      const tick = opts.tick ?? (arena ? (opts.beam ? BEAM_TICK[opts.beam] : 900) : 0);
+      const tick = opts.tick ?? (arena ? 900 : 0);
       // The boss first: the seats aim at the shell this scene actually has, so a stripped
       // part re-targets the raid the way `autoAim` re-targets a real player.
-      const boss = bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, !!opts.beam, opts.dead);
+      const boss = bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, opts.dead);
       store.setWorld({
         from: '11111111111111111111111111111111',
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,

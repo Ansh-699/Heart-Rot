@@ -250,42 +250,6 @@ const CLAWS_LANE_COUNT: u64 = 2;
 const SLAM_VENT_LANE: i32 = 4;
 
 // ---------------------------------------------------------------------------
-// The beam
-// ---------------------------------------------------------------------------
-
-// The mid-fight escalation: from half of `Boss::fight_hp` until the core dies, a beam
-// sweeps one half of the floor lane by lane, every eight seconds. Fury at 20 % stays the
-// final escalation, so the fight reads 100 % normal → 50 % beam → 20 % fury → 0 win.
-//
-// Stateless, for the slam's reason — `Boss` has no padding and the layout is frozen —
-// and on the slam's scaffolding: the same eight lanes, the same telegraph length, the
-// same damage, the same [`strike_lane`]. What differs is the shape of the dodge. A slam
-// claims one lane and the answer is "step out of it"; the beam claims four in a row and
-// the answer is "be on the other half of the floor before it starts", which the whole
-// raid decides at once, from the warning, with 1.5 s to cross the centre line.
-
-/// One sweep every 8 s. `tick % BEAM_PERIOD_TICKS` is where in the cycle a tick falls and
-/// `tick / BEAM_PERIOD_TICKS` is which sweep it belongs to — no counter and no field, as
-/// [`SLAM_PERIOD_TICKS`] has none. 80 ticks against the slam's 60, so the two beats
-/// coincide once every 240 ticks (24 s) rather than every time.
-const BEAM_PERIOD_TICKS: u32 = crate::state::ticks_for(8_000);
-
-/// The warning is the slam's telegraph: the same 1.5 s that was budgeted against the worst
-/// latency ever measured here (1,126 ms), buying the same 480 units of escape — which is
-/// 3.75 lane widths, so a raider against the far wall of the doomed half can still make
-/// the other half. Nothing on chain reads it; it is the client's window, mirrored from
-/// here for the reason [`SLAM_TELEGRAPH_TICKS`] gives.
-const BEAM_WARN_TICKS: u32 = SLAM_TELEGRAPH_TICKS;
-
-/// Ticks the beam spends on each lane. A lane is 128 units and a raider covers 128 in
-/// 0.4 s exactly (320 u/s), so running *with* the sweep is a tie and running against it
-/// is safe: the beam is a strike to get out of, not a wall to be pushed by.
-const BEAM_LANE_TICKS: u32 = crate::state::ticks_for(400);
-
-/// Lanes one sweep crosses: half the floor. The dodge is "get to the other half".
-const BEAM_SWEEP_LANES: i32 = SLAM_LANES / 2;
-
-// ---------------------------------------------------------------------------
 // Emitters
 // ---------------------------------------------------------------------------
 
@@ -338,18 +302,6 @@ const _: () = {
     assert!(MACE_LANE_FIRST >= 0 && MACE_LANE_FIRST + MACE_LANE_COUNT as i32 <= SLAM_LANES);
     assert!(CLAWS_LANE_FIRST >= 0 && CLAWS_LANE_FIRST + CLAWS_LANE_COUNT as i32 <= SLAM_LANES);
     assert!(PART_MACE < crate::state::N_PARTS && PART_CLAWS < crate::state::N_PARTS);
-
-    // The beam's halves are whole lanes, and a sweep fits its period with room to breathe:
-    // the warning, four lane steps, then at least 2 s of quiet floor before the next
-    // warning. A sweep that ran into its own next warning would be a beam that never stops.
-    assert!(SLAM_LANES % 2 == 0 && BEAM_SWEEP_LANES * 2 == SLAM_LANES);
-    assert!(BEAM_WARN_TICKS > 0 && BEAM_LANE_TICKS > 0);
-    assert!(
-        BEAM_WARN_TICKS
-            + BEAM_SWEEP_LANES as u32 * BEAM_LANE_TICKS
-            + crate::state::ticks_for(2_000)
-            <= BEAM_PERIOD_TICKS
-    );
 };
 
 // ---------------------------------------------------------------------------
@@ -378,7 +330,7 @@ fn mix64(seed: u64) -> u64 {
 
 /// `affix_seed[..8]` as the `u64` every per-tick draw in this file is keyed on — the range
 /// `docs/architecture/06-game-loop.md` §6 reserves for it. One reader, so the volley, the
-/// slam and the beam cannot disagree about which bytes or which endianness; the client's
+/// slam's draw reads one definition of which bytes and which endianness; the client's
 /// `le64` is its mirror.
 #[inline]
 fn seed64(affix_seed: &[u8; 32]) -> u64 {
@@ -561,82 +513,6 @@ fn slam_lane(affix_seed: &[u8; 32], tick: u32, boss: &Boss) -> Option<i32> {
     Some(lane)
 }
 
-/// Where in its cycle a beam is: quiet floor, the warning, or a lane burning.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum BeamStage {
-    Idle,
-    Warning,
-    Sweeping,
-}
-
-/// One sweep, as the tests and the client see it. `half` is which four lanes are doomed
-/// (0 = lanes `0..4`, 1 = lanes `4..8`); `outward` is whether the sweep runs from the
-/// centre line to the wall or from the wall in; `k` is the lane step `0..4` and `lane` the
-/// lane it is on — during the warning, the lane it will start from. `strikes` is the first
-/// tick of a lane step: the one tick in four the chain deals damage on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Beam {
-    pub(crate) half: u8,
-    pub(crate) outward: bool,
-    pub(crate) stage: BeamStage,
-    pub(crate) lane: i32,
-    pub(crate) k: u32,
-    pub(crate) strikes: bool,
-}
-
-/// The beam on `tick`, from the seed and the tick alone — the whole telegraph, as
-/// [`slam_lane`] is the slam's. Pure and total: twenty clients and this handler run these
-/// lines on the same published bytes and agree on which half is doomed and which lane
-/// burns now, with no field on `Boss` and no notification. Mirrored line for line as
-/// `beamAt` in `packages/client/src/layout.ts`, and the two are pinned to one vector.
-///
-/// Whether it *fires* is not decided here. [`step`] asks [`Boss::is_phase2`] first, so the
-/// derivation is the same function above and below 50 % and only the damage is gated; the
-/// client gates its drawing on the same predicate.
-///
-/// The `0xBEA1` is domain separation from the slam's `mix64(cycle)`. Sweep 1 spans ticks
-/// 80..160 and slam cycle 1 spans 60..120, so without it the two draws are the same `r`
-/// over ticks 80..120 — and both spend bit 0, the slam on the hand and the beam on the
-/// half. The mace's lanes (1..4) are half 0 and the claws' (5..7) are half 1, so an equal
-/// draw would put the beam on the half the hand had just slammed, every time they overlap.
-pub(crate) fn beam_at(affix_seed: &[u8; 32], tick: u32) -> Beam {
-    let t = tick % BEAM_PERIOD_TICKS;
-    let r = mix64(seed64(affix_seed) ^ mix64((tick / BEAM_PERIOD_TICKS) as u64 ^ 0xBEA1));
-    let half = (r & 1) as u8;
-    let outward = (r >> 1) & 1 == 1;
-
-    let sweep_end = BEAM_WARN_TICKS + BEAM_SWEEP_LANES as u32 * BEAM_LANE_TICKS;
-    let (stage, k, strikes) = if t < BEAM_WARN_TICKS {
-        (BeamStage::Warning, 0, false)
-    } else if t < sweep_end {
-        let into = t - BEAM_WARN_TICKS;
-        (BeamStage::Sweeping, into / BEAM_LANE_TICKS, into % BEAM_LANE_TICKS == 0)
-    } else {
-        (BeamStage::Idle, 0, false)
-    };
-    // Distance from the centre line, in lanes. An outward sweep starts at 0 and walks to
-    // the wall; an inward one starts at the wall and walks in. Lanes 3 and 4 flank the
-    // centre, so half 0 counts down from 3 and half 1 counts up from 4.
-    let dist = if outward {
-        k as i32
-    } else {
-        BEAM_SWEEP_LANES - 1 - k as i32
-    };
-    let lane = if half == 0 {
-        BEAM_SWEEP_LANES - 1 - dist
-    } else {
-        BEAM_SWEEP_LANES + dist
-    };
-    Beam {
-        half,
-        outward,
-        stage,
-        lane,
-        k,
-        strikes,
-    }
-}
-
 /// Land `damage` on the live target at `live[i]`, and do the one and only death
 /// bookkeeping this program has.
 ///
@@ -682,8 +558,8 @@ fn damage_seat(
 }
 
 /// Land `damage` on every live target standing in `lane`, with [`damage_seat`]'s death
-/// bookkeeping for each one it kills. The slam and the beam both hit "everyone in a lane";
-/// a second copy of this loop is a second place to get the swap-remove wrong.
+/// bookkeeping for each one it kills. The slam hits "everyone in a lane"; the loop lives
+/// apart from it so the swap-remove has one home.
 fn strike_lane(
     lane: i32,
     players: &mut Players,
@@ -918,23 +794,6 @@ fn step(arena: &mut Arena, boss: &mut Boss, players: &mut Players) {
     // sees a slam death exactly as it sees a bullet death.
     if let Some(lane) = slam_lane(&arena.affix_seed, tick, boss) {
         strike_lane(lane, players, &mut live, &mut live_n, per_slam);
-    }
-
-    // ---- 4b. the beam -----------------------------------------------------
-    //
-    // The 50 % escalation, on the slam's scaffolding: see [`beam_at`]. Gated on
-    // `is_phase2` here and nowhere inside the derivation, so the client draws from the
-    // same function this damages from. A slam's damage and no vent-lane exemption: the
-    // slam's exemption is about the one lane the torso lunges over, and a sweep that
-    // skipped one of its four lanes would leave a safe column inside a wall of fire.
-    // Same placement as the slam, for the slam's reasons — a seat the slam killed this
-    // tick is already off the live list, and a beam death reaches the wipe check exactly
-    // as a slam death does.
-    if boss.is_phase2(arena.raid_size, arena.difficulty) {
-        let beam = beam_at(&arena.affix_seed, tick);
-        if beam.strikes {
-            strike_lane(beam.lane, players, &mut live, &mut live_n, per_slam);
-        }
     }
 
     // ---- 5. alive count ---------------------------------------------------
@@ -2378,186 +2237,16 @@ mod tests {
         );
     }
 
-    /// A boss that is nothing but a core: no thorns to fire, no hands to slam, `parts_max`
-    /// zero so the vent stays sealed and the torso never lunges. The beam is the only thing
-    /// left that can move a raider's health, and phase 2 is exactly
-    /// `core_hp * 2 <= core_hp_max`. The core is sized to `raiders` up front so stage 1b
-    /// tops nothing up under the test and the line stays where it was set.
-    fn core_only(raiders: u16, phase2: bool) -> (Arena, Boss, Players) {
-        let (arena, mut boss, players) = fight();
-        boss.parts = [0; N_PARTS];
-        boss.parts_max = [0; N_PARTS];
-        boss.core_hp_max = core_hp_required(raiders as u8, TIER_EASY);
-        boss.core_hp = boss.core_hp_max / 2 + if phase2 { 0 } else { 1 };
-        (arena, boss, players)
-    }
-
-    /// The beam is the 50 % escalation and nothing else: above the line a whole period
-    /// touches nobody; on it, every strike tick `beam_at` names lands one slam on exactly
-    /// the lane it names, once per lane step, and one sweep leaves the other half of the
-    /// floor untouched.
-    #[test]
-    fn the_beam_sweeps_half_the_floor_only_in_phase_two() {
-        // One raider in the middle of every lane, so a sweep that strays shows up as a seat
-        // that should not have been touched.
-        let raid = SLAM_LANES as usize;
-        let stand = |players: &mut Players| {
-            for lane in 0..raid {
-                let x = (lane as i32 * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
-                seat_in_arena(players, lane, x, 512);
-            }
-        };
-
-        let (mut arena, mut boss, mut players) = core_only(raid as u16, false);
-        stand(&mut players);
-        while arena.tick < BEAM_PERIOD_TICKS {
-            tick_once(&mut arena, &mut boss, &mut players);
-            assert!(!boss.is_phase2(arena.raid_size, arena.difficulty), "one point over the line");
-        }
-        assert!(
-            players.slots[..raid].iter().all(|s| s.hp == 100),
-            "no beam above 50 %"
-        );
-
-        let (mut arena, mut boss, mut players) = core_only(raid as u16, true);
-        stand(&mut players);
-        let seed = arena.affix_seed;
-        let per_slam = slam_damage(raid as u8, TIER_EASY);
-        let mut hp = [100u16; SLAM_LANES as usize];
-        while arena.tick < BEAM_PERIOD_TICKS {
-            tick_once(&mut arena, &mut boss, &mut players);
-            assert!(boss.is_phase2(arena.raid_size, arena.difficulty), "on the line");
-            let beam = beam_at(&seed, arena.tick);
-            if beam.strikes {
-                hp[beam.lane as usize] -= per_slam;
-            }
-            for lane in 0..raid {
-                assert_eq!(
-                    players.slots[lane].hp, hp[lane],
-                    "lane {lane} at tick {}",
-                    arena.tick
-                );
-            }
-        }
-        let half = beam_at(&seed, 0).half as usize;
-        for lane in 0..raid {
-            let doomed = lane / BEAM_SWEEP_LANES as usize == half;
-            assert_eq!(
-                players.slots[lane].hp,
-                if doomed { 100 - per_slam } else { 100 },
-                "lane {lane} after one sweep of half {half}"
-            );
-        }
-    }
-
-    /// The derivation the client mirrors: stage boundaries, one strike per lane step, a
-    /// sweep that covers its half exactly and never changes its mind, "outward" meaning
-    /// away from the centre line, all four (half, direction) draws coming up over a fight,
-    /// and the vector `layoutSelfCheck` pins on the other side.
-    #[test]
-    fn the_beam_is_a_pure_function_of_the_seed_and_the_tick() {
-        let seed = [7u8; 32];
-        let sweep_ticks = BEAM_SWEEP_LANES as u32 * BEAM_LANE_TICKS;
-        let (mut halves, mut outwards) = ([0u32; 2], [0u32; 2]);
-        for sweep in 0..ENRAGE_TICKS / BEAM_PERIOD_TICKS {
-            let start = sweep * BEAM_PERIOD_TICKS;
-            let first = beam_at(&seed, start);
-            halves[first.half as usize] += 1;
-            outwards[first.outward as usize] += 1;
-            let mut swept = [false; SLAM_LANES as usize];
-            for t in 0..BEAM_PERIOD_TICKS {
-                let beam = beam_at(&seed, start + t);
-                assert_eq!(beam, beam_at(&seed, start + t), "deterministic");
-                assert_eq!(
-                    (beam.half, beam.outward),
-                    (first.half, first.outward),
-                    "sweep {sweep} changed its mind at tick {t}"
-                );
-                assert_eq!(
-                    beam.lane / BEAM_SWEEP_LANES,
-                    beam.half as i32,
-                    "lane {} is not in half {}",
-                    beam.lane,
-                    beam.half
-                );
-                if t < BEAM_WARN_TICKS {
-                    assert_eq!(
-                        (beam.stage, beam.k, beam.strikes),
-                        (BeamStage::Warning, 0, false)
-                    );
-                    assert_eq!(
-                        beam.lane, first.lane,
-                        "the warning names the lane the sweep starts from"
-                    );
-                } else if t < BEAM_WARN_TICKS + sweep_ticks {
-                    let into = t - BEAM_WARN_TICKS;
-                    assert_eq!(
-                        (beam.stage, beam.k),
-                        (BeamStage::Sweeping, into / BEAM_LANE_TICKS)
-                    );
-                    assert_eq!(
-                        beam.strikes,
-                        into % BEAM_LANE_TICKS == 0,
-                        "one strike per lane step"
-                    );
-                    swept[beam.lane as usize] = true;
-                } else {
-                    assert_eq!((beam.stage, beam.strikes), (BeamStage::Idle, false));
-                }
-            }
-            // Outward starts on the lane flanking the centre line and ends at the wall;
-            // inward is the same walk reversed. Either way the half is covered exactly.
-            let centre = if first.half == 0 {
-                BEAM_SWEEP_LANES - 1
-            } else {
-                BEAM_SWEEP_LANES
-            };
-            let wall = if first.half == 0 { 0 } else { SLAM_LANES - 1 };
-            let last = beam_at(&seed, start + BEAM_WARN_TICKS + sweep_ticks - 1);
-            assert_eq!(
-                (first.lane, last.lane),
-                if first.outward {
-                    (centre, wall)
-                } else {
-                    (wall, centre)
-                },
-                "sweep {sweep}"
-            );
-            for lane in 0..SLAM_LANES as usize {
-                assert_eq!(
-                    swept[lane],
-                    lane / BEAM_SWEEP_LANES as usize == first.half as usize,
-                    "lane {lane} of sweep {sweep}"
-                );
-            }
-        }
-        assert!(
-            halves.iter().all(|&n| n > 0) && outwards.iter().all(|&n| n > 0),
-            "two bits pick the half and the direction; all four must come up"
-        );
-
-        // The vector the client pins too: `layoutSelfCheck` asserts these same three sweeps
-        // of this same seed, so a mirror that drifts by a bit fails on both sides.
-        let vector: Vec<(u8, bool)> = (0..3)
-            .map(|s| {
-                let b = beam_at(&seed, s * BEAM_PERIOD_TICKS);
-                (b.half, b.outward)
-            })
-            .collect();
-        assert_eq!(vector, [(0, false), (1, true), (1, false)]);
-    }
-
     /// Twenty seats in one lane at one slam of health each, all dying on the same strike:
     /// the swap-remove loop is the one place a wrong index would panic, and a panic here
     /// burns a crank strike. Every seat dies once, none twice, and twenty corpses are a
     /// wipe on the tick they fall.
     #[test]
     fn a_whole_raid_can_die_to_one_lane_step() {
-        let (mut arena, mut boss, mut players) = core_only(MAX_SEATS as u16, true);
-        let strike = BEAM_WARN_TICKS;
-        let beam = beam_at(&arena.affix_seed, strike);
-        assert!(beam.strikes, "the first lane step strikes on its first tick");
-        let x = (beam.lane * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
+        let (mut arena, mut boss, mut players) = hands_only();
+        let strike = SLAM_PERIOD_TICKS;
+        let lane = slam_lane(&arena.affix_seed, strike, &boss).expect("a hand stands");
+        let x = (lane * SLAM_LANE_W + SLAM_LANE_W / 2) as i16;
         for seat in 0..MAX_SEATS {
             seat_in_arena(&mut players, seat, x, 512);
             players.slots[seat].hp = slam_damage(MAX_SEATS as u8, TIER_EASY);

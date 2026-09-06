@@ -15,15 +15,15 @@ await pg.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'load' });
 await pg.waitForFunction('window.__ready === true', null, { timeout: 20000 });
 await pg.evaluate(async () => { await window.__store.signIn(); await window.__store.join(); });
 await pg.addStyleTag({ content: '.dev,.errorbar,[class*=telemetry]{display:none!important}' });
-// Tick 940 → 985 at 10 Hz: the slam winds up 945..960 and lands; bullets thin every 4th tick so impacts land in frame.
-let t = 936;
-const AR = () => pg.evaluate((k) => window.__scene('arena', { seats: 20, ring: true, bullets: 12 - ((k % 4) === 3 ? 3 : 0), fury: true, tick: k }), t);
+// A calm fight at 10 Hz: six fireballs, the slam winding up over 945..960 and landing, then a super.
+let t = 938;
+const AR = () => pg.evaluate((k) => window.__scene('arena', { seats: 12, ring: true, bullets: 6, tick: k }), t);
 await AR(); await pg.waitForTimeout(1500);
 const iv = setInterval(() => { t++; AR().catch(() => {}); }, 100);
-await pg.waitForTimeout(1800);
-await pg.evaluate(() => window.__charge(1)); await pg.waitForTimeout(1400);
+await pg.waitForTimeout(3400);
+await pg.evaluate(() => window.__charge(1)); await pg.waitForTimeout(1300);
 await pg.evaluate(() => window.__charge(2)); await pg.waitForTimeout(2200);
 await pg.evaluate(() => { window.__charge(null); const s = window.__store.getState().players.slots[0]; const dx = 512 - s.x, dy = 352 - 108 - s.y, m = Math.max(Math.abs(dx), Math.abs(dy)); window.__fire({ seat: 0, x: s.x, y: s.y, dx: Math.round(dx / m * 127), dy: Math.round(dy / m * 127), tier: 2 }); });
-await pg.waitForTimeout(2400); clearInterval(iv);
+await pg.waitForTimeout(2600); clearInterval(iv);
 await ctx.close(); await b.close(); srv.close();
 const v = fs.readdirSync(OUT).find((f) => f.endsWith('.webm')); fs.renameSync(path.join(OUT, v), path.join(OUT, 'raw.webm')); console.log('landing raw ok');

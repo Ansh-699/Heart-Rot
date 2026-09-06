@@ -908,13 +908,11 @@ h3 {
   .hr-vent-open .hr-boss-vent,
   .hr-fury .hr-boss-aura,
   .hr-smoke-wisp,
-  .hr-aoe-haze,
-  .hr-aoe-burn,
-  .hr-zone-fire,
-  .hr-flame,
-  .hr-aoe-front,
-  .hr-rain-fall,
-  .hr-rain-splash,
+  .hr-hell-haze,
+  .hr-hell-glow,
+  .hr-hell-ring,
+  .hr-hell-flame,
+  .hr-hell-spark,
   .room-light circle,
   .room-motes,
   .fury-wash.is-on {
@@ -1269,139 +1267,64 @@ h3 {
 }
 
 /* --------------------------------------------------------------------------
-   fire — everything the boss burns in room B (`Arena.tsx`: `FireZone`, the comets)
+   hellfire — the slam's lane in room B (`Arena.tsx`: `HellLane`)
 
-   The slam's lane, the beam's doomed half and the beam's sweeping wall are ONE picture:
-   the stone the attack is about to land on catching fire, and a shower of comets falling
-   into it. The volley is the same comet, thrown. Nothing here is a box or a tint: every
-   shape is a gradient, every motion is `transform` or `opacity` on its own node, nothing
+   Rings of fire on the stone with a pillar of flame standing in each. Every shape is a
+   gradient, every motion is `transform` or `opacity` on its own node, nothing
    re-rasterises, nothing forces layout, and no `filter` appears anywhere (27 blurred
    nodes cost `Boss.tsx` 0.9 ms/frame).
 
-   What carries MEANING is not here. The extent of a zone is its rect (`Arena.tsx`, in
-   world units, where the lanes are), how far into the wind-up it is is the size of its
-   fire (one seeked WAAPI transform on a clip circle, on the chain's clock and no other),
-   and when a comet lands is a WAAPI one-shot on a pooled node. This file only makes the
-   fire move like fire. The reduced-motion block above cancels every loop below and the
-   zone is drawn lit in full, no rain.
+   What carries MEANING is not here. Where the rings are is `Arena.tsx`'s (world units,
+   where the lanes are); how far into the wind-up it is is the size of each ring's fill and
+   the height of its pillar (seeked WAAPI transforms, on the chain's clock and no other);
+   the landing is a WAAPI one-shot on pooled nodes. This file only makes the fire move
+   like fire: the ring pulses, the glow breathes, the flame gutters, the sparks rise. The
+   reduced-motion block above cancels every loop below and the lane is drawn lit and still.
    -------------------------------------------------------------------------- */
 
-/* The haze over the whole rect, from the first frame: warm, soft, no edge. */
-.hr-aoe-haze {
-  animation: hr-fire-breathe 2.4s ease-in-out infinite alternate;
+.hr-hell-haze {
+  animation: hr-hell-breathe 2.2s ease-in-out infinite alternate;
 }
-/* The burning floor: the circle out of the centre, pulsing like a bed of coals. Its size
-   is `Arena.tsx`'s seeked transform; only the breathe is here. */
-.hr-aoe-burn {
-  animation: hr-fire-breathe 1.15s ease-in-out infinite alternate;
+.hr-hell-glow {
+  animation: hr-hell-breathe 1.3s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i, 0) * -0.41s);
 }
-/* A spot's fire switches on the instant its first comet lands (`--f`, set once at mount)
-   and stays. One-shot with a positive delay is "not yet"; a negative one is "already". */
-.hr-zone-fire {
-  opacity: 0;
-  animation: hr-spot-on 140ms linear var(--f, 0ms) forwards;
+.hr-hell-ring {
+  animation: hr-hell-ring 0.9s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i, 0) * -0.29s);
 }
-@keyframes hr-spot-on {
-  from { opacity: 0; }
+@keyframes hr-hell-breathe {
+  from { opacity: 0.72; }
   to { opacity: 1; }
 }
-.hr-aoe-burn-wall {
-  animation-duration: 0.5s;
-}
-@keyframes hr-fire-breathe {
-  from { opacity: 0.78; }
+@keyframes hr-hell-ring {
+  from { opacity: 0.82; }
   to { opacity: 1; }
 }
-
-/* A tongue, guttering about its own base — the origin is a world-unit point `Arena.tsx`
-   sets per instance, because the flame must lick UPWARD off the spot it stands on and
-   never slide across the lane. Three duration buckets over the `--i` delay: twelve
-   tongues on one duration breathe as one animal instead of twelve. */
-.hr-flame {
-  animation: hr-flame-gutter 0.94s ease-in-out infinite;
-  animation-delay: calc(var(--i, 0) * -0.137s);
+/* The flame gutters about its own foot — the origin is the ring's centre, set per instance
+   in `Arena.tsx`, inside the seeked group that stands the pillar up, so the two compose. */
+.hr-hell-flame {
+  animation: hr-hell-gutter 0.62s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * -0.17s);
 }
-.hr-flame:nth-of-type(3n) {
-  animation-name: hr-flame-tall;
-  animation-duration: 1.21s;
+@keyframes hr-hell-gutter {
+  0% { transform: scale(0.94, 0.9); opacity: 0.86; }
+  30% { transform: scale(1.05, 1.06); opacity: 1; }
+  55% { transform: scale(0.97, 0.95); opacity: 0.9; }
+  80% { transform: scale(1.03, 1.1); opacity: 1; }
+  100% { transform: scale(0.94, 0.9); opacity: 0.86; }
 }
-.hr-flame:nth-of-type(3n + 1) {
-  animation-name: hr-flame-small;
-  animation-duration: 0.76s;
+/* Sparks off the pillar. `translate`, not a `cy` write — one composited property, no layout. */
+.hr-hell-spark {
+  fill: #ffc24a;
+  animation: hr-hell-spark 1.4s linear infinite;
+  animation-delay: calc(var(--j, 0) * -0.35s + var(--i, 0) * -0.13s);
 }
-.hr-flame:nth-of-type(2n) { rotate: 7deg; }
-.hr-flame:nth-of-type(5n) { rotate: -9deg; }
-@keyframes hr-flame-gutter {
-  0% { scale: 0.84 0.7; opacity: 0.5; }
-  27% { scale: 1.05 1.08; opacity: 0.95; }
-  53% { scale: 0.9 0.82; opacity: 0.66; }
-  78% { scale: 1.09 1.2; opacity: 1; }
-  100% { scale: 0.84 0.7; opacity: 0.5; }
-}
-@keyframes hr-flame-tall {
-  0% { scale: 0.93 1; opacity: 0.55; }
-  31% { scale: 1.11 1.47; opacity: 1; }
-  62% { scale: 0.99 1.15; opacity: 0.72; }
-  100% { scale: 0.93 1; opacity: 0.55; }
-}
-@keyframes hr-flame-small {
-  0% { scale: 0.6 0.46; opacity: 0.45; }
-  24% { scale: 0.78 0.76; opacity: 0.92; }
-  58% { scale: 0.65 0.58; opacity: 0.6; }
-  100% { scale: 0.6 0.46; opacity: 0.45; }
-}
-/* The wall's tongues, driven harder: it arrives already roaring. */
-.hr-fire-wall .hr-flame { animation-name: hr-flame-roar; }
-@keyframes hr-flame-roar {
-  0% { scale: 1 1.16; opacity: 0.85; }
-  26% { scale: 1.15 1.74; opacity: 1; }
-  57% { scale: 1.02 1.36; opacity: 0.88; }
-  100% { scale: 1 1.16; opacity: 0.85; }
-}
-
-/* The shower. One spot is a `<g>` at the landing point carrying `--d` (when the fire
-   reaches it), `--p` (its own period) and `--sx` (where in the sky its comet starts,
-   leaning away from the creature). The comet falls in the first 38 % of the period and
-   the splash takes over at the instant it lands; the rest of the period is dark, so the
-   spots do not read as a metronome. Both loops on `--d`, so they cannot drift apart. */
-.hr-rain-fall {
-  opacity: 0;
-  animation: hr-rain-fall var(--p, 1000ms) linear infinite;
-  animation-delay: var(--d, 0ms);
-}
-@keyframes hr-rain-fall {
-  0% { translate: var(--sx, 0px) -300px; opacity: 0; }
-  7% { opacity: 1; }
-  38% { translate: 0 0; opacity: 1; }
-  38.5%, 100% { translate: 0 0; opacity: 0; }
-}
-.hr-rain-splash {
-  opacity: 0;
-  animation: hr-rain-splash var(--p, 1000ms) linear infinite;
-  animation-delay: var(--d, 0ms);
-}
-@keyframes hr-rain-splash {
-  0%, 37% { opacity: 0; scale: 0.3; }
-  38% { opacity: 1; scale: 0.6; }
-  50% { opacity: 1; scale: 1.05; }
-  70% { opacity: 0.7; scale: 1.2; }
-  84%, 100% { opacity: 0; scale: 1.3; }
-}
-
-/* The front ring pulses a little harder than the coals behind it. */
-.hr-aoe-front {
-  animation: hr-fire-breathe 0.7s ease-in-out infinite alternate;
-}
-
-/* The comet in flight carries NO animation of its own: the frame loop moves it ~7 units a
-   frame already, and 64 extra transform animations on the tails and cores measured
-   +10 ms at p95 for a flicker nobody can see at that speed. */
-
-.beam-warn-chevron {
-  fill: none;
-  stroke: #ffc24a;
-  stroke-width: 3px;
-  stroke-opacity: 0.9;
+@keyframes hr-hell-spark {
+  0% { translate: 0 0; opacity: 0; }
+  12% { opacity: 1; }
+  70% { opacity: 0.6; }
+  100% { translate: 9px -150px; opacity: 0; }
 }
 
 /* --------------------------------------------------------------------------

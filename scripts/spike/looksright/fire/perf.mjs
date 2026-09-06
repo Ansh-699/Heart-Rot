@@ -25,10 +25,7 @@ const S = { seats: 20, ring: true };
 for (let k = 0; k < 2; k++) {
 await probe('floor: 20 seats, nothing burning', { ...S, bullets: 0, tick: 900 });
 await probe('24 comets', { ...S, bullets: 24, fury: true, tick: 900 });
-await probe('24 comets, no sheath', { ...S, bullets: 24, fury: true, tick: 900 }, '#hr-fb-trail>path:first-child{display:none}');
-await probe('24 comets, no glow', { ...S, bullets: 24, fury: true, tick: 900 }, '#hr-fb-core>circle:first-child{display:none}');
 await probe('slam wind-up only', { ...S, bullets: 0, tick: 954 });
-await probe('beam sweep + 6 comets', { ...S, bullets: 6, beam: 'sweep' });
-await probe('beam warning + 6 comets', { ...S, bullets: 6, beam: 'warn' });
+await probe('slam wind-up + 12 bullets', { ...S, bullets: 12, fury: true, tick: 954 });
 }
 await b.close(); srv.close();
