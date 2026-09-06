@@ -1412,7 +1412,7 @@ const KILL_RAIN_MS = 3_000;
  * are the core's. Built once; the numbers are a hash of the index, so the shower is the
  * same one every kill.
  */
-const RAIN = Array.from({ length: 30 }, (_, i) => {
+const RAIN = Array.from({ length: 48 }, (_, i) => {
   const a = ((Math.sin(i * 12.9898) * 43758.5453) % 1 + 1) % 1;
   const b = ((Math.sin(i * 78.233) * 43758.5453) % 1 + 1) % 1;
   const dur = 1.7 + a * 1.1;
@@ -1422,7 +1422,7 @@ const RAIN = Array.from({ length: 30 }, (_, i) => {
       className="hrl-ember"
       cx={BOSS_SPAWN[0] - 330 + b * 660}
       cy={PIT_TOP - 80 + a * 120}
-      r={1.5 + b * 1.5}
+      r={2 + b * 2}
       fill="#ffb020"
       style={
         {
@@ -1430,7 +1430,7 @@ const RAIN = Array.from({ length: 30 }, (_, i) => {
           '--del': `${(-a * dur).toFixed(2)}s`,
           '--dx': `${((a - 0.5) * 24).toFixed(1)}px`,
           '--ry': `${(260 + b * 160).toFixed(1)}px`,
-          '--a': (0.6 + a * 0.35).toFixed(2),
+          '--a': (0.8 + a * 0.2).toFixed(2),
         } as CSSProperties
       }
     />

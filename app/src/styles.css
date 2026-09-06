@@ -327,7 +327,7 @@ h3 {
 
 @media (max-width: 480px) {
   .main:has(> .card) { padding: 12px; }
-  .card { padding: 20px; }
+  .main:has(> .card) > .card { padding: 20px; }
 }
 
 /*

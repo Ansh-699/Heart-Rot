@@ -855,14 +855,6 @@ function Verdict() {
       () => {},
     );
   };
-  // `leaveMatch` already releases and, for a seated identity, takes the next open arena;
-  // the explicit `join` after it is for the day it stops, and is a no-op while it does
-  // not (a match on file, or the join's own error, which `SeatLoader` shows).
-  const raidAgain = async () => {
-    await store.leaveMatch();
-    const s = store.getState();
-    if (s.match === null && s.status === 'idle' && s.authenticated) await store.join();
-  };
   return (
     <div className={`hud hud-ml verdict verdict-${row.tone}`} role="status">
       <span className="verdict-label">{row.label}</span>
@@ -905,11 +897,12 @@ function Verdict() {
           </li>
         </ol>
       )}
+      {/* ONE button. `leaveMatch` releases the seat and, for a seated identity, takes the
+          next open arena — so "Back to lobby" and "Raid again" were the same act with two
+          names. The way to stop instead is the link below: the select screen, where nothing
+          happens until you take a seat. */}
       <span className="verdict-actions">
         <button className="btn btn-primary" disabled={!settled} onClick={() => void store.leaveMatch()}>
-          Back to lobby
-        </button>
-        <button className="btn" disabled={!settled} onClick={() => void raidAgain()}>
           Raid again
         </button>
       </span>

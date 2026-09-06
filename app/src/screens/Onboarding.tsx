@@ -77,7 +77,7 @@ const LANDING_CSS = `${LINK_CSS}
 .landing video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--line); }
 .landing .row { align-items: center; }
 .landing .link { margin-left: auto; }
-.landing .beats { margin: -6px 0 0; font: 11.5px/1.7 var(--mono); font-variant-caps: all-small-caps; letter-spacing: 0.08em; color: var(--muted); }
+.landing .beats { margin: -6px 0 0; font: 13px/1.7 var(--mono); font-variant-caps: all-small-caps; letter-spacing: 0.08em; color: var(--muted); }
 .landing .count { margin: -8px 0 0; font: 11px var(--mono); letter-spacing: 0.06em; color: var(--muted); font-variant-numeric: tabular-nums; }
 .marker-row { gap: 8px; margin: -4px 0 2px; }
 .marker-row .fine { margin: 0 4px 0 0; }
@@ -97,7 +97,7 @@ export function Onboarding() {
   // there is none.
   const [hovered, setHovered] = useState<number | null>(null);
 
-  // "N raids recorded": the ring's write counter (`total` on `GET /api/leaderboard`), once
+  // "N raider runs recorded": the ring's write counter (one per seated raider per settle) (`total` on `GET /api/leaderboard`), once
   // per mount. Nothing is shown until it lands, and Play never waits for it.
   const [total, setTotal] = useState<number | null>(null);
   useEffect(() => {
@@ -175,10 +175,10 @@ export function Onboarding() {
         <p className="lede">
           A co-op boss raid where every move and every arrow is a Solana transaction.
         </p>
-        <p className="beats">MOVE = A TRANSACTION · ARROW = A TRANSACTION · 50 MS SLOTS ON MAGICBLOCK</p>
+        <p className="beats">move = a transaction · arrow = a transaction · 50 ms slots on magicblock</p>
         {total !== null && (
           <p className="count">
-            {total.toLocaleString('en-US')} {total === 1 ? 'raid' : 'raids'} recorded
+            {total.toLocaleString('en-US')} raider {total === 1 ? 'run' : 'runs'} recorded
           </p>
         )}
         {/* The marker, picked here: a seat is one click now, so the select screen no

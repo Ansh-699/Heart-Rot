@@ -738,7 +738,9 @@ export function attachControls(cfg: ControlsConfig): () => void {
         return;
       }
     }
-    if (fireId !== null) return;
+    // A second finger is not a second tap — but the SAME pointer pressing again (a mouse
+    // whose up was eaten by a context menu) is, or desktop click-to-fire sticks.
+    if (fireId !== null && fireId !== event.pointerId) return;
     fireDown(performance.now());
     fireId = event.pointerId;
     // Keeps the hold alive after the pointer leaves the viewport mid-press.
