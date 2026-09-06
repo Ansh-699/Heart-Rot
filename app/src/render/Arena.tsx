@@ -112,6 +112,7 @@ import { useSeatInterpolation, type PredictedSelf, type Predictor } from '../net
 import { BOSS_ARENA } from './BossArena';
 import { Boss } from './Boss';
 import { Knight, knightDrawOrder } from './Knight';
+import { FIRE_DEFS, FIRE_PILLAR, FIRE_RING } from './fire.gen';
 import { ORDNANCE_DEFS, ORD_BULLET, ORD_BURST } from './ordnance.gen';
 import { play } from './sfx';
 import { Shot } from './Shot';
@@ -211,6 +212,7 @@ const NO_BULLETS: readonly number[] = [];
  * 1920x1080, 6x throttle): that one object was 9.8 % of all sampled time in `setProp`.
  */
 const ORDNANCE_HTML = { __html: ORDNANCE_DEFS } as const;
+const FIRE_HTML = { __html: FIRE_DEFS } as const;
 
 function visibleBullets(bullets: readonly Bullet[], slots: readonly PlayerSlot[]): number[] {
   const live: number[] = [];
@@ -473,71 +475,20 @@ const RING_RY = 24;
 function ringAt(lane: number, k: number): readonly [number, number] {
   return [lane * SLAM_LANE_W + SLAM_LANE_W / 2, PIT_TOP + (LANE_H * (k + 0.5)) / HELL_RINGS];
 }
-/** Where the eight rune marks sit on a ring. */
-const RUNES = Array.from({ length: 8 }, (_, i) => {
-  const a = (i * Math.PI) / 4 + Math.PI / 8;
-  return [Math.cos(a) * RING_RX, Math.sin(a) * RING_RY] as const;
-});
-/**
- * The geyser, base at the origin, drawn upward — a spray fountain, as the reference: a thin
- * white-hot spike, three short jagged flames around its foot, a fan of streaks shooting up
- * and out of the base, embers thrown after them. Capped at about the ring's own width in
- * height, so the four fires of a lane stand apart instead of merging into one wall. Every
- * path is drawn ONCE here and instanced per ring as real nodes (not a `<use>`), because
- * each one carries its own CSS loop and four rings flickering in lockstep read as one
- * sticker stamped four times.
- */
-const SPIKE = 'M-5 0C-6.5 -18 -4 -42 -2 -62C-0.8 -74 0 -82 0 -88C0 -82 0.8 -74 2 -62C4 -42 6.5 -18 5 0Z';
-const FLAME_A = 'M-9 0C-11 -14 -8 -30 -6.5 -44C-5.5 -36 -4 -52 -2.5 -62C-1.5 -68 -0.5 -72 0 -74C0.5 -72 1.5 -68 2.5 -62C4 -52 5.5 -36 6.5 -44C8 -30 11 -14 9 0Z';
-const FLAME_B = 'M-6 0C-7.5 -10 -5 -20 -4.2 -30C-3.4 -25 -2.7 -36 -1.5 -44C-0.9 -48 -0.3 -50 0 -52C0.3 -50 0.9 -48 1.5 -44C2.7 -36 3.4 -25 4.2 -30C5 -20 7.5 -10 6 0Z';
-const FLAME_C = 'M-4.5 0C-6 -7 -4 -15 -3.2 -22C-2.6 -18 -2 -27 -1.3 -33C-0.7 -36 -0.3 -37.5 0 -38C0.3 -37.5 0.7 -36 1.3 -33C2 -27 2.6 -18 3.2 -22C4 -15 6 -7 4.5 0Z';
-/** A stable pseudo-random in [0, 1) off a small integer, for the spray's variety. */
-function hash(i: number): number {
-  const v = Math.sin(i * 127.1 + 311.7) * 43758.5453;
-  return v - Math.floor(v);
-}
-/**
- * The spray: thirty sparks per fire (36 measured +2 ms p95 in software raster with bullets in flight), each launched from the foot along its own angle for
- * its own distance and gone at the top — the fountain the reference is made of, as
- * particles rather than rays. Angle, reach, period and phase are fixed per spark here;
- * the loop is one CSS animation on `translate`/`opacity` (`.hr-hell-spark`).
- */
-const SPARKS = Array.from({ length: 30 }, (_, i) => {
-  // Dense in the plume, thinning toward ±58°; the middle reaches highest.
-  const t = (i / 29) * 2 - 1;
-  const a = Math.sign(t) * Math.pow(Math.abs(t), 1.5) * 58 + (hash(i) - 0.5) * 9;
-  const rad = (a * Math.PI) / 180;
-  const reach = 40 + (1 - Math.abs(t)) * 96 + hash(i + 40) * 30;
-  return {
-    angle: Math.round(a * 10) / 10,
-    dx: Math.round(Math.sin(rad) * reach),
-    dy: -Math.round(Math.cos(rad) * reach),
-    // A streak, not a dot: long along its own line, which the rotate below points.
-    len: 4 + hash(i + 80) * 6,
-    period: 460 + Math.round(hash(i + 120) * 440),
-    phase: -Math.round(hash(i + 160) * 900),
-    hot: i % 3 === 0,
-  };
-});
-/** Embers: start x, drift x, rise, radius. */
-const EMBERS: ReadonlyArray<readonly [number, number, number, number]> = [
-  [-8, -44, -70, 2], [6, 36, -96, 1.7], [-3, -14, -130, 2.3], [10, 54, -46, 1.5], [-12, -58, -38, 1.6], [3, 18, -116, 1.9], [-6, -26, -100, 1.4], [8, 40, -78, 2.1], [-2, -8, -140, 1.6], [4, 30, -60, 2.4],
-];
 
 /**
  * One lane of hellfire, in two stages. THE WARNING is the circle alone: the red glow on
  * the stone, the ring with its runes, and a fill growing out of each ring's centre over
  * the wind-up — `fills` seeked by `Arena` off the chain's countdown, one animation per node
  * (`useSeekedAll`), so the countdown IS the size of the circle and it runs on the chain's
- * clock and no other; a few embers drift up as the hint of heat. THE ERUPTION is the fire,
- * mounted by `Arena` for `ERUPT_MS` on the landing tick and never before: the geyser stands
- * up out of every ring at once, burns, and dies down (`.hr-hell-erupt`). The flicker, the
- * spray and the embers are CSS loops on their own nodes, nothing per frame in JS. Under
- * reduced motion the rings are drawn full and still and the fire stands still.
+ * clock and no other. THE ERUPTION is the fire, mounted by `Arena` for `ERUPT_MS` on the
+ * landing tick and never before: the pixel flame stands up out of every ring at once,
+ * burns through its frames, and dies down (`.hr-hell-erupt`). Nothing per frame in JS.
+ * Under reduced motion the rings are drawn full and still and the fire holds one frame.
  *
- * Nodes: 1 haze + 4 × (glow, fill group + ellipse, ring, pillar group + local group, halo,
- * foot, 2 soft copies, 30 sparks, 3 flames, spike, point, 2 base, 10 embers) = 213. All motion on
- * `transform` and `opacity`; no filter, no mask.
+ * Nodes: 1 haze + 4 × (glow, fill group + ellipse, ring window + use, and in the eruption
+ * a group + window + use) = 33 at most. The fire is `tools/gen_fire.py`'s frames, so the
+ * flames MOVE frame to frame instead of shapes being scaled; no filter, no mask.
  */
 function HellLane({
   lane,
@@ -571,54 +522,19 @@ function HellLane({
             >
               <ellipse className="hr-hell-fill" cx={cx} cy={cy} rx={RING_RX} ry={RING_RY} fill="url(#hr-hell-fill-g)" />
             </g>
-            <use className="hr-hell-ring" href="#hr-hell-ring" x={cx} y={cy} />
-            {!erupt && !reduced && (
-              <g transform={`translate(${cx} ${cy})`}>
-                {EMBERS.slice(0, 4).map(([ox, dx, dy, r], j) => (
-                  <circle key={j} className="hr-hell-ember hr-hell-ember-warn" cx={ox} cy={-4} r={r * 0.8} style={{ '--j': j, '--dx': `${dx / 2}px`, '--dy': `${dy / 2}px` } as CSSProperties} />
-                ))}
-              </g>
-            )}
+            {/* The rune ring, `tools/gen_fire.py`'s two frames through a frame-sized window,
+                stepped by CSS. Pixel art on the stone, like everything else on it. */}
+            <svg x={cx - FIRE_RING.w / 2} y={cy - FIRE_RING.h / 2} width={FIRE_RING.w} height={FIRE_RING.h} aria-hidden="true">
+              <use className="hr-ring-frames" href="#fire-ring" width={FIRE_RING.w * FIRE_RING.frames} height={FIRE_RING.h} />
+            </svg>
             {erupt && (
-              <g className="hr-hell-erupt" style={{ transformOrigin: origin }}>
-              <g transform={`translate(${cx} ${cy})`}>
-                <ellipse className="hr-hell-halo" cy={-26} rx={50} ry={58} fill="url(#hr-pillar-halo-g)" />
-                <ellipse rx={26} ry={9} fill="url(#hr-pillar-foot-g)" />
-                {/* Soft copies: the same flames, wider and faint, behind the real ones — the
-                    bloom a blur would give, without the blur. */}
-                <path className="hr-hell-soft" d={FLAME_A} fill="url(#hr-soft-g)" transform="scale(2.3 1.12)" />
-                <path className="hr-hell-soft" d={SPIKE} fill="url(#hr-soft-g)" transform="scale(3.4 1.05)" />
-                {SPARKS.map((sp, j) => (
-                  <ellipse
-                    key={j}
-                    className={sp.hot ? 'hr-hell-spark hr-hell-spark-hot' : 'hr-hell-spark'}
-                    cy={-6}
-                    rx={1.3}
-                    ry={sp.len}
-                    // The attribute rotate points the streak along its line; the CSS
-                    // `translate` the loop animates composes outside it, in the fire's space.
-                    transform={`rotate(${sp.angle})`}
-                    style={{ '--dx': `${sp.dx}px`, '--dy': `${sp.dy}px`, '--p': `${sp.period}ms`, '--d': `${sp.phase}ms` } as CSSProperties}
-                  />
-                ))}
-                <path className="hr-hell-tongue hr-hell-t0" d={FLAME_A} fill="url(#hr-pillar-g)" />
-                <path className="hr-hell-tongue hr-hell-t1" d={FLAME_B} fill="url(#hr-pillar-g)" />
-                <path className="hr-hell-tongue hr-hell-t2" d={FLAME_C} fill="url(#hr-pillar-g)" />
-                <path className="hr-hell-core" d={SPIKE} fill="url(#hr-pillar-core-g)" />
-                <circle className="hr-hell-point" cy={-12} r={3} fill="#fffbe8" />
-                <ellipse rx={10} ry={3.6} fill="#b8180a" />
-                <ellipse rx={5} ry={1.9} fill="#ff4a1c" />
-                {EMBERS.map(([ox, dx, dy, r], j) => (
-                  <circle
-                    key={j}
-                    className="hr-hell-ember"
-                    cx={ox}
-                    cy={-6}
-                    r={r}
-                    style={{ '--j': j, '--dx': `${dx}px`, '--dy': `${dy}px` } as CSSProperties}
-                  />
-                ))}
-              </g>
+              /* The fire: the eight-frame flame loop through its window, its base on the
+                 ring's centre, stood up by `.hr-hell-erupt` and stepped by `.hr-fire-frames`.
+                 Two nodes; the frames are the animation. */
+              <g className="hr-hell-erupt" style={{ transformOrigin: `${cx}px ${cy + 3}px` }}>
+                <svg x={cx - FIRE_PILLAR.w / 2} y={cy + 3 - FIRE_PILLAR.h} width={FIRE_PILLAR.w} height={FIRE_PILLAR.h} aria-hidden="true">
+                  <use className="hr-fire-frames" href="#fire-pillar" width={FIRE_PILLAR.w * FIRE_PILLAR.frames} height={FIRE_PILLAR.h} />
+                </svg>
               </g>
             )}
           </g>
@@ -1109,9 +1025,9 @@ export function Arena({
               inside an SVG parent; it is a build artefact of `tools/gen_ordnance.py`, not
               anything a user can reach. */}
           <g dangerouslySetInnerHTML={ORDNANCE_HTML} />
-          {/* HELLFIRE, mounted once: the ring, the pillar, the landing burst and their
-              gradients. Every burning thing in room B is a `<use>` of these. Soft by
-              GRADIENT — no `filter` anywhere in the scene. */}
+          <g dangerouslySetInnerHTML={FIRE_HTML} />
+          {/* HELLFIRE's light: the glow on the stone and the growing fill, both soft by
+              GRADIENT. The fire and the ring themselves are pixel art from the atlas above. */}
           <radialGradient id="hr-hell-glow-g">
             <stop offset="0" stopColor="#ff4a1c" stopOpacity="0.7" />
             <stop offset="0.45" stopColor="#e8200c" stopOpacity="0.36" />
@@ -1127,44 +1043,6 @@ export function Arena({
             <stop offset="0.6" stopColor="#d01c0c" stopOpacity="0.09" />
             <stop offset="1" stopColor="#7a0e08" stopOpacity="0" />
           </radialGradient>
-          <linearGradient id="hr-pillar-g" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0" stopColor="#ff8a2a" stopOpacity="1" />
-            <stop offset="0.25" stopColor="#ff4a12" stopOpacity="1" />
-            <stop offset="0.6" stopColor="#c81c0c" stopOpacity="0.9" />
-            <stop offset="1" stopColor="#7a0e08" stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id="hr-pillar-core-g" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0" stopColor="#fff6d8" stopOpacity="1" />
-            <stop offset="0.3" stopColor="#ffd66a" stopOpacity="1" />
-            <stop offset="0.6" stopColor="#ff8a1a" stopOpacity="0.9" />
-            <stop offset="1" stopColor="#ff3a10" stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id="hr-soft-g" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0" stopColor="#ff6a1a" stopOpacity="0.38" />
-            <stop offset="0.5" stopColor="#ff3a10" stopOpacity="0.22" />
-            <stop offset="1" stopColor="#a0140a" stopOpacity="0" />
-          </linearGradient>
-          <radialGradient id="hr-pillar-foot-g">
-            <stop offset="0" stopColor="#ffe28a" stopOpacity="0.9" />
-            <stop offset="0.5" stopColor="#ff6a1a" stopOpacity="0.45" />
-            <stop offset="1" stopColor="#ff2a12" stopOpacity="0" />
-          </radialGradient>
-          <radialGradient id="hr-pillar-halo-g">
-            <stop offset="0" stopColor="#ff5a1c" stopOpacity="0.36" />
-            <stop offset="0.55" stopColor="#ff2a12" stopOpacity="0.14" />
-            <stop offset="1" stopColor="#8a1408" stopOpacity="0" />
-          </radialGradient>
-          {/* The ring: a glow stroke under a hard one, a fainter line inside, eight runes. */}
-          <g id="hr-hell-ring">
-            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff2a12" strokeWidth={20} strokeOpacity={0.3} />
-            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff4a1c" strokeWidth={9} strokeOpacity={0.75} />
-            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff7a2a" strokeWidth={3.5} strokeOpacity={1} />
-            <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ffc24a" strokeWidth={2} strokeOpacity={0.9} strokeDasharray="13 7 21 9 6 11 17 5" />
-            <ellipse rx={RING_RX - 9} ry={RING_RY - 5} fill="none" stroke="#ffb03a" strokeWidth={1.4} strokeOpacity={0.6} />
-            {RUNES.map(([rx, ry], i) => (
-              <circle key={i} cx={rx} cy={ry} r={3} fill="#ffd66a" />
-            ))}
-          </g>
         </defs>
 
         {/* `#camera` rests at IDENTITY. It carries no transform from this file, ever — it

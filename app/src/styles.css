@@ -910,14 +910,8 @@ h3 {
   .hr-smoke-wisp,
   .hr-hell-haze,
   .hr-hell-glow,
-  .hr-hell-ring,
-  .hr-hell-halo,
-  .hr-hell-tongue,
-  .hr-hell-core,
-  .hr-hell-point,
-  .hr-hell-soft,
-  .hr-hell-spark,
-  .hr-hell-ember,
+  .hr-fire-frames,
+  .hr-ring-frames,
   .hr-hell-erupt,
   .room-light circle,
   .room-motes,
@@ -1332,8 +1326,7 @@ h3 {
    where the lanes are); how far into the wind-up it is is the size of each ring's fill and
    the height of its pillar (seeked WAAPI transforms, on the chain's clock and no other);
    the landing is a WAAPI one-shot on pooled nodes. This file only makes the fire move
-   like fire: the ring pulses, the glow breathes, three tongues flicker on three clocks,
-   the core breathes, streaks shoot out of the foot and embers rise off it. The
+   like fire: the frames step, the ring pulses, the glow breathes. The
    reduced-motion block above cancels every loop below and the lane is drawn lit and still.
    -------------------------------------------------------------------------- */
 
@@ -1344,140 +1337,47 @@ h3 {
   animation: hr-hell-breathe 1.3s ease-in-out infinite alternate;
   animation-delay: calc(var(--i, 0) * -0.41s);
 }
-.hr-hell-ring {
-  animation: hr-hell-ring 0.9s ease-in-out infinite alternate;
-  animation-delay: calc(var(--i, 0) * -0.29s);
-}
 @keyframes hr-hell-breathe {
   from { opacity: 0.72; }
   to { opacity: 1; }
 }
-@keyframes hr-hell-ring {
-  from { opacity: 0.82; }
-  to { opacity: 1; }
+/* The fire is FRAMES: `tools/gen_fire.py` draws eight of them side by side and the window
+   shows one at a time, `steps()` jumping at the end of each interval so frame 0 shows first.
+   Twelve and a half frames a second, which is what pixel fire runs at; each ring offset by
+   its index so four fires never flicker in step. The ring's two frames pulse the same way. */
+.hr-fire-frames {
+  animation: hr-fire-frames 0.64s steps(8) infinite;
+  animation-delay: calc(var(--i, 0) * -0.17s);
 }
-/* The geyser. Everything below is about the foot of the fire — the origin is the local
-   (0, 0) of a `<g>` translated to the ring's centre in `Arena.tsx`, inside the seeked group
-   that stands the pillar up, so the loops and the countdown compose. */
-.hr-hell-halo {
-  animation: hr-hell-breathe 0.5s ease-in-out infinite alternate;
-  animation-delay: calc(var(--i, 0) * -0.19s);
+@keyframes hr-fire-frames {
+  from { transform: translateX(0); }
+  to { transform: translateX(-448px); }
 }
-/* Three tongues, three clocks: one shape on one clock reads as a sticker. Skew is the
-   wave; scale is the height; both about the foot. */
-.hr-hell-tongue {
-  transform-origin: 0 0;
-  animation: hr-hell-t0 0.72s ease-in-out infinite;
+.hr-ring-frames {
+  animation: hr-ring-frames 0.7s steps(2) infinite;
   animation-delay: calc(var(--i, 0) * -0.23s);
 }
-.hr-hell-t1 {
-  animation-name: hr-hell-t1;
-  animation-duration: 0.53s;
-}
-.hr-hell-t2 {
-  animation-name: hr-hell-t2;
-  animation-duration: 0.41s;
-}
-@keyframes hr-hell-t0 {
-  0% { transform: skewX(-3deg) scale(0.96, 0.88); opacity: 0.9; }
-  28% { transform: skewX(3deg) scale(1.04, 1.06); opacity: 1; }
-  56% { transform: skewX(-2deg) scale(0.98, 0.94); opacity: 0.94; }
-  80% { transform: skewX(4deg) scale(1.02, 1.12); opacity: 1; }
-  100% { transform: skewX(-3deg) scale(0.96, 0.88); opacity: 0.9; }
-}
-@keyframes hr-hell-t1 {
-  0% { transform: translate(-6px, 0) skewX(4deg) scale(1, 0.84); opacity: 0.85; }
-  35% { transform: translate(-6px, 0) skewX(-4deg) scale(1.08, 1.14); opacity: 1; }
-  70% { transform: translate(-6px, 0) skewX(2deg) scale(0.94, 0.96); opacity: 0.9; }
-  100% { transform: translate(-6px, 0) skewX(4deg) scale(1, 0.84); opacity: 0.85; }
-}
-@keyframes hr-hell-t2 {
-  0% { transform: translate(7px, 0) skewX(-5deg) scale(0.9, 0.8); opacity: 0.8; }
-  40% { transform: translate(7px, 0) skewX(5deg) scale(1.1, 1.2); opacity: 1; }
-  100% { transform: translate(7px, 0) skewX(-5deg) scale(0.9, 0.8); opacity: 0.8; }
-}
-/* The white-hot core breathes fast and narrow. */
-.hr-hell-core {
-  transform-origin: 0 0;
-  animation: hr-hell-core 0.36s ease-in-out infinite alternate;
-  animation-delay: calc(var(--i, 0) * -0.11s);
-}
-@keyframes hr-hell-core {
-  from { transform: scale(0.92, 0.94); opacity: 0.88; }
-  to { transform: scale(1.06, 1.05); opacity: 1; }
-}
-/* The spray: each spark leaves the foot along its own line (`--dx`/`--dy`), slows as it
-   climbs, and is gone at the top; its own period and phase, so thirty of them never pulse.
-   The hot third are brighter and a touch bigger. */
-.hr-hell-spark {
-  fill: #ffc24a;
-  opacity: 0;
-  animation: hr-hell-spark var(--p, 700ms) ease-out infinite;
-  animation-delay: calc(var(--d, 0ms) + var(--i, 0) * -0.13s);
-}
-.hr-hell-spark-hot {
-  fill: #fff0b0;
-}
-@keyframes hr-hell-spark {
-  0% { translate: 0 0; opacity: 0; }
-  6% { opacity: 1; }
-  72% { opacity: 0.8; }
-  100% { translate: var(--dx, 0px) var(--dy, -80px); opacity: 0; }
-}
-/* The soft copies breathe slower than the flames they sit behind, and they are the one
-   place a blur is spent: eight nodes for the second the fire burns, so the light bleeds
-   the way the reference's does. Measured: 27 blurred nodes cost 0.9 ms/frame in Boss.tsx;
-   this is eight, for 950 ms, on a lane. */
-.hr-hell-soft {
-  transform-origin: 0 0;
-  filter: blur(5px);
-  animation: hr-hell-soft 0.9s ease-in-out infinite alternate;
-  animation-delay: calc(var(--i, 0) * -0.3s);
+@keyframes hr-ring-frames {
+  from { transform: translateX(0); }
+  to { transform: translateX(-256px); }
 }
 /* The eruption: the whole fire stands up out of the ring in a tenth of a second, burns,
    and dies down — one shot, forwards, `ERUPT_MS` long (`Arena.tsx`). */
 .hr-hell-erupt {
-  transform-origin: 0 0;
   animation: hr-hell-erupt 950ms cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
 }
 @keyframes hr-hell-erupt {
-  0% { transform: scale(0.5, 0.04); opacity: 0; }
-  12% { transform: scale(1.08, 1.14); opacity: 1; }
+  0% { transform: scale(0.6, 0.1); opacity: 0; }
+  12% { transform: scale(1, 1.06); opacity: 1; }
   30% { transform: scale(1, 1); opacity: 1; }
-  72% { transform: scale(1.02, 0.96); opacity: 1; }
-  100% { transform: scale(0.85, 0.55); opacity: 0; }
-}
-/* The hint of heat during the warning: a few embers, slow and low. */
-.hr-hell-ember-warn {
-  animation-duration: 1.9s;
-}
-@keyframes hr-hell-soft {
-  from { opacity: 0.7; }
-  to { opacity: 1; }
-}
-.hr-hell-point {
-  animation: hr-hell-core 0.3s ease-in-out infinite alternate;
+  72% { transform: scale(1, 1); opacity: 1; }
+  100% { transform: scale(1, 0.7); opacity: 0; }
 }
 /* The light on the stone is LIGHT: screen-blended, so the tiles show through it instead
-   of sitting under a tint. Three blended nodes per ring; measured within noise. */
+   of sitting under a tint. Two blended nodes per ring; measured within noise. */
 .hr-hell-glow,
-.hr-hell-fill,
-.hr-hell-halo {
+.hr-hell-fill {
   mix-blend-mode: screen;
-}
-
-/* Embers thrown out of the fire in arcs: up, out, gone. `translate`, not a `cy` write. */
-.hr-hell-ember {
-  fill: #ffc24a;
-  opacity: 0;
-  animation: hr-hell-ember 1.1s ease-out infinite;
-  animation-delay: calc(var(--j, 0) * -0.14s + var(--i, 0) * -0.23s);
-}
-@keyframes hr-hell-ember {
-  0% { translate: 0 0; opacity: 0; }
-  10% { opacity: 1; }
-  65% { opacity: 0.8; }
-  100% { translate: var(--dx, 0px) var(--dy, -80px); opacity: 0; }
 }
 
 /* --------------------------------------------------------------------------
