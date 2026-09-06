@@ -525,13 +525,15 @@ const EMBERS: ReadonlyArray<readonly [number, number, number, number]> = [
 ];
 
 /**
- * One lane of hellfire. Per ring: the red glow on the stone, the ring itself (runes and
- * all), the fill that grows out of the ring's centre over the wind-up, and the pillar
- * standing up out of it over the same wind-up — `fills` and `pillars` are seeked by
- * `Arena` off the chain's countdown, one animation per node (`useSeekedAll`), so the
- * countdown IS the size of the fire and it runs on the chain's clock and no other. The
- * flicker of the flame and the sparks are CSS loops on their own nodes, nothing per frame
- * in JS. Under reduced motion every ring is drawn full and still.
+ * One lane of hellfire, in two stages. THE WARNING is the circle alone: the red glow on
+ * the stone, the ring with its runes, and a fill growing out of each ring's centre over
+ * the wind-up — `fills` seeked by `Arena` off the chain's countdown, one animation per node
+ * (`useSeekedAll`), so the countdown IS the size of the circle and it runs on the chain's
+ * clock and no other; a few embers drift up as the hint of heat. THE ERUPTION is the fire,
+ * mounted by `Arena` for `ERUPT_MS` on the landing tick and never before: the geyser stands
+ * up out of every ring at once, burns, and dies down (`.hr-hell-erupt`). The flicker, the
+ * spray and the embers are CSS loops on their own nodes, nothing per frame in JS. Under
+ * reduced motion the rings are drawn full and still and the fire stands still.
  *
  * Nodes: 1 haze + 4 × (glow, fill group + ellipse, ring, pillar group + local group, halo,
  * foot, 2 soft copies, 30 sparks, 3 flames, spike, point, 2 base, 10 embers) = 213. All motion on
@@ -539,15 +541,18 @@ const EMBERS: ReadonlyArray<readonly [number, number, number, number]> = [
  */
 function HellLane({
   lane,
+  stage,
   fills,
-  pillars,
   reduced,
 }: {
   lane: number;
-  fills: React.MutableRefObject<(SVGGElement | null)[]>;
-  pillars: React.MutableRefObject<(SVGGElement | null)[]>;
+  /** `warn`: the rings alone, glowing, each fill growing out of its centre over the
+   *  wind-up. `erupt`: the fire, standing up out of every ring at once and dying down. */
+  stage: 'warn' | 'erupt';
+  fills?: React.MutableRefObject<(SVGGElement | null)[]>;
   reduced: boolean;
 }): ReactNode {
+  const erupt = stage === 'erupt';
   const x = lane * SLAM_LANE_W;
   return (
     <>
@@ -560,21 +565,22 @@ function HellLane({
             <ellipse className="hr-hell-glow" cx={cx} cy={cy} rx={RING_RX * 2} ry={RING_RY * 2.6} fill="url(#hr-hell-glow-g)" />
             <g
               ref={(el) => {
-                fills.current[k] = el;
+                if (fills) fills.current[k] = el;
               }}
-              style={{ transformOrigin: origin, transform: reduced ? undefined : 'scale(0.05)' }}
+              style={{ transformOrigin: origin, transform: reduced || erupt ? undefined : 'scale(0.05)' }}
             >
               <ellipse className="hr-hell-fill" cx={cx} cy={cy} rx={RING_RX} ry={RING_RY} fill="url(#hr-hell-fill-g)" />
             </g>
             <use className="hr-hell-ring" href="#hr-hell-ring" x={cx} y={cy} />
-            <g
-              ref={(el) => {
-                pillars.current[k] = el;
-              }}
-              style={{ transformOrigin: origin, transform: reduced ? undefined : 'scale(0.9, 0.25)' }}
-            >
-              {/* Local origin at the ring's centre: every loop below scales, skews or rises
-                  about the foot of the fire with no per-node origin arithmetic. */}
+            {!erupt && !reduced && (
+              <g transform={`translate(${cx} ${cy})`}>
+                {EMBERS.slice(0, 4).map(([ox, dx, dy, r], j) => (
+                  <circle key={j} className="hr-hell-ember hr-hell-ember-warn" cx={ox} cy={-4} r={r * 0.8} style={{ '--j': j, '--dx': `${dx / 2}px`, '--dy': `${dy / 2}px` } as CSSProperties} />
+                ))}
+              </g>
+            )}
+            {erupt && (
+              <g className="hr-hell-erupt" style={{ transformOrigin: origin }}>
               <g transform={`translate(${cx} ${cy})`}>
                 <ellipse className="hr-hell-halo" cy={-26} rx={50} ry={58} fill="url(#hr-pillar-halo-g)" />
                 <ellipse rx={26} ry={9} fill="url(#hr-pillar-foot-g)" />
@@ -613,7 +619,8 @@ function HellLane({
                   />
                 ))}
               </g>
-            </g>
+              </g>
+            )}
           </g>
         );
       })}
@@ -968,13 +975,11 @@ export function Arena({
   const slam = slamTelegraph(arena, boss);
   const slamRef = useRef<SVGGElement | null>(null);
   const slamFills = useRef<(SVGGElement | null)[]>([]);
-  const slamPillars = useRef<(SVGGElement | null)[]>([]);
   const slamElapsed = slam === null || reduced ? null : (SLAM_TELEGRAPH_TICKS - slam.ticksToImpact) * tickMs;
-  // Three seeked animations on one clock: the lane brightening, each ring's fill growing
-  // out of its centre, and each pillar standing up — all full on the landing tick.
+  // Two seeked animations on one clock: the lane brightening, and each ring's fill growing
+  // out of its centre — both full on the landing tick.
   useSeeked(slamRef, SLAM_KEYFRAMES, windupMs, slamElapsed);
   useSeekedAll(slamFills, RING_KEYFRAMES, windupMs, slamElapsed);
-  useSeekedAll(slamPillars, PILLAR_KEYFRAMES, windupMs, slamElapsed);
   // The slam's two cues, off the same derivation the lane is drawn from: the warn when a
   // wind-up appears, the impact when it resolves. Nothing is DRAWN on the landing: the
   // fire is the telegraph and it goes out on the tick the hand comes down — a burst or a
@@ -982,11 +987,27 @@ export function Arena({
   // lane, and the first render starts with nothing winding up, so a mount plays nothing.
   const slamming = shown === 'arena' && slam !== null;
   const slamHeard = useRef(false);
+  const slamLaneLast = useRef(0);
+  if (slam !== null) slamLaneLast.current = slam.lane;
+  // The eruption: the fire itself, on the lane the wind-up was last drawn over, for
+  // `ERUPT_MS` from the landing tick. State rather than a pooled node because the geyser
+  // is two hundred nodes of CSS loops, and mounting them only for the second they burn is
+  // what keeps a quiet floor quiet. Keyed on the landing so two slams a lane apart are two
+  // fires. `play('slam')` lands on the same edge.
+  const [erupt, setErupt] = useState<{ lane: number; key: number } | null>(null);
   useEffect(() => {
     if (slamming) play('slamWarn');
-    else if (slamHeard.current) play('slam');
+    else if (slamHeard.current) {
+      play('slam');
+      setErupt({ lane: slamLaneLast.current, key: Date.now() });
+    }
     slamHeard.current = slamming;
   }, [slamming]);
+  useEffect(() => {
+    if (erupt === null) return;
+    const id = window.setTimeout(() => setErupt(null), ERUPT_MS);
+    return () => window.clearTimeout(id);
+  }, [erupt]);
 
   const volley = volleyTelegraph(arena, boss, players);
   const volleyRef = useRef<SVGGElement | null>(null);
@@ -1218,16 +1239,25 @@ export function Arena({
               too, and a wind-up you cannot see through the mace is not a wind-up. Under the
               knights, because the player is on top of everything the scene does.
 
-              The lane is HELLFIRE: rings of fire down the lane the chain names, each one's
-              fill growing out of its centre and its pillar standing up over the 1.5 s
-              (`slamFills`, `slamPillars`, seeked off the chain above), the whole lane
-              brightening on top. Keyed on the landing tick so each wind-up is a fresh mount.
-              Under reduced motion the same rings, lit in full and still. */}
+              The lane is HELLFIRE in two stages. The wind-up is the WARNING: red rune rings
+              down the lane the chain names, each one's fill growing out of its centre over
+              the 1.5 s (`slamFills`, seeked off the chain above), the whole lane
+              brightening on top — the circle that says "something is about to happen here",
+              and nothing burns yet. The landing is the ERUPTION: the fire stands up out of
+              every ring for `ERUPT_MS` and dies down. Keyed on the landing tick so each
+              wind-up is a fresh mount. Under reduced motion the rings are drawn lit and
+              still. */}
           {shown === 'arena' && slam !== null && (
             <g key={slam.atTick} ref={slamRef} className="hr-hell" aria-hidden="true">
-              <HellLane lane={slam.lane} fills={slamFills} pillars={slamPillars} reduced={reduced} />
+              <HellLane lane={slam.lane} stage="warn" fills={slamFills} reduced={reduced} />
             </g>
           )}
+          {shown === 'arena' && erupt !== null && (
+            <g key={erupt.key} className="hr-hell" aria-hidden="true">
+              <HellLane lane={erupt.lane} stage="erupt" reduced={reduced} />
+            </g>
+          )}
+
           {/* Where the next volley goes. `spawn_volley` fans around exactly these lines,
               so this is the shot itself drawn 1.5 s early, not an impression of one. */}
           {shown === 'arena' && volley !== null && (
@@ -1425,8 +1455,8 @@ const SLAM_KEYFRAMES: Keyframe[] = [{ opacity: 0.7 }, { opacity: 0.82, offset: 0
 /** A ring's fill, from a spark at its centre to the whole ring on the landing tick. */
 const RING_KEYFRAMES: Keyframe[] = [{ transform: 'scale(0.05)' }, { transform: 'scale(1)' }];
 
-/** A pillar standing up out of its ring: low and wide first, full height on the landing tick. */
-const PILLAR_KEYFRAMES: Keyframe[] = [{ transform: 'scale(0.9, 0.25)' }, { transform: 'scale(1, 1)' }];
+/** How long the fire burns after the hand lands. `styles.css`'s `hr-hell-erupt` runs this long. */
+const ERUPT_MS = 950;
 
 /** The aim lines brighten into the shot. */
 const VOLLEY_KEYFRAMES: Keyframe[] = [{ opacity: 0.1 }, { opacity: 0.8 }];

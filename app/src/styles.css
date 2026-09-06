@@ -918,6 +918,7 @@ h3 {
   .hr-hell-soft,
   .hr-hell-spark,
   .hr-hell-ember,
+  .hr-hell-erupt,
   .room-light circle,
   .room-motes,
   .fury-wash.is-on {
@@ -1206,6 +1207,54 @@ h3 {
   color: var(--flesh);
 }
 
+/* The tab's own transactions, newest first: kind, signature, how it ended. A list and not
+   rows, because a signature is not a label/value pair and the eye reads it as a log. */
+.dev-txs {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dev-tx {
+  display: grid;
+  grid-template-columns: 2.6rem 1fr auto;
+  column-gap: 6px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.dev-tx-kind {
+  color: var(--muted);
+}
+.dev-tx-sig {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dev-tx-ms {
+  justify-self: end;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.dev-tx.is-acked .dev-tx-ms {
+  color: var(--ok);
+}
+.dev-tx.is-refused .dev-tx-ms,
+.dev-tx.is-dropped .dev-tx-ms {
+  color: var(--flesh);
+}
+.dev-tx.is-sent .dev-tx-ms {
+  color: var(--torch);
+}
+.dev-tx-empty {
+  grid-template-columns: 1fr;
+  color: var(--dim);
+  font-size: 10px;
+}
 .dev-foot {
   margin: 0;
   padding-top: 10px;
@@ -1375,11 +1424,32 @@ h3 {
   72% { opacity: 0.8; }
   100% { translate: var(--dx, 0px) var(--dy, -80px); opacity: 0; }
 }
-/* The soft copies breathe slower than the flames they sit behind. */
+/* The soft copies breathe slower than the flames they sit behind, and they are the one
+   place a blur is spent: eight nodes for the second the fire burns, so the light bleeds
+   the way the reference's does. Measured: 27 blurred nodes cost 0.9 ms/frame in Boss.tsx;
+   this is eight, for 950 ms, on a lane. */
 .hr-hell-soft {
   transform-origin: 0 0;
+  filter: blur(5px);
   animation: hr-hell-soft 0.9s ease-in-out infinite alternate;
   animation-delay: calc(var(--i, 0) * -0.3s);
+}
+/* The eruption: the whole fire stands up out of the ring in a tenth of a second, burns,
+   and dies down — one shot, forwards, `ERUPT_MS` long (`Arena.tsx`). */
+.hr-hell-erupt {
+  transform-origin: 0 0;
+  animation: hr-hell-erupt 950ms cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+}
+@keyframes hr-hell-erupt {
+  0% { transform: scale(0.5, 0.04); opacity: 0; }
+  12% { transform: scale(1.08, 1.14); opacity: 1; }
+  30% { transform: scale(1, 1); opacity: 1; }
+  72% { transform: scale(1.02, 0.96); opacity: 1; }
+  100% { transform: scale(0.85, 0.55); opacity: 0; }
+}
+/* The hint of heat during the warning: a few embers, slow and low. */
+.hr-hell-ember-warn {
+  animation-duration: 1.9s;
 }
 @keyframes hr-hell-soft {
   from { opacity: 0.7; }

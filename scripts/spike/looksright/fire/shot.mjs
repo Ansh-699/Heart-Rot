@@ -42,6 +42,8 @@ const scenes = {
   slam09: async () => { await crank(944, 954, { seats: 20, ring: true, bullets: 0 }); },
   slam14: async () => { await crank(944, 959, { seats: 20, ring: true, bullets: 0 }); },
   // The landing: wind-up then the resolve tick, photographed 120 ms after.
+  slamhit2: async () => { await crank(944, 960, { seats: 20, ring: true, bullets: 0 }); await pg.waitForTimeout(420); },
+  slamhit3: async () => { await crank(944, 960, { seats: 20, ring: true, bullets: 0 }); await pg.waitForTimeout(760); },
   slamhit: async () => {
     await crank(944, 960, { seats: 20, ring: true, bullets: 0 }); await pg.waitForTimeout(60);
   },

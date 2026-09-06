@@ -27,7 +27,7 @@ import {
   type ReactNode,
 } from 'react';
 
-import { recordWorld } from '../net/metrics';
+import { recordWorld, recordWrites } from '../net/metrics';
 
 import {
   CLASS_ARCHER,
@@ -750,7 +750,8 @@ export function createStore(): Store {
       if (state.match === null || update.from !== state.match.arenaPda) return;
       const seat = state.match.seat;
       const slot = update.players?.slots?.[seat];
-      recordWorld(update.arena?.tick, slot?.lastMoveSeq);
+      recordWorld(update.arena?.tick, slot?.lastMoveSeq, slot?.lastShotTick);
+      recordWrites(update.arena?.tick, update.players?.slots);
 
       // Our seat is gone. Someone released it — another tab of ours pressing Exit, a
       // beacon from a window that closed, or the Worker's reaper — and the match we are

@@ -32,8 +32,6 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
-import { BULLET_ACTIVE } from '@heartrot/client';
-
 import { onMetrics, snapshot, type Snapshot } from '../net/metrics';
 import { useSelect } from '../state/store';
 
@@ -255,20 +253,7 @@ export default function DevPanel() {
   const [open, setOpen] = useState(false);
   const [m, setM] = useState<Snapshot>(() => snapshot());
   const [treasury, setTreasury] = useState<Treasury | null>(null);
-  const [opening, setOpening] = useState<{ lamports: number; at: number } | null>(null);
-  const status = useSelect((s) => s.status);
-  // Match identity, because "the chain says one thing and the screen says another" is the
-  // failure this project keeps hitting, and it is unanswerable without knowing WHICH
-  // arena and WHICH validator the tab is actually reading.
-  const arenaId = useSelect((s) => s.match?.arenaId ?? null);
-  const mySeat = useSelect((s) => s.match?.seat ?? null);
-  const erEndpoint = useSelect((s) => s.match?.erEndpoint ?? null);
   const seated = useSelect((s) => s.players?.slots.filter((x) => x.occupied).length ?? null);
-  // Live boss ordnance. It came off the HUD when the side panel did: it is a debugging
-  // number, not a raid decision, and the bullets themselves are on screen.
-  const incoming = useSelect(
-    (s) => s.arena?.bullets.reduce((n, b) => n + (b.active === BULLET_ACTIVE ? 1 : 0), 0) ?? null,
-  );
   const drag = useDrag(open);
 
   // Backtick toggles. Ignored while typing so it never eats a keystroke meant for a field.
@@ -305,8 +290,8 @@ export default function DevPanel() {
     };
   }, [open]);
 
-  // Treasury polls whether or not the panel is open, so the session burn is measured from
-  // when the page loaded rather than from when someone first pressed backtick.
+  // The treasury is a gauge the owner reads (a low balance is a refused seat); it polls
+  // whether or not the panel is open so the first reading is ready when it opens.
   useEffect(() => {
     let live = true;
     const read = async () => {
@@ -317,7 +302,6 @@ export default function DevPanel() {
         const lamports = Number(j.treasuryLamports);
         if (!Number.isFinite(lamports) || !live) return;
         setTreasury({ lamports, matches: j.estimatedMatches });
-        setOpening((v) => v ?? { lamports, at: Date.now() });
       } catch {
         // A failed poll leaves the last reading on screen. The treasury is a gauge, not a
         // control, so a gap is not worth an error state.
@@ -338,15 +322,6 @@ export default function DevPanel() {
       </button>
     );
   }
-
-  const burn = treasury && opening ? opening.lamports - treasury.lamports : null;
-  // A rate needs a baseline long enough to mean something. Under a minute the arithmetic
-  // is dominated by whichever single match happened to land, so it stays "—" rather than
-  // reporting a number that swings by 10x between polls.
-  const elapsedMin = opening ? (Date.now() - opening.at) / 60_000 : 0;
-  const burnRate = burn !== null && elapsedMin >= 1 ? burn / elapsedMin : null;
-  // The Worker's own gauge, turned around: what it thinks one match costs.
-  const perMatch = treasury && treasury.matches > 0 ? treasury.lamports / treasury.matches : null;
 
   return (
     <aside className="dev" aria-label="Telemetry" ref={drag.panel}>
@@ -370,6 +345,42 @@ export default function DevPanel() {
       </div>
 
       <div className="dev-group">
+        <h3>Chain</h3>
+        {/* The whole arena's traffic, read off the feed: every raider's move and shot and
+            every crank tick is one transaction the ER executed. This is the number that
+            says what the game costs the chain, and it is counted, not estimated. */}
+        <Row
+          label="writes"
+          value={m.writesPerSec.toFixed(1)}
+          unit="tx/s"
+          tone="is-ok"
+          note="every raider's move and shot, every crank tick"
+        />
+        <Row label="moves" value={m.movesPerSec.toFixed(1)} unit="tx/s" />
+        <Row label="shots" value={m.shotsPerSec.toFixed(1)} unit="tx/s" />
+        <Row label="ticks" value={m.ticksPerSec.toFixed(1)} unit="tx/s" />
+        <Row label="session" value={String(m.writesTotal)} unit="tx" />
+        <Row label="raiders" value={seated === null ? '—' : String(seated)} unit="seated" />
+      </div>
+
+      <div className="dev-group">
+        <h3>Yours, live</h3>
+        <Row label="sent" value={m.txPerSec.toFixed(1)} unit="tx/s" note={`${m.txTotal} this session`} />
+        {/* Newest first: what it was, its signature once the node answered, how long it
+            took to come back through the feed, and how it ended. */}
+        <ol className="dev-txs" aria-label="Your latest transactions">
+          {m.recent.length === 0 && <li className="dev-tx dev-tx-empty">move or shoot and they appear here</li>}
+          {m.recent.map((t) => (
+            <li key={t.id} className={`dev-tx is-${t.state}`}>
+              <span className="dev-tx-kind">{t.kind}</span>
+              <span className="dev-tx-sig">{t.signature ? `${t.signature.slice(0, 8)}…${t.signature.slice(-4)}` : 'signing…'}</span>
+              <span className="dev-tx-ms">{t.ms !== undefined ? `${Math.round(t.ms)} ms` : t.state === 'sent' ? '…' : t.state}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <div className="dev-group">
         <h3>Round trip</h3>
         <Row
           label="p50"
@@ -385,114 +396,23 @@ export default function DevPanel() {
           tone={grade(m.p95, 500, 900)}
         />
         <Row
-          label="last"
-          value={m.last === null ? '—' : String(Math.round(m.last))}
-          unit="ms"
-          tone={grade(m.last, 300, 600)}
-        />
-      </div>
-
-      <div className="dev-group">
-        <h3>Throughput</h3>
-        {/* First in the group: a refusal is the one number here that means the client and
-            the chain disagree about what is allowed, which is the shape of the dead
-            spacebar. Its note now says what it cannot see — `recordSend(seq?)` takes a seq
-            for `move` only, so a refused *shot* increments `sent` and nothing else, ever.
-            The instrument for that one is the HUD's SHOT pill, which is state-derived. */}
-        <Row
-          label="refused"
-          value={(m.refusedRate * 100).toFixed(0)}
-          unit="%"
-          tone={grade(m.refusedRate, 0.01, 0.05)}
-          note="two sends, one ER slot · moves only — a refused shot is not counted here"
-        />
-        <Row label="sent" value={m.txPerSec.toFixed(1)} unit="tx/s" />
-        <Row label="acked" value={m.ackPerSec.toFixed(1)} unit="tx/s" />
-        <Row label="in flight" value={String(m.pending)} />
-        <Row
-          label="unacked"
-          value={(m.dropRate * 100).toFixed(0)}
-          unit="%"
-          tone={grade(m.dropRate, 0.05, 0.25)}
-          note="rate limited or lost"
-        />
-        <Row label="session" value={String(m.txTotal)} unit="tx" />
-      </div>
-
-      <div className="dev-group">
-        <h3>Feed</h3>
-        <Row
           label="tick"
           value={m.tickHz === null ? '—' : m.tickHz.toFixed(2)}
           unit="/s"
           tone={m.tickHz === null ? '' : grade(Math.abs(m.tickHz - TARGET_HZ), 0.4, 1)}
-          note={`chain targets ${TARGET_HZ.toFixed(1)}`}
-        />
-        <Row
-          label="feed age"
-          value={m.feedAge === null ? '—' : String(Math.round(m.feedAge))}
-          unit="ms"
-          tone={grade(m.feedAge, 1500, 3000)}
-        />
-        <Row label="socket" value={status} />
-        <Row
-          label="incoming"
-          value={incoming === null ? '—' : String(incoming)}
-          unit="bullets"
-          note="boss ordnance in flight"
+          note={`chain targets ${TARGET_HZ.toFixed(1)} · feed age ${m.feedAge === null ? '—' : Math.round(m.feedAge)} ms`}
         />
       </div>
 
       <div className="dev-group">
-        <h3>Match</h3>
-        <Row label="arena" value={arenaId === null ? '—' : String(arenaId)} />
-        <Row label="your seat" value={mySeat === null ? '—' : String(mySeat)} />
+        <h3>Treasury</h3>
         <Row
-          label="roster"
-          value={seated === null ? '—' : String(seated)}
-          unit="seated"
-          note={seated === 0 && mySeat !== null ? 'you hold a seat the roster does not show' : undefined}
-          tone={seated === 0 && mySeat !== null ? 'is-bad' : ''}
-        />
-        <Row
-          label="validator"
-          value={erEndpoint ? erEndpoint.replace(/^https?:\/\//, '').replace(/\/$/, '') : '—'}
-        />
-      </div>
-
-      <div className="dev-group">
-        <h3>Cost</h3>
-        <Row label="you pay" value="0" unit="SOL" tone="is-ok" note="ER fees are zero" />
-        <Row
-          label="treasury"
+          label="balance"
           value={treasury ? sol(treasury.lamports) : '—'}
           unit="SOL"
-          note={treasury ? `~${treasury.matches} matches left` : undefined}
-        />
-        <Row
-          label="burned"
-          value={burn === null ? '—' : sol(Math.max(0, burn), 5)}
-          unit="SOL"
-          note="since you loaded the page"
-        />
-        <Row
-          label="burn rate"
-          value={burnRate === null ? '—' : sol(Math.max(0, burnRate), 5)}
-          unit="SOL/min"
-          note={burnRate === null ? 'needs a minute of baseline' : undefined}
-        />
-        <Row
-          label="per match"
-          value={perMatch === null ? '—' : sol(perMatch, 5)}
-          unit="SOL"
-          note="rent and delegation for one raid"
+          note={treasury ? `~${treasury.matches} matches left · players pay nothing` : 'players pay nothing'}
         />
       </div>
-
-      <p className="dev-foot">
-        Latency is a <code>move</code>&apos;s <code>seq</code> matched against the roster.
-        Sends are fire-and-forget, so a refusal is only ever visible as an unacked write.
-      </p>
     </aside>
   );
 }

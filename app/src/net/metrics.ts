@@ -63,7 +63,35 @@ export interface Snapshot {
   readonly feedAge: number | null;
   /** Total submitted this session. */
   readonly txTotal: number;
+  /**
+   * The arena's own traffic, as evidence: every raider's `move` (a `lastMoveSeq` step on
+   * any seat), every `shoot` (a `lastShotTick` change on any seat) and every crank tick
+   * (an `Arena.tick` step), counted off the feed. Per second over the window, and the
+   * session total. Each one is one transaction the chain executed; none is estimated.
+   */
+  readonly movesPerSec: number;
+  readonly shotsPerSec: number;
+  readonly ticksPerSec: number;
+  readonly writesPerSec: number;
+  readonly writesTotal: number;
+  /** The newest of this tab's own transactions, newest first. */
+  readonly recent: readonly TxRecord[];
 }
+
+/** What this tab sent: what, when, its signature once the node answered, and how it ended. */
+export interface TxRecord {
+  readonly id: number;
+  readonly kind: 'move' | 'shoot' | 'gate';
+  readonly seq?: number;
+  readonly signature?: string;
+  readonly at: number;
+  readonly state: 'sent' | 'acked' | 'refused' | 'dropped';
+  /** Write-to-visible, once acknowledged. */
+  readonly ms?: number;
+}
+
+/** How many of this tab's transactions the panel lists. */
+const RECENT = 10;
 
 const sendTimes: number[] = [];
 const ackTimes: number[] = [];
@@ -77,6 +105,22 @@ const pending = new Map<number, number>();
 let txTotal = 0;
 let lastFeedAt: number | null = null;
 let listeners: Array<() => void> = [];
+
+let nextId = 1;
+let recent: TxRecord[] = [];
+const moveTimes: number[] = [];
+const shotTimes: number[] = [];
+const tickTimes: number[] = [];
+let writesTotal = 0;
+/** Per seat, the last `lastMoveSeq` / `lastShotTick` seen, for the diff that counts writes. */
+let seenSeq: number[] = [];
+let seenShot: number[] = [];
+let seenTick: number | null = null;
+let ownShot: number | null = null;
+
+function note(id: number, patch: Partial<TxRecord>): void {
+  recent = recent.map((r) => (r.id === id ? { ...r, ...patch } : r));
+}
 
 function trim(buf: number[], now: number): void {
   for (;;) {
@@ -99,13 +143,69 @@ function isSettled(lastSeq: number, seq: number): boolean {
  * A gameplay transaction left the browser. `seq` is present for `move` only — `shoot`
  * carries no sequence number, so it counts toward throughput but never toward latency.
  */
-export function recordSend(seq?: number): void {
+export function recordSend(seq?: number, kind: TxRecord['kind'] = seq === undefined ? 'shoot' : 'move'): number {
   const now = Date.now();
   txTotal += 1;
   sendTimes.push(now);
   trim(sendTimes, now);
   if (seq !== undefined) pending.set(seq, now);
+  const id = nextId++;
+  const rec: TxRecord = { id, kind, seq, at: now, state: 'sent' };
+  recent = [rec, ...recent].slice(0, RECENT);
   emit();
+  return id;
+}
+
+/** The node answered a send with its signature. */
+export function recordSignature(id: number, signature: string): void {
+  note(id, { signature });
+  emit();
+}
+
+/**
+ * The arena's traffic, read off one account update: which seats moved, which shot, and
+ * whether the crank ticked. Called with every decoded update, so a seat's step from seq N
+ * to N+3 counts three moves (wrap-safe, capped so a rejoin's jump is not a burst).
+ */
+export function recordWrites(tick: number | undefined, slots: ReadonlyArray<{ readonly occupied: boolean; readonly lastMoveSeq: number; readonly lastShotTick: number }> | undefined): void {
+  const now = Date.now();
+  if (tick !== undefined) {
+    if (seenTick !== null && tick > seenTick) {
+      const n = Math.min(tick - seenTick, 5);
+      for (let i = 0; i < n; i++) tickTimes.push(now);
+      writesTotal += n;
+    }
+    seenTick = tick;
+  }
+  if (slots !== undefined) {
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i]!;
+      if (!slot.occupied) {
+        seenSeq[i] = -1;
+        seenShot[i] = -1;
+        continue;
+      }
+      const ps = seenSeq[i];
+      if (ps !== undefined && ps >= 0) {
+        const d = (slot.lastMoveSeq - ps) & 0xffff;
+        if (d > 0 && d < 0x8000) {
+          const n = Math.min(d, 8);
+          for (let k = 0; k < n; k++) moveTimes.push(now);
+          writesTotal += n;
+        }
+      }
+      seenSeq[i] = slot.lastMoveSeq;
+      const pt = seenShot[i];
+      if (pt !== undefined && pt >= 0 && slot.lastShotTick !== pt) {
+        shotTimes.push(now);
+        writesTotal += 1;
+      }
+      seenShot[i] = slot.lastShotTick;
+    }
+  }
+  trim(moveTimes, now);
+  trim(shotTimes, now);
+  trim(tickTimes, now);
 }
 
 /**
@@ -113,9 +213,19 @@ export function recordSend(seq?: number): void {
  * so one update can resolve several sends — which is exactly what happens when the
  * client is ahead of the 100 ms tick.
  */
-export function recordWorld(tick?: number, lastSeq?: number): void {
+export function recordWorld(tick?: number, lastSeq?: number, lastShotTick?: number): void {
   const now = Date.now();
   lastFeedAt = now;
+
+  // A shot carries no seq, so its acknowledgement is the seat's own `lastShotTick`
+  // moving: the oldest shot still marked sent is the one it answers.
+  if (lastShotTick !== undefined && lastShotTick !== ownShot) {
+    if (ownShot !== null) {
+      const r = [...recent].reverse().find((x) => x.kind === 'shoot' && x.state === 'sent');
+      if (r) note(r.id, { state: 'acked', ms: now - r.at });
+    }
+    ownShot = lastShotTick;
+  }
 
   if (tick !== undefined) {
     const prev = ticks[ticks.length - 1];
@@ -134,14 +244,17 @@ export function recordWorld(tick?: number, lastSeq?: number): void {
       // long match.
       if (!isSettled(lastSeq, seq)) continue;
       pending.delete(seq);
+      const rec = recent.find((x) => x.seq === seq && x.kind === 'move');
       if (seq === lastSeq) {
         latencies.push(now - at);
         if (latencies.length > SAMPLES) latencies.shift();
         ackTimes.push(now);
+        if (rec) note(rec.id, { state: 'acked', ms: now - at });
       } else {
         // Superseded: this seq never came back on its own, so there is no round trip to
         // record. Timing it against a later write would report a number nothing measured.
         refusedTimes.push(now);
+        if (rec) note(rec.id, { state: 'refused' });
       }
     }
     trim(ackTimes, now);
@@ -155,6 +268,8 @@ export function recordWorld(tick?: number, lastSeq?: number): void {
     if (now - at <= DROP_AFTER_MS) continue;
     pending.delete(seq);
     dropTimes.push(now);
+    const rec = recent.find((x) => x.seq === seq && x.kind === 'move');
+    if (rec) note(rec.id, { state: 'dropped' });
   }
   trim(dropTimes, now);
   emit();
@@ -172,6 +287,9 @@ export function snapshot(): Snapshot {
   trim(ackTimes, now);
   trim(dropTimes, now);
   trim(refusedTimes, now);
+  trim(moveTimes, now);
+  trim(shotTimes, now);
+  trim(tickTimes, now);
 
   const sorted = [...latencies].sort((a, b) => a - b);
   const acked = ackTimes.length;
@@ -197,6 +315,12 @@ export function snapshot(): Snapshot {
     refusedRate: settled > 0 ? refused / settled : 0,
     feedAge: lastFeedAt === null ? null : now - lastFeedAt,
     txTotal,
+    movesPerSec: moveTimes.length / (WINDOW_MS / 1000),
+    shotsPerSec: shotTimes.length / (WINDOW_MS / 1000),
+    ticksPerSec: tickTimes.length / (WINDOW_MS / 1000),
+    writesPerSec: (moveTimes.length + shotTimes.length + tickTimes.length) / (WINDOW_MS / 1000),
+    writesTotal,
+    recent,
   };
 }
 

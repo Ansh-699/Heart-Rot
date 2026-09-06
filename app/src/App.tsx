@@ -67,7 +67,7 @@ import {
 } from '@heartrot/client';
 
 import { attachControls, octantAim } from './input/controls';
-import { recordSend } from './net/metrics';
+import { recordSend, recordSignature } from './net/metrics';
 import DevPanel from './ui/DevPanel';
 import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
@@ -544,9 +544,11 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
     const send = (
       instruction: Parameters<typeof sendInstructions>[2][number],
       downgrade?: () => void,
+      txId?: number,
     ): void => {
       void sendInstructions(er, signer, [instruction])
         .then(async (signature) => {
+          if (txId !== undefined) recordSignature(txId, signature);
           if (confirming && downgrade === undefined) return;
           confirming = true;
           try {
@@ -653,8 +655,8 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         if (seq === null) return;
         // Recorded before the send, so a transaction that never resolves still counts as
         // in flight and ages into the unacked bucket rather than vanishing.
-        recordSend(seq);
-        send(movePlayer({ ...common, session, seat: match.seat, dir, seq }));
+        const txId = recordSend(seq, 'move');
+        send(movePlayer({ ...common, session, seat: match.seat, dir, seq }), undefined, txId);
       },
       onTrigger: (dx, dy, tier) => {
         // Every accepted trigger, live or practice, drawn at 0 ms from the exact pair that
@@ -675,14 +677,14 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         //
         // No `seq` on the wire for `shoot`, so it counts toward throughput and never
         // toward latency. Inventing a round trip for it would be a made-up number.
-        recordSend();
+        const txId = recordSend(undefined, 'shoot');
         const ix = (t: ShotTier) => shoot({ ...common, boss: match.boss, session, seat: match.seat, dx, dy, tier: t });
         // A tiered send that loses the race with a step in flight is refused for free; the
         // answer is the same shot one tier down, once per rung — see `send`. The beam
         // already drawn estimated a super's damage per part; the number the chain reports
         // for the lesser shot is the right one, so `Shot` is told to draw it after all.
         const fire = (t: ShotTier): void =>
-          send(ix(t), t === 0 ? undefined : () => { beamDowngraded(); fire((t - 1) as ShotTier); });
+          send(ix(t), t === 0 ? undefined : () => { beamDowngraded(); fire((t - 1) as ShotTier); }, txId);
         fire(tier);
       },
       onCharge: (hold) => {
@@ -753,6 +755,7 @@ function useGateEntry(link: Link): void {
         return;
       }
       inFlight = true;
+      const gateTx = recordSend(undefined, 'gate');
       void sendInstructions(er, signer, [
         enterGate({
           programId: match.programId,
@@ -768,7 +771,10 @@ function useGateEntry(link: Link): void {
         // `WrongPhase` racing the crank. Sending it with `skipPreflight` and no confirm at
         // all made every one of them silent, on the one screen whose copy tells the player
         // to stand still and stop generating the traffic that would reveal them.
-        .then((signature) => confirmSignature(er, signature, { timeoutMs: 1_500, pollMs: 300 }))
+        .then((signature) => {
+          recordSignature(gateTx, signature);
+          return confirmSignature(er, signature, { timeoutMs: 1_500, pollMs: 300 });
+        })
         .catch((error: unknown) => {
           // Same reader as the gameplay path, and for the same reason: `confirmSignature`
           // throws with the decode on `cause` and `sendInstructions` throws undecoded, so
