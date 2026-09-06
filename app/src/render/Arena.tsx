@@ -939,30 +939,17 @@ export function Arena({
   useSeekedAll(slamFills, RING_KEYFRAMES, windupMs, slamElapsed);
   useSeekedAll(slamPillars, PILLAR_KEYFRAMES, windupMs, slamElapsed);
   // The slam's two cues, off the same derivation the lane is drawn from: the warn when a
-  // wind-up appears, the impact when it resolves — and the landing itself: a burst on
-  // every ring of the lane the wind-up was last drawn over, and a shake. Room B only,
-  // like the lane, and the first render starts with nothing winding up, so a mount plays
-  // nothing.
+  // wind-up appears, the impact when it resolves. Nothing is DRAWN on the landing: the
+  // fire is the telegraph and it goes out on the tick the hand comes down — a burst or a
+  // shake there was "a flick after the fire" the owner had removed. Room B only, like the
+  // lane, and the first render starts with nothing winding up, so a mount plays nothing.
   const slamming = shown === 'arena' && slam !== null;
   const slamHeard = useRef(false);
-  const slamLaneLast = useRef(0);
-  if (slam !== null) slamLaneLast.current = slam.lane;
-  const hellBurstNodes = useRef<(SVGGElement | null)[]>([]);
   useEffect(() => {
     if (slamming) play('slamWarn');
-    else if (slamHeard.current) {
-      play('slam');
-      if (!reduced) {
-        for (const [k, el] of hellBurstNodes.current.entries()) {
-          if (el === null) continue;
-          const [bx, by] = ringAt(slamLaneLast.current, k);
-          el.style.transformOrigin = `${bx}px ${by}px`;
-          el.animate(hellBurstKeyframes(bx, by), HELL_BURST_TIMING);
-        }
-      }
-    }
+    else if (slamHeard.current) play('slam');
     slamHeard.current = slamming;
-  }, [slamming, reduced]);
+  }, [slamming]);
 
   const volley = volleyTelegraph(arena, boss, players);
   const volleyRef = useRef<SVGGElement | null>(null);
@@ -1111,11 +1098,6 @@ export function Arena({
             <stop offset="0.55" stopColor="#ff2a12" stopOpacity="0.14" />
             <stop offset="1" stopColor="#8a1408" stopOpacity="0" />
           </radialGradient>
-          <radialGradient id="hr-hell-burst-g">
-            <stop offset="0" stopColor="#fff6d0" stopOpacity="1" />
-            <stop offset="0.4" stopColor="#ffb03a" stopOpacity="0.8" />
-            <stop offset="1" stopColor="#ff4a1c" stopOpacity="0" />
-          </radialGradient>
           {/* The ring: a glow stroke under a hard one, a fainter line inside, eight runes. */}
           <g id="hr-hell-ring">
             <ellipse rx={RING_RX} ry={RING_RY} fill="none" stroke="#ff2a12" strokeWidth={20} strokeOpacity={0.3} />
@@ -1125,11 +1107,6 @@ export function Arena({
             {RUNES.map(([rx, ry], i) => (
               <circle key={i} cx={rx} cy={ry} r={3} fill="#ffd66a" />
             ))}
-          </g>
-          {/* The hand landing on a ring: a flash on the stone and a spike of fire thrown up. */}
-          <g id="hr-hell-burst">
-            <ellipse rx={88} ry={34} fill="url(#hr-hell-burst-g)" />
-            <path d="M-10 0C-12 -50 -4 -130 0 -200C4 -130 12 -50 10 0Z" fill="url(#hr-pillar-core-g)" />
           </g>
         </defs>
 
@@ -1215,23 +1192,6 @@ export function Arena({
               <HellLane lane={slam.lane} fills={slamFills} pillars={slamPillars} reduced={reduced} />
             </g>
           )}
-          {/* The hand landing: one pooled burst per ring, played by WAAPI on the wind-up's
-              falling edge over the lane it last wound up on. React sets nothing on them
-              after mount. */}
-          {shown === 'arena' &&
-            Array.from({ length: HELL_RINGS }, (_, k) => (
-              <g
-                key={k}
-                ref={(el) => {
-                  hellBurstNodes.current[k] = el;
-                }}
-                aria-hidden="true"
-                style={{ opacity: 0 }}
-              >
-                <use href="#hr-hell-burst" />
-              </g>
-            ))}
-
           {/* Where the next volley goes. `spawn_volley` fans around exactly these lines,
               so this is the shot itself drawn 1.5 s early, not an impression of one. */}
           {shown === 'arena' && volley !== null && (
@@ -1417,17 +1377,6 @@ const BURST_TIMING: KeyframeAnimationOptions = {
   duration: BURST_MS,
   easing: `steps(${ORD_BURST.frames})`,
 };
-
-/** The hand landing on a ring: the flash and the spike, up and gone. */
-function hellBurstKeyframes(x: number, y: number): Keyframe[] {
-  const at = `translate(${x}px, ${y}px)`;
-  return [
-    { opacity: 1, transform: `${at} scale(0.5)` },
-    { opacity: 1, transform: `${at} scale(1.1)`, offset: 0.3 },
-    { opacity: 0, transform: `${at} scale(1.35)` },
-  ];
-}
-const HELL_BURST_TIMING: KeyframeAnimationOptions = { duration: 600, easing: 'ease-out' };
 
 /**
  * The lane goes from a glow to a blaze as the hand comes down — the whole group, on top of
