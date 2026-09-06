@@ -1317,6 +1317,20 @@ h3 {
    gen_rooms.py and published by WaitingRoom.tsx; the torch amber is only the fallback), so
    it reads as an objective rather than scenery and says which tier without a word.
    Animated in CSS because the scene layer mounts once and React never walks it again. */
+/* The gate "Raid again" asked for: a slow pulse on the whole doorway, cancelled to a
+   steady wash under reduced motion. */
+.gate-wanted {
+  fill-opacity: 0.22;
+  stroke-opacity: 0.8;
+  animation: gate-wanted 1.4s ease-in-out infinite alternate;
+}
+@keyframes gate-wanted {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gate-wanted { animation: none; opacity: 0.7; }
+}
 .gate-mark-halo {
   fill: color-mix(in srgb, var(--tier, var(--torch)) 26%, transparent);
   stroke: color-mix(in srgb, var(--tier, var(--torch)) 55%, transparent);

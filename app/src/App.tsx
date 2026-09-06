@@ -452,6 +452,7 @@ function World({
   link: Link;
   feedEpoch: number;
 }) {
+  const wantTier = useSelect((s) => s.wantTier);
   const arena = useSelect((s) => s.arena);
   const boss = useSelect((s) => s.boss);
   const players = useSelect((s) => s.players);
@@ -492,7 +493,8 @@ function World({
         tickMs={tickMs}
         predictor={link?.predictor}
         feedEpoch={feedEpoch}
-      />
+          wantTier={wantTier}
+        />
     </div>,
     host,
   );

@@ -627,6 +627,8 @@ export interface ArenaProps {
    * the clock; the crank promises no wall-clock period.
    */
   tickMs?: number;
+  /** The verdict's "Raid again": the tier whose gate the lobby lights until it is walked. */
+  wantTier?: number | null;
   /**
    * Which room is on screen. `Passage` owns it, because during the 460 ms cover it and the
    * seat's own `zone` disagree ON PURPOSE — the swap hangs off `cover.finished` so the
@@ -685,6 +687,7 @@ export function Arena({
   players,
   localSeat,
   predictor,
+  wantTier = null,
   tickMs = TICK_MS,
   room,
   hold = false,
@@ -1132,6 +1135,22 @@ export function Arena({
               is why React gives them none. Feedback, never a send: `enter_gate` stays on
               `useGateEntry`'s authoritative poll, and the version that fired from the input
               path stranded players. */}
+          {/* The gate "Raid again" asked for, pulsing until walked through. Its own node:
+              the glow rects below are the frame loop's, and one writer per node holds. */}
+          {shown === 'lobby' && wantTier !== null && GATES[wantTier] !== undefined && (
+            <rect
+              className="gate-wanted"
+              aria-hidden="true"
+              x={GATES[wantTier]!.minX}
+              y={GATES[wantTier]!.minY}
+              width={GATES[wantTier]!.maxX - GATES[wantTier]!.minX + 1}
+              height={GATES[wantTier]!.maxY - GATES[wantTier]!.minY + 1}
+              fill={PAL.ventOpen}
+              stroke={PAL.ventOpen}
+              strokeWidth={3}
+              style={{ pointerEvents: 'none' }}
+            />
+          )}
           {shown === 'lobby' &&
             GATES.map((g, tier) => (
               <rect

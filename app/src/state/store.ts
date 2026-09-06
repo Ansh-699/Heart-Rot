@@ -128,6 +128,9 @@ export type State = {
    * The landing is the resting screen; a seat is taken on a click and nowhere else.
    */
   seeking: boolean;
+  /** The tier the verdict's "Raid again" asked for: the next lobby lights that gate and
+   *  the hint names it, until the seat walks through a gate. `null` otherwise. */
+  wantTier: number | null;
   /**
    * Always `CLASS_ARCHER`: the archer is the only class this client sends. Still a field
    * because it travels inside `claim_seat` and `App.tsx` compares it to a returning seat's
@@ -229,6 +232,8 @@ export type Store = {
    * `.then` would have left the player on the loader forever.
    */
   leaveMatch(): Promise<void>;
+  /** "Raid again": remember this raid's tier, then leave for the next open arena's lobby. */
+  raidAgain(): Promise<void>;
 
   /**
    * The JSON body of `/api/match/leave` for the held seat, for the closing-tab beacon —
@@ -465,6 +470,7 @@ const INITIAL: State = {
   skinId: 0,
   skinChosen: false,
   seeking: false,
+  wantTier: null,
   classId: CLASS_ARCHER,
   match: null,
   status: 'idle',
@@ -752,6 +758,8 @@ export function createStore(): Store {
       const slot = update.players?.slots?.[seat];
       recordWorld(update.arena?.tick, slot?.lastMoveSeq, slot?.lastShotTick);
       recordWrites(update.arena?.tick, update.players?.slots);
+      // Through a gate: the wish is spent, whichever gate it was.
+      if (state.wantTier !== null && slot?.zone === ZONE_ARENA) set({ wantTier: null });
 
       // Our seat is gone. Someone released it — another tab of ours pressing Exit, a
       // beacon from a window that closed, or the Worker's reaper — and the match we are
@@ -810,9 +818,19 @@ export function createStore(): Store {
       if (state.authenticated && state.skinChosen) await join();
     },
 
+    async raidAgain() {
+      // Every seat is released when an arena settles (`begin_next_incarnation` zeroes the
+      // roster), so "again" can only mean the next open arena's lobby — the same place
+      // "Back to lobby" goes. What this adds is the wish: the lobby lights the gate of the
+      // tier just fought and the hint names it, until the seat walks through one.
+      set({ wantTier: state.arena?.difficulty ?? null });
+      await release();
+      if (state.authenticated && state.skinChosen) await join();
+    },
+
     async changeMarker() {
       storeSkin(null);
-      set({ skinChosen: false, seeking: true });
+      set({ skinChosen: false, seeking: true, wantTier: null });
       await release();
     },
 

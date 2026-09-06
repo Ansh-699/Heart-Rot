@@ -650,6 +650,7 @@ function Hint() {
   const moved = useSelect((s) => (mySeatSlot(s)?.lastMoveSeq ?? 0) > 0);
   const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
   const mustering = useSelect((s) => s.arena?.phase === PHASE_MUSTERING);
+  const wantTier = useSelect((s) => s.wantTier);
   if (inPit) {
     if (!mustering) return null;
     return (
@@ -663,6 +664,13 @@ function Hint() {
             <b>SPACE</b> shoot · <b>HOLD</b> to charge · <b>HOLD LONGER</b> for a super
           </>
         )}
+      </div>
+    );
+  }
+  if (wantTier !== null) {
+    return (
+      <div className="hud-hint" aria-hidden="true">
+        <b>WALK</b> to the <b>{TIER_NAMES[wantTier] ?? 'lit'}</b> gate to raid again
       </div>
     );
   }
@@ -897,12 +905,14 @@ function Verdict() {
           </li>
         </ol>
       )}
-      {/* ONE button. `leaveMatch` releases the seat and, for a seated identity, takes the
-          next open arena — so "Back to lobby" and "Raid again" were the same act with two
-          names. The way to stop instead is the link below: the select screen, where nothing
-          happens until you take a seat. */}
+      {/* Both go to the next open arena's lobby — every seat is released when an arena
+          settles, so there is nowhere else to go. "Raid again" also remembers this raid's
+          tier: that gate is lit in the lobby and the hint names it, until you walk through. */}
       <span className="verdict-actions">
         <button className="btn btn-primary" disabled={!settled} onClick={() => void store.leaveMatch()}>
+          Back to lobby
+        </button>
+        <button className="btn" disabled={!settled} onClick={() => void store.raidAgain()}>
           Raid again
         </button>
       </span>
