@@ -66,13 +66,14 @@ import {
   type ShotTier,
 } from '@heartrot/client';
 
-import { attachControls, octantAim } from './input/controls';
+import { attachControls, dirFromVector, octantAim } from './input/controls';
 import { recordSend, recordSignature } from './net/metrics';
 import DevPanel from './ui/DevPanel';
 import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
 import { chargeLocal } from './render/Knight';
 import { Passage } from './render/Passage';
+import { atSecretDoor } from './render/SecretRoom';
 import { play } from './render/sfx';
 import { beamDowngraded, fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';
@@ -81,6 +82,9 @@ import { Leaderboard } from './screens/Leaderboard';
 import { Onboarding, SeatLoader } from './screens/Onboarding';
 import { mySeatSlot, screenOf, useSelect, useStore } from './state/store';
 import { Hud } from './ui/Hud';
+
+/** The sector a step west quantises to — the one that knocks on the lobby's door. */
+const WEST = dirFromVector(-1, 0);
 
 /**
  * `Address` without importing `@solana/kit`: `app/package.json` does not depend on it
@@ -453,6 +457,7 @@ function World({
   feedEpoch: number;
 }) {
   const wantTier = useSelect((s) => s.wantTier);
+  const secret = useSelect((s) => s.secret);
   const arena = useSelect((s) => s.arena);
   const boss = useSelect((s) => s.boss);
   const players = useSelect((s) => s.players);
@@ -460,6 +465,18 @@ function World({
   const tickMs = useSelect((s) => s.match?.tickMs ?? 100);
 
   useGameplay(host, link);
+
+  // Escape closes the secret room. A real step closes it too (`onMove` below), and on touch
+  // that is the only way out — a thumb on the stick, walking east through the door.
+  const store = useStore();
+  useEffect(() => {
+    if (!secret) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') store.setSecret(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [secret, store]);
 
   if (!host || !arena || !boss || !players) return null;
 
@@ -493,8 +510,9 @@ function World({
         tickMs={tickMs}
         predictor={link?.predictor}
         feedEpoch={feedEpoch}
-          wantTier={wantTier}
-        />
+        wantTier={wantTier}
+        secret={secret}
+      />
     </div>,
     host,
   );
@@ -651,7 +669,18 @@ function useGameplay(host: HTMLElement | null, link: Link): void {
         // the handler indexes with `dir`, so the predicted step and the chain's are one
         // table and cannot disagree.
         const seq = predictor.push(dir);
-        if (seq === null) return;
+        if (seq === null) {
+          // Refused before the wire: a wall. West from the threshold of the lobby's door,
+          // that wall IS the door — the knock that opens the secret room (`SecretRoom.tsx`).
+          // On the edge only: a held key pumps this every slot, and the room opens once.
+          if (dir === WEST && !store.getState().secret && atSecretDoor(predictor.self.x, predictor.self.y)) {
+            store.setSecret(true);
+            play('gate');
+          }
+          return;
+        }
+        // Any step the chain will take is a step out of the chamber.
+        if (store.getState().secret) store.setSecret(false);
         // Recorded before the send, so a transaction that never resolves still counts as
         // in flight and ages into the unacked bucket rather than vanishing.
         const txId = recordSend(seq, 'move');

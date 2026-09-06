@@ -33,6 +33,9 @@ documentation; the one-line summaries:
 - `gen_knights.py` / `archer_sheet.py` — the archer paper-doll: 10 poses × 5 authored
   directions × 3 skins plus silhouette and halo frames, one atlas and a `FRAMES` table.
 - `gen_ordnance.py` — the boss's thorn ordnance at 16 velocity sectors, burst and hit splat.
+- `gen_secret.py` — the chamber behind the lobby's west door, cut from the lobby painting,
+  with the Solana and MagicBlock marks (`assets/sprites/*-mark.png`, the official SVGs
+  rasterised once) as pixel banners; emits its world placement and the door threshold.
 - `gen_errors.py` — `HeartrotError` codes to the client.
 
 Why one script per pair of outputs: the pixels the browser draws and the rectangle the

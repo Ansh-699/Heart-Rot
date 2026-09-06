@@ -124,6 +124,8 @@ import { Shot } from './Shot';
 import { Spawn } from './Spawn';
 import { WAITING } from './WaitingRoom';
 import { useViewport, type Room } from './viewport';
+import { SECRET_DOOR, SECRET_LIGHTS } from './secret.gen';
+import { SecretRoom, atSecretDoor } from './SecretRoom';
 import { ARENA_UNITS, PAL, SELF_SNAP, VISIBLE_PROJECTILES } from './sprites';
 
 /**
@@ -629,6 +631,8 @@ export interface ArenaProps {
   tickMs?: number;
   /** The verdict's "Raid again": the tier whose gate the lobby lights until it is walked. */
   wantTier?: number | null;
+  /** The secret room is open: drawn over room A. `store.secret`, client-only (`SecretRoom.tsx`). */
+  secret?: boolean;
   /**
    * Which room is on screen. `Passage` owns it, because during the 460 ms cover it and the
    * seat's own `zone` disagree ON PURPOSE — the swap hangs off `cover.finished` so the
@@ -688,6 +692,7 @@ export function Arena({
   localSeat,
   predictor,
   wantTier = null,
+  secret = false,
   tickMs = TICK_MS,
   room,
   hold = false,
@@ -1151,6 +1156,23 @@ export function Arena({
               style={{ pointerEvents: 'none' }}
             />
           )}
+          {/* The west door answers a raider standing at its threshold — the one hint the
+              secret room gives. The wanted gate's pulse, in the torch's own light. */}
+          {shown === 'lobby' && !secret && localSlot?.occupied === true && atSecretDoor(localSlot.x, localSlot.y) && (
+            <rect
+              className="gate-wanted"
+              aria-hidden="true"
+              x={SECRET_DOOR.x}
+              y={SECRET_DOOR.y}
+              width={SECRET_DOOR.w}
+              height={SECRET_DOOR.h}
+              fill={SECRET_LIGHTS[0]!.color}
+              stroke={SECRET_LIGHTS[0]!.color}
+              strokeWidth={3}
+              style={{ pointerEvents: 'none' }}
+            />
+          )}
+
           {shown === 'lobby' &&
             GATES.map((g, tier) => (
               <rect
@@ -1382,6 +1404,9 @@ export function Arena({
               <g className="room-light">{RAIN}</g>
             </g>
           )}
+
+          {/* The secret room: over room A and everyone in it, under the passage veil. */}
+          {shown === 'lobby' && secret && <SecretRoom skinId={localSlot?.skinId ?? 0} />}
 
           {/* Row 16. After `Spawn`, so the veil covers the flare when both fire. */}
           {veil}

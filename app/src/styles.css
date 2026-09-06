@@ -1331,6 +1331,14 @@ h3 {
 @media (prefers-reduced-motion: reduce) {
   .gate-wanted { animation: none; opacity: 0.7; }
 }
+/* The secret room (render/SecretRoom.tsx): a fade on the whole group, and the two kinds of
+   text on it, in world units (an SVG px is a unit inside #camera). */
+.secret-room { animation: secret-in 280ms ease-out both; }
+@keyframes secret-in { from { opacity: 0; } to { opacity: 1; } }
+.secret-label { font: 700 11px var(--pixel); fill: #e6d9bd; letter-spacing: 0.06em; }
+.secret-caption { font: 500 8px var(--mono); fill: #a99f8c; letter-spacing: 0.04em; }
+@media (prefers-reduced-motion: reduce) { .secret-room { animation: none; } }
+
 .gate-mark-halo {
   fill: color-mix(in srgb, var(--tier, var(--torch)) 26%, transparent);
   stroke: color-mix(in srgb, var(--tier, var(--torch)) 55%, transparent);

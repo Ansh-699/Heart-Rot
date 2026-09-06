@@ -651,6 +651,7 @@ function Hint() {
   const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
   const mustering = useSelect((s) => s.arena?.phase === PHASE_MUSTERING);
   const wantTier = useSelect((s) => s.wantTier);
+  const secret = useSelect((s) => s.secret);
   if (inPit) {
     if (!mustering) return null;
     return (
@@ -664,6 +665,13 @@ function Hint() {
             <b>SPACE</b> shoot · <b>HOLD</b> to charge · <b>HOLD LONGER</b> for a super
           </>
         )}
+      </div>
+    );
+  }
+  if (secret) {
+    return (
+      <div className="hud-hint" aria-hidden="true">
+        <b>WALK</b> out to leave
       </div>
     );
   }
