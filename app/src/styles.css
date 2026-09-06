@@ -1337,6 +1337,9 @@ h3 {
 @keyframes secret-in { from { opacity: 0; } to { opacity: 1; } }
 .secret-label { font: 700 11px var(--pixel); fill: #e6d9bd; letter-spacing: 0.06em; }
 .secret-caption { font: 500 8px var(--mono); fill: #a99f8c; letter-spacing: 0.04em; }
+.room-text { font: 600 5.6px var(--mono); fill: #e6d9bd; }
+.room-text.is-dim { fill: #a99f8c; font-weight: 500; }
+.room-text.is-you { fill: #f2cf6b; }
 @media (prefers-reduced-motion: reduce) { .secret-room { animation: none; } }
 
 .gate-mark-halo {

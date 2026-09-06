@@ -187,23 +187,71 @@ export const LOBBY_TOP = 640;
 export const LOBBY_BOT = 895;
 
 /**
- * The secret room: a THIRD zone, `ZONE_SECRET` (layout.ts), laid over the lobby floor
- * (tiles (22, 40) .. (41, 49)), so the grid is unchanged and a lobby seat and a secret seat
- * may share a tile. `map::SECRET_ROOM` on the chain, byte for byte: `mayMoveTo` and
- * `standable` hold a secret seat inside it, and `use_door` flips a lobby seat standing in
- * {@link SECRET_DOOR} to {@link SECRET_ENTRY}, and a secret seat standing in
- * {@link SECRET_EXIT} back to {@link SECRET_RETURN}. The renderer paints the chamber
- * onto exactly this block (`secret.gen.ts`), so a seat inside it is drawn where the chain
- * has it, with no offset anywhere.
+ * A side room off the lobby: a zone of its own, `SIDE_ZONE_BASE + index` (`ZONE_SECRET`,
+ * `ZONE_KEEP`, `ZONE_CRYPT` in layout.ts), laid over the lobby floor so the grid is unchanged
+ * and a lobby seat and a room seat may share a tile. `map::Room` on the chain, byte for byte:
+ * `mayMoveTo` and `standable` hold a room seat inside `floor`; `use_door` moves a lobby seat
+ * standing in `door` to `entry` facing `knock`, and a room seat standing in `exit` back to
+ * `back` facing `leave`. `knock`/`leave` are cardinal octants (0 N, 2 E, 4 S, 6 W, y down),
+ * `leave` four from `knock`: a seat comes back the way it came. The renderer paints each
+ * chamber onto exactly its `floor` (`siderooms.gen.ts`), so a seat inside is drawn where the
+ * chain has it, with no offset anywhere.
  */
-export const SECRET_ROOM: Gate = { minX: 352, maxX: 671, minY: 640, maxY: 799 };
-/** The lobby tiles a seat pushes WEST from: the painted arch in the lobby's west wall. */
-export const SECRET_DOOR: Gate = { minX: 80, maxX: 95, minY: 688, maxY: 751 };
-/** The room tiles a seat pushes EAST from: against the room's east wall, where its door is drawn. */
-export const SECRET_EXIT: Gate = { minX: 656, maxX: 671, minY: 672, maxY: 751 };
-/** Where `use_door` puts a seat coming in, and where it puts one going out. */
-export const SECRET_ENTRY: readonly [number, number] = [656, 704]; // tile (41, 44)
-export const SECRET_RETURN: readonly [number, number] = [80, 704]; // tile (5, 44)
+export interface SideRoom {
+  readonly name: string;
+  readonly floor: Gate;
+  readonly door: Gate;
+  readonly exit: Gate;
+  readonly entry: readonly [number, number];
+  readonly back: readonly [number, number];
+  readonly knock: number;
+  readonly leave: number;
+}
+
+/** The zone byte of `SIDE_ROOMS[0]`: `state::ZONE_SECRET`, read back rather than retyped. */
+export const SIDE_ZONE_BASE = 2;
+
+export const SIDE_ROOMS: readonly SideRoom[] = [
+  // secret: floor tiles (22, 40)..(41, 49), knock W
+  {
+    name: 'secret',
+    floor: { minX: 352, maxX: 671, minY: 640, maxY: 799 },
+    door: { minX: 80, maxX: 95, minY: 688, maxY: 751 },
+    exit: { minX: 656, maxX: 671, minY: 672, maxY: 751 },
+    entry: [656, 704], // tile (41, 44)
+    back: [80, 704], // tile (5, 44)
+    knock: 6,
+    leave: 2,
+  },
+  // keep: floor tiles (19, 42)..(44, 53), knock E
+  {
+    name: 'keep',
+    floor: { minX: 304, maxX: 719, minY: 672, maxY: 863 },
+    door: { minX: 928, maxX: 943, minY: 688, maxY: 751 },
+    exit: { minX: 304, maxX: 319, minY: 720, maxY: 799 },
+    entry: [304, 752], // tile (19, 47)
+    back: [928, 704], // tile (58, 44)
+    knock: 2,
+    leave: 6,
+  },
+  // crypt: floor tiles (22, 42)..(41, 51), knock S
+  {
+    name: 'crypt',
+    floor: { minX: 352, maxX: 671, minY: 672, maxY: 831 },
+    door: { minX: 496, maxX: 543, minY: 880, maxY: 895 },
+    exit: { minX: 480, maxX: 543, minY: 672, maxY: 687 },
+    entry: [496, 672], // tile (31, 42)
+    back: [512, 880], // tile (32, 55)
+    knock: 4,
+    leave: 0,
+  },
+];
+
+/** The side room a zone byte names, or `null` for the lobby, the pit and any byte off the table. */
+export function sideRoomOf(zone: number): SideRoom | null {
+  const i = zone - SIDE_ZONE_BASE;
+  return Number.isInteger(i) && i >= 0 && i < SIDE_ROOMS.length ? SIDE_ROOMS[i]! : null;
+}
 
 /** Is this arena-space point inside the block? `map::Gate::contains`, byte for byte. */
 export function inBlock(g: Gate, x: number, y: number): boolean {

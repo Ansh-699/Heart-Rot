@@ -38,6 +38,7 @@ import { usePrivy } from '@privy-io/react-auth';
 // The painted arena, the same file `render/rooms.gen.ts` draws the room from: the first
 // screen is the dungeon, not a void.
 import arenaPng from '../render/rooms/arena.png?no-inline';
+import { useLeaderboard } from '../net/leaderboard';
 import { useSelect, useStore } from '../state/store';
 import { SKIN_COLORS, SKIN_NAMES } from './CharacterSelect';
 
@@ -99,19 +100,7 @@ export function Onboarding() {
 
   // "N raider runs recorded": the ring's write counter (one per seated raider per settle) (`total` on `GET /api/leaderboard`), once
   // per mount. Nothing is shown until it lands, and Play never waits for it.
-  const [total, setTotal] = useState<number | null>(null);
-  useEffect(() => {
-    let live = true;
-    fetch('/api/leaderboard')
-      .then((response) => (response.ok ? (response.json() as Promise<{ total?: number }>) : null))
-      .then((body) => {
-        if (live && typeof body?.total === 'number') setTotal(body.total);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
+  const { total } = useLeaderboard();
 
   /**
    * Two steps, because the proof and the key have different owners: Privy's modal proves

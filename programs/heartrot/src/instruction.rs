@@ -468,10 +468,10 @@
 //!
 //! # Tag 17 — `UseDoor`, ER
 //!
-//! Args, 1 byte exactly: `seat` u8 at `[0]`. The secret door, either way: a `ZONE_LOBBY` seat
-//! standing in `map::SECRET_DOOR` goes to `map::SECRET_ENTRY` in `ZONE_SECRET`; a `ZONE_SECRET`
-//! seat standing in `map::SECRET_EXIT` comes back to `map::SECRET_RETURN`. Anywhere else is
-//! `NotOnGate`; a seat in the pit is `WrongZone`. Rate limited on `last_move_tick` exactly as
+//! Args, 1 byte exactly: `seat` u8 at `[0]`. A side room's door, either way: a `ZONE_LOBBY`
+//! seat standing in some `map::ROOMS[i].door` goes to that room's `entry` in zone
+//! `ZONE_SECRET + i`; a room seat standing in its `exit` comes back to its `back`. Anywhere
+//! else is `NotOnGate`; a seat in the pit is `WrongZone`. Rate limited on `last_move_tick` exactly as
 //! `Move` is -- the client sends it from the edge of a refused step, and a held key pumps
 //! that edge every slot.
 //!

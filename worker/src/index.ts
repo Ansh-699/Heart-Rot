@@ -132,7 +132,7 @@ export default {
         return await faucetStatus(env);
       }
       if (request.method === 'GET' && pathname === '/api/leaderboard') {
-        return await leaderboard(env);
+        return await leaderboard(env, new URL(request.url).searchParams.has('all'));
       }
 
       // Resolved before the body is touched, so a typo'd URL answers `not_found`

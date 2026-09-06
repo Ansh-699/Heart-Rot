@@ -295,7 +295,7 @@ const SUPER_GLOW_OPACITY = 0.3;
 const SUPER_FLASH_MS = 180;
 
 /** One frame of the atlas at a local offset. The viewBox is the crop. */
-function Sprite({
+export function Sprite({
   frame,
   x,
   y,

@@ -19,6 +19,7 @@ import {
   ARENA, BOSS, BOSS_SPAWN, BULLET, MUZZLES, PLAYERS, PLAYER_SLOT, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
   LAYOUT_VERSION, MAX_SEATS, N_PARTS, CLASS_MASK,
   PHASE_LOBBY, PHASE_FIGHTING, PHASE_MUSTERING, ZONE_ARENA, ZONE_LOBBY, ZONE_SECRET,
+  SIDE_ROOMS,
   autoAim, decodeAim, decodeArena, decodeBoss, decodePlayers,
   type BossAccount,
 } from '@heartrot/client';
@@ -225,6 +226,20 @@ setAuthSource(async () => 'stub.jwt.token');
 const realFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+  if (url.includes('/api/leaderboard')) {
+    // Twelve runs over three incarnations of two arenas, two outcomes, so the keep's tablets
+    // and the crypt's slabs have something to say.
+    const rows = [
+      [1, 'ab12…zz90', 41250, 2, 12, false, '7'], [2, 'cd34…yy81', 30110, 2, 12, true, '7'], [3, 'ef56…xx72', 22400, 1, 11, true, '7'],
+      [4, 'gh78…ww63', 19870, 1, 11, true, '7'], [5, 'ij90…vv54', 15020, 1, 11, false, '7'], [6, 'kl12…uu45', 12800, 3, 10, false, '7'],
+      [7, 'mn34…tt36', 9900, 3, 10, false, '7'], [8, 'op56…ss27', 8400, 2, 12, false, '7'], [9, 'qr78…rr18', 7100, 2, 3, true, '6'],
+      [10, 'st90…qq09', 5600, 2, 3, false, '6'], [11, 'uv12…pp00', 4200, 1, 2, true, '6'], [12, 'wx34…oo11', 3000, 1, 2, true, '6'],
+    ].map(([rank, raider, damage, outcome, incarnation, survived, arenaId]) => ({ rank, raider, damage, outcome, incarnation, survived, arenaId }));
+    return new Response(JSON.stringify({ rows, total: 1287 }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  if (url.includes('/api/faucet/status')) {
+    return new Response(JSON.stringify({ treasury: '11111111111111111111111111111111', treasuryLamports: '2731450000', estimatedMatches: 41, tier: 1 }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   if (url.includes('/api/session/init')) {
     return new Response(JSON.stringify({
       seat: 0, arenaId: '1', programId: '11111111111111111111111111111111',
@@ -258,9 +273,24 @@ function Bridge() {
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__store = store;
-    w.__scene = (which: 'lobby' | 'arena' | 'secret', opts: SceneOpts = {}) => {
+    w.__scene = (which: 'lobby' | 'arena' | 'secret' | 'keep' | 'crypt', opts: SceneOpts = {}) => {
       const arena = which === 'arena';
-      const zone = which === 'secret' ? ZONE_SECRET : arena ? ZONE_ARENA : ZONE_LOBBY;
+      const room = SIDE_ROOMS.findIndex((r) => r.name === which);
+      const zone = room >= 0 ? ZONE_SECRET + room : arena ? ZONE_ARENA : ZONE_LOBBY;
+      // A room scene without placements: the local seat at the room's entry, the rest
+      // fanned across its floor, so nobody is drawn outside the walls.
+      if (room >= 0 && opts.at === undefined) {
+        const f = SIDE_ROOMS[room]!.floor;
+        const n = opts.seats ?? 3;
+        opts = {
+          ...opts,
+          at: Array.from({ length: n }, (_, i) =>
+            i === 0
+              ? [SIDE_ROOMS[room]!.entry[0], SIDE_ROOMS[room]!.entry[1], 2, 1]
+              : [f.minX + 32 + ((i * 96) % (f.maxX - f.minX - 48)), f.minY + 48 + ((i * 40) % (f.maxY - f.minY - 64)), i % 3, 1],
+          ),
+        };
+      }
       const tick = opts.tick ?? (arena ? 900 : 0);
       // The boss first: the seats aim at the shell this scene actually has, so a stripped
       // part re-targets the raid the way `autoAim` re-targets a real player.

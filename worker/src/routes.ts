@@ -18,7 +18,6 @@ import {
   address,
   createKeyPairSignerFromPrivateKeyBytes,
   getAddressEncoder,
-  getBase58Decoder,
   getBase58Encoder,
   getProgramDerivedAddress,
   isAddress,
@@ -56,6 +55,7 @@ import {
   ZONE_ARENA,
   type PlayersAccount,
   matchPdas,
+  raiderTag,
   nextIncarnation,
   rollDeadlineTick,
   rollSeed,
@@ -1749,22 +1749,26 @@ const LEADERBOARD_TOP = 50;
  * real; sorting makes the ring's write order irrelevant. Ties share a rank, as the results
  * panel's placing does (`ui/Hud.tsx`).
  */
-export async function leaderboard(env: Env): Promise<Response> {
+/**
+ * `all`: every written row (the whole ring, at most 128), still ranked, for the crypt --
+ * which reads incarnations, not places, and needs the rows the top fifty would drop.
+ */
+export async function leaderboard(env: Env, all = false): Promise<Response> {
   const c = await context(env);
   const data = await accountData(c.base, await leaderboardPda(c.programId));
   const board = data === null ? null : decodeLeaderboard(data);
   const written =
     board === null ? [] : board.entries.slice(0, Math.min(board.totalWritten, LEADERBOARD_CAP));
-  const top = written.sort((a, b) => b.damageDealt - a.damageDealt).slice(0, LEADERBOARD_TOP);
-  const base58 = getBase58Decoder();
+  const ranked = written.sort((a, b) => b.damageDealt - a.damageDealt);
+  const top = all ? ranked : ranked.slice(0, LEADERBOARD_TOP);
   const rows = top.map((entry) => {
-    const identity = base58.decode(entry.identity);
     return {
       rank: top.findIndex((other) => other.damageDealt === entry.damageDealt) + 1,
-      raider: `${identity.slice(0, 4)}…${identity.slice(-4)}`,
+      raider: raiderTag(entry.identity),
       damage: entry.damageDealt,
       outcome: entry.outcome,
       incarnation: entry.incarnation,
+      survived: entry.survived,
       // A bigint: `JSON.stringify` throws on it rather than rendering it.
       arenaId: entry.arenaId.toString(),
     };

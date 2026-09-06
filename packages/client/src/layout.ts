@@ -18,7 +18,7 @@
  * `map.ts`, which is generated and imports nothing.
  */
 
-import { GATES, MAP_MAX_XY, MAP_TILE, MAP_TILES, PIT_BOT, PIT_TOP, SECRET_ROOM } from './map';
+import { GATES, MAP_MAX_XY, MAP_TILE, MAP_TILES, PIT_BOT, PIT_TOP, SIDE_ZONE_BASE, sideRoomOf } from './map';
 
 // ---------------------------------------------------------------------------
 // Capacities, discriminators, sentinels — mirrors of the Rust constants
@@ -129,8 +129,14 @@ export const ENRAGE_TICKS = ticksFor(360_000);
 
 export const ZONE_LOBBY = 0;
 export const ZONE_ARENA = 1;
-/** The chamber behind the lobby's west door, `map.ts`'s `SECRET_ROOM`: `use_door` is its only writer, both ways. */
-export const ZONE_SECRET = 2;
+/**
+ * The three side rooms off the lobby, one zone each from `SIDE_ZONE_BASE` in `SIDE_ROOMS`
+ * order (`map.ts`): the secret room behind the west door, the keep behind the east door, the
+ * crypt down the stairs. `use_door` is their only writer, both ways.
+ */
+export const ZONE_SECRET = SIDE_ZONE_BASE;
+export const ZONE_KEEP = SIDE_ZONE_BASE + 1;
+export const ZONE_CRYPT = SIDE_ZONE_BASE + 2;
 
 /**
  * May a seat in `zone` step from `y` to `ny`? The mirror of `handlers::player::may_move_to`,
@@ -156,10 +162,10 @@ export const ZONE_SECRET = 2;
  */
 export function mayMoveTo(zone: number, y: number, ny: number): boolean {
   const inArena = zone === ZONE_ARENA;
-  const secret = zone === ZONE_SECRET;
-  // The chamber's own rows (`player::zone_box`); its columns are `standable`'s question.
-  const top = secret ? SECRET_ROOM.minY : inArena ? PIT_TOP : PIT_BOT + 1;
-  const bot = secret ? SECRET_ROOM.maxY : inArena ? PIT_BOT : MAP_MAX_XY;
+  const room = sideRoomOf(zone);
+  // A side room's own rows (`player::zone_box`); its columns are `standable`'s question.
+  const top = room ? room.floor.minY : inArena ? PIT_TOP : PIT_BOT + 1;
+  const bot = room ? room.floor.maxY : inArena ? PIT_BOT : MAP_MAX_XY;
   const over = (v: number): number => Math.max(top - v, v - bot, 0);
   // Mirrors `handlers::player::may_move_to`. A stranded seat is governed by WALLS ALONE
   // until it re-enters its box: the earlier strictly-decreasing rule froze 4,620 stale

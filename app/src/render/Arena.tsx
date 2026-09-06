@@ -101,11 +101,11 @@ import {
   TICK_MS,
   ZONE_ARENA,
   ZONE_LOBBY,
-  ZONE_SECRET,
   gateAt,
   isFurious,
   onDais,
   isWall,
+  sideRoomOf,
   slamTelegraph,
   type ArenaAccount,
   type BossAccount,
@@ -125,8 +125,8 @@ import { Shot } from './Shot';
 import { Spawn } from './Spawn';
 import { WAITING } from './WaitingRoom';
 import { useViewport, type Room } from './viewport';
-import { SECRET_LIGHTS } from './secret.gen';
-import { SecretRoom, archAt } from './SecretRoom';
+import { DOOR_GLOW, SideRoom, archAt } from './SideRooms';
+import { CRYPT_GLYPH_DEFS } from './siderooms.gen';
 import { ARENA_UNITS, PAL, SELF_SNAP, VISIBLE_PROJECTILES } from './sprites';
 
 /**
@@ -221,6 +221,7 @@ const NO_BULLETS: readonly number[] = [];
  */
 const ORDNANCE_HTML = { __html: ORDNANCE_DEFS } as const;
 const FIRE_HTML = { __html: FIRE_DEFS } as const;
+const GLYPH_HTML = { __html: CRYPT_GLYPH_DEFS } as const;
 
 function visibleBullets(bullets: readonly Bullet[], slots: readonly PlayerSlot[]): number[] {
   const live: number[] = [];
@@ -389,10 +390,10 @@ export const roomOf = (zone: number): Room => (zone === ZONE_ARENA ? 'arena' : '
 export function seatShown(slot: PlayerSlot, room: Room, holdSeat?: number, side: number = ZONE_LOBBY): boolean {
   if (holdSeat !== undefined && slot.seat === holdSeat) return true;
   if (roomOf(slot.zone) !== room) return false;
-  // Room A has two sides of one wall: the waiting area, and the secret room behind its west
-  // door. `side` is the local seat's zone there, and a seat is drawn on that side only —
-  // never through the wall, in either direction.
-  return room !== 'lobby' || (slot.zone === ZONE_SECRET) === (side === ZONE_SECRET);
+  // Room A is several rooms behind one set of walls: the waiting area, and the side rooms
+  // off it. `side` is the local seat's zone there, and a seat is drawn on that side only —
+  // never through a wall, in either direction.
+  return room !== 'lobby' || slot.zone === side;
 }
 
 /**
@@ -1007,10 +1008,10 @@ export function Arena({
   // The local seat is kept in the room on screen while the passage is crossing — see
   // `seatShown`. That, and not the `hold` prop, is what makes the documented hold real.
   const holdSeat = holding ? localSeat : undefined;
-  // Which side of room A's west wall is on screen: the secret room while the local seat is
-  // in it, the waiting area otherwise (and for a spectator).
-  const side = localSlot?.occupied === true && localSlot.zone === ZONE_SECRET ? ZONE_SECRET : ZONE_LOBBY;
-  const inRoom = shown === 'lobby' && side === ZONE_SECRET;
+  // Which of room A's rooms is on screen: the side room the local seat is in, the waiting
+  // area otherwise (and for a spectator).
+  const side = localSlot?.occupied === true && sideRoomOf(localSlot.zone) !== null ? localSlot.zone : ZONE_LOBBY;
+  const inRoom = shown === 'lobby' && side !== ZONE_LOBBY;
   const drawOrder = useMemo(
     () => roomSeats(players.slots, shown, holdSeat, side),
     [players, shown, holdSeat, side],
@@ -1090,6 +1091,7 @@ export function Arena({
               anything a user can reach. */}
           <g dangerouslySetInnerHTML={ORDNANCE_HTML} />
           <g dangerouslySetInnerHTML={FIRE_HTML} />
+          <g dangerouslySetInnerHTML={GLYPH_HTML} />
           {/* HELLFIRE's light: the glow on the stone and the growing fill, both soft by
               GRADIENT. The fire and the ring themselves are pixel art from the atlas above. */}
           <radialGradient id="hr-hell-glow-g">
@@ -1118,10 +1120,11 @@ export function Arena({
               and so does the frame budget: two rooms is two full scene rasters. */}
           {shown === 'lobby' ? WAITING : BOSS_ARENA}
 
-          {/* The secret room, painted over the waiting area (its veil hides the hall) and
-              UNDER every mover: the seats in it are drawn by the layer below at their chain
-              positions, on the painting's floor, which is the chain's block. */}
-          {inRoom && <SecretRoom />}
+          {/* The side room the local seat is in, painted over the waiting area (its veil
+              hides the hall) and UNDER every mover: the seats in it are drawn by the layer
+              below at their chain positions, on the painting's floor, which is the chain's
+              block. */}
+          {inRoom && <SideRoom zone={side} local={localSlot} />}
 
           {/* The muster, on the raid's gate itself, for whoever is still in the lobby: the
               raider who walked through started a twenty-second clock the arena account
@@ -1167,9 +1170,9 @@ export function Arena({
               style={{ pointerEvents: 'none' }}
             />
           )}
-          {/* The secret door answers a seat standing at either of its thresholds — the one
-              hint the room gives, from both sides. The wanted gate's pulse, in the torch's
-              own light, on the painted arch about to be pushed. */}
+          {/* A side room's door answers a seat standing at either of its thresholds — the
+              one hint the rooms give, from both sides. The wanted gate's pulse, in the
+              torch's own light, on the painted doorway about to be pushed. */}
           {shown === 'lobby' &&
             localSlot?.occupied === true &&
             (() => {
@@ -1183,8 +1186,8 @@ export function Arena({
                     y={arch.y}
                     width={arch.w}
                     height={arch.h}
-                    fill={SECRET_LIGHTS[0]!.color}
-                    stroke={SECRET_LIGHTS[0]!.color}
+                    fill={DOOR_GLOW}
+                    stroke={DOOR_GLOW}
                     strokeWidth={3}
                     style={{ pointerEvents: 'none' }}
                   />

@@ -17,8 +17,8 @@
  */
 
 import { PART_HITBOXES, type Rect } from './hitboxes';
-import { ZONE_ARENA, ZONE_SECRET } from './layout';
-import { BOSS_SPAWN, SECRET_ROOM, inBlock, onDais } from './map';
+import { ZONE_ARENA } from './layout';
+import { BOSS_SPAWN, inBlock, onDais, sideRoomOf } from './map';
 
 /** The union of every part box, boss-local, in arena units. Half-open like every `Rect`. */
 export const BOSS_BODY: Rect = (() => {
@@ -47,9 +47,10 @@ export function inBossBody(x: number, y: number): boolean {
  * seat stands wherever walls and the band allow, which is not this module's question.
  */
 export function standable(zone: number, x: number, y: number): boolean {
-  // The whole secret room and nothing else: its walls are not in the grid, because the room
-  // is laid over lobby floor that lobby seats still walk.
-  if (zone === ZONE_SECRET) return inBlock(SECRET_ROOM, x, y);
+  // A side room, whole and nothing else: its walls are not in the grid, because the room is
+  // laid over lobby floor that lobby seats still walk.
+  const room = sideRoomOf(zone);
+  if (room) return inBlock(room.floor, x, y);
   return zone !== ZONE_ARENA || (onDais(x, y) && !inBossBody(x, y));
 }
 

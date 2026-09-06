@@ -463,13 +463,24 @@ const _: () = {
     assert!(slam_damage(MAX_SEATS as u8, TIER_HARD) == 135 && bullet_damage(MAX_SEATS as u8, TIER_HARD) == 24);
 };
 
-/// `PlayerSlot.zone`. `ZONE_SECRET` is the chamber behind the lobby's west door
-/// (`map::SECRET_ROOM`): a waiting seat that is not in the waiting area, kept out of the raid
-/// by every `== ZONE_ARENA` test and out of the lobby's practice by `shoot::practice`'s
-/// `!= ZONE_LOBBY`. `player::use_door` is its only writer, both ways.
+/// `PlayerSlot.zone`. The three side rooms off the lobby -- the secret room behind the west
+/// door, the keep behind the east door, the crypt down the stairs -- are `map::ROOMS`, one
+/// zone each from `ZONE_SECRET` up: a waiting seat that is not in the waiting area, kept out
+/// of the raid by every `== ZONE_ARENA` test and out of the lobby's practice by
+/// `shoot::practice`'s `!= ZONE_LOBBY`. `player::use_door` is their only writer, both ways.
 pub const ZONE_LOBBY: u8 = 0;
 pub const ZONE_ARENA: u8 = 1;
 pub const ZONE_SECRET: u8 = 2;
+pub const ZONE_KEEP: u8 = 3;
+pub const ZONE_CRYPT: u8 = 4;
+
+// One zone per side room, contiguous from `ZONE_SECRET`: `player::room_of` indexes the table
+// by `zone - ZONE_SECRET`, and a room without a zone (or a zone without a room) is a seat
+// the movement rule would treat as a lobby seat with no walls of its own.
+const _: () = assert!(
+    crate::map::N_ROOMS == (ZONE_CRYPT - ZONE_SECRET + 1) as usize && ZONE_KEEP == ZONE_SECRET + 1,
+    "map::ROOMS and the ZONE_* constants disagree -- add a zone per room, or a room per zone"
+);
 
 /// `Boss.target_seat` when no player is alive in the arena. 0xFF is outside
 /// `0..MAX_SEATS`, so an unchecked index with it would be caught by bounds checks
@@ -1433,8 +1444,9 @@ const _: () = {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct PlayerSlot {
-    /// `ZONE_LOBBY`, `ZONE_ARENA` or `ZONE_SECRET`. The gate tile flips the first to the
-    /// second, once; the secret door flips between the first and the third.
+    /// `ZONE_LOBBY`, `ZONE_ARENA`, or a side room's zone (`ZONE_SECRET`..). The gate tile
+    /// flips the first to the second, once; a side room's door flips between the first and
+    /// that room's zone, both ways.
     pub zone: u8,
     /// Bits 0..2: the octant this seat last stepped or fired along, 0 N … 7 NW, y down —
     /// the sprite's body direction (the arrow is drawn from `class_aim`, at 1.90° rather

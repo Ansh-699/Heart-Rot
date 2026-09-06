@@ -79,24 +79,25 @@
     "E": "floor, entrance - a respawn door, must flood-fill to the heart",
     "B": "floor, heart of the chamber - the boss spawn tile"
   },
-  "secret": {
+  "doors": {
     "readme": [
-      "The secret room behind the lobby's WEST door, in TILES: [col, row, cols, rows] or [col, row].",
-      "A third zone, ZONE_SECRET, not a hole in the wall: its floor is laid OVER the lobby floor (a",
-      "lobby seat and a secret seat may share a tile; the zone keeps them apart on screen), so the",
-      "grid does not change and nothing about the pit does. `use_door` (tag 17) flips a lobby seat",
-      "standing on `door_tiles` to `entry_tile` in ZONE_SECRET, and a secret seat on `exit_tiles`",
-      "back to `return_tile` in ZONE_LOBBY. gen_map.py compiles these into map.rs / map.ts as",
-      "SECRET_ROOM, SECRET_DOOR, SECRET_EXIT, SECRET_ENTRY, SECRET_RETURN and refuses a room off",
-      "the lobby floor, a door without wall to its west, or an exit off the room's east column;",
-      "gen_secret.py paints the chamber onto exactly `room_tiles` and proves `door_tiles` is the",
-      "painted arch in lobby.png."
+      "The side rooms off the lobby, one per painted exit, in TILES: [col, row, cols, rows] or [col, row].",
+      "Each is a ZONE of its own (ZONE_SECRET + index), not a hole in the wall: its floor is laid OVER",
+      "the lobby floor (a lobby seat and a room seat may share a tile; the zone keeps them apart on",
+      "screen), so the grid does not change and nothing about the pit does. `knock` is the direction a",
+      "lobby seat pushes into the wall from `door_tiles` -- the refusal the client knocks with -- and the",
+      "seat comes back the way it came: leave = knock + 4 octants, so `exit_tiles` sit on the room's edge",
+      "facing that way. `use_door` (tag 17) moves a lobby seat on `door_tiles` to `entry_tile` in the",
+      "room's zone, and a room seat on `exit_tiles` back to `return_tile`. gen_map.py compiles the list",
+      "into map.rs / map.ts as ROOMS / SIDE_ROOMS and refuses a room off the lobby floor, a door without",
+      "wall in its knock direction, an exit off the edge it leaves by, or two doors sharing a tile;",
+      "gen_side_rooms.py paints each chamber onto exactly its `room_tiles`."
     ],
-    "room_tiles": [22, 40, 20, 10],
-    "door_tiles": [5, 43, 1, 4],
-    "exit_tiles": [41, 42, 1, 5],
-    "entry_tile": [41, 44],
-    "return_tile": [5, 44]
+    "rooms": [
+      { "name": "secret", "knock": "W", "room_tiles": [22, 40, 20, 10], "door_tiles": [5, 43, 1, 4],  "exit_tiles": [41, 42, 1, 5], "entry_tile": [41, 44], "return_tile": [5, 44] },
+      { "name": "keep",   "knock": "E", "room_tiles": [19, 42, 26, 12], "door_tiles": [58, 43, 1, 4], "exit_tiles": [19, 45, 1, 5], "entry_tile": [19, 47], "return_tile": [58, 44] },
+      { "name": "crypt",  "knock": "S", "room_tiles": [22, 42, 20, 10], "door_tiles": [31, 55, 3, 1], "exit_tiles": [30, 42, 4, 1], "entry_tile": [31, 42], "return_tile": [32, 55] }
+    ]
   },
   "rooms": {
     "lobby": {

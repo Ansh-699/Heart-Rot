@@ -57,7 +57,6 @@ import {
   VENT_PCT_FULL_BY_TIER,
   VENT_PCT_SOLO_BY_TIER,
   ZONE_ARENA,
-  ZONE_SECRET,
   fightHp,
   isFurious,
   ventPct,
@@ -67,6 +66,7 @@ import {
 import { shotAllowed } from '../input/controls';
 import { isMuted, play, setMuted, type SfxName } from '../render/sfx';
 import { SKIN_COLORS } from '../screens/CharacterSelect';
+import { leaveWay } from '../render/SideRooms';
 import { mySeatSlot, useSelect, useStore } from '../state/store';
 
 /**
@@ -652,7 +652,12 @@ function Hint() {
   const inPit = useSelect((s) => mySeatSlot(s)?.zone === ZONE_ARENA);
   const mustering = useSelect((s) => s.arena?.phase === PHASE_MUSTERING);
   const wantTier = useSelect((s) => s.wantTier);
-  const inRoom = useSelect((s) => mySeatSlot(s)?.zone === ZONE_SECRET);
+  // A string, not an object: `useSelect` compares by value, and a fresh object each read
+  // would re-render the hint on every notification.
+  const way = useSelect((s) => {
+    const zone = mySeatSlot(s)?.zone;
+    return zone === undefined ? null : leaveWay(zone);
+  });
   if (inPit) {
     if (!mustering) return null;
     return (
@@ -669,10 +674,10 @@ function Hint() {
       </div>
     );
   }
-  if (inRoom) {
+  if (way !== null) {
     return (
       <div className="hud-hint" aria-hidden="true">
-        <b>WALK</b> east through the door to leave
+        <b>WALK</b> {way} to leave
       </div>
     );
   }

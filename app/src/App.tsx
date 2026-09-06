@@ -74,7 +74,7 @@ import { createPredictor, type Predictor } from './net/predict';
 import { subscribeMatch, type MatchSubscription } from './net/subscribe';
 import { chargeLocal } from './render/Knight';
 import { Passage } from './render/Passage';
-import { knockDir } from './render/SecretRoom';
+import { knockDir } from './render/SideRooms';
 import { play } from './render/sfx';
 import { beamDowngraded, fireLocal } from './render/Shot';
 import { CharacterSelect } from './screens/CharacterSelect';

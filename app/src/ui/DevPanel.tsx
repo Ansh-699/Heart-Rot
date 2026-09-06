@@ -33,10 +33,9 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
 import { onMetrics, snapshot, type Snapshot } from '../net/metrics';
+import { useTreasury } from '../net/treasury';
 import { useSelect } from '../state/store';
 
-/** Treasury poll interval. It moves once per match, so this is already generous. */
-const TREASURY_MS = 15_000;
 
 /** Panel sample rate. Fast enough to feel live, slow enough to read. */
 const SAMPLE_MS = 250;
@@ -123,10 +122,6 @@ function grade(v: number | null, ok: number, warn: number): string {
  * number, and the copy that loses is the one that is not next to the rest of the rule.
  */
 
-interface Treasury {
-  readonly lamports: number;
-  readonly matches: number;
-}
 
 function Row({
   label,
@@ -252,7 +247,7 @@ export default function DevPanel() {
   // late still reports from page load. The choice does not persist.
   const [open, setOpen] = useState(false);
   const [m, setM] = useState<Snapshot>(() => snapshot());
-  const [treasury, setTreasury] = useState<Treasury | null>(null);
+  const treasury = useTreasury();
   const seated = useSelect((s) => s.players?.slots.filter((x) => x.occupied).length ?? null);
   const drag = useDrag(open);
 
@@ -290,30 +285,6 @@ export default function DevPanel() {
     };
   }, [open]);
 
-  // The treasury is a gauge the owner reads (a low balance is a refused seat); it polls
-  // whether or not the panel is open so the first reading is ready when it opens.
-  useEffect(() => {
-    let live = true;
-    const read = async () => {
-      try {
-        const r = await fetch('/api/faucet/status');
-        if (!r.ok || !live) return;
-        const j = (await r.json()) as { treasuryLamports: string; estimatedMatches: number };
-        const lamports = Number(j.treasuryLamports);
-        if (!Number.isFinite(lamports) || !live) return;
-        setTreasury({ lamports, matches: j.estimatedMatches });
-      } catch {
-        // A failed poll leaves the last reading on screen. The treasury is a gauge, not a
-        // control, so a gap is not worth an error state.
-      }
-    };
-    void read();
-    const id = window.setInterval(read, TREASURY_MS);
-    return () => {
-      live = false;
-      window.clearInterval(id);
-    };
-  }, []);
 
   if (!open) {
     return (

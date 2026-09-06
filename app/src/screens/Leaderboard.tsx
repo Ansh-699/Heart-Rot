@@ -14,21 +14,12 @@
  * `screenOf` returns to whatever the sign-in and the seat already say.
  */
 
-import { useEffect, useState } from 'react';
 
 import { OUTCOME_ENRAGE, OUTCOME_WIN, OUTCOME_WIPE } from '@heartrot/client';
 
 import { useStore } from '../state/store';
 
-/** One row of `GET /api/leaderboard`, as the Worker shapes it (`worker/src/routes.ts`). */
-type Row = {
-  rank: number;
-  raider: string;
-  damage: number;
-  outcome: number;
-  incarnation: number;
-  arenaId: string;
-};
+import { useLeaderboard } from '../net/leaderboard';
 
 /**
  * The match's outcome, as a column word. `OUTCOME_UNDECIDED` is every row written before
@@ -62,28 +53,7 @@ const LEADERBOARD_CSS = `
 
 export function Leaderboard() {
   const store = useStore();
-  const [rows, setRows] = useState<Row[] | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  // One fetch per mount. `live` drops a response that lands after `Back`, which is the
-  // only way a state update can reach an unmounted card.
-  useEffect(() => {
-    let live = true;
-    fetch('/api/leaderboard')
-      .then((response) => {
-        if (!response.ok) throw new Error(`leaderboard ${response.status}`);
-        return response.json() as Promise<{ rows: Row[] }>;
-      })
-      .then((body) => {
-        if (live) setRows(body.rows);
-      })
-      .catch(() => {
-        if (live) setFailed(true);
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+  const { rows, failed } = useLeaderboard();
 
   const note = failed
     ? 'The leaderboard did not answer. Try again in a moment.'

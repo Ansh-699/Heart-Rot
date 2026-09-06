@@ -337,22 +337,74 @@ pub const LOBBY_SPAWN_Y: i16 = 832;
 pub const LOBBY_TOP: i16 = 640; // tile row 40
 pub const LOBBY_BOT: i16 = 895; // tile row 55, last unit
 
-/// The secret room: a THIRD zone, `state::ZONE_SECRET`, laid over the lobby floor (tiles
-/// (22, 40) .. (41, 49)), so the grid is unchanged and a lobby seat and a
-/// secret seat may share a tile -- the zone keeps them apart on screen. `player::zone_box`
-/// and `player::standable` hold a secret seat inside this block; `player::use_door` flips a
-/// `ZONE_LOBBY` seat standing in [`SECRET_DOOR`] to [`SECRET_ENTRY`] in `ZONE_SECRET`, and a
-/// `ZONE_SECRET` seat standing in [`SECRET_EXIT`] back to [`SECRET_RETURN`] in `ZONE_LOBBY`.
-/// Re-proved below on every `cargo check`: floor inside the lobby band, wall west of every
-/// door tile, the exit on the room's east column, the entry an exit tile.
-pub const SECRET_ROOM: Gate = Gate { min_x: 352, max_x: 671, min_y: 640, max_y: 799 };
-/// The lobby tiles a seat pushes WEST from: the painted arch in the lobby's west wall.
-pub const SECRET_DOOR: Gate = Gate { min_x: 80, max_x: 95, min_y: 688, max_y: 751 };
-/// The room tiles a seat pushes EAST from: against the room's east wall, where its door is drawn.
-pub const SECRET_EXIT: Gate = Gate { min_x: 656, max_x: 671, min_y: 672, max_y: 751 };
-/// Where `use_door` puts a seat coming in, and where it puts one going out.
-pub const SECRET_ENTRY: (i16, i16) = (656, 704); // tile (41, 44)
-pub const SECRET_RETURN: (i16, i16) = (80, 704); // tile (5, 44)
+/// A side room off the lobby: a zone of its own (`state::ZONE_SECRET + index`), laid OVER
+/// the lobby floor so the grid is unchanged and a lobby seat and a room seat may share a
+/// tile -- the zone keeps them apart on screen. `player::zone_box` and `player::standable`
+/// hold a room seat inside `floor`; `player::use_door` moves a `ZONE_LOBBY` seat standing in
+/// `door` to `entry` facing `knock`, and a room seat standing in `exit` back to `back`
+/// facing `leave`. `knock` and `leave` are cardinal octants (0 N, 2 E, 4 S, 6 W, y down),
+/// `leave` always four octants from `knock`: a seat comes back the way it came.
+#[derive(Clone, Copy)]
+pub struct Room {
+    pub floor: Gate,
+    pub door: Gate,
+    pub exit: Gate,
+    pub entry: (i16, i16),
+    pub back: (i16, i16),
+    pub knock: u8,
+    pub leave: u8,
+}
+
+/// One tile of travel along a cardinal octant -- the direction a side room is knocked on
+/// and left by. Anything that is not a cardinal answers west, and the check below refuses
+/// a table that names one.
+pub const fn cardinal(octant: u8) -> (i16, i16) {
+    match octant {
+        0 => (0, -1),
+        2 => (1, 0),
+        4 => (0, 1),
+        _ => (-1, 0),
+    }
+}
+
+/// The side rooms, in zone order: `ROOMS[zone - state::ZONE_SECRET]`. `state.rs` holds one
+/// zone constant per entry and asserts the count. Re-proved below on every `cargo check`:
+/// each floor inside the lobby band and wall-free, wall one tile along `knock` from every
+/// door tile, every exit tile on the edge facing `leave`, the entry an exit tile, the
+/// return a door tile, the door outside the room, and no two doors sharing a tile.
+pub const N_ROOMS: usize = 3;
+pub const ROOMS: [Room; N_ROOMS] = [
+    // secret: floor tiles (22, 40)..(41, 49), knock W (6), leave 2
+    Room {
+        floor: Gate { min_x: 352, max_x: 671, min_y: 640, max_y: 799 },
+        door: Gate { min_x: 80, max_x: 95, min_y: 688, max_y: 751 },
+        exit: Gate { min_x: 656, max_x: 671, min_y: 672, max_y: 751 },
+        entry: (656, 704), // tile (41, 44)
+        back: (80, 704), // tile (5, 44)
+        knock: 6,
+        leave: 2,
+    },
+    // keep: floor tiles (19, 42)..(44, 53), knock E (2), leave 6
+    Room {
+        floor: Gate { min_x: 304, max_x: 719, min_y: 672, max_y: 863 },
+        door: Gate { min_x: 928, max_x: 943, min_y: 688, max_y: 751 },
+        exit: Gate { min_x: 304, max_x: 319, min_y: 720, max_y: 799 },
+        entry: (304, 752), // tile (19, 47)
+        back: (928, 704), // tile (58, 44)
+        knock: 2,
+        leave: 6,
+    },
+    // crypt: floor tiles (22, 42)..(41, 51), knock S (4), leave 0
+    Room {
+        floor: Gate { min_x: 352, max_x: 671, min_y: 672, max_y: 831 },
+        door: Gate { min_x: 496, max_x: 543, min_y: 880, max_y: 895 },
+        exit: Gate { min_x: 480, max_x: 543, min_y: 672, max_y: 687 },
+        entry: (496, 672), // tile (31, 42)
+        back: (512, 880), // tile (32, 55)
+        knock: 4,
+        leave: 0,
+    },
+];
 
 /// Every entrance stands on floor in the table above.
 ///
@@ -479,38 +531,57 @@ const _: () = {
          re-run tools/gen_map.py",
     );
 
-    // The secret room, a third zone over the lobby floor. Every fact `use_door` and the
-    // movement rule lean on, re-proved against the bitboard that shipped: the room is floor
-    // inside the lobby band, every door tile has wall to its west (the refusal the client
-    // knocks with), the exit is the room's east column, the entry is an exit tile and the
-    // return a door tile.
-    assert!(
-        SECRET_ROOM.min_y >= LOBBY_TOP && SECRET_ROOM.max_y <= LOBBY_BOT,
-        "the secret room is off the lobby floor band -- re-run tools/gen_map.py",
-    );
-    let mut ty = SECRET_ROOM.min_y / TILE;
-    while ty <= SECRET_ROOM.max_y / TILE {
-        let mut tx = SECRET_ROOM.min_x / TILE;
-        while tx <= SECRET_ROOM.max_x / TILE {
-            assert!(WALLS[ty as usize] & (1u64 << tx) == 0, "a secret room tile is wall");
-            tx += 1;
+    // The side rooms, each a zone over the lobby floor. Every fact `use_door` and the
+    // movement rule lean on, re-proved against the bitboard that shipped.
+    let mut i = 0;
+    while i < ROOMS.len() {
+        let r = ROOMS[i];
+        assert!(r.knock & 1 == 0 && r.knock < 8 && r.leave == (r.knock + 4) % 8, "a side room's octants are not a cardinal and its opposite");
+        assert!(r.floor.min_y >= LOBBY_TOP && r.floor.max_y <= LOBBY_BOT, "a side room is off the lobby floor band -- re-run tools/gen_map.py");
+        let mut ty = r.floor.min_y / TILE;
+        while ty <= r.floor.max_y / TILE {
+            let mut tx = r.floor.min_x / TILE;
+            while tx <= r.floor.max_x / TILE {
+                assert!(WALLS[ty as usize] & (1u64 << tx) == 0, "a side room tile is wall");
+                tx += 1;
+            }
+            ty += 1;
         }
-        ty += 1;
-    }
-    let mut ty = SECRET_DOOR.min_y / TILE;
-    while ty <= SECRET_DOOR.max_y / TILE {
-        assert!(WALLS[ty as usize] & (1u64 << (SECRET_DOOR.min_x / TILE)) == 0, "a secret door tile is wall");
+        let (kx, ky) = cardinal(r.knock);
+        let mut ty = r.door.min_y / TILE;
+        while ty <= r.door.max_y / TILE {
+            let mut tx = r.door.min_x / TILE;
+            while tx <= r.door.max_x / TILE {
+                assert!(WALLS[ty as usize] & (1u64 << tx) == 0, "a side room's door tile is wall");
+                assert!(
+                    WALLS[(ty + ky) as usize] & (1u64 << (tx + kx)) != 0,
+                    "no wall beyond a door tile in its knock direction -- a step there would be taken, not refused",
+                );
+                tx += 1;
+            }
+            ty += 1;
+        }
+        let (lx, ly) = cardinal(r.leave);
+        assert!(r.floor.contains(r.exit.min_x, r.exit.min_y) && r.floor.contains(r.exit.max_x, r.exit.max_y), "a side room's exit is outside it");
         assert!(
-            WALLS[ty as usize] & (1u64 << (SECRET_DOOR.min_x / TILE - 1)) != 0,
-            "no wall west of the secret door -- a step there would be taken, not refused",
+            !r.floor.contains(r.exit.min_x + lx * TILE, r.exit.min_y + ly * TILE)
+                && !r.floor.contains(r.exit.max_x + lx * TILE, r.exit.max_y + ly * TILE),
+            "a side room's exit is not on the edge it leaves by",
         );
-        ty += 1;
+        assert!(r.exit.contains(r.entry.0, r.entry.1), "a side room's entry is not an exit tile");
+        assert!(r.door.contains(r.back.0, r.back.1), "a side room's return is not a door tile");
+        assert!(!r.floor.contains(r.door.min_x, r.door.min_y), "a side room's door is inside it");
+        let mut j = 0;
+        while j < i {
+            let o = ROOMS[j];
+            assert!(
+                o.door.max_x < r.door.min_x || r.door.max_x < o.door.min_x || o.door.max_y < r.door.min_y || r.door.max_y < o.door.min_y,
+                "two side rooms' doors share a tile -- use_door takes the first",
+            );
+            j += 1;
+        }
+        i += 1;
     }
-    assert!(SECRET_ROOM.contains(SECRET_EXIT.min_x, SECRET_EXIT.min_y) && SECRET_ROOM.contains(SECRET_EXIT.max_x, SECRET_EXIT.max_y));
-    assert!(SECRET_EXIT.max_x == SECRET_ROOM.max_x, "the secret exit is not the room's east column");
-    assert!(SECRET_EXIT.contains(SECRET_ENTRY.0, SECRET_ENTRY.1), "the secret entry is not an exit tile");
-    assert!(SECRET_DOOR.contains(SECRET_RETURN.0, SECRET_RETURN.1), "the secret return is not a door tile");
-    assert!(!SECRET_ROOM.contains(SECRET_DOOR.min_x, SECRET_DOOR.min_y), "the secret door is inside the room");
 };
 
 #[cfg(test)]
