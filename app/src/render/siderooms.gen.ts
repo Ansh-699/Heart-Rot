@@ -91,7 +91,7 @@ export const SIDE_ROOM_ART: Readonly<Record<SideRoomName, SideRoomArt>> = {
       { x: 747.774, y: 667.17, r: 57.3849, color: '#ffef7e' },
     ],
     labels: [
-      { x: 512, y: 663.547, text: 'THE RANGE' },
+      { x: 395.774, y: 663.547, text: 'THE RANGE' },
       { x: 512, y: 855.547, text: 'loose at the straw · every arrow is a transaction' },
     ],
     archLobby: { x: 477.267, y: 921.635, w: 72.4862, h: 54.3646 },

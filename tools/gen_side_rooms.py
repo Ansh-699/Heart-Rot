@@ -645,7 +645,8 @@ def dress_range(shell: Shell, lobby: Image.Image) -> None:
             sx = dx + (k * 19) % (dw + 36) - 18
             sy = dy + dh - 4 + (k * 5) % 12
             shell.im.putpixel((max(0, min(shell.W - 1, sx)), max(0, min(shell.H - 1, sy))), STRAW[1 if k % 3 else 2])
-    shell.label(SIDE + shell.floor_w / 2, BACK - 14, "THE RANGE")
+    # Over the firing line, clear of the stair on the back wall.
+    shell.label(line_x + 3 * ART, BACK - 14, "THE RANGE")
     shell.label(shell.W / 2, shell.H - FRONT_H - 14, "loose at the straw \u00b7 every arrow is a transaction")
 
 
