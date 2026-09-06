@@ -86,6 +86,7 @@ import {
   MAP_TILE,
   MAX_BULLETS,
   MUZZLES,
+  SLAM_LANES,
   NO_TARGET,
   PART_HITBOXES,
   PHASE_FIGHTING,
@@ -100,6 +101,8 @@ import {
   ZONE_LOBBY,
   gateAt,
   isFurious,
+  onDais,
+  isWall,
   slamTelegraph,
   type ArenaAccount,
   type BossAccount,
@@ -462,19 +465,41 @@ function volleyTelegraph(
 }
 
 /**
- * Hellfire: the slam's lane as rings of fire on the stone with a pillar of flame standing
- * in each — the picture the owner asked for, from his reference. Four rings, a lane wide
- * each, evenly spaced down the lane; together they cover the rect the chain names, and
- * a faint haze over the whole rect keeps its exact extent readable between them.
+ * Hellfire: the slam's lane as rings of fire on the stone with a flame standing in each,
+ * from the owner's reference. Two rings a lane (one where the floor is short), placed on
+ * the STANDABLE floor of that lane — the dais tiles a raider can be hit on, read off the
+ * generated map — and below the creature's feet, because a ring drawn up on the boss's own
+ * body warned nobody and hid the boss. The chain's danger is still the whole lane; a faint
+ * haze over the exact rect keeps that readable, the rings say where you would be standing.
  */
-const HELL_RINGS = 4;
-/** A ring: a lane wide, squashed to the floor's perspective. */
-const RING_RX = SLAM_LANE_W / 2 - 4;
-const RING_RY = 24;
-/** Where ring `k` of `lane` sits, in world units. */
-function ringAt(lane: number, k: number): readonly [number, number] {
-  return [lane * SLAM_LANE_W + SLAM_LANE_W / 2, PIT_TOP + (LANE_H * (k + 0.5)) / HELL_RINGS];
-}
+const RING_RX = FIRE_RING.rx;
+const RING_RY = FIRE_RING.ry;
+/** How far in from the floor's ends the first and last ring sit. */
+const RING_INSET = 34;
+/** A ring per this much floor, two at least where there is room for two. */
+const RING_EVERY = 100;
+/** Where the rings of every lane sit, computed once from the map. Lanes with no floor are
+ *  empty — the chain never slams them, since no raider can stand there. */
+const LANE_RINGS: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = Array.from({ length: SLAM_LANES }, (_, lane) => {
+  const cx = lane * SLAM_LANE_W + SLAM_LANE_W / 2;
+  const floor = (y: number): boolean => [cx - RING_RX * 0.8, cx, cx + RING_RX * 0.8].every((x) => !isWall(x, y) && onDais(x, y));
+  // The lowest run of standable rows in the lane, and only below the creature's feet.
+  let top = -1;
+  let bot = -1;
+  for (let y = PIT_TOP; y <= PIT_BOT; y += MAP_TILE) {
+    if (!floor(y)) continue;
+    if (top < 0) top = y;
+    bot = y;
+  }
+  if (top < 0) return [];
+  top = Math.max(top, BOSS_SPAWN[1] + 40);
+  const span = bot - top;
+  if (span < RING_EVERY / 2) return [];
+  const n = span >= RING_EVERY ? Math.max(2, Math.round(span / RING_EVERY)) : 1;
+  const a = top + RING_INSET;
+  const b = bot - RING_INSET;
+  return Array.from({ length: n }, (_, k) => [cx, Math.round(n === 1 ? (a + b) / 2 : a + ((b - a) * k) / (n - 1))] as const);
+});
 
 /**
  * One lane of hellfire, in two stages. THE WARNING is the circle alone: the red glow on
@@ -508,12 +533,11 @@ function HellLane({
   return (
     <>
       <rect className="hr-hell-haze" x={x} y={PIT_TOP} width={SLAM_LANE_W} height={LANE_H} fill="url(#hr-hell-haze-g)" />
-      {Array.from({ length: HELL_RINGS }, (_, k) => {
-        const [cx, cy] = ringAt(lane, k);
+      {(LANE_RINGS[lane] ?? []).map(([cx, cy], k) => {
         const origin = `${cx}px ${cy}px`;
         return (
           <g key={k} style={{ '--i': k } as CSSProperties}>
-            <ellipse className="hr-hell-glow" cx={cx} cy={cy} rx={RING_RX * 2} ry={RING_RY * 2.6} fill="url(#hr-hell-glow-g)" />
+            <ellipse className="hr-hell-glow" cx={cx} cy={cy} rx={RING_RX * 1.7} ry={RING_RY * 2.2} fill="url(#hr-hell-glow-g)" />
             <g
               ref={(el) => {
                 if (fills) fills.current[k] = el;
@@ -525,7 +549,7 @@ function HellLane({
             {/* The rune ring, `tools/gen_fire.py`'s two frames through a frame-sized window,
                 stepped by CSS. Pixel art on the stone, like everything else on it. */}
             <svg x={cx - FIRE_RING.w / 2} y={cy - FIRE_RING.h / 2} width={FIRE_RING.w} height={FIRE_RING.h} aria-hidden="true">
-              <use className="hr-ring-frames" href="#fire-ring" width={FIRE_RING.w * FIRE_RING.frames} height={FIRE_RING.h} />
+              <use className="hr-ring-frames" href="#fire-ring" width={FIRE_RING.w * FIRE_RING.frames} height={FIRE_RING.h} style={{ '--strip': `${-FIRE_RING.w * FIRE_RING.frames}px` } as CSSProperties} />
             </svg>
             {erupt && (
               /* The fire: the eight-frame flame loop through its window, its base on the
@@ -533,7 +557,7 @@ function HellLane({
                  Two nodes; the frames are the animation. */
               <g className="hr-hell-erupt" style={{ transformOrigin: `${cx}px ${cy + 3}px` }}>
                 <svg x={cx - FIRE_PILLAR.w / 2} y={cy + 3 - FIRE_PILLAR.h} width={FIRE_PILLAR.w} height={FIRE_PILLAR.h} aria-hidden="true">
-                  <use className="hr-fire-frames" href="#fire-pillar" width={FIRE_PILLAR.w * FIRE_PILLAR.frames} height={FIRE_PILLAR.h} />
+                  <use className="hr-fire-frames" href="#fire-pillar" width={FIRE_PILLAR.w * FIRE_PILLAR.frames} height={FIRE_PILLAR.h} style={{ '--strip': `${-FIRE_PILLAR.w * FIRE_PILLAR.frames}px` } as CSSProperties} />
                 </svg>
               </g>
             )}
@@ -1029,14 +1053,14 @@ export function Arena({
           {/* HELLFIRE's light: the glow on the stone and the growing fill, both soft by
               GRADIENT. The fire and the ring themselves are pixel art from the atlas above. */}
           <radialGradient id="hr-hell-glow-g">
-            <stop offset="0" stopColor="#ff4a1c" stopOpacity="0.7" />
-            <stop offset="0.45" stopColor="#e8200c" stopOpacity="0.36" />
+            <stop offset="0" stopColor="#ff4a1c" stopOpacity="0.34" />
+            <stop offset="0.5" stopColor="#e8200c" stopOpacity="0.16" />
             <stop offset="1" stopColor="#7a0e08" stopOpacity="0" />
           </radialGradient>
           <radialGradient id="hr-hell-fill-g">
-            <stop offset="0" stopColor="#ff5a20" stopOpacity="0.6" />
-            <stop offset="0.6" stopColor="#ff2a12" stopOpacity="0.45" />
-            <stop offset="1" stopColor="#b0140a" stopOpacity="0.2" />
+            <stop offset="0" stopColor="#ff5a20" stopOpacity="0.42" />
+            <stop offset="0.6" stopColor="#ff2a12" stopOpacity="0.3" />
+            <stop offset="1" stopColor="#b0140a" stopOpacity="0.12" />
           </radialGradient>
           <radialGradient id="hr-hell-haze-g">
             <stop offset="0" stopColor="#ff2a12" stopOpacity="0.18" />

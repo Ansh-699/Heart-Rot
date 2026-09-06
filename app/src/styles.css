@@ -1351,7 +1351,7 @@ h3 {
 }
 @keyframes hr-fire-frames {
   from { transform: translateX(0); }
-  to { transform: translateX(-448px); }
+  to { transform: translateX(var(--strip, -320px)); }
 }
 .hr-ring-frames {
   animation: hr-ring-frames 0.7s steps(2) infinite;
@@ -1359,7 +1359,7 @@ h3 {
 }
 @keyframes hr-ring-frames {
   from { transform: translateX(0); }
-  to { transform: translateX(-256px); }
+  to { transform: translateX(var(--strip, -216px)); }
 }
 /* The eruption: the whole fire stands up out of the ring in a tenth of a second, burns,
    and dies down — one shot, forwards, `ERUPT_MS` long (`Arena.tsx`). */

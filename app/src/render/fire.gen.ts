@@ -7,14 +7,15 @@ import FIRE_ATLAS from './fire.png';
 /** The flame loop: `frames` frames of `w` x `h` side by side in ONE symbol. Show it through
  *  a `w` x `h` window and step `translateX` by `-w` per frame; the base is 3 px above the
  *  frame's bottom edge. */
-export const FIRE_PILLAR = { w: 56, h: 96, frames: 8 } as const;
+export const FIRE_PILLAR = { w: 40, h: 64, frames: 8 } as const;
 
-/** The rune ring on the stone, `frames` frames pulsing; centred on its frame, rx 60 ry 24. */
-export const FIRE_RING = { w: 128, h: 56, frames: 2 } as const;
+/** The rune ring on the stone, `frames` frames pulsing; centred on its frame. `rx`/`ry` are
+ *  the ellipse the line is drawn on, for the glow and the fill `Arena.tsx` puts under it. */
+export const FIRE_RING = { w: 108, h: 44, frames: 2, rx: 50, ry: 20 } as const;
 
-const IMG = `<image href="${FIRE_ATLAS}" width="448" height="152"/>`;
+const IMG = `<image href="${FIRE_ATLAS}" width="320" height="108"/>`;
 
 /** The `<defs>` markup, mounted once by whichever component owns the arena `<svg>`. */
 export const FIRE_DEFS =
-  `<symbol id="fire-pillar" viewBox="0 0 448 96">${IMG}</symbol>` +
-  `<symbol id="fire-ring" viewBox="0 96 256 56">${IMG}</symbol>`;
+  `<symbol id="fire-pillar" viewBox="0 0 320 64">${IMG}</symbol>` +
+  `<symbol id="fire-ring" viewBox="0 64 216 44">${IMG}</symbol>`;

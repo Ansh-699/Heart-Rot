@@ -49,9 +49,9 @@ PALETTE = (
 )
 T, OUTLINE, DARK, RED, ORANGE, YELLOW, CREAM, EMBER = range(8)
 
-PW, PH, PILLAR_FRAMES = 56, 96, 8
-RW, RH, RING_FRAMES = 128, 56, 2
-RING_RX, RING_RY = 60, 24
+PW, PH, PILLAR_FRAMES = 40, 64, 8
+RW, RH, RING_FRAMES = 108, 44, 2
+RING_RX, RING_RY = 50, 20
 
 ATLAS_W = max(PW * PILLAR_FRAMES, RW * RING_FRAMES)
 ATLAS_H = PH + RH
@@ -66,11 +66,11 @@ def h(*xs: float) -> float:
 TONGUES = [
     # (base x, base half-width, full height, phase): five tongues, the tallest off-centre,
     # every one rising and falling on its own phase so the loop never shows the same shape.
-    (-15, 5.5, 44, 0.05),
-    (-7, 5.0, 60, 0.42),
-    (1, 6.5, 80, 0.0),
-    (9, 5.0, 56, 0.66),
-    (16, 5.0, 40, 0.28),
+    (-11, 4.0, 30, 0.05),
+    (-5, 3.6, 41, 0.42),
+    (1, 4.6, 54, 0.0),
+    (7, 3.6, 38, 0.66),
+    (12, 3.6, 27, 0.28),
 ]
 
 
@@ -91,10 +91,11 @@ def tongue_mask(cx: float, hw: float, height: float, f: int, seed: int, sway: fl
         x0 = int(round(xc - half))
         x1 = int(round(xc + half))
         y = base_y - r
-        if y < 1:
+        # Two pixels of margin on every side: the outline needs one, the check wants one.
+        if y < 2:
             break
-        x0 = max(1, x0)
-        x1 = min(PW - 2, x1)
+        x0 = max(2, x0)
+        x1 = min(PW - 3, x1)
         if x1 >= x0:
             m[y, x0 : x1 + 1] = True
     return m
@@ -115,17 +116,17 @@ def pillar(f: int) -> np.ndarray:
         cyc = (phase + ph) % 1.0
         hgt = H * (0.7 + 0.3 * math.sin(cyc * 2 * math.pi))
         cx = cx0 + bx + (h(i, f) - 0.5) * 2
-        sway = 3.5 + i % 2
+        sway = 2.5 + i % 2
         red |= tongue_mask(cx, hw, hgt, f, i, sway)
         orange |= tongue_mask(cx, hw * 0.78, hgt * 0.8, f, i + 10, sway)
         yellow |= tongue_mask(cx, hw * 0.55, hgt * 0.58, f, i + 20, sway)
         cream |= tongue_mask(cx, hw * 0.32, hgt * 0.34, f, i + 30, sway)
         tips.append((cx, hgt, cyc))
     # The pool at the foot binds the tongues into one fire.
-    red |= tongue_mask(cx0, 24, 16, f, 40, 0.5)
-    orange |= tongue_mask(cx0, 19, 11, f, 41, 0.5)
-    yellow |= tongue_mask(cx0, 13, 7, f, 42, 0.5)
-    cream |= tongue_mask(cx0, 7, 4, f, 43, 0.5)
+    red |= tongue_mask(cx0, 17, 11, f, 40, 0.5)
+    orange |= tongue_mask(cx0, 13, 8, f, 41, 0.5)
+    yellow |= tongue_mask(cx0, 9, 5, f, 42, 0.5)
+    cream |= tongue_mask(cx0, 5, 3, f, 43, 0.5)
     frame[red] = RED
     frame[orange] = ORANGE
     frame[yellow] = YELLOW
@@ -150,15 +151,15 @@ def pillar(f: int) -> np.ndarray:
         if cyc < 0.25 or cyc > 0.75:
             continue
         lift = (cyc - 0.25) / 0.5
-        ex = int(round(cx + (h(i, 7) - 0.5) * 6 + math.sin(lift * 3) * 3))
-        ey = int(round(base_y - hgt - 4 - lift * 22))
+        ex = int(round(cx + (h(i, 7) - 0.5) * 5 + math.sin(lift * 3) * 2))
+        ey = int(round(base_y - hgt - 3 - lift * 15))
         if 2 <= ex < PW - 2 and 2 <= ey < PH - 2 and frame[ey, ex] == T:
             size = 2 if lift < 0.5 else 1
             frame[ey : ey + size, ex : ex + size] = EMBER if lift < 0.6 else RED
     for k in range(4):
         t = (phase + h(k, 9)) % 1.0
-        ex = int(round(cx0 + (h(k, 11) - 0.5) * 40))
-        ey = int(round(base_y - 70 - t * 20))
+        ex = int(round(cx0 + (h(k, 11) - 0.5) * 28))
+        ey = int(round(base_y - 48 - t * 13))
         if 2 <= ex < PW - 2 and 2 <= ey < PH - 2 and frame[ey, ex] == T and t < 0.7:
             frame[ey, ex] = ORANGE
             for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
@@ -168,19 +169,18 @@ def pillar(f: int) -> np.ndarray:
 
 
 def ring(f: int) -> np.ndarray:
+    """A thin line on the stone, dark-rimmed, with eight small rune marks: quiet enough to
+    sit under the raiders' feet without shouting, brighter for the second frame."""
     frame = np.zeros((RH, RW), np.uint8)
     cx, cy = RW / 2, RH / 2
     yy, xx = np.mgrid[0:RH, 0:RW]
     d = np.sqrt(((xx + 0.5 - cx) / RING_RX) ** 2 + ((yy + 0.5 - cy) / RING_RY) ** 2)
-    band = (d >= 0.93) & (d <= 1.03)
-    frame[band] = ORANGE if f == 0 else YELLOW
-    frame[(d >= 1.03) & (d <= 1.075)] = DARK
-    frame[(d >= 0.88) & (d < 0.93)] = RED if f == 0 else ORANGE
+    frame[(d >= 0.955) & (d <= 1.0)] = RED if f == 0 else ORANGE
+    frame[(d > 1.0) & (d <= 1.04)] = DARK
     for k in range(8):
         a = k * math.pi / 4 + math.pi / 8
-        rx, ry = cx + math.cos(a) * RING_RX * 0.98, cy + math.sin(a) * RING_RY * 0.98
-        x0, y0 = int(rx), int(ry)
-        frame[y0 - 1 : y0 + 1, x0 - 1 : x0 + 1] = CREAM if (k + f) % 2 == 0 else YELLOW
+        rx, ry = cx + math.cos(a) * RING_RX * 0.975, cy + math.sin(a) * RING_RY * 0.975
+        frame[int(ry), int(rx)] = YELLOW if (k + f) % 2 == 0 else ORANGE
     return frame
 
 
@@ -212,8 +212,9 @@ import FIRE_ATLAS from './fire.png';
  *  frame's bottom edge. */
 export const FIRE_PILLAR = {{ w: {PW}, h: {PH}, frames: {PILLAR_FRAMES} }} as const;
 
-/** The rune ring on the stone, `frames` frames pulsing; centred on its frame, rx {RING_RX} ry {RING_RY}. */
-export const FIRE_RING = {{ w: {RW}, h: {RH}, frames: {RING_FRAMES} }} as const;
+/** The rune ring on the stone, `frames` frames pulsing; centred on its frame. `rx`/`ry` are
+ *  the ellipse the line is drawn on, for the glow and the fill `Arena.tsx` puts under it. */
+export const FIRE_RING = {{ w: {RW}, h: {RH}, frames: {RING_FRAMES}, rx: {RING_RX}, ry: {RING_RY} }} as const;
 
 const IMG = `<image href="${{FIRE_ATLAS}}" width="{ATLAS_W}" height="{ATLAS_H}"/>`;
 
