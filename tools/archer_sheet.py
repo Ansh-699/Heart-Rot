@@ -1098,7 +1098,7 @@ DIRECTIONS_CHIBI: dict[str, dict] = {
 # The two bodies, and the one that ships. `gen_knights.py --body` picks either; `--check`
 # holds the atlas to the shipped one.
 BODIES: dict[str, dict[str, dict]] = {"classic": DIRECTIONS, "chibi": DIRECTIONS_CHIBI}
-SHIPPED_BODY = "classic"
+SHIPPED_BODY = "chibi"
 
 
 # ---------------------------------------------------------------------------
