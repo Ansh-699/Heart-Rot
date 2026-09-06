@@ -1366,7 +1366,7 @@ h3 {
   animation-delay: calc(var(--i, 0) * -0.08s);
 }
 .hr-lock-frames {
-  animation: hr-fire-frames 1.5s steps(3) forwards;
+  animation: hr-fire-frames 1.5s steps(3, jump-none) forwards;
 }
 @keyframes hr-ring-frames {
   from { transform: translateX(0); }
