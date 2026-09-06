@@ -356,6 +356,19 @@ const HUD_CSS = `
 .verdict .link:hover, .verdict .link:focus-visible { color: var(--olive); outline: none; }
 /* Until SETTLED lands (see Verdict): plain text, the underline is what says "link". */
 .verdict .link:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+/* The scoreboard: top three by damage, you, the raid's total. Full card width; the bar is
+   the HP bar's shape (scaleX, never width) scaled to the best raider's damage. */
+.verdict-board { align-self: stretch; display: grid; grid-template-columns: 8px 1fr 52px 24px; column-gap: 8px; row-gap: 6px; align-items: center; margin: 0; padding: 0; list-style: none; font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); text-align: left; }
+.verdict-board li { display: contents; }
+.verdict-dot { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.6); }
+.verdict-bar { height: 3px; background: rgb(0 0 0 / 0.55); overflow: hidden; }
+.verdict-bar-fill { display: block; height: 100%; width: 100%; transform-origin: left center; background: var(--cyan); }
+.verdict-board .is-you .verdict-bar-fill { background: var(--olive); }
+.verdict-num { text-align: right; }
+.verdict-you { color: var(--olive); font-size: 11px; }
+.verdict-total { grid-column: 1 / -1; padding-top: 4px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.verdict-actions { display: flex; gap: 8px; margin-top: 4px; }
+.verdict-actions .btn { margin-top: 0; }
 `;
 
 /** Quiet seconds before the layer fades. Long enough that it never fades mid-dodge. */
@@ -717,8 +730,30 @@ function standing(slots: readonly PlayerSlot[], seat: number) {
     rank: 1 + seated.filter((s) => s.damageDealt > damage).length,
     of: seated.length,
     damage,
+    total,
     share: floorPercent(damage, total),
   };
+}
+
+/**
+ * The scoreboard's rows: the top three by damage, then you if you are not among them.
+ * Occupied seats only, like {@link standing}; ties keep seat order, which is stable and
+ * matches what the roster already draws.
+ */
+function scoreboard(slots: readonly PlayerSlot[], seat: number): PlayerSlot[] {
+  const seated = slots.filter((s) => s.occupied).sort((a, b) => b.damageDealt - a.damageDealt);
+  const rows = seated.slice(0, 3);
+  const me = seated.find((s) => s.seat === seat);
+  if (me && !rows.includes(me)) rows.push(me);
+  return rows;
+}
+
+/** The one sentence Share copies. Placing only on a WIN; a loss has no rank to post. */
+function shareLine(won: boolean, stand: ReturnType<typeof standing>, incarnation: number): string {
+  const head = won
+    ? `Placed ${ordinal(stand.rank)} of ${stand.of} against Heartrot`
+    : 'Fell to Heartrot';
+  return `${head}, incarnation ${incarnation} · ${stand.damage.toLocaleString('en-US')} damage · heartrot.ansht.workers.dev`;
 }
 
 /** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th, 20th. `MAX_SEATS` is 20, so the teens are the whole trick. */
@@ -772,16 +807,41 @@ function Verdict() {
     return () => window.clearTimeout(timer);
   }, [outcome]);
 
+  // "copied" for a beat after Share lands on the clipboard; a refused clipboard changes nothing.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1_500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
   if (!row || !shown) return null;
   const won = outcome === OUTCOME_WIN;
   // Only a WIN rolls a next incarnation (`OUTCOME_WIN`'s own doc), so only a WIN names one.
   const next = incarnation + 1;
-  const stand = won && players !== null ? standing(players.slots, seat) : null;
+  const stand = players !== null ? standing(players.slots, seat) : null;
+  const rows = players !== null ? scoreboard(players.slots, seat) : [];
+  const top = rows[0]?.damageDealt ?? 0;
+  const share = () => {
+    if (stand === null || typeof navigator.clipboard?.writeText !== 'function') return;
+    navigator.clipboard.writeText(shareLine(won, stand, incarnation)).then(
+      () => setCopied(true),
+      () => {},
+    );
+  };
+  // `leaveMatch` already releases and, for a seated identity, takes the next open arena;
+  // the explicit `join` after it is for the day it stops, and is a no-op while it does
+  // not (a match on file, or the join's own error, which `SeatLoader` shows).
+  const raidAgain = async () => {
+    await store.leaveMatch();
+    const s = store.getState();
+    if (s.match === null && s.status === 'idle' && s.authenticated) await store.join();
+  };
   return (
     <div className={`hud hud-ml verdict verdict-${row.tone}`} role="status">
       <span className="verdict-label">{row.label}</span>
       <span className={won ? 'verdict-line' : 'fine'}>{row.line}</span>
-      {stand !== null && (
+      {won && stand !== null && (
         <>
           <span className="verdict-line">
             You placed {ordinal(stand.rank)} of {stand.of}
@@ -797,9 +857,36 @@ function Verdict() {
           </span>
         </>
       )}
-      <button className="btn btn-primary" disabled={!settled} onClick={() => void store.leaveMatch()}>
-        Back to lobby
-      </button>
+      {stand !== null && rows.length > 0 && (
+        <ol className="verdict-board" aria-label="damage by raider">
+          {rows.map((s) => (
+            <li key={s.seat} className={s.seat === seat ? 'is-you' : undefined}>
+              <span className="verdict-dot" style={{ background: SKIN_COLORS[s.skinId] ?? 'var(--dim)' }} />
+              <span className="verdict-bar" role="presentation">
+                <span
+                  className="verdict-bar-fill"
+                  style={{ transform: `scaleX(${top > 0 ? s.damageDealt / top : 0})` }}
+                />
+              </span>
+              <span className="verdict-num">{s.damageDealt.toLocaleString('en-US')}</span>
+              <span className="verdict-you">{s.seat === seat ? 'you' : ''}</span>
+            </li>
+          ))}
+          <li>
+            <span className="verdict-total">
+              {stand.of} raiders · {stand.total.toLocaleString('en-US')} damage
+            </span>
+          </li>
+        </ol>
+      )}
+      <span className="verdict-actions">
+        <button className="btn btn-primary" disabled={!settled} onClick={() => void store.leaveMatch()}>
+          Back to lobby
+        </button>
+        <button className="btn" disabled={!settled} onClick={() => void raidAgain()}>
+          Raid again
+        </button>
+      </span>
       {/* Secondary, in the box's smallest type: the select is not a step any more, so
           the way back to it is a link, and the guest's sign-in is an offer under the same
           button everyone else gets — a name on the leaderboard, not a gate on the raid. */}
@@ -807,6 +894,14 @@ function Verdict() {
         <button className="link" disabled={!settled} onClick={() => void store.changeMarker()}>
           Change marker
         </button>
+        {stand !== null && (
+          <>
+            {' · '}
+            <button className="link" disabled={!settled} onClick={share}>
+              {copied ? 'copied' : 'Share'}
+            </button>
+          </>
+        )}
       </span>
       {guest && (
         <span className="fine">
@@ -966,6 +1061,12 @@ if (import.meta.env.DEV) {
   }
   if (a.share !== 27 || b.share !== 44 || c.share !== 0 || a.damage !== 1_240) {
     throw new Error(`Hud self-check: standing shares ${a.share}/${b.share}/${c.share}`);
+  }
+  // The scoreboard is the same roster, top three then you: seat 2 (last) makes a fourth
+  // row, seat 1 (first) does not, and the zeroed seat 4 never appears.
+  const board = scoreboard(raid, 2).map((s) => s.seat);
+  if (board.join() !== '1,0,3,2' || scoreboard(raid, 1).length !== 3 || scoreboard(raid, 4).some((s) => s.seat === 4)) {
+    throw new Error(`Hud self-check: scoreboard rows ${board.join()}`);
   }
   for (const [n, s] of [[1, '1st'], [2, '2nd'], [3, '3rd'], [4, '4th'], [11, '11th'], [12, '12th'], [13, '13th'], [20, '20th']] as const) {
     if (ordinal(n) !== s) throw new Error(`Hud self-check: ordinal(${n}) reads ${ordinal(n)}`);
