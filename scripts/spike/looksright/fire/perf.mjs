@@ -23,9 +23,10 @@ const probe = async (label, scene, css) => {
 };
 const S = { seats: 20, ring: true };
 for (let k = 0; k < 2; k++) {
-await probe('floor: 20 seats, nothing burning', { ...S, bullets: 0, tick: 900 });
-await probe('24 comets', { ...S, bullets: 24, fury: true, tick: 900 });
-await probe('slam wind-up only', { ...S, bullets: 0, tick: 954 });
-await probe('slam wind-up + 12 bullets', { ...S, bullets: 12, fury: true, tick: 954 });
+await probe('floor', { ...S, bullets: 0, tick: 900 });
+await probe('slam + 12 bullets', { ...S, bullets: 12, fury: true, tick: 954 });
+await probe('slam + 12 bullets, no sparks', { ...S, bullets: 12, fury: true, tick: 954 }, '.hr-hell-spark{display:none!important}');
+await probe('slam + 12 bullets, no blend', { ...S, bullets: 12, fury: true, tick: 954 }, '.hr-hell-glow,.hr-hell-fill,.hr-hell-halo{mix-blend-mode:normal!important}');
+await probe('slam + 12 bullets, no soft', { ...S, bullets: 12, fury: true, tick: 954 }, '.hr-hell-soft{display:none!important}');
 }
 await b.close(); srv.close();

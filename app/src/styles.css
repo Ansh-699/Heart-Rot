@@ -914,7 +914,9 @@ h3 {
   .hr-hell-halo,
   .hr-hell-tongue,
   .hr-hell-core,
-  .hr-hell-streak,
+  .hr-hell-point,
+  .hr-hell-soft,
+  .hr-hell-spark,
   .hr-hell-ember,
   .room-light circle,
   .room-motes,
@@ -1355,20 +1357,45 @@ h3 {
   from { transform: scale(0.92, 0.94); opacity: 0.88; }
   to { transform: scale(1.06, 1.05); opacity: 1; }
 }
-/* Streaks shoot up and out of the foot and die at the tip: grown from the base, then gone.
-   Each lives in its own rotated `<g>`, so this transform is along the streak's own line. */
-.hr-hell-streak {
-  transform-origin: 0 0;
+/* The spray: each spark leaves the foot along its own line (`--dx`/`--dy`), slows as it
+   climbs, and is gone at the top; its own period and phase, so thirty of them never pulse.
+   The hot third are brighter and a touch bigger. */
+.hr-hell-spark {
+  fill: #ffc24a;
   opacity: 0;
-  animation: hr-hell-streak 0.56s ease-out infinite;
-  animation-delay: calc(var(--j, 0) * -0.067s + var(--i, 0) * -0.05s);
+  animation: hr-hell-spark var(--p, 700ms) ease-out infinite;
+  animation-delay: calc(var(--d, 0ms) + var(--i, 0) * -0.13s);
 }
-@keyframes hr-hell-streak {
-  0% { transform: scale(1, 0.1); opacity: 0; }
-  12% { opacity: 1; }
-  60% { transform: scale(1, 1); opacity: 0.95; }
-  100% { transform: scale(0.4, 1.25); opacity: 0; }
+.hr-hell-spark-hot {
+  fill: #fff0b0;
 }
+@keyframes hr-hell-spark {
+  0% { translate: 0 0; opacity: 0; }
+  6% { opacity: 1; }
+  72% { opacity: 0.8; }
+  100% { translate: var(--dx, 0px) var(--dy, -80px); opacity: 0; }
+}
+/* The soft copies breathe slower than the flames they sit behind. */
+.hr-hell-soft {
+  transform-origin: 0 0;
+  animation: hr-hell-soft 0.9s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i, 0) * -0.3s);
+}
+@keyframes hr-hell-soft {
+  from { opacity: 0.7; }
+  to { opacity: 1; }
+}
+.hr-hell-point {
+  animation: hr-hell-core 0.3s ease-in-out infinite alternate;
+}
+/* The light on the stone is LIGHT: screen-blended, so the tiles show through it instead
+   of sitting under a tint. Three blended nodes per ring; measured within noise. */
+.hr-hell-glow,
+.hr-hell-fill,
+.hr-hell-halo {
+  mix-blend-mode: screen;
+}
+
 /* Embers thrown out of the fire in arcs: up, out, gone. `translate`, not a `cy` write. */
 .hr-hell-ember {
   fill: #ffc24a;
