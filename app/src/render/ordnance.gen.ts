@@ -21,12 +21,22 @@ export const ORD_BURST = { w: 32, h: 32, frames: 3 } as const;
 /** The impact splat, centred on its frame. */
 export const ORD_HIT = { w: 18, h: 18 } as const;
 
-const IMG = `<image href="${ORDNANCE_ATLAS}" width="480" height="152"/>`;
+/** The fight's cue strips, each `frames` frames of `w` x `h` side by side in one symbol,
+ *  shown through a `w` x `h` window and stepped by `-w` a frame: the lock closing on the
+ *  raider a volley is aimed at, the thorn glowing before it fires, the chunks an arrow
+ *  knocks off the shell, the vent ringing on a core hit, the core bursting on the kill. */
+export const ORD_LOCK = { w: 28, h: 28, frames: 3 } as const;
+export const ORD_THORN = { w: 32, h: 32, frames: 2 } as const;
+export const ORD_CHIP = { w: 24, h: 24, frames: 3 } as const;
+export const ORD_VENT = { w: 48, h: 48, frames: 2 } as const;
+export const ORD_SHATTER = { w: 64, h: 64, frames: 6 } as const;
+
+const IMG = `<image href="${ORDNANCE_ATLAS}" width="480" height="264"/>`;
 
 /**
  * The `<defs>` markup: 16 velocity sectors (`ord-b0` at +x, clockwise with y down,
  * 22.5 degrees a step -- `Math.round(Math.atan2(dy, dx) / (Math.PI / 8)) & 15`), the burst
- * strip and the splat, each a `<symbol>` whose `viewBox` crops the one atlas. Mounted once
+ * strip, the splat and the five cue strips, each a `<symbol>` whose `viewBox` crops the one atlas. Mounted once
  * by whichever component owns the arena `<svg>`; React must never walk it again.
  */
 export const ORDNANCE_DEFS =
@@ -47,4 +57,9 @@ export const ORDNANCE_DEFS =
   `<symbol id="ord-b14" viewBox="360 60 60 60">${IMG}</symbol>` +
   `<symbol id="ord-b15" viewBox="420 60 60 60">${IMG}</symbol>` +
   `<symbol id="ord-burst" viewBox="0 120 96 32">${IMG}</symbol>` +
-  `<symbol id="ord-hit" viewBox="96 120 18 18">${IMG}</symbol>`;
+  `<symbol id="ord-hit" viewBox="96 120 18 18">${IMG}</symbol>` +
+  `<symbol id="ord-lock" viewBox="0 152 84 28">${IMG}</symbol>` +
+  `<symbol id="ord-thorn" viewBox="84 152 64 32">${IMG}</symbol>` +
+  `<symbol id="ord-chip" viewBox="148 152 72 24">${IMG}</symbol>` +
+  `<symbol id="ord-vent" viewBox="220 152 96 48">${IMG}</symbol>` +
+  `<symbol id="ord-shatter" viewBox="0 200 384 64">${IMG}</symbol>`;

@@ -37,7 +37,7 @@
  * one `<image>` of the whole atlas: the viewBox is the crop, so there is no `<defs>`, no
  * `clipPath`, and one decoded bitmap for all twenty seats.
  */
-import { memo, useEffect, useRef, useState, type Ref } from 'react';
+import { memo, useEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
 
 import { MAP_TILE, type PlayerSlot, type ShotTier,
   ZONE_ARENA,
@@ -55,6 +55,7 @@ import {
   type Pose,
   type SkinId,
 } from './knights.gen';
+import { ORD_LOCK } from './ordnance.gen';
 import { play } from './sfx';
 import { FACING_UNIT, HP_BAR_W, PAL, SELF_SNAP } from './sprites';
 
@@ -266,6 +267,8 @@ export interface KnightProps {
   mine?: boolean;
   /** No breathe, no recoil, no glow pulse, no translation — fades survive as opacity only. */
   reduced?: boolean;
+  /** The boss's next volley is aimed at this seat: the lock closes on it over the wind-up. */
+  targeted?: boolean;
 }
 
 /**
@@ -313,7 +316,7 @@ function Sprite({
   );
 }
 
-function KnightBody({ slot, mine = false, reduced = false }: KnightProps) {
+function KnightBody({ slot, mine = false, reduced = false, targeted = false }: KnightProps) {
   const state = useRef<Walk | null>(null);
   // Guards the fold against React re-rendering this component with the *same* snapshot —
   // StrictMode's double render, or a parent re-rendering for the bullet feed. The decoder
@@ -535,6 +538,22 @@ function KnightBody({ slot, mine = false, reduced = false }: KnightProps) {
     <>
       <ellipse cy={FEET_Y} rx={11} ry={4} fill={PAL.outline} opacity={0.45} />
 
+      {/* The boss is aiming here. `tools/gen_ordnance.py`'s three-frame lock, closing on
+          the body over the wind-up's 1.5 s (`.hr-lock-frames`, `styles.css`) — the same
+          information the old dashed aim lines carried, as a pixel cue on the raider it is
+          about. Mounted only while `targeted`, so it starts at the wind-up's first frame. */}
+      {targeted && (
+        <svg x={-ORD_LOCK.w / 2} y={-ORD_LOCK.h / 2 + 2} width={ORD_LOCK.w} height={ORD_LOCK.h} aria-hidden="true">
+          <use
+            className="hr-lock-frames"
+            href="#ord-lock"
+            width={ORD_LOCK.w * ORD_LOCK.frames}
+            height={ORD_LOCK.h}
+            style={{ '--strip': `${-ORD_LOCK.w * ORD_LOCK.frames}px` } as CSSProperties}
+          />
+        </svg>
+      )}
+
       {/* Cue 2 of 3 for finding yourself. Two tones, wide dark under narrow bright, because
           one of the two has to be winning on every ground the ring can land on: `#eafff4`
           is 7.94:1 against the darkest sampled floor and `#05060a` is 10.96:1 against a lit
@@ -664,6 +683,7 @@ function sameSeat(a: KnightProps, b: KnightProps): boolean {
   return (
     a.mine === b.mine &&
     a.reduced === b.reduced &&
+    a.targeted === b.targeted &&
     p.x === n.x &&
     p.y === n.y &&
     p.facing === n.facing &&

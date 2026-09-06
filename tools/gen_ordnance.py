@@ -63,8 +63,10 @@ PALETTE = (
     (0xff, 0xb0, 0x20),  # 5 amber
     (0xff, 0xe0, 0x7a),  # 6 hot yellow
     (0xff, 0xff, 0xf0),  # 7 white heat
+    (0x8f, 0xe9, 0xff),  # 8 vent cyan, the core's own light
+    (0x2f, 0xb8, 0xd6),  # 9 deep cyan
 )
-OLIVE, CHAR, RED, ORANGE, AMBER, YELLOW, WHITE = range(1, 8)
+OLIVE, CHAR, RED, ORANGE, AMBER, YELLOW, WHITE, CYAN, DEEP = range(1, 10)
 
 SECTORS = 16
 
@@ -75,7 +77,7 @@ CORE_R = 5.5
 TAIL = 22.0
 TAIL_HALF_W = 3.0
 # The tail's four heats, as fractions of its length: amber at the seed, char at the end.
-TAIL_BANDS = ((0.0, 0.25, AMBER), (0.25, 0.5, ORANGE), (0.5, 0.78, RED), (0.78, 1.01, CHAR))
+TAIL_BANDS = ((0.0, 0.12, YELLOW), (0.12, 0.28, AMBER), (0.28, 0.5, ORANGE), (0.5, 0.78, RED), (0.78, 1.01, CHAR))
 # Loose sparks off the tail: (px behind the rim, px off the axis). The side alternates
 # per sector so sixteen frames do not share one silhouette.
 SPARKS = ((9.0, 3.5, AMBER), (14.0, 4.5, ORANGE), (19.0, 3.0, RED))
@@ -88,12 +90,28 @@ BURST = 32
 BURST_FRAMES = 3
 HIT = 18
 
-# Atlas: bullets in two rows of eight, then the burst strip and the splat on a third row.
+# The cues the fight reads: the lock closing on the raider a volley is aimed at, the thorn
+# glowing before it fires, the chunks a hit knocks off the shell, the vent ringing when
+# the core takes one, and the core bursting on the kill.
+LOCK, LOCK_FRAMES = 28, 3
+THORN, THORN_FRAMES = 32, 2
+CHIP, CHIP_FRAMES = 24, 3
+VENT, VENT_FRAMES = 48, 2
+SHATTER, SHATTER_FRAMES = 64, 6
+
+# Atlas: bullets in two rows of eight, then the burst strip and the splat on a third row,
+# the four small cue strips on a fourth, the shatter strip on a fifth.
 COLS = 8
 ATLAS_W = COLS * BULLET
-ATLAS_H = (SECTORS // COLS) * BULLET + BURST
 BURST_Y = (SECTORS // COLS) * BULLET
 HIT_X = BURST_FRAMES * BURST
+CUES_Y = BURST_Y + BURST
+LOCK_X = 0
+THORN_X = LOCK_X + LOCK * LOCK_FRAMES
+CHIP_X = THORN_X + THORN * THORN_FRAMES
+VENT_X = CHIP_X + CHIP * CHIP_FRAMES
+SHATTER_Y = CUES_Y + VENT
+ATLAS_H = SHATTER_Y + SHATTER
 
 
 def grid(size: int):
@@ -156,9 +174,12 @@ def bullet(k: int):
     idx[rim & (along >= 0)] = ORANGE
     idx[rim & (along < 0)] = RED
     idx[d <= CORE_R] = OLIVE
-    # Two hot pixels just ahead of centre, either side of the heading.
+    # Two hot pixels just ahead of centre, either side of the heading, and one at the
+    # centre: on the floor's dark stone a seed was a dark dot with a tail, and the tail
+    # alone is what the eye found. The white core is what it finds first now.
     for side in (-1, 1):
         idx[int(c + uy * 2.5 + ux * side * 1.5), int(c + ux * 2.5 - uy * side * 1.5)] = WHITE
+    idx[int(c), int(c)] = WHITE
     return idx
 
 
@@ -201,6 +222,100 @@ def hit():
     return idx
 
 
+def lock(f: int):
+    """Frame `f` of the lock: four corner brackets closing on the target, then a dot."""
+    idx = np.zeros((LOCK, LOCK), np.uint8)
+    c = LOCK // 2
+    r = (11, 8, 5)[f]
+    colour = (AMBER, AMBER, YELLOW)[f]
+    arm = 4 if f < 2 else 3
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            x, y = c + sx * r, c + sy * r
+            for k in range(arm):
+                idx[y, x - sx * k] = colour
+                idx[y - sy * k, x] = colour
+            idx[y, x] = WHITE if f == 2 else colour
+    if f == 2:
+        idx[c, c] = WHITE
+        idx[c - 1, c] = idx[c + 1, c] = idx[c, c - 1] = idx[c, c + 1] = RED
+    return idx
+
+
+def thorn(f: int):
+    """Frame `f` of the thorn's glow: a dim ring, then the thorn lit through to white."""
+    idx = np.zeros((THORN, THORN), np.uint8)
+    c = THORN / 2
+    if f == 0:
+        ring(idx, 7.5, 9.5, RED)
+        ring(idx, 5.5, 7.5, ORANGE)
+        stamp(idx, c, c, 3.0, AMBER)
+    else:
+        ring(idx, 10.5, 12.5, RED)
+        ring(idx, 8.0, 10.5, ORANGE)
+        ring(idx, 5.5, 8.0, AMBER)
+        stamp(idx, c, c, 5.5, YELLOW)
+        stamp(idx, c, c, 3.0, WHITE)
+        spokes(idx, 12.5, 15.0, AMBER, math.pi / 8)
+    return idx
+
+
+def chip(f: int):
+    """Frame `f` of the chip burst: shell chunks flung out of the wound, thinning and
+    cooling as they go — the reference's flying chunks, at arrow scale."""
+    idx = np.zeros((CHIP, CHIP), np.uint8)
+    c = CHIP / 2
+    reach = (4.0, 7.5, 10.5)[f]
+    size = (2.0, 1.6, 1.1)[f]
+    for j in range(6):
+        a = math.radians(15 + j * 60 + f * 9)
+        x, y = c + math.cos(a) * reach, c + math.sin(a) * reach
+        stamp(idx, x, y, size, (OLIVE, RED, CHAR)[(j + f) % 3])
+        if f < 2:
+            sx, sy = c + math.cos(a) * (reach + 2.5), c + math.sin(a) * (reach + 2.5)
+            if 0 <= int(sy) < CHIP and 0 <= int(sx) < CHIP:
+                idx[int(sy), int(sx)] = AMBER
+    if f == 0:
+        stamp(idx, c, c, 3.0, YELLOW)
+        stamp(idx, c, c, 1.5, WHITE)
+    return idx
+
+
+def vent(f: int):
+    """Frame `f` of the vent ringing: the core's own cyan, a ring that widens and thins."""
+    idx = np.zeros((VENT, VENT), np.uint8)
+    if f == 0:
+        ring(idx, 15.0, 18.0, CYAN)
+        ring(idx, 13.5, 15.0, WHITE)
+    else:
+        ring(idx, 20.0, 22.5, DEEP)
+        ring(idx, 18.5, 20.0, CYAN)
+    return idx
+
+
+def shatter(f: int):
+    """Frame `f` of the core bursting on the kill: a white flash that becomes a ring of
+    cyan and a spray of chunks, all flying out and cooling to char by the last frame."""
+    idx = np.zeros((SHATTER, SHATTER), np.uint8)
+    c = SHATTER / 2
+    t = f / (SHATTER_FRAMES - 1)
+    r = 5 + 25 * t
+    if f == 0:
+        stamp(idx, c, c, 9.0, WHITE)
+        ring(idx, 9.0, 12.0, CYAN)
+    else:
+        ring(idx, r - 1.5, r + 1.0, DEEP if f > 3 else CYAN)
+        if f < 4:
+            stamp(idx, c, c, max(1.0, 7.0 - 2.5 * f), WHITE)
+    for j in range(10):
+        a = math.radians(j * 36 + f * 13)
+        reach = 3 + 27 * t + (j % 3) * 2
+        x, y = c + math.cos(a) * reach, c + math.sin(a) * reach
+        if 1 <= int(y) < SHATTER - 1 and 1 <= int(x) < SHATTER - 1:
+            stamp(idx, x, y, 2.2 - 1.2 * t, (WHITE, CYAN, DEEP, DEEP, CHAR, CHAR)[f])
+    return idx
+
+
 def build():
     """-> (png bytes, typescript source)."""
     atlas = np.zeros((ATLAS_H, ATLAS_W), np.uint8)
@@ -208,7 +323,8 @@ def build():
         frame = bullet(k)
         # The contract with `Arena.tsx`: the seed is centred, and nothing touches the
         # frame's edge -- a clipped tail is the first sign the frame size is stale.
-        if frame[BULLET // 2, BULLET // 2] != OLIVE:
+        # The centre pixel is the seed's white point; the olive core is the pixel beside it.
+        if frame[BULLET // 2, BULLET // 2] != WHITE or frame[BULLET // 2, BULLET // 2 - 2] != OLIVE:
             raise SystemExit(f"gen_ordnance: sector {k} has no seed at its centre")
         if frame[0, :].any() or frame[-1, :].any() or frame[:, 0].any() or frame[:, -1].any():
             raise SystemExit(f"gen_ordnance: sector {k} is clipped by its {BULLET} px frame")
@@ -223,6 +339,20 @@ def build():
     if not splat.any():
         raise SystemExit("gen_ordnance: the hit splat is empty")
     atlas[BURST_Y : BURST_Y + HIT, HIT_X : HIT_X + HIT] = splat
+    for name, draw, size, n, x0, y0 in (
+        ("lock", lock, LOCK, LOCK_FRAMES, LOCK_X, CUES_Y),
+        ("thorn", thorn, THORN, THORN_FRAMES, THORN_X, CUES_Y),
+        ("chip", chip, CHIP, CHIP_FRAMES, CHIP_X, CUES_Y),
+        ("vent", vent, VENT, VENT_FRAMES, VENT_X, CUES_Y),
+        ("shatter", shatter, SHATTER, SHATTER_FRAMES, 0, SHATTER_Y),
+    ):
+        strip = [draw(f) for f in range(n)]
+        for f, frame in enumerate(strip):
+            if not frame.any():
+                raise SystemExit(f"gen_ordnance: {name} frame {f} is empty")
+            if f and np.array_equal(frame, strip[f - 1]):
+                raise SystemExit(f"gen_ordnance: {name} frames {f - 1} and {f} are identical")
+            atlas[y0 : y0 + size, x0 + f * size : x0 + (f + 1) * size] = frame
     if atlas.max() >= len(PALETTE):
         raise SystemExit("gen_ordnance: an index outside the palette")
 
@@ -237,6 +367,11 @@ def build():
     syms = [sym(f"ord-b{k}", (k % COLS) * BULLET, (k // COLS) * BULLET, BULLET, BULLET) for k in range(SECTORS)]
     syms.append(sym("ord-burst", 0, BURST_Y, BURST_FRAMES * BURST, BURST))
     syms.append(sym("ord-hit", HIT_X, BURST_Y, HIT, HIT))
+    syms.append(sym("ord-lock", LOCK_X, CUES_Y, LOCK_FRAMES * LOCK, LOCK))
+    syms.append(sym("ord-thorn", THORN_X, CUES_Y, THORN_FRAMES * THORN, THORN))
+    syms.append(sym("ord-chip", CHIP_X, CUES_Y, CHIP_FRAMES * CHIP, CHIP))
+    syms.append(sym("ord-vent", VENT_X, CUES_Y, VENT_FRAMES * VENT, VENT))
+    syms.append(sym("ord-shatter", 0, SHATTER_Y, SHATTER_FRAMES * SHATTER, SHATTER))
     src = f"""// @generated by `python3 tools/gen_ordnance.py` -- DO NOT EDIT.
 //
 // Hand-editing this file re-creates the defect it exists to close. The ids below are a
@@ -260,12 +395,22 @@ export const ORD_BURST = {{ w: {BURST}, h: {BURST}, frames: {BURST_FRAMES} }} as
 /** The impact splat, centred on its frame. */
 export const ORD_HIT = {{ w: {HIT}, h: {HIT} }} as const;
 
+/** The fight's cue strips, each `frames` frames of `w` x `h` side by side in one symbol,
+ *  shown through a `w` x `h` window and stepped by `-w` a frame: the lock closing on the
+ *  raider a volley is aimed at, the thorn glowing before it fires, the chunks an arrow
+ *  knocks off the shell, the vent ringing on a core hit, the core bursting on the kill. */
+export const ORD_LOCK = {{ w: {LOCK}, h: {LOCK}, frames: {LOCK_FRAMES} }} as const;
+export const ORD_THORN = {{ w: {THORN}, h: {THORN}, frames: {THORN_FRAMES} }} as const;
+export const ORD_CHIP = {{ w: {CHIP}, h: {CHIP}, frames: {CHIP_FRAMES} }} as const;
+export const ORD_VENT = {{ w: {VENT}, h: {VENT}, frames: {VENT_FRAMES} }} as const;
+export const ORD_SHATTER = {{ w: {SHATTER}, h: {SHATTER}, frames: {SHATTER_FRAMES} }} as const;
+
 const IMG = `<image href="${{ORDNANCE_ATLAS}}" width="{ATLAS_W}" height="{ATLAS_H}"/>`;
 
 /**
  * The `<defs>` markup: {SECTORS} velocity sectors (`ord-b0` at +x, clockwise with y down,
  * 22.5 degrees a step -- `Math.round(Math.atan2(dy, dx) / (Math.PI / 8)) & 15`), the burst
- * strip and the splat, each a `<symbol>` whose `viewBox` crops the one atlas. Mounted once
+ * strip, the splat and the five cue strips, each a `<symbol>` whose `viewBox` crops the one atlas. Mounted once
  * by whichever component owns the arena `<svg>`; React must never walk it again.
  */
 export const ORDNANCE_DEFS =

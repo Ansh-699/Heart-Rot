@@ -99,6 +99,7 @@ import {
 } from '@heartrot/client';
 
 import { hitStop, shake } from './Arena';
+import { ORD_CHIP } from './ordnance.gen';
 import { play } from './sfx';
 import { FACING_UNIT, PAL, VISIBLE_PROJECTILES } from './sprites';
 import type { Room } from './viewport';
@@ -215,6 +216,14 @@ const TRAIL_LEN = 22;
 
 /** What the local seat's charged hit does to the whole picture — `Arena.tsx`'s two exports. */
 const HIT_STOP_MS = 70;
+
+/** The chip strip stepped across its window, frame 0 first; `fill: 'none'` leaves the
+ *  base opacity 0 behind. */
+const CHIP_KEYFRAMES: Keyframe[] = [
+  { opacity: 1, transform: 'translateX(0)' },
+  { opacity: 1, transform: `translateX(${-ORD_CHIP.w * ORD_CHIP.frames}px)` },
+];
+const CHIP_TIMING: KeyframeAnimationOptions = { duration: 240, easing: `steps(${ORD_CHIP.frames})` };
 const SHAKE_UNITS = 6;
 
 /**
@@ -402,6 +411,8 @@ export function Shot({
   const trail = useRef<Array<SVGLineElement | null>>([]);
   const impactAt = useRef<Array<SVGGElement | null>>([]);
   const impact = useRef<Array<SVGGElement | null>>([]);
+  /** The chip strip at the same point: chunks off the shell on a hit, nothing on a wall. */
+  const chip = useRef<Array<SVGUseElement | null>>([]);
   const damage = useRef<Array<SVGGElement | null>>([]);
   const damageText = useRef<Array<SVGTextElement | null>>([]);
   // The beam, per seat; the strike pool, per PART. A part flashes the same whichever seat's
@@ -480,6 +491,9 @@ export function Shot({
     if (el === null || el === undefined) return;
     el.style.color = hit === 'hit' ? SPARK_HIT : hit === 'absorb' ? SPARK_ABSORB : SPARK_WALL;
     spark(el, hit);
+    // A hit on the shell knocks chunks off it: `tools/gen_ordnance.py`'s three-frame chip
+    // strip, stepped across its window. A wall or an absorbed shot throws nothing.
+    if (hit === 'hit') chip.current[seat]?.animate(CHIP_KEYFRAMES, CHIP_TIMING);
   };
 
   /** The spark's one-shot, on whichever node is at the point: an arrow's, or a beam's. */
@@ -940,6 +954,15 @@ export function Shot({
                 <circle r={9} fill="currentColor" opacity={0.5} />
                 <circle r={3.5} fill="currentColor" />
               </g>
+              <svg x={-ORD_CHIP.w / 2} y={-ORD_CHIP.h / 2} width={ORD_CHIP.w} height={ORD_CHIP.h} aria-hidden="true">
+                <use
+                  ref={(el) => void (chip.current[seat] = el)}
+                  href="#ord-chip"
+                  width={ORD_CHIP.w * ORD_CHIP.frames}
+                  height={ORD_CHIP.h}
+                  style={{ opacity: 0 }}
+                />
+              </svg>
             </g>
 
             <g ref={(el) => void (damage.current[seat] = el)} style={{ opacity: 0 }}>

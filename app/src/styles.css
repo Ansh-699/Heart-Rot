@@ -912,6 +912,8 @@ h3 {
   .hr-hell-glow,
   .hr-fire-frames,
   .hr-ring-frames,
+  .hr-thorn-frames,
+  .hr-lock-frames,
   .hr-hell-erupt,
   .room-light circle,
   .room-motes,
@@ -1356,6 +1358,15 @@ h3 {
 .hr-ring-frames {
   animation: hr-ring-frames 0.7s steps(2) infinite;
   animation-delay: calc(var(--i, 0) * -0.23s);
+}
+/* The volley's two cues, the same way: the thorn's glow alternates through the wind-up,
+   the lock closes on the raider over the wind-up's 1.5 s and holds its last frame. */
+.hr-thorn-frames {
+  animation: hr-ring-frames 0.32s steps(2) infinite;
+  animation-delay: calc(var(--i, 0) * -0.08s);
+}
+.hr-lock-frames {
+  animation: hr-fire-frames 1.5s steps(3) forwards;
 }
 @keyframes hr-ring-frames {
   from { transform: translateX(0); }

@@ -85,6 +85,7 @@ import {
 } from '@heartrot/client';
 
 import { ASH_DY, ATLAS_H, ATLAS_SCALE, ATLAS_W, BOSS_ATLAS, BOSS_PARTS, EYES_PX, type BossPart } from './boss.gen';
+import { ORD_VENT } from './ordnance.gen';
 import { play, speak, VOICE_NAMES, type VoiceName } from './sfx';
 
 /**
@@ -143,6 +144,13 @@ const AURA = {
  * still matches the volley the first time anyone tunes balance. `deathMs` stays a prop.
  */
 const FLINCH_MS = 180;
+
+/** The vent's ring on a core hit: two frames, out and gone, `fill: 'none'`. */
+const VENT_KEYFRAMES: Keyframe[] = [
+  { opacity: 1, transform: 'translateX(0)' },
+  { opacity: 1, transform: `translateX(${-ORD_VENT.w * ORD_VENT.frames}px)` },
+];
+const VENT_TIMING: KeyframeAnimationOptions = { duration: 220, easing: `steps(${ORD_VENT.frames})` };
 const BREAK_MS = 520;
 /** Between one limb tearing off and the next, in the death — ten limbs in 1.4 s. */
 const DEATH_STAGGER_MS = 140;
@@ -338,7 +346,9 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
     for (const t of deathTimers.current) window.clearTimeout(t);
   }, []);
   /** The last snapshot actually consumed. Every one-shot below is a diff against it. */
-  const prev = useRef<{ parts: number[]; phase: number; vent: number; fury: boolean } | null>(null);
+  const prev = useRef<{ parts: number[]; phase: number; vent: number; fury: boolean; core: number } | null>(null);
+  /** The vent's ring strip, played on every core hit. */
+  const ventRing = useRef<SVGUseElement | null>(null);
 
   // A chain fact, derived and never stored: `Boss::is_furious` on the same integers the
   // crank halves the volley on. FIGHTING-gated so a settling corpse at 0 % fight HP and a
@@ -456,9 +466,15 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
   }, [fighting]);
 
   useEffect(() => {
-    const now = { parts: boss.parts.slice(0, N_PARTS), phase: arena.phase, vent: boss.ventOpen, fury: furious };
+    const now = { parts: boss.parts.slice(0, N_PARTS), phase: arena.phase, vent: boss.ventOpen, fury: furious, core: boss.coreHp };
     const was = prev.current;
     prev.current = now;
+    // The core took one: the vent rings in its own cyan. `tools/gen_ordnance.py`'s
+    // two-frame strip, stepped across its window; a value diff, so a duplicate
+    // notification plays nothing. Not on the kill: the death sequence owns the core then.
+    if (was !== null && now.core < was.core && now.core > 0) {
+      ventRing.current?.animate(VENT_KEYFRAMES, VENT_TIMING);
+    }
 
     const soft = reduced();
     const at = (i: number): SVGGElement | null => partRefs.current[i] ?? null;
@@ -689,6 +705,9 @@ export function Boss({ arena, boss, deathMs = DEATH_MS }: BossProps) {
           {EYES.map(([x, y]) => (
             <circle key={x} className="hr-boss-eye" cx={x} cy={y} r={EYE_R} />
           ))}
+          <svg x={CORE.x - ORD_VENT.w / 2} y={CORE.y - ORD_VENT.h / 2} width={ORD_VENT.w} height={ORD_VENT.h} aria-hidden="true">
+            <use ref={ventRing} href="#ord-vent" width={ORD_VENT.w * ORD_VENT.frames} height={ORD_VENT.h} style={{ opacity: 0 }} />
+          </svg>
         </g>
       </g>
       {/* Beside the breathe group, not inside it: the corpse's charring filter never

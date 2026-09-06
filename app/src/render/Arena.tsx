@@ -116,7 +116,7 @@ import { BOSS_ARENA } from './BossArena';
 import { Boss } from './Boss';
 import { Knight, knightDrawOrder } from './Knight';
 import { FIRE_DEFS, FIRE_PILLAR, FIRE_RING } from './fire.gen';
-import { ORDNANCE_DEFS, ORD_BULLET, ORD_BURST } from './ordnance.gen';
+import { ORDNANCE_DEFS, ORD_BULLET, ORD_BURST, ORD_THORN } from './ordnance.gen';
 import { play } from './sfx';
 import { Shot } from './Shot';
 import { Spawn } from './Spawn';
@@ -1160,21 +1160,23 @@ export function Arena({
             </g>
           )}
 
-          {/* Where the next volley goes. `spawn_volley` fans around exactly these lines,
-              so this is the shot itself drawn 1.5 s early, not an impression of one. */}
+          {/* Where the next volley comes from. `spawn_volley` fires every live thorn at
+              `boss.targetSeat`; the thorns glow through the wind-up (`tools/gen_ordnance.py`'s
+              two-frame strip, stepped by `.hr-thorn-frames`) and the raider it is aimed at
+              wears the lock (`Knight`'s `targeted`). The group's seeked opacity is the
+              countdown, on the chain's clock, as the dashed lines' was. */}
           {shown === 'arena' && volley !== null && (
-            <g ref={volleyRef} aria-hidden="true" opacity={reduced ? 0.5 : 0}>
-              {volley.lines.map(([x1, y1, x2, y2], i) => (
-                <line
-                  key={i}
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  stroke={PAL.bossEdge}
-                  strokeWidth={2}
-                  strokeDasharray="6 10"
-                />
+            <g ref={volleyRef} aria-hidden="true" opacity={reduced ? 0.6 : 0}>
+              {volley.lines.map(([x1, y1], i) => (
+                <svg key={i} x={x1 - ORD_THORN.w / 2} y={y1 - ORD_THORN.h / 2} width={ORD_THORN.w} height={ORD_THORN.h}>
+                  <use
+                    className="hr-thorn-frames"
+                    href="#ord-thorn"
+                    width={ORD_THORN.w * ORD_THORN.frames}
+                    height={ORD_THORN.h}
+                    style={{ '--strip': `${-ORD_THORN.w * ORD_THORN.frames}px`, '--i': i } as CSSProperties}
+                  />
+                </svg>
               ))}
             </g>
           )}
@@ -1265,7 +1267,7 @@ export function Arena({
                 // attribute on it, which is why `Knight` renders the CHILDREN of this node
                 // and never the node. The style is {@link SEAT_STYLE}, shared by all twenty.
                 <g key={slot.seat} ref={predicted ? selfRef : seats.ref(slot.seat)} style={SEAT_STYLE}>
-                  <Knight slot={posed} mine={mine} reduced={reduced} />
+                  <Knight slot={posed} mine={mine} reduced={reduced} targeted={volley !== null && boss.targetSeat === slot.seat} />
                 </g>
               );
             })}
@@ -1360,8 +1362,8 @@ const RING_KEYFRAMES: Keyframe[] = [{ transform: 'scale(0.05)' }, { transform: '
 /** How long the fire burns after the hand lands. `styles.css`'s `hr-hell-erupt` runs this long. */
 const ERUPT_MS = 950;
 
-/** The aim lines brighten into the shot. */
-const VOLLEY_KEYFRAMES: Keyframe[] = [{ opacity: 0.1 }, { opacity: 0.8 }];
+/** The thorns brighten into the shot. */
+const VOLLEY_KEYFRAMES: Keyframe[] = [{ opacity: 0.25 }, { opacity: 1 }];
 
 /**
  * A SEEKED animation: built once at its true duration, played, and re-seeked from a chain

@@ -200,6 +200,18 @@ const HUD_CSS = `
 }
 .hud-layer.is-calm { opacity: 0.6; }
 .hud-layer.is-hidden { opacity: 0; }
+/* Your own hp went down: the edge of the room flushes ember and fades, opacity only. The
+   layer itself may be calm or hidden; the flush is on a pseudo-element so it is neither. */
+.hud-layer.is-hurt::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 52%, rgb(255 90 74 / 0.5) 100%);
+  animation: hud-hurt 160ms ease-out forwards;
+}
+@keyframes hud-hurt { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .hud-layer.is-hurt::after { animation: none; opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .hud-layer { transition: none; } }
 
 /* Top right: the wordmark owns the top left and telemetry's cue owns the bottom right. */
@@ -356,10 +368,11 @@ const CALM_AFTER_MS = 4_000;
 export function Hud() {
   const calm = useCalm();
   const hidden = useHideKey();
+  const hurt = useHurt();
   return (
     <>
       <style>{HUD_CSS}</style>
-      <div className={`hud-layer${calm ? ' is-calm' : ''}${hidden ? ' is-hidden' : ''}`}>
+      <div className={`hud-layer${calm ? ' is-calm' : ''}${hidden ? ' is-hidden' : ''}${hurt ? ' is-hurt' : ''}`}>
         <Card />
         <Hint />
         <Top />
@@ -369,6 +382,30 @@ export function Hud() {
       <Verdict />
     </>
   );
+}
+
+/** How long the edge of the screen glows red after your own hp drops. */
+const HURT_MS = 160;
+
+/**
+ * True for {@link HURT_MS} after your own hp goes DOWN — a value diff on the chain's
+ * number, so a duplicate notification is not a second hit and the first snapshot after a
+ * join (hp from −1 to full) is not one either. The `hurt` cue plays on the same edge in
+ * `Knight.tsx`; this is its picture: the room's edge flushing `--ember`, opacity only.
+ */
+function useHurt(): boolean {
+  const hp = useSelect((s) => mySeatSlot(s)?.hp ?? -1);
+  const last = useRef(hp);
+  const [hurt, setHurt] = useState(false);
+  useEffect(() => {
+    const was = last.current;
+    last.current = hp;
+    if (was < 0 || hp < 0 || hp >= was) return;
+    setHurt(true);
+    const id = window.setTimeout(() => setHurt(false), HURT_MS);
+    return () => window.clearTimeout(id);
+  }, [hp]);
+  return hurt;
 }
 
 /**

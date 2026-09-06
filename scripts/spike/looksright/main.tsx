@@ -85,7 +85,7 @@ function arenaBytes(phase: number, tick: number, bullets: number, outcome = 0, i
  * quiet ring shows. `fury`: the same plus a core at 300 of 2,000 — with 90 shell to strip
  * the effective pool is 2,090 and 300 is under 20 % of it, so `isFurious` reads true.
  */
-function bossBytes(hurt: boolean, vent = false, fury = false, dead: number[] = []) {
+function bossBytes(hurt: boolean, vent = false, fury = false, dead: number[] = [], core?: number) {
   const { d, v } = blank(BOSS.size, DISC_BOSS);
   const o = BOSS.offsets;
   v.setInt16(o.x, BOSS_SPAWN[0], true);
@@ -100,7 +100,7 @@ function bossBytes(hurt: boolean, vent = false, fury = false, dead: number[] = [
     v.setUint16(o.parts + i * 2, hp, true);
   }
   v.setUint8(o.vent_open, open ? 1 : 0);
-  v.setUint16(o.core_hp, fury ? 300 : 2000, true);
+  v.setUint16(o.core_hp, core ?? (fury ? 300 : 2000), true);
   v.setUint16(o.core_hp_max, 2000, true);
   return decodeBoss(d);
 }
@@ -242,6 +242,8 @@ interface SceneOpts {
   dead?: number[];
   /** The local seat's hp; 0 photographs the fallen card over its corpse. */
   localHp?: number;
+  /** The boss's core hp, over the fury/normal defaults — lower it between two scenes for a core hit. */
+  core?: number;
   /** Stand the seats in a combat arc around the boss instead of the default 5-column grid. */
   ring?: boolean;
 }
@@ -256,7 +258,7 @@ function Bridge() {
       const tick = opts.tick ?? (arena ? 900 : 0);
       // The boss first: the seats aim at the shell this scene actually has, so a stripped
       // part re-targets the raid the way `autoAim` re-targets a real player.
-      const boss = bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, opts.dead);
+      const boss = bossBytes(!!opts.hurt, !!opts.vent, !!opts.fury, opts.dead, opts.core);
       store.setWorld({
         from: '11111111111111111111111111111111',
         arena: arenaBytes(opts.phase ?? (arena ? PHASE_FIGHTING : PHASE_LOBBY), tick,
