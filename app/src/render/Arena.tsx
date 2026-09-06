@@ -1186,13 +1186,29 @@ export function Arena({
             </g>
           )}
 
-          {/* Where the next volley comes from. `spawn_volley` fires every live thorn at
-              `boss.targetSeat`; the thorns glow through the wind-up (`tools/gen_ordnance.py`'s
-              two-frame strip, stepped by `.hr-thorn-frames`) and the raider it is aimed at
-              wears the lock (`Knight`'s `targeted`). The group's seeked opacity is the
-              countdown, on the chain's clock, as the dashed lines' was. */}
+          {/* Where the next volley goes. `spawn_volley` fans around exactly these lines,
+              so the dashed lines are the shot itself drawn 1.5 s early; the thorns glow
+              through the wind-up (`tools/gen_ordnance.py`'s two-frame strip, stepped by
+              `.hr-thorn-frames`) and the raider it is aimed at wears the lock (`Knight`'s
+              `targeted`). The group's seeked opacity is the countdown, on the chain's clock. */}
           {shown === 'arena' && volley !== null && (
             <g ref={volleyRef} aria-hidden="true" opacity={reduced ? 0.6 : 0}>
+              {/* The dashed aim lines, thorn to raider: the owner asked for them back. They
+                  are `spawn_volley`'s own lines, drawn 1.5 s early; the glow and the lock
+                  below sit at their two ends. */}
+              {volley.lines.map(([x1, y1, x2, y2], i) => (
+                <line
+                  key={`l${i}`}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={PAL.bossEdge}
+                  strokeWidth={2}
+                  strokeDasharray="6 10"
+                  opacity={0.85}
+                />
+              ))}
               {volley.lines.map(([x1, y1], i) => (
                 <svg key={i} x={x1 - ORD_THORN.w / 2} y={y1 - ORD_THORN.h / 2} width={ORD_THORN.w} height={ORD_THORN.h}>
                   <use
