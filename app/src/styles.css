@@ -303,8 +303,18 @@ h3 {
  * that: the stage always gets the whole cell, and anything a screen has not finished
  * migrating draws over it instead of squeezing it. The HUD clusters and the result
  * overlay are `position: fixed` and out of flow, so they are unaffected either way.
+ *
+ * Not `.main:has(> .stage) > *`, which said the same thing. A `:has()` rule ending in `*`
+ * gives Blink a whole-subtree invalidation set, and `:has()` is re-evaluated on every
+ * element inserted under `.main` — a bullet spawning, a damage number's text node, a
+ * hellfire ring mounting — so every other frame of a fight recalculated the style of the
+ * entire scene (1,521 elements, 9–21 ms a time, 107 times in an 11.6 s raid; measured with
+ * the devtools invalidation tracker on the looksright dist). The stage is `<main>`'s first
+ * child (App.tsx), so "the stage and whatever follows it" is the same set of children,
+ * and this shape hangs off nothing that mutates.
  */
-.main:has(> .stage) > * {
+.main > .stage,
+.main > .stage ~ * {
   grid-area: 1 / 1;
   min-height: 0;
   min-width: 0;
@@ -374,9 +384,12 @@ h3 {
  * Onboarding and character select have no scene and no HUD — one 560 px card, centred —
  * and there the middle-right lane clips the card's right edge on any window under
  * ~1240 px. Same overlay, the anchor the card leaves free. `:has()` on the shell, the
- * same idiom `.main:has(> .stage)` above already uses.
+ * same idiom `.main:has(> .stage)` above already uses — with the child combinator, because
+ * `:has(.main > .card)` is re-checked on every element inserted anywhere under `.shell`,
+ * the scene's SVG included, while `:has(> .main > .card)` only watches `.main`'s children.
+ * `.main` is the shell's own child, so the two match the same thing.
  */
-.shell:has(.main > .card) .errorbar {
+.shell:has(> .main > .card) .errorbar {
   top: auto;
   bottom: 12px;
   right: 50%;

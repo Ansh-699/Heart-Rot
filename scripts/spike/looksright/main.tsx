@@ -181,12 +181,14 @@ function playersBytes(zone: number, tick: number, seats: number, boss: BossAccou
       v.setUint8(s + PLAYER_SLOT.offsets.zone, zone);
       v.setUint8(s + PLAYER_SLOT.offsets.skin_id, p[2]);
       v.setUint8(s + PLAYER_SLOT.offsets.facing, 0);
-      v.setUint8(s + PLAYER_SLOT.offsets.class_aim, (p[3] ? CLASS_MASK : 0) | 0x18);
+      // `ring` with placements: the seats aim at the shell and loose on the archer's period,
+      // as the arc does, so a perf run can walk the raid AND keep its volley.
+      v.setUint8(s + PLAYER_SLOT.offsets.class_aim, (p[3] ? CLASS_MASK : 0) | (ring ? aimAtBoss(p[0], p[1], boss) : 0x18));
       v.setInt16(s + PLAYER_SLOT.offsets.x, p[0], true);
       v.setInt16(s + PLAYER_SLOT.offsets.y, p[1], true);
       v.setUint16(s + PLAYER_SLOT.offsets.hp, 100, true);
       v.setUint16(s + PLAYER_SLOT.offsets.hp_max, 100, true);
-      v.setUint32(s + PLAYER_SLOT.offsets.last_shot_tick, 0, true);
+      v.setUint32(s + PLAYER_SLOT.offsets.last_shot_tick, ring && tick > 4 ? 1 + Math.floor((tick + seat * 3) / 4) : 0, true);
       v.setUint32(s + PLAYER_SLOT.offsets.damage_dealt, damage?.[seat] ?? seat * 137, true);
     });
     return decodePlayers(d);
