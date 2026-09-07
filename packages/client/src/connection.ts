@@ -605,14 +605,20 @@ function kickRefresh(rpc: HeartrotRpc): void {
  * Stale-while-revalidate rather than a timer: a hash older than the TTL is still ~57 s
  * from expiry, so the send that notices serves the old one and lets the refresh land
  * behind it. No caller owns a timer; an idle match's freshness is `warmBlockhash`'s job.
+ *
+ * The TTL rotation is NOT issued here, even though this is where the age is read. It used
+ * to be, and a kick fired from inside a send goes to the network BEFORE the send's own
+ * fetch — kit reaches `fetch()` synchronously — so the first input after two idle seconds
+ * queued its POST behind a `getLatestBlockhash` on the same connection: keydown to
+ * `sendTransaction` p95 20.9 ms against 6.3 ms for a tap after one idle second, p50 2.6
+ * against 1.8 (Sep 7 2026, forty of each, interleaved on one seat). `sendInstructions`
+ * already rotates behind every send it makes, so the send needs nothing from here; the
+ * idle client's rotation moved to {@link warmBlockhash}, the only other caller.
  */
 async function blockhashFor(rpc: HeartrotRpc): Promise<CachedBlockhash> {
   const entry = blockhashCache.get(rpc);
   if (entry === undefined) return refreshBlockhash(rpc);
-
-  const age = Date.now() - entry.fetchedAt;
-  if (age >= BLOCKHASH_MAX_AGE_MS) return refreshBlockhash(rpc);
-  if (age >= BLOCKHASH_TTL_MS) kickRefresh(rpc);
+  if (Date.now() - entry.fetchedAt >= BLOCKHASH_MAX_AGE_MS) return refreshBlockhash(rpc);
   return entry;
 }
 
@@ -629,6 +635,10 @@ async function blockhashFor(rpc: HeartrotRpc): Promise<CachedBlockhash> {
  * is not the caller's problem. Awaiting the result is only useful to a test.
  */
 export function warmBlockhash(rpc: HeartrotRpc): Promise<unknown> {
+  // The TTL rotation, behind the caller: `blockhashFor` serves the held hash; past the max
+  // age the two join the same single-flight fetch.
+  const held = blockhashCache.get(rpc);
+  if (held !== undefined && Date.now() - held.fetchedAt >= BLOCKHASH_TTL_MS) kickRefresh(rpc);
   return blockhashFor(rpc).catch(() => undefined);
 }
 
