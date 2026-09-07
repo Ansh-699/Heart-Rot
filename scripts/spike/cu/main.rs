@@ -9,8 +9,8 @@ use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 
 use heartrot::state::{
-    Arena, Boss, PlayerSlot, Players, DISC_ARENA, DISC_BOSS, DISC_PLAYERS, LAYOUT_VERSION,
-    MAX_SEATS, N_PARTS, NO_TARGET, PHASE_FIGHTING, ZONE_ARENA,
+    Arena, Boss, PlayerSlot, Players, BULLET_ACTIVE, DISC_ARENA, DISC_BOSS, DISC_PLAYERS,
+    LAYOUT_VERSION, MAX_SEATS, N_PARTS, NO_TARGET, PHASE_FIGHTING, ZONE_ARENA,
 };
 
 const PROGRAM_ID: &str = "JCfWB9zDXYqAv2or2GVriN39enEudWstz3M8sKvVkzc5";
@@ -444,6 +444,73 @@ fn run(tag: &str, elf_path: &str, boss_xy: (i16, i16), pit_y: i16, shoot_len: us
             "| _{label} {seats} seats: peak live bullets {peak_bullets}{}_ | | | | | | |",
             err.map(|e| format!(", aborted: {e}")).unwrap_or_default()
         );
+        }
+
+        // ---- boss_tick, the pool FULL ------------------------------------
+        // The fight never fills the pool by itself — a volley is `1 + alive`, 21 at most,
+        // and the walls kill them within a few ticks — so sp2 only extrapolated the 128
+        // case. This pins it: every slot active and flying across the pit floor before
+        // every tick, raiders standing, so the sweep-and-collide loop runs at its fixed
+        // bound against the full live-target list. The worst tick the handler can be
+        // asked for. `live after` says how many of the 128 were still in play once the
+        // tick had swept them, i.e. that they were on open floor and not in a wall.
+        {
+            let mut w = build(seats, boss_xy, pit_y);
+            let m = mollusk_for(&elf, &w.program);
+            let mut tk = Vec::new();
+            let mut live_after = Vec::new();
+            let mut err = None;
+            for _ in 0..200usize {
+                {
+                    let (_, aacc) = w.accounts.iter_mut().find(|(a, _)| *a == w.arena).unwrap();
+                    let ar: &mut Arena = bytemuck::from_bytes_mut(&mut aacc.data[..1200]);
+                    for (i, b) in ar.bullets.iter_mut().enumerate() {
+                        b.x = 240 + ((i % 16) as i16) * 40;
+                        b.y = pit_y - 60 + ((i / 16) as i16) * 20;
+                        b.dx = [17i8, -23, 31, -9][i % 4];
+                        b.dy = [33i8, 27, -19, 41][(i / 4) % 4];
+                        b.active = BULLET_ACTIVE;
+                    }
+                    ar.alive_count = seats as u8;
+                    ar.enrage_at_tick = ar.tick + 3_600;
+                    let (_, pacc) = w.accounts.iter_mut().find(|(a, _)| *a == w.players).unwrap();
+                    let pl: &mut Players = bytemuck::from_bytes_mut(&mut pacc.data[..1924]);
+                    for i in 0..seats {
+                        pl.slots[i].hp = 100;
+                        pl.slots[i].respawn_at_tick = 0;
+                    }
+                    let (_, bacc) = w.accounts.iter_mut().find(|(a, _)| *a == w.boss).unwrap();
+                    let b: &mut Boss = bytemuck::from_bytes_mut(&mut bacc.data[..50]);
+                    b.parts = PARTS_BASE;
+                }
+                let ix = Instruction::new_with_bytes(
+                    w.program,
+                    &[8],
+                    vec![
+                        AccountMeta::new(w.arena, false),
+                        AccountMeta::new(w.boss, false),
+                        AccountMeta::new(w.players, false),
+                        AccountMeta::new_readonly(w.crank_signer, true),
+                    ],
+                );
+                let accs = pick(&w, &[w.arena, w.boss, w.players, w.crank_signer]);
+                let r = m.process_instruction(&ix, &accs);
+                if r.raw_result.is_err() {
+                    err = Some(format!("{:?}", r.raw_result));
+                    break;
+                }
+                tk.push(r.compute_units_consumed);
+                merge(&mut w, &r.resulting_accounts);
+                let (_, acc) = w.accounts.iter().find(|(a, _)| *a == w.arena).unwrap();
+                let arena: &Arena = bytemuck::from_bytes(&acc.data[..1200]);
+                live_after.push(arena.bullets.iter().filter(|b| b.active == BULLET_ACTIVE).count() as u64);
+            }
+            row(&format!("boss_tick FULL POOL 128 bullets, {seats} seats"), tk);
+            let (lmin, lp50, _, lmax, _) = stats(live_after);
+            println!(
+                "| _full pool {seats} seats: live after the tick min {lmin} p50 {lp50} max {lmax}{}_ | | | | | | |",
+                err.map(|e| format!(", aborted: {e}")).unwrap_or_default()
+            );
         }
     }
 }

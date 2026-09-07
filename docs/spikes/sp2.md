@@ -161,6 +161,19 @@ No arithmetic change is warranted. The active-bullet mask does not need a bitboa
 `MAX_BULLETS` does not need to drop to 64. If a future affix ever does saturate the pool,
 this measurement says the first 4× of headroom is already paid for.
 
+**Measured, 2026-09-07** — `scripts/spike/cu`, the `boss_tick FULL POOL` row, against an
+ELF byte-identical to the devnet deployment (its tick path is `tick.rs` at `c623d44`):
+every one of the 128 slots active and flying before every tick, twenty raiders standing,
+**p50 109,638 / max 121,779 CU — 30.5 % of 399,700**; 73,763 with one raider. The
+extrapolation held. Same harness, same ELF, the fight it can actually reach: p50 5,429 /
+p95 19,596 / max 20,128 CU at twenty seats (21 bullets peak) and p50 3,193 / max 5,722
+solo — the three `find_program_address` searches of §2 are gone (`assert_pda_at_bump`),
+which is where the 6,857 went. Off the ER's own history the same day
+(`getSignaturesForAddress` on five arenas, 6,688 crank transactions): consecutive cranks
+land **exactly 2 slots apart in 6,681 of 6,683 intervals** (one 1, one 3), so the 100 ms
+period is delivered slot-exact and whatever jitter a client sees is the network's;
+`consumed` p50 3,190–4,256, max 5,762 across those solo raids, 614 on a heartbeat-only tick.
+
 ## 4. Monotonicity: five minutes, unattended
 
 | | empty match | loaded match |
