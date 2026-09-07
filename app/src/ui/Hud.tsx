@@ -482,6 +482,7 @@ function Corner() {
     <div className="hud-corner">
       <MarkerIcon />
       <MuteIcon />
+      <FullscreenIcon />
       <ExitIcon />
     </div>
   );
@@ -511,6 +512,42 @@ function MuteIcon() {
           <path d="M16 8l5 8M21 8l-5 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
         ) : (
           <path d="M16 8.5a4.5 4.5 0 0 1 0 7M18.5 5.5a8 8 0 0 1 0 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+        )}
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * The browser's own fullscreen, nothing faked: the document element goes full-window and
+ * the stage, which already fills `<main>`, fills the screen with it. Escape leaves it as
+ * the browser always allows, so the icon mirrors `fullscreenElement` off `fullscreenchange`
+ * rather than remembering what it last asked for. Hidden where the API is absent (an
+ * iPhone), where the page would only have a dead button.
+ */
+function FullscreenIcon() {
+  const [full, set] = useState(() => document.fullscreenElement !== null);
+  useEffect(() => {
+    const sync = () => set(document.fullscreenElement !== null);
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  if (!document.fullscreenEnabled) return null;
+  return (
+    <button
+      className="hud-icon"
+      aria-pressed={full}
+      aria-label={full ? 'Leave fullscreen' : 'Fullscreen'}
+      title={full ? 'Leave fullscreen' : 'Fullscreen'}
+      onClick={() => {
+        void (full ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => undefined);
+      }}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        {full ? (
+          <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        ) : (
+          <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
         )}
       </svg>
     </button>
