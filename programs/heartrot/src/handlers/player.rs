@@ -489,6 +489,39 @@ fn move_clock(arena: &Arena) -> Result<u32, ProgramError> {
     Ok(Clock::get()?.slot as u32)
 }
 
+/// The stamp an accepted step leaves in `last_move_tick`: `now`, or one slot EARLIER when
+/// the seat had rested a whole slot or more. One slot of credit, and nothing wider.
+///
+/// Measured on devnet with the plain `last_move_tick == now` refusal (Sep 7 2026, one
+/// guest, a direction key held 40 s on the lobby floor, `getSignatureStatuses` on every
+/// send, three runs): 68 of 599, 22 of 712 and 15 of 840 sends refused `RateLimited`, and
+/// 94 of those 105 landed in the SAME slot as the send before them. The client sends once
+/// per 50 ms slot, but the POST to Singapore jitters (p50 78-154 ms, p95 430-460 ms), so
+/// two sends 50 ms apart on the keyboard land in one slot — one step in eight on a loaded
+/// link, one in fifty on a calm one — and the second is thrown away: a 16-unit pull-back
+/// on the player's own screen and a 100 ms hole on everyone else's. Replaying those
+/// verdicts under this rule accepts 586, 712 and 839 (capacity 3 would take 598, 712 and
+/// 840, and a limiter that wide stops being one).
+///
+/// The rule is a two-token bucket refilling one per slot, stored in the field that already
+/// exists: `last_move_tick == now` still refuses, so the second step of a straddling pair is
+/// taken only because the first stamped the slot BEFORE it, and a third in the same slot
+/// finds the stamp at `now` and is refused. Over any run of `n` slots at most `n + 1`
+/// steps land; a flood is still one step per slot on average, which is the whole of what
+/// the limiter promised (D16/R12).
+///
+/// Two readers see a stamp up to one slot early and both tolerate it: `shoot::fire`'s
+/// charge hold can be granted 50 ms sooner than the stand it measures, inside the 250 ms
+/// margin the client already waits on top; the Worker's idle sweep measures five minutes.
+/// `wrapping_sub` for the same reason `shoot` uses it: the slot is truncated to 32 bits.
+fn banked(last: u32, now: u32) -> u32 {
+    if now.wrapping_sub(last) >= 2 {
+        now.wrapping_sub(1)
+    } else {
+        now
+    }
+}
+
 /// Land an accepted step on the seat: position, body direction, the client's sequence
 /// echo and the rate-limit stamp, in one write.
 ///
@@ -895,7 +928,7 @@ pub fn move_player(
         return Err(HeartrotError::BlockedByWall.into());
     }
 
-    commit_move(slot, dir, (nx, ny), seq, now);
+    commit_move(slot, dir, (nx, ny), seq, banked(slot.last_move_tick, now));
     Ok(())
 }
 
@@ -1235,6 +1268,56 @@ mod tests {
         }
         // The door octants are the step table's cardinals.
         assert!(MOVE_STEP[0] == (0, -STEP) && MOVE_STEP[2] == (STEP, 0) && MOVE_STEP[4] == (0, STEP) && MOVE_STEP[6] == (-STEP, 0));
+    }
+
+    /// The limiter as `move_player` runs it — the `== now` refusal, then `banked` on the
+    /// stamp — driven through the slot sequences the wire actually produces. A limiter is
+    /// wrong quietly in both directions: too tight and every eighth held step is thrown
+    /// away with no error under `skipPreflight`; too loose and a flood is free.
+    #[test]
+    fn the_limiter_takes_a_straddling_pair_and_still_caps_a_flood() {
+        let step = |last: &mut u32, now: u32| -> bool {
+            if *last == now {
+                return false;
+            }
+            *last = banked(*last, now);
+            true
+        };
+
+        // The claim stamps its own slot; the first step waits for the next one, as before.
+        let mut last = 1_000u32;
+        assert!(!step(&mut last, 1_000), "no step in the slot the seat was claimed in");
+        assert!(step(&mut last, 1_001));
+        assert_eq!(last, 1_001, "no rest, no credit");
+
+        // A rested seat banks one slot: a pair straddling into one slot is taken whole, a
+        // third in that slot is not.
+        assert!(step(&mut last, 1_010));
+        assert_eq!(last, 1_009, "a rested step stamps the slot before its own");
+        assert!(step(&mut last, 1_010), "the straddling second step lands");
+        assert_eq!(last, 1_010);
+        assert!(!step(&mut last, 1_010), "and a third in the same slot is refused");
+        assert!(step(&mut last, 1_011), "the next slot is open as ever");
+
+        // A flood is still one per slot: over any n slots at most n + 1 land, and a stream
+        // that never rests never rebuilds the credit.
+        let mut last = 5_000u32;
+        let mut landed = 0;
+        for now in 5_002..5_102u32 {
+            for _ in 0..4 {
+                if step(&mut last, now) {
+                    landed += 1;
+                }
+            }
+        }
+        assert_eq!(landed, 101, "100 slots of flood land 100 + 1 steps");
+
+        // The slot is a truncated u64 and the stamp may sit at the wrap, as `shoot` allows.
+        let mut last = u32::MAX - 3;
+        assert!(step(&mut last, 0));
+        assert_eq!(last, u32::MAX, "a rested step across the wrap banks the slot before 0");
+        assert!(step(&mut last, 0), "and the pair still lands");
+        assert!(!step(&mut last, 0));
     }
 
     #[test]
