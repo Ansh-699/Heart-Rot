@@ -593,6 +593,13 @@ export function subscribeMatch(cfg: MatchSubscriptionConfig): MatchSubscription 
     }
   }, WATCHDOG_POLL_MS);
 
+  // The world does not wait for the socket. The router's WebSocket takes 375-524 ms to
+  // open from this ISP (two sessions, 2026-09-07) and the snapshot used to start only in
+  // `onopen`, so a fresh seat watched the loader for the whole handshake and then the
+  // read: 721-793 ms from socket to world. This read needs no socket. The snapshot-on-open
+  // still runs — it is what makes the subscribe-then-snapshot ordering exact — and
+  // `lastSlot` orders the two, so whichever lands second cannot rewind the first.
+  void snapshot().catch(() => undefined);
   void connect();
 
   return {
@@ -824,11 +831,12 @@ if (import.meta.env.DEV) {
     const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
     try {
       open();
-      gates[0]?.(); // the first open's snapshot, landing two reconnects late
+      // `gates[0]` is the pre-connect snapshot `subscribeMatch` fires before any open.
+      gates[1]?.(); // the first open's snapshot, landing two reconnects late
       await settle();
       expect(snapshotReads === 1, 'the stale snapshot should have delivered into the fresh open');
       expect(!reachedDecoder(100, DUP), 'a payload the snapshot already delivered is a duplicate');
-      gates[2]?.(); // this open's own snapshot: it must find the kind already heard from
+      gates[3]?.(); // this open's own snapshot: it must find the kind already heard from
       await settle();
       expect(
         snapshotReads === 1,
