@@ -32,6 +32,7 @@ import { recordWorld, recordWrites } from '../net/metrics';
 import {
   CLASS_ARCHER,
   ZONE_ARENA,
+  createRpc,
   guestProof,
   loadOrCreateSession,
   type ArenaAccount,
@@ -610,6 +611,9 @@ export function createStore(): Store {
     });
   };
 
+  /** Where the arena lives today: the ER `index.html` preconnects to, as a URL kit accepts. */
+  const ER_HOME = 'https://devnet-as.magicblock.app/';
+
   // The latch. `signIn` and `playAsGuest` are fired from effects React double-invokes in
   // development, and the verdict's countdown and its button both want the same seat.
   let joining: Promise<void> | null = null;
@@ -626,6 +630,17 @@ export function createStore(): Store {
     set({ status: 'joining', error: null, skinChosen: true, seeking: true });
     try {
       if (!sessionKey) throw new Error('Sign in before taking a seat.');
+      // Open the ER's connection under the Worker's round trip. The first frame is the
+      // roster read the link fires the moment `/api/session/init` answers, and that read
+      // paid for a cold connection to Singapore: p50 314 ms (241-902) on top of the ~120 ms
+      // the read itself takes, measured Sep 7 2026, because nothing had touched the ER
+      // since the page loaded and Chrome drops an unused preconnect after ~10 s while
+      // Privy takes longer than that to make Play clickable. One request now, on the
+      // same transport the link will use, so the handshake and the preflight are done by
+      // the time the seat comes back. The host is the one `index.html` preconnects to; the
+      // real `erEndpoint` arrives with the seat, and a different one would cost this one
+      // wasted request and nothing else.
+      void createRpc(ER_HOME).getHealth().send().catch(() => undefined);
       for (let attempt = 0; ; attempt++) {
         try {
           const match = await postJson<MatchInfo>('/api/session/init', {
