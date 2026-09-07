@@ -732,8 +732,9 @@ export function Shot({
     // The lob's control point: the chord's midpoint, lifted for an archer. For a knight it
     // IS the midpoint, which makes the Bezier the straight line at uniform speed.
     const lift = cls === CLASS_ARCHER ? range * LOB_FRACTION : 0;
+    const t0 = performance.now();
     flights.current[seat] = {
-      t0: performance.now(),
+      t0,
       x0: x,
       y0: y,
       cx: x + cdx / 2,
@@ -747,6 +748,12 @@ export function Shot({
       dummy,
       landed: false,
     };
+    // Drawn at the bow NOW, by the same step the loop runs, not on the loop's next pass. A
+    // remote launch runs from `App.tsx`'s per-frame world flush, whose rAF is registered
+    // when the notification lands — after `Arena.tsx`'s loop registered its own — so the
+    // step had already run this frame and the arrow's first frame was the one after:
+    // one frame late, 60 of 60 in the harness. Same writer, one call earlier.
+    frameRef.current?.(t0);
   };
 
   // ---- the local shot, at input rate ------------------------------------
